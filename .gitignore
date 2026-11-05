@@ -5,6 +5,11 @@ build/
 out/
 release/
 
+# 外部参考源码（体积大，不入库；按需本地 clone）
+docs/reference-main/
+docs/reference-main/
+docs/*-main/
+
 # 运行数据
 *.sqlite
 *.sqlite3

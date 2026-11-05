@@ -1,0 +1,3814 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YieldMind Harness — 需求与模块对比</title>
+<style>
+  :root{
+    --bg:#f5f7f9;
+    --surface:#ffffff;
+    --surface-2:#f9fafb;
+    --ink:#161b22;
+    --ink-2:#3d4753;
+    --muted:#6b7684;
+    --line:#e2e7ec;
+    --line-2:#cfd7df;
+    --accent:#0d8a7a;
+    --accent-soft:#e6f5f2;
+    --indigo:#4f5bd5;
+    --indigo-soft:#eceefc;
+    --warn:#b45309;
+    --warn-soft:#fdf3e3;
+    --danger:#c0392b;
+    --danger-soft:#fdecea;
+    --ok:#1a7f4b;
+    --ok-soft:#e9f7ef;
+    --wire-bg:#eef1f5;
+    --wire-line:#c9d2dc;
+    --radius:12px;
+    --mono:"SFMono-Regular",ui-monospace,Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:var(--sans);font-size:15px;line-height:1.75;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.86em;background:#eef1f4;border:1px solid var(--line);border-radius:5px;padding:.1em .35em;white-space:nowrap}
+  pre{margin:0;overflow:auto}
+  pre code{white-space:pre;display:block;background:none;border:0;padding:0;font-size:12.5px;line-height:1.7}
+
+  /* ---------- layout ---------- */
+  .shell{display:grid;grid-template-columns:250px minmax(0,1fr);min-height:100vh}
+  .nav{
+    position:sticky;top:0;height:100vh;overflow:auto;
+    background:#111820;color:#aeb9c4;padding:22px 16px 40px;
+    border-right:1px solid #0b1116;
+  }
+  .nav .brand{color:#fff;font-weight:700;font-size:15px;letter-spacing:.3px;line-height:1.4}
+  .nav .brand span{display:block;color:#7d8b99;font-weight:500;font-size:11.5px;letter-spacing:.6px;margin-top:2px}
+  .nav .ver{display:inline-block;margin:12px 0 18px;padding:2px 8px;border:1px solid #2c3945;border-radius:999px;font-size:11px;color:#93a1af}
+  .nav a{display:block;color:#9aa8b6;font-size:13px;padding:5px 9px;border-radius:6px;border-left:2px solid transparent}
+  .nav a:hover{background:#1a242e;color:#fff;text-decoration:none}
+  .nav a.active{background:#1a242e;color:#fff;border-left-color:#2dd4bf}
+  .nav .group{margin:14px 0 4px;font-size:10.5px;letter-spacing:1.4px;color:#5f6d7b;text-transform:uppercase;padding:0 9px}
+  main{min-width:0;padding:34px 40px 90px}
+  .wrap{max-width:1140px;margin:0 auto}
+
+  /* ---------- header ---------- */
+  .doc-head{background:linear-gradient(145deg,#0f1720 0%,#152a2b 55%,#0d3b36 100%);color:#e8eef3;border-radius:18px;padding:30px 32px;margin-bottom:26px;box-shadow:0 1px 0 rgba(0,0,0,.2)}
+  .doc-head h1{margin:0 0 6px;font-size:27px;line-height:1.3;letter-spacing:.3px;color:#fff}
+  .doc-head .sub{color:#8fb3ad;font-size:13.5px;margin-bottom:18px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+  .meta span{font-size:12px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);color:#c9d8d5;padding:3px 9px;border-radius:999px}
+  .doc-head ul{margin:0;padding-left:18px;color:#b9c9c6;font-size:13px}
+  .doc-head ul li{margin:2px 0}
+  .doc-head ul li b{color:#e8f4f1}
+
+  h2{font-size:21px;margin:44px 0 14px;padding-bottom:9px;border-bottom:1px solid var(--line);letter-spacing:.2px;scroll-margin-top:20px}
+  h2 .num{color:var(--accent);font-family:var(--mono);font-size:15px;margin-right:8px;font-weight:600}
+  h3{font-size:16px;margin:26px 0 10px;color:var(--ink);scroll-margin-top:20px}
+  h3 .tag{font-size:10.5px;vertical-align:2px}
+  p{margin:9px 0}
+  .lead{color:var(--ink-2)}
+  .muted{color:var(--muted)}
+  .small{font-size:12.5px}
+
+  /* ---------- chips ---------- */
+  .chip{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.3px;padding:1px 7px;border-radius:999px;border:1px solid transparent;vertical-align:1px;white-space:nowrap}
+  .p0{background:var(--danger-soft);color:var(--danger);border-color:#f5c6c0}
+  .p1{background:var(--warn-soft);color:var(--warn);border-color:#f0dcb4}
+  .p2{background:#eef1f4;color:#55606d;border-color:#dbe1e7}
+  .chip-pass{background:var(--ok-soft);color:var(--ok);border-color:#bfe3cd}
+  .chip-info{background:var(--indigo-soft);color:var(--indigo);border-color:#d3d8f7}
+
+  /* ---------- cards / tables ---------- */
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;margin:14px 0}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:16px 0}
+  .kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}
+  .kpi .k{font-size:12px;color:var(--muted)}
+  .kpi .v{font-size:17px;font-weight:700;margin-top:2px;color:var(--ink)}
+  .kpi .v em{font-style:normal;color:var(--accent)}
+
+  table{width:100%;border-collapse:collapse;background:var(--surface);font-size:13.5px;margin:12px 0}
+  .tbl-wrap{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .tbl-wrap table{table-layout:fixed}
+  table th{background:var(--surface-2);text-align:left;font-weight:600;color:var(--ink-2);font-size:12px;letter-spacing:.4px;padding:9px 12px;border-bottom:1px solid var(--line)}
+  table td{padding:9px 12px;border-bottom:1px solid #eef1f4;vertical-align:top;color:var(--ink-2)}
+  table tr:last-child td{border-bottom:0}
+  table td:first-child{font-family:var(--mono);font-size:12px;color:var(--accent);font-weight:600;width:52px}
+  table td b{color:var(--ink);font-weight:600}
+  table td,table th{overflow-wrap:anywhere}
+  table td code{white-space:normal;overflow-wrap:anywhere}
+  table tbody tr:hover{background:#fbfcfd}
+  .tbl-compact td{padding:7px 12px;font-size:13px}
+
+  .mod-head{display:flex;align-items:center;gap:10px;margin:30px 0 4px;flex-wrap:wrap}
+  .mod-head h3{margin:0;font-size:17px}
+  .mod-head .rule{flex:1;height:1px;background:var(--line)}
+
+  /* ---------- code ---------- */
+  .code{background:#0f1720;border-radius:10px;border:1px solid #243040;color:#d7e3ec;padding:14px 16px;margin:12px 0;overflow:auto}
+  .code .cm{color:#6f8698}
+  .code .hl{color:#7ee0cf}
+  .code .st{color:#e8c07d}
+  .code .k{color:#8fb4ff}
+  .code pre{color:#d7e3ec}
+  .code-bar{display:flex;justify-content:space-between;align-items:center;color:#7d90a3;font-size:11.5px;margin-bottom:8px;letter-spacing:.5px}
+  .code-bar .dots{display:flex;gap:5px}
+  .code-bar .dots i{width:8px;height:8px;border-radius:50%;background:#3a4a5a;display:block}
+
+  /* ---------- callouts ---------- */
+  .note{border-left:3px solid var(--accent);background:var(--accent-soft);padding:10px 14px;border-radius:0 8px 8px 0;margin:14px 0;font-size:13.5px;color:#215a52}
+  .note.warn{border-left-color:var(--warn);background:var(--warn-soft);color:#7a4a06}
+  .note strong{color:inherit}
+
+  /* ================= 原型 wireframe 基础 ================= */
+  .proto{margin:22px 0 8px}
+  .proto-title{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+  .proto-title .n{font-family:var(--mono);font-size:11px;font-weight:700;color:#fff;background:#33414f;border-radius:5px;padding:1px 6px;letter-spacing:.5px}
+  .proto-title h4{margin:0;font-size:15px}
+  .proto-title .cap{font-size:12px;color:var(--muted)}
+  .wire{
+    background:var(--wire-bg);border:1px solid var(--wire-line);border-radius:14px;
+    padding:12px;box-shadow:inset 0 1px 0 #fff, 0 2px 6px rgba(17,24,32,.05);
+    overflow:auto;
+  }
+  .wire .chrome{display:flex;align-items:center;gap:6px;padding:0 2px 9px;color:#7c8794;font-size:11px}
+  .wire .chrome .dot{width:9px;height:9px;border-radius:50%;background:#c8d1da;display:block}
+  .wire .chrome .url{flex:1;text-align:center;font-family:var(--mono);font-size:10.5px;color:#8b95a1;background:#e5e9ee;border-radius:6px;padding:2px 8px}
+  .box{background:#fff;border:1px solid #d9e0e7;border-radius:9px;position:relative}
+  .box.dash{border-style:dashed;background:#fcfdfe}
+  .ph{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 9px;border-bottom:1px solid #e8edf2;font-size:11px;font-weight:600;color:#54606d;letter-spacing:.3px;background:#fafbfc;border-radius:9px 9px 0 0}
+  .ph .mini{font-weight:500;color:#94a0ad;font-size:10px;letter-spacing:0}
+  .ph .ico{width:14px;height:14px;border-radius:4px;background:#dfe6ed;display:inline-block;flex:none}
+  .body{padding:7px 8px}
+  .tiny{font-size:10px;line-height:1.5}
+  .faint{color:#94a0ad}
+  .row{display:flex;align-items:center;gap:6px}
+  .between{display:flex;align-items:center;justify-content:space-between;gap:6px}
+  .sk{background:#eef2f6;border-radius:4px;height:7px;display:block}
+  .pill{display:inline-block;font-size:9.5px;padding:0 6px;border-radius:999px;background:#eef2f6;color:#5d6875;border:1px solid #e1e7ee;line-height:16px;white-space:nowrap}
+  .pill.g{background:#e9f7ef;border-color:#c3e5d2;color:#1a7f4b}
+  .pill.b{background:#eceefc;border-color:#d3d8f7;color:#4f5bd5}
+  .pill.y{background:#fdf3e3;border-color:#f0dcb4;color:#9a6209}
+  .pill.r{background:#fdecea;border-color:#f5c6c0;color:#b03225}
+  .pill.t{background:#e6f5f2;border-color:#bfe3d8;color:#0b6f62}
+  .dotl{width:5px;height:5px;border-radius:50%;background:#9aa6b2;display:inline-block;flex:none}
+  .dotl.g{background:#22a06b}.dotl.y{background:#d9962a}.dotl.r{background:#cf4b3c}.dotl.b{background:#5b6bd6}
+  .ann{
+    display:inline-flex;align-items:center;justify-content:center;min-width:15px;height:15px;padding:0 3px;
+    border-radius:999px;background:#111820;color:#fff;font-size:9.5px;font-weight:700;
+    font-family:var(--mono);vertical-align:1px;box-shadow:0 0 0 2px #fff;
+  }
+  .ann.t{background:#0d8a7a;box-shadow:0 0 0 2px #fff}
+  .ann.i{background:#4f5bd5;box-shadow:0 0 0 2px #fff}
+  .ann.w{background:#b45309;box-shadow:0 0 0 2px #fff}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:11.5px;color:var(--muted);margin-top:8px}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .legend .sw{width:14px;height:9px;border-radius:2px;border:1px solid #cfd7df;background:#fff;display:inline-block}
+  .legend .sw.d{background:#fcfdfe;border-style:dashed}
+
+  /* ---- workspace 真源数据条 ---- */
+  .ws-strip{display:flex;align-items:center;gap:5px;flex-wrap:wrap;background:#f1f8f6;border:1px solid #d3e9e4;border-radius:7px;padding:4px 7px;font-size:9.5px;color:#0b6f62;margin-bottom:6px}
+  .ws-k{font-size:8px;font-weight:700;letter-spacing:1.2px;color:#7f9b96}
+  .ws-item{background:#fff;border:1px solid #d3e9e4;border-radius:999px;padding:0 6px;line-height:15px;color:#3d6b64;white-space:nowrap}
+  .ws-item.on{border-color:#0d8a7a;background:#e6f5f2;font-weight:600}
+  .ws-grow{flex:1}
+  .src{font-family:var(--mono);font-size:7.5px;color:#0b6f62;background:#e6f5f2;border:1px solid #bfe3d8;border-radius:3px;padding:0 3px;line-height:12px;white-space:nowrap}
+
+  /* ---- 主工作台 ---- */
+  .ws{display:grid;grid-template-columns:196px minmax(0,1fr) 250px;grid-template-rows:30px minmax(0,1fr) 108px;gap:6px;min-height:470px;min-width:940px}
+  .ws .top{grid-column:1/-1;display:flex;align-items:center;gap:8px;padding:0 9px}
+  .ws .top .tab{font-size:10px;color:#6a7683;padding:2px 7px;border-radius:5px}
+  .ws .top .tab.on{background:#e2f1ee;color:#0b6f62;font-weight:600}
+  .ws .top .grow{flex:1}
+  .ws .bot{grid-column:1/-1}
+  .ws .left,.ws .center,.ws .right,.ws .bot{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+  .ws .center .body{display:flex;flex-direction:column;gap:6px;flex:1;min-height:0}
+  .tabbar{display:flex;gap:3px;padding:5px 6px 0;border-bottom:1px solid #e8edf2;background:#fafbfc}
+  .tabbar .t{font-size:10px;color:#77828f;padding:3px 8px;border-radius:5px 5px 0 0;border:1px solid transparent;border-bottom:0}
+  .tabbar .t.on{background:#fff;border-color:#e8edf2;color:#161b22;font-weight:600;margin-bottom:-1px;padding-bottom:4px}
+  .agent-item{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:6px;font-size:10.5px;color:#3d4753}
+  .agent-item:hover{background:#f5f8fa}
+  .agent-item.on{background:#e9f5f2;box-shadow:inset 2px 0 0 #0d8a7a}
+  .avatar{width:16px;height:16px;border-radius:5px;background:#dbe4ec;color:#4a5764;font-size:8.5px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none}
+  .av1{background:#dcefe9;color:#0b6f62}.av2{background:#e3e6fb;color:#424fbf}.av3{background:#fbe9d6;color:#995c0d}
+  .todo-line{display:flex;gap:5px;padding:4px 6px;border-radius:6px;font-size:10.5px;color:#3d4753;align-items:flex-start}
+  .todo-line:hover{background:#f5f8fa}
+  .todo-line .txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .board{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px;flex:1;min-height:0;min-width:560px}
+  .col{background:#f4f7f9;border:1px solid #e6ebf0;border-radius:7px;padding:4px;display:flex;flex-direction:column;gap:4px;min-width:0}
+  .col .ch{font-size:9.5px;font-weight:700;color:#68737f;letter-spacing:.2px;display:flex;justify-content:space-between;align-items:center;padding:0 2px 2px}
+  .col .ch .n{background:#e4e9ee;color:#67727e;border-radius:999px;padding:0 4px;font-size:8.5px}
+  .kcard{background:#fff;border:1px solid #e0e6ec;border-radius:6px;padding:5px 6px;font-size:9.5px;line-height:1.5;color:#3d4753;box-shadow:0 1px 1px rgba(16,24,32,.03)}
+  .kcard.sel{border-color:#0d8a7a;box-shadow:0 0 0 2px #d9efeb}
+  .kcard .ttl{font-weight:600;color:#1b2430;font-size:10px;margin-bottom:2px;display:block}
+  .kcard .meta2{display:flex;justify-content:space-between;gap:4px;color:#8b96a2;font-size:8.5px;margin-top:2px}
+  .chat{flex:1;display:flex;flex-direction:column;gap:5px;padding:6px;overflow:hidden}
+  .msg{font-size:9.5px;line-height:1.5;border-radius:7px;padding:4px 6px;max-width:94%}
+  .msg.u{background:#e6f5f2;color:#14544c;align-self:flex-end;border:1px solid #cbe8e2}
+  .msg.a{background:#f3f6f9;border:1px solid #e6ecf1;color:#3d4753}
+  .msg.sys{background:transparent;color:#94a0ad;font-size:8.5px;border:1px dashed #dde4ea;align-self:center;text-align:center}
+  .msg .inj{display:inline-block;font-size:8px;background:#fdf3e3;color:#9a6209;border:1px solid #f0dcb4;border-radius:999px;padding:0 4px;margin-left:3px}
+  .composer{border-top:1px solid #e8edf2;padding:5px 6px;display:flex;gap:4px;align-items:center;background:#fafbfc;border-radius:0 0 9px 9px}
+  .composer .fake{flex:1;background:#fff;border:1px solid #dfe5eb;border-radius:6px;padding:3px 6px;font-size:9px;color:#a3adb8}
+  .logline{font-family:var(--mono);font-size:9px;line-height:1.55;color:#5d6875;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .logline .tm{color:#a3adb8}
+  .logline .ok{color:#1a7f4b}.logline .er{color:#b03225}.logline .wn{color:#9a6209}
+
+  /* ---- 数据面板 ---- */
+  .data-grid{display:grid;grid-template-columns:150px minmax(0,1fr) 158px;gap:6px;min-height:300px;min-width:700px}
+  .ds-item{padding:4px 6px;border-radius:5px;font-size:10px;color:#3d4753;display:flex;align-items:center;gap:5px}
+  .ds-item.on{background:#e9f5f2;color:#0b6f62;font-weight:600}
+  .grid-table{font-size:9.5px;border-collapse:collapse;width:100%;font-family:var(--mono)}
+  .grid-table th{background:#f2f5f8;color:#5d6875;font-weight:600;padding:3px 6px;text-align:left;border-bottom:1px solid #e4eaf0;white-space:nowrap;position:sticky;top:0;font-size:9px}
+  .grid-table td{padding:3px 6px;border-bottom:1px solid #f1f4f7;color:#4a5561;white-space:nowrap}
+  .grid-table tr.hl td{background:#e6f5f2;color:#0b6f62}
+  .selrange{outline:1.5px dashed #0d8a7a;outline-offset:-2px;background:#eefaf7}
+  .profile .prow{padding:3px 0;border-bottom:1px dashed #edf1f4;font-size:9px;color:#5d6875;display:flex;justify-content:space-between;gap:4px}
+  .bar-mini{height:4px;background:#e6edf2;border-radius:2px;overflow:hidden;width:46px}
+  .bar-mini i{display:block;height:100%;background:#2bb3a0}
+
+  /* ---- figure ---- */
+  .fig-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;flex:1;min-width:520px}
+  .fig{background:#fff;border:1px solid #dfe6ec;border-radius:7px;padding:6px;display:flex;flex-direction:column;gap:4px;min-height:0}
+  .fig .fh{font-size:9.5px;font-weight:600;color:#4a5561;display:flex;justify-content:space-between;align-items:center}
+  .fig .fh .pill{font-size:8px;line-height:14px}
+  .plot{flex:1;display:flex;align-items:flex-end;gap:3px;border-left:1px solid #e8edf2;border-bottom:1px solid #e8edf2;padding:4px 4px 0;min-height:64px}
+  .plot .b{flex:1;background:#9fd8cf;border-radius:2px 2px 0 0;position:relative}
+  .plot .b.hot{background:#0d8a7a}
+  .plot .b .lb{position:absolute;bottom:-11px;left:50%;transform:translateX(-50%);font-size:7px;color:#94a0ad}
+  .line-plot{flex:1;min-height:64px;position:relative}
+  .line-plot svg{width:100%;height:100%;display:block}
+
+  /* ---- html canvas ---- */
+  .canvas-grid{display:grid;grid-template-columns:112px minmax(0,1fr) 148px;gap:6px;min-height:320px;min-width:680px}
+  .layer{padding:3px 5px;font-size:9.5px;color:#4a5561;display:flex;gap:4px;align-items:center;border-radius:4px}
+  .layer.on{background:#eceefc;color:#3b47b5}
+  .stage{background:#fff;border:1px solid #dfe6ec;border-radius:7px;padding:8px;overflow:hidden;display:flex;flex-direction:column;gap:5px}
+  .stage .hero{border:1px solid #e4eaf0;border-radius:6px;padding:8px;background:linear-gradient(135deg,#f7fbfa,#eef6f4);position:relative}
+  .stage .hero .h1{font-size:12px;font-weight:700;color:#1b2430;display:inline-block;padding:1px 3px}
+  .stage .hero .h1.sel{outline:1.5px solid #4f5bd5;outline-offset:2px;background:#eceefc}
+  .seltag{position:absolute;top:-9px;left:6px;font-size:7.5px;font-family:var(--mono);background:#4f5bd5;color:#fff;padding:0 5px;border-radius:3px;line-height:13px}
+  .diff{font-family:var(--mono);font-size:8.5px;line-height:1.6;background:#101820;color:#c8d6e0;border-radius:6px;padding:5px 7px;white-space:pre;overflow:auto}
+  .diff .add{color:#7ee0a8}.diff .del{color:#f08c8c}
+
+  /* ---- bus ---- */
+  .bus-layer{border:1px dashed #c9d2dc;border-radius:10px;padding:8px;background:#fbfcfd}
+  .bus-label{font-size:9.5px;letter-spacing:1px;color:#94a0ad;font-weight:700;margin-bottom:5px}
+  .bus-boxes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  .bus-box{background:#fff;border:1px solid #dfe6ec;border-radius:7px;padding:6px 7px;font-size:10px;color:#3d4753}
+  .bus-box b{display:block;font-size:10.5px;color:#1b2430;margin-bottom:1px}
+  .bus-core{background:linear-gradient(90deg,#0f2a29,#123c38);color:#cfe9e4;border-radius:9px;padding:8px 12px;font-size:10px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .bus-core b{color:#7ee0cf;font-size:11px;letter-spacing:.4px}
+  .bus-core code{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);color:#d9efeb;font-size:9px;padding:0 4px}
+  .arrow-v{display:flex;align-items:center;justify-content:center;gap:10px;color:#9aa6b2;font-size:9.5px;padding:3px 0}
+  .arrow-v .l{color:#7c8794}
+  .arrow-v .glyph{font-size:13px;color:#0d8a7a;line-height:1}
+
+  /* ---- flows ---- */
+  .flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;margin:12px 0}
+  .step{flex:1 1 150px;min-width:130px;background:#fff;border:1px solid #dfe6ec;border-radius:8px;padding:8px 10px;font-size:11px;color:#3d4753;position:relative}
+  .step b{display:block;font-size:11px;color:#1b2430;margin-bottom:1px}
+  .step .n{font-family:var(--mono);font-size:9px;color:#0d8a7a;font-weight:700;letter-spacing:.6px}
+  .flow .arw{display:flex;align-items:center;padding:0 5px;color:#b3bdc8;font-size:14px}
+
+  /* ---- timeline ---- */
+  .timeline{margin:16px 0}
+  .tl-row{display:grid;grid-template-columns:56px 88px minmax(0,1.6fr) minmax(200px,1fr);gap:10px;align-items:center;padding:5px 0;font-size:12px}
+  .tl-row .m{font-family:var(--mono);font-weight:700;color:#33414f;font-size:11.5px}
+  .tl-row .w{color:var(--muted);font-size:11.5px}
+  .tl-row .desc{color:var(--ink-2);font-size:12.5px}
+  .tl-bar{height:16px;background:#eef2f6;border-radius:4px;position:relative;overflow:hidden}
+  .tl-bar i{position:absolute;top:0;bottom:0;border-radius:4px;background:#0d8a7a;opacity:.85}
+  .tl-bar i.i2{background:#4f5bd5}
+  .tl-scale{display:grid;grid-template-columns:56px 88px minmax(0,1.6fr) minmax(200px,1fr);gap:10px;font-size:10px;color:#a3adb8;border-top:1px dashed var(--line);padding-top:4px;margin-top:4px}
+  .tl-scale .ticks{display:flex;justify-content:space-between}
+
+  /* ---- misc ---- */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .grid2 > *{min-width:0}
+  @media (max-width:1400px){
+    .shell{grid-template-columns:224px minmax(0,1fr)}
+    .nav{padding:20px 12px 36px}
+    main{padding:28px 26px 80px}
+  }
+  @media (max-width:980px){
+    .shell{grid-template-columns:1fr}
+    .nav{position:relative;height:auto;display:flex;flex-wrap:wrap;gap:4px;padding:14px}
+    .nav .brand,.nav .ver{flex:1 0 100%}
+    .nav a{flex:0 0 auto}
+    .nav .group{display:none}
+    main{padding:22px 16px 60px}
+    .grid2{grid-template-columns:1fr}
+    .ws{grid-template-columns:1fr;grid-template-rows:auto;min-width:0}
+    .data-grid,.canvas-grid{grid-template-columns:1fr;min-width:0}
+    .fig-grid{min-width:0;grid-template-columns:1fr !important;grid-template-rows:none !important}
+    .fig-grid > .fig{grid-column:auto !important;grid-row:auto !important;min-height:150px}
+    .board{min-width:0;grid-template-columns:repeat(3,minmax(0,1fr))}
+    .proto .wire{overflow-x:auto}
+  }
+  @page{size:A4 landscape;margin:10mm}
+  @media print{
+    body{background:#fff;font-size:11px}
+    .shell{display:block}
+    .nav{display:none}
+    main{padding:0}
+    .wrap{max-width:none}
+    .wire{overflow:visible}
+    .ws,.board,.data-grid,.canvas-grid,.fig-grid{min-width:0}
+    .doc-head{background:#0f1720 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    h2{page-break-after:avoid}
+    .proto,.card,.tbl-wrap,table{page-break-inside:avoid}
+    *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  }
+
+  /* ---------- doc parts ---------- */
+  .part{margin-top:56px;padding-top:8px;border-top:2px solid var(--line)}
+  .part-head{margin:0 0 6px;font-size:22px;letter-spacing:.4px;border-top:0;padding-top:0}
+  .part-head .num{display:inline-block;font:600 10.5px var(--sans);letter-spacing:1.4px;
+    color:var(--accent);background:var(--accent-soft);border-radius:999px;padding:3px 9px;
+    margin-right:10px;vertical-align:3px}
+  .part-lead{color:var(--muted);font-size:13.5px;margin:0 0 18px}
+
+  /* ---------- code ---------- */
+  .part pre{background:#0f1720;color:#cfdae5;border:1px solid #0b1116;border-radius:10px;
+    padding:14px 16px;margin:14px 0;overflow:auto;font-size:12.5px;line-height:1.7}
+  .part pre code{background:none;border:0;color:inherit;padding:0;white-space:pre;font-size:12.5px}
+  .part blockquote{margin:14px 0;padding:10px 16px;background:var(--surface-2);
+    border-left:3px solid var(--accent);border-radius:0 8px 8px 0;color:var(--ink-2);font-size:13.5px}
+  .part blockquote p{margin:0}
+
+  /* ---------- tables ---------- */
+  .tbl{margin:14px 0;overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+  .tbl table{margin:0;border:0;border-radius:0}
+  .tbl table td:first-child{width:auto;font-family:var(--sans);font-size:13.5px;color:var(--ink-2);font-weight:400}
+  .tbl.tbl-id table td:first-child{width:52px;font-family:var(--mono);font-size:12px;color:var(--accent);font-weight:600}
+
+  /* ---------- compare ---------- */
+  .cmp h2{margin-top:40px;padding-top:16px;border-top:1px solid var(--line)}
+  .cmp h2:first-of-type{border-top:0}
+  .cmp h2 .badge{font:600 10px var(--sans);letter-spacing:1px;border-radius:999px;
+    padding:2px 8px;margin-left:8px;vertical-align:3px}
+  .cmp .tbl{margin:10px 0 14px}
+  .cmp .tbl table{min-width:640px}
+  .cmp .tbl td{width:auto}
+  .cmp .tbl-plain td:first-child{color:var(--ink);font-weight:600;width:20%;min-width:150px}
+  .cmp .tbl-plain td,.cmp .tbl-plain th{overflow-wrap:break-word;word-break:normal}
+  .cmp .tbl td img.shot{width:100%;height:auto;max-height:520px;object-fit:contain;background:var(--surface-2)}
+  .shot{display:block;width:100%;border:1px solid var(--line-2);border-radius:8px;background:#fff}
+  .cmp table:has(img.shot) td{width:50%;vertical-align:top}
+  .cmp .suggest{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:4px 18px 10px;margin:14px 0 8px}
+  .cmp .suggest h3{margin:12px 0 4px;font-size:14px}
+  .cmp .suggest ol{margin:6px 0 6px;padding-left:20px}
+  .cmp .suggest li{margin:4px 0}
+  .cmp em{color:var(--muted)}
+  .cmp code{white-space:normal}
+  .cmp blockquote{color:var(--muted);font-size:13px}
+
+  /* ---------- misc ---------- */
+  .lede-chips{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 0}
+  .lede-chips span{font-size:12px;color:var(--ink-2);background:var(--surface);
+    border:1px solid var(--line);border-radius:999px;padding:4px 11px}
+  .doc-foot{margin-top:70px;padding-top:16px;border-top:1px solid var(--line);
+    color:var(--muted);font-size:12.5px}
+  @media (max-width:900px){
+    .shell{grid-template-columns:1fr}
+    .nav{position:static;height:auto}
+    main{padding:20px 18px 60px}
+    .cmp td{display:block;width:100%}
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+<nav class="nav">
+  <div class="brand">YieldMind Harness<span>MULTI-AGENT ORCHESTRATION CONSOLE</span></div>
+  <div class="ver">需求 76 条 · 模块 A–T</div>
+  <div class="group">需求</div>
+<a href="#s1">1. 目标</a>
+<a href="#s2">2. 角色</a>
+<a href="#s3">3. 功能需求</a>
+<a href="#m-a" class="sub">A. Agent 与主机管理（P0）</a>
+<a href="#m-b" class="sub">B. TODO 与每日计划（P0）</a>
+<a href="#m-c" class="sub">C. 分派（P0）</a>
+<a href="#m-d" class="sub">D. 对话与纠偏（P0）</a>
+<a href="#m-e" class="sub">E. 进度、回写与通知（P0）</a>
+<a href="#m-f" class="sub">F. 远程执行（P1）</a>
+<a href="#m-g" class="sub">G. 工作区布局（P0）</a>
+<a href="#m-k" class="sub">K. 上下文桥（harness ↔ IDE，P0）</a>
+<a href="#m-l" class="sub">L. Agent ↔ 域工作区接口（P0）</a>
+<a href="#m-m" class="sub">M. IDE 交接（P0）</a>
+<a href="#m-n" class="sub">N. 任务协作（P0）</a>
+<a href="#m-o" class="sub">O. 项目、工作流与小队（P1）</a>
+<a href="#m-p" class="sub">P. 技能与自动化（P1）</a>
+<a href="#m-q" class="sub">Q. 运行时与执行治理（P0）</a>
+<a href="#m-r" class="sub">R. 工作树与代码审阅（P0）</a>
+<a href="#m-s" class="sub">S. 通知与检索（P1）</a>
+<a href="#m-t" class="sub">T. 集成与客户端（P2）</a>
+<a href="#s4">4. 三条关键流程（必须端到端跑通）</a>
+<a href="#s5">5. 最小数据模型</a>
+<a href="#s6">6. 对外接口</a>
+<a href="#s7">7. 非功能要求</a>
+<a href="#s8">8. 分发与打包清单</a>
+<a href="#s9">9. 验收清单（最小可交付）</a>
+<a href="#s10">10. 分期</a>
+<a href="#s11">11. 与现有 YieldMind-IDE 的关系</a>
+<a href="#s12">12. 选型结论（已定，避免反复）</a>
+<a href="#s13">13. 复用与改造清单</a>
+<a href="#s14">14. 待定</a>
+<a href="#s15">15. 原文 → 规格追溯</a>
+<a href="#s16">16. 功能来源（reference / reference 对照）</a>
+<a href="#apx">附录 A. 补充说明</a>
+<a href="#s17">17. 工程约束与风险</a>
+<div class="group">原型</div>
+<a href="#proto">界面原型（Wireframe）</a>
+<div class="group">对比</div>
+<a href="#cmp">reference / reference / 本项目对比</a>
+<a href="#cmp-0">0. 结论速览</a>
+<a href="#cm-a">A. Agent 与主机管理</a>
+<a href="#cm-b">B. TODO 与每日计划</a>
+<a href="#cm-c">C. 分派</a>
+<a href="#cm-d">D. 对话与纠偏</a>
+<a href="#cm-e">E. 进度、回写与通知</a>
+<a href="#cm-f">F. 远程执行（SSH）</a>
+<a href="#cm-g">G. 工作区布局</a>
+<a href="#cm-k">K. 上下文桥（harness ↔ IDE）</a>
+<a href="#cm-l">L. Agent ↔ 域工作区接口</a>
+<a href="#cm-m">M. IDE 交接</a>
+<a href="#cm-n">N. 任务协作（评论 / @ / 快捷操作）</a>
+<a href="#cm-o">O. 项目、工作流与小队</a>
+<a href="#cm-p">P. 技能与自动化</a>
+<a href="#cm-q">Q. 运行时与执行治理</a>
+<a href="#cm-r">R. 工作树与代码审阅</a>
+<a href="#cm-s">S. 通知与检索</a>
+<a href="#cm-t">T. 集成与客户端</a>
+<a href="#cmp-skip">附：不建议抄的能力</a>
+<div class="group">附录</div>
+<a href="#orig">原话拆解与修改建议</a>
+</nav>
+<main>
+  <header class="doc-head" id="top">
+    <h1>YieldMind Harness — 需求与模块对比</h1>
+    <p class="lead">独立发包的多 Agent 编排控制台：TODO / 看板 / 分派 / 纠偏 / 回写，<b>域面板留在 YieldMind-IDE</b>。
+    本文合并三份内容：现行需求（A–T）、界面原型、与 reference / reference 的模块级对比。</p>
+    <div class="lede-chips">
+      <span>76 条需求 · 57 P0 / 14 P1 / 5 P2</span>
+      <span>14 周（M0–M6）</span>
+      <span>截图 52 张</span>
+    </div>
+  </header>
+  <div class="part" id="req"><blockquote>
+<p><strong>仓库</strong>：<code>spin-yieldmind-harness</code>（与同级目录 <code>spin-yieldmind-ide</code> 并列的独立仓）。
+<strong>定位</strong>：<strong>独立发包</strong>的桌面编排控制台 —— 左侧 Agent 与任务，中间看板 / 任务详情，右侧会话与日志；<strong>数据 / 绘图 / HTML 画布在 YieldMind-IDE</strong>，harness 只做只读产物预览与深链。
+冲突时以本文为准；未列入第 11 节的内容一律不做。
+<strong>原始需求存档</strong>（原文要点与修改建议）见 <a href="#orig"><code>REQ-original.md</code></a>，仅作追溯，不参与迭代。</p>
+</blockquote>
+<hr />
+<h2 id="s1">1. 目标</h2>
+<p>用<strong>一个界面</strong>管住一支 Agent 队伍（本机 + SSH 远程），把每天的 TODO 变成可追踪、可干预、可收口的执行流。</p>
+<p><strong>形态（已定，不再讨论）</strong>：独立安装包（<code>.dmg</code> / <code>.exe</code> / <code>.AppImage</code>），壳内含本地控制面、本地执行器、SSH 客户端；远程主机只装瘦代理。<strong>不以 VSCodium 为底座，不 fork reference / reference。</strong></p>
+<p><strong>能力边界（已定）</strong>：做<strong>编排 + 协作 + 审阅</strong>——Agent / 主机 / 运行时、TODO / 项目 / 看板、分派与纠偏、评论与通知、worktree 与 Diff 审阅、统计审计。<strong>不做代码编辑器，也不做数据 / 绘图 / HTML 画布</strong>：这三类域面板归 IDE，harness 只保留<strong>只读产物预览 + 深链回 IDE</strong>，并通过 Context Bridge 把"我正在看什么"传给 Agent。</p>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>指标</th>
+<th>目标值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>早上把当日计划变成已分派任务</td>
+<td>≤ 5 分钟，≤ 5 次点击</td>
+</tr>
+<tr>
+<td>任一 Agent 在干什么，一屏可见</td>
+<td>1 屏，无需翻日志</td>
+</tr>
+<tr>
+<td>从发现问题到把纠正送达正在跑的 Agent</td>
+<td>≤ 10 秒</td>
+</tr>
+<tr>
+<td>Agent 跑完后"结果落在哪里"</td>
+<td>必须回到原 TODO，不允许只留在会话里</td>
+</tr>
+<tr>
+<td>审阅一次 Agent 产出（diff / 产物）</td>
+<td>不离开看板，≤ 2 分钟给出采纳或打回</td>
+</tr>
+<tr>
+<td>一条自动化从触发到 run 起来</td>
+<td>≤ 5 秒（不含排队时间）</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2 id="s2">2. 角色</h2>
+<ul>
+<li><strong>用户</strong>：唯一操作者（个人/小队）。团队与权限为 P2。</li>
+<li><strong>Agent</strong>：一个有名字、有 CLI、有工作目录、有并发上限的执行体。分本地 / 远程（SSH）两类。</li>
+<li><strong>主机（Host）</strong>：一台机器，装一个代理进程，向控制台上报心跳与 Agent 清单。</li>
+<li><strong>运行时（Runtime）</strong>：主机上的一款 Agent CLI（或自定义配置），决定能力矩阵——会话恢复 / MCP 托管 / 能否选模型 / skill 注入目录。</li>
+<li><strong>小队（Squad）</strong>：一名 Agent 队长 + 若干成员（Agent 或人），队长负责接单与路由，成员按指令执行。</li>
+<li><strong>项目（Project）</strong>：一组任务 + 资源（仓库 / 本地目录）+ 工作流，用于承载长期目标。</li>
+</ul>
+<hr />
+<h2 id="s3">3. 功能需求</h2>
+<h3 id="m-a">A. Agent 与主机管理（P0）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A1</td>
+<td>探测本机已安装的 Agent CLI（claude / codex / pi / opencode / dsh / zcode …），一键纳管</td>
+<td>纳管后能在分派下拉框里选到</td>
+</tr>
+<tr>
+<td>A2</td>
+<td>添加远程主机：填 SSH 信息 → 控制台输出一条安装命令 → 在远端执行后自动上线</td>
+<td>远端 Agent 可被分派并执行命令</td>
+</tr>
+<tr>
+<td>A3</td>
+<td>Agent 档案：名称、CLI、工作目录、并发上限、技能/提示词、可用工具白名单、<strong>审批策略</strong>（allow / ask / deny）</td>
+<td>修改后新 run 生效；dangerous 命令按策略拦截</td>
+</tr>
+<tr>
+<td>A4</td>
+<td>心跳与状态：在线 / 离线 / 忙碌(n/m) / 版本</td>
+<td>掉线 30s 内在界面标红</td>
+</tr>
+<tr>
+<td>A5</td>
+<td>Run 与主机绑定，不自动漂移；主机离线时 run 排队等待，恢复后继续</td>
+<td>断线重连后任务继续，不重复执行</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="m-b">B. TODO 与每日计划（P0）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>B1</td>
+<td>TODO 字段：标题、描述、<strong>验收标准（可勾选项 <code>{text, done}</code>）</strong>、指派人、优先级、截止、状态、父任务、标签、产物链接（artifacts）、工作目录</td>
+<td>验收标准为空的任务不允许指派；验收项可逐条勾选</td>
+</tr>
+<tr>
+<td>B2</td>
+<td>状态：待办 / 排队 / 进行中 / 等待输入 / 待验收 / 完成 / 取消 / <strong>已放弃</strong>（广播未采纳）；<strong>人工可任意改状态（写 <code>todo.status_changed</code> 事件）</strong></td>
+<td>每次变更留痕（by / reason / 时间）；人工操作比 run 更晚时，旧 run 的状态回写不得覆盖</td>
+</tr>
+<tr>
+<td>B3</td>
+<td>每日计划：模板生成 / 手动新建 / 从上一日未完成项滚动；<strong>模板与快捷操作共用 <code>templates</code> 表（kind = plan / quick_action）</strong></td>
+<td>一键生成当日列表；滚动项保留 <code>rolled_from</code> 关联，不复制历史评论</td>
+</tr>
+<tr>
+<td>B4</td>
+<td>看板：<strong>5 列</strong>（待办「含排队」/ 进行中 / 等待输入 / 待验收 / 完成）；泳道 = Agent；卡片显示 Agent、已耗时、当前动作、<strong>排队原因</strong>、产物数；卡片操作 = 暂停 / 纠偏 / 验收；<strong>支持全量拖拽改状态</strong></td>
+<td>30 张卡不卡顿，状态变化 1s 内反映；纠偏 ≤ 1 步；拖拽写事件，冲突时先确认</td>
+</tr>
+<tr>
+<td>B5</td>
+<td>一次性 <code>at</code>、延后 <code>after</code>、到点提醒（<code>due</code>）；<strong>重复调度（cron）归 P2 自动化</strong>，本条不实现</td>
+<td>到点触发一次，有执行记录；提醒只进收件箱、不起 run</td>
+</tr>
+</tbody>
+</table></div>
+<blockquote>
+<p><strong>拖拽规则</strong>：拖到任意列都写一条 <code>status_changed</code>，<code>reason=manual</code>。若该任务存在 active run，拖到 <code>待验收 / 完成 / 取消</code> 前先弹确认「同时停止运行中的 run」；拖到 <code>进行中</code> 而当前无 run 时，提示「立即开跑？」（选否 = 只标记状态，不改 run）。</p>
+</blockquote>
+<h3 id="m-c">C. 分派（P0）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>C1</td>
+<td>单播：一条 TODO → 一个 Agent；支持"只指派、暂不开跑"</td>
+<td>指派后可手动开跑</td>
+</tr>
+<tr>
+<td>C2</td>
+<td>广播：一条 TODO → N 个 Agent 并行，各自独立工作目录/worktree；产出并列展示，用户选中一个作为采纳结果</td>
+<td>N 个 run 同时可见、互不串目录；采纳其一后其余 run 置「已放弃」并保留产物</td>
+</tr>
+<tr>
+<td>C3</td>
+<td>队列：每 Agent 并发上限；同一工作目录串行化并显示"等待目录释放"；排队原因可见</td>
+<td>超并发时排队而非失败</td>
+</tr>
+<tr>
+<td>C4</td>
+<td>依赖：TODO 之间可设 blocking；<strong>保存时做无环校验</strong>；写作用域仅作提示、不承诺锁</td>
+<td>前置完成后自动开跑或提示；成环配置被拒绝</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="m-d">D. 对话与纠偏（P0）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>D1</td>
+<td>每条 TODO 一个会话流：消息、工具调用、命令、文件改动、错误</td>
+<td>可回放历史 run</td>
+</tr>
+<tr>
+<td>D2</td>
+<td>运行中注入消息（steer），在<strong>最近 step 边界</strong>交付当前 run；界面标注"已注入"并留投递回执；CLI 不支持注入时降级为"已排队至下一轮"；默认投递目标 = 该 TODO 最新的 active run</td>
+<td>消息出现在 agent 下一步动作之前；多条按序；<strong>降级态与真实注入在界面可区分</strong></td>
+</tr>
+<tr>
+<td>D3</td>
+<td>暂停 / 继续 / 中止 / 重试；重试生成新 run 且保留旧 run 记录</td>
+<td>旧 run 不被覆盖</td>
+</tr>
+<tr>
+<td>D4</td>
+<td>Agent 提问时置为"等待输入"并置顶提醒；用户回答后继续</td>
+<td>回答后 run 恢复，不会另起新 run</td>
+</tr>
+<tr>
+<td>D5</td>
+<td>全局对话：任选 Agent 一对一聊天，不绑定 TODO，可随时"转成 TODO"</td>
+<td>会话可一键提升为 TODO 并保留上下文</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="m-e">E. 进度、回写与通知（P0）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>E1</td>
+<td>实时状态推送（排队 / 运行 / 等待输入 / 完成 / 失败 / 取消）</td>
+<td>界面与实际一致，无轮询卡顿</td>
+</tr>
+<tr>
+<td>E2</td>
+<td>Agent 收尾必须回写：改状态 + 结论评论 + 产物（分支/PR/文件路径/测试结果）；执行器在 run 结束时校验三项齐备性，缺失即标黄并入收件箱</td>
+<td>未回写则视为未完成，界面标黄；校验由执行器完成，不依赖 Agent 自觉</td>
+</tr>
+<tr>
+<td>E3</td>
+<td>收件箱的<strong>打扰规则</strong>：仅在"需要人决策/失败/待验收"时入箱；可标记已读、可归档</td>
+<td>不产生逐条步骤通知（通知中心与偏好归 S1）</td>
+</tr>
+<tr>
+<td>E4</td>
+<td>审计留痕：谁触发、执行的命令、授权决策（allow / ask / deny）、改动文件数</td>
+<td>可按 TODO / Agent / 日期查询；用量与成本归 Q3</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="m-f">F. 远程执行（P1）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>F1</td>
+<td>SSH 主机管理：密钥、端口转发、连接测试</td>
+<td>一个界面看全部主机状态；远程与本地走同一套分派 / 纠偏 / 回写路径</td>
+</tr>
+<tr>
+<td>F2</td>
+<td>远端工作目录准备：clone 或 worktree，支持复用已有 checkout</td>
+<td>首次跑自动准备，之后增量同步</td>
+</tr>
+<tr>
+<td>F3</td>
+<td>断线重连后 tmux/会话恢复，run 不中断</td>
+<td>网络抖动 60s 内可自动恢复</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="m-g">G. 工作区布局（P0）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>G1</td>
+<td><strong>固定四区 + 可缩放侧栏</strong>：左 = Agent/任务，中 = 看板/任务详情，右 = 会话，下 = 日志；区域可折叠、布局可命名保存</td>
+<td>布局可保存/恢复；1366 宽下不横向滚动</td>
+</tr>
+<tr>
+<td>G2</td>
+<td><strong>Section 插件契约（P2）</strong>：会话与详情页的右栏按 section 注册（执行日志 / 产物 / 上下文）</td>
+<td>新增 section 不改内核</td>
+</tr>
+<tr>
+<td>G3</td>
+<td>多标签 + 未保存保护（分屏为 P2）</td>
+<td>—</td>
+</tr>
+<tr>
+<td>G4</td>
+<td>命令面板 + 快捷键（切视图、派活、注入纠正）</td>
+<td>可自定义</td>
+</tr>
+<tr>
+<td>G5</td>
+<td>主题与设计 token 与 YieldMind 平台一致</td>
+<td>换主题全局生效</td>
+</tr>
+<tr>
+<td>G6</td>
+<td>Section 崩溃隔离：单个 section 白屏不影响主进程</td>
+<td>可单独重载</td>
+</tr>
+<tr>
+<td>G7</td>
+<td><strong>Context 唯一真源在 IDE</strong>：activity dataset / selection / figure 由 IDE 持有并上报，harness 只缓存指针与快照</td>
+<td>关掉 IDE 后 harness 仍显示最后一次 Context（标 stale）</td>
+</tr>
+</tbody>
+</table></div>
+<blockquote>
+<p><strong>H–J 不在本文档范围</strong>：数据面板、绘图面板、HTML 画布由 IDE 承载；harness 侧只保留产物预览与深链（见 M）。</p>
+</blockquote>
+<h3 id="m-k">K. 上下文桥（harness ↔ IDE，P0）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>K1</td>
+<td>统一 Context Envelope：<code>{ dataset, selection, figure, canvasElement, activeFile }</code>，由 IDE 上报、harness 缓存并广播给 Agent；<strong>协议与 stale 语义只在此定义</strong>（M2 只讲接入）</td>
+<td>IDE 内切换，harness ≤ 200ms 同步</td>
+</tr>
+<tr>
+<td>K2</td>
+<td>发给 Agent 的任务<strong>默认携带</strong>相关 Context，且为结构化而非截图</td>
+<td>Agent 知道"我正在看什么"</td>
+</tr>
+<tr>
+<td>K3</td>
+<td>用户可钉住 / 移除 Context，注入内容在消息里<strong>可见</strong>；IDE 离线时标 stale</td>
+<td>不存在隐式注入</td>
+</tr>
+<tr>
+<td>K4</td>
+<td>反向消费：Agent 产出 → harness 预览卡 + 深链 → IDE 打开并恢复选中</td>
+<td>不需要用户手动搬文件</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="m-l">L. Agent ↔ 域工作区接口（P0）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>L1</td>
+<td>工具 / CLI（<strong>给 Agent 用</strong>）：<code>context get/set</code>、<code>artifact link</code>、<code>run log</code>；Agent 可读当前 Context、登记产物</td>
+<td>Agent 能拿到结构化上下文，不靠用户复述（人 / CI 用的 CLI 见 T4）</td>
+</tr>
+<tr>
+<td>L3</td>
+<td>结果落点：run 结束时声明产出的 artifact（含 <code>origin=ide|agent</code> 与深链），界面一键打开</td>
+<td>可追溯到具体 run</td>
+</tr>
+</tbody>
+</table></div>
+<blockquote>
+<p>面板写权限白名单归 IDE；harness 只保留工具 / 命令白名单（A3）。</p>
+</blockquote>
+<h3 id="m-m">M. IDE 交接（P0）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>M1</td>
+<td><strong>深链协议</strong> <code>yieldmind-ide://open?path=&lt;abs&gt;&amp;selection=…</code>，从看板 / 收件箱 / 会话唤起 IDE 并定位</td>
+<td>点击产物 ≤ 2s 打开，选中态保留</td>
+</tr>
+<tr>
+<td>M2</td>
+<td><strong>IDE 接入</strong>：IDE 扩展的上报端点 + 心跳；离线时保留最后一次并标 stale（协议见 K1）</td>
+<td>关掉 IDE 后仍显示最后 context（stale）</td>
+</tr>
+<tr>
+<td>M3</td>
+<td><strong>只读产物预览</strong>：dataset / figure / canvas / file 的缩略、元数据与「在 IDE 打开」；不在 harness 内编辑</td>
+<td>不跳转即可判断「这图对不对」</td>
+</tr>
+<tr>
+<td>M4</td>
+<td><strong>产物归属</strong>：artifact 记录 origin（ide / agent）/ run / todo；未声明产物视为未完成（<strong>变更归属见 R5</strong>）</td>
+<td>卡片标黄，可追溯到具体 run 与 IDE 路径</td>
+</tr>
+<tr>
+<td>M5</td>
+<td>预览兼容自定义图（<code>render:"custom"</code>）与视图态（<code>.ymfig.view</code>）</td>
+<td>非 22 类图也能出缩略图；视图一致</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="m-n">N. 任务协作（P0）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>N1</td>
+<td>评论线程：回复、编辑、删除、表情；可「解决讨论」；可从评论直接创建子任务</td>
+<td>已解决讨论不再出现在未解决列表；子任务继承父任务上下文</td>
+</tr>
+<tr>
+<td>N2</td>
+<td>@ 路由：成员 = 通知；Agent = 起一次 run；小队 = 队长接手；任务 = 插入链接（不通知）；<code>@all</code> = 全体成员（不触发 Agent）</td>
+<td>每种 @ 目标的行为一致；纯文本 <code>@name</code> 不触发任何人</td>
+</tr>
+<tr>
+<td>N3</td>
+<td>快捷操作：<strong>复用 B3 的模板表</strong>（名称 + 内容 + 目标 Agent/小队），任务侧栏一键发布；输入 <code>/</code> 调用并可改后发送</td>
+<td>一键发布即产生 run；仅选择不发送</td>
+</tr>
+<tr>
+<td>N4</td>
+<td>附件与产物：评论可上传文件；同名文件按版本归并，可追溯历史版本</td>
+<td>不覆盖旧版本；版本列表可见</td>
+</tr>
+<tr>
+<td>N5</td>
+<td>标签与自定义属性：文本 / 数字 / 单选 / 多选 / 日期；看板可按属性分组</td>
+<td>属性变更写入事件流</td>
+</tr>
+<tr>
+<td>N6</td>
+<td>视图与批量：分组 / 泳道 / 排序 / 显示字段可保存；批量改状态 / 负责人 / 标签；标记重复；可见性（私有 / 工作区）</td>
+<td>视图 1 次点击恢复；批量操作写一条审计</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="m-o">O. 项目、工作流与小队（P1）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>O1</td>
+<td>项目：名称 / 图标 / 描述、状态（planned / in_progress / paused / completed / cancelled）、优先级、负责人（人 / Agent）、起止日期、进度</td>
+<td>进度按任务完成比例自动计算；项目描述进入执行上下文</td>
+</tr>
+<tr>
+<td>O2</td>
+<td>项目资源：GitHub 仓库（含 ref）或本机已有目录；指定执行位置；同目录并发串行</td>
+<td>资源进入执行上下文；目录被占用时排队并显示原因</td>
+</tr>
+<tr>
+<td>O3</td>
+<td>工作流：阶段 + 每阶段处理方（Agent / 人）；阶段交接、退回、跳过；在项目内生效</td>
+<td>交接后自动触发下一步；退回重新起 run</td>
+</tr>
+<tr>
+<td>O4</td>
+<td>小队：队长（Agent）+ 成员（Agent / 人）+ 角色说明 + 小队指令（路由规则 / 上报策略）；成员进展触发队长再评估，显式 @ 时不触发</td>
+<td>派给小队 → 队长接单并 @ 成员；队长不复述任务内容</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="m-p">P. 技能与自动化（P1）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P1</td>
+<td>Skills：手动建 / 本地导入（目录、<code>.skill</code>、<code>.zip</code>）/ URL 导入 / 从运行时复制；挂载到多个 Agent 并单独启停；更新保留绑定与创建者</td>
+<td>挂载后下一次 run 生效；本地修改被覆盖前有提示</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>自动化（Autopilot）：runbook（目标 / 背景 / 约束 / 步骤）、执行方（Agent / 小队）、关联项目、输出模式（创建任务 / 仅运行）、触发（cron + 时区 / Webhook + 过滤 + 签名）</td>
+<td>Webhook 验签失败被拒；「仅运行」不产生任务</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>任务唤醒：条件（时间、定期、有人回复、字段变化、run 结束、子任务完成、PR CI、其他任务、自定义事件）；触发次数（一次 / 重复 + 上限）、最长等待、超时策略；支持「立即唤醒」</td>
+<td>满足条件后按规则起 run；关闭开关撤回未开始的 run</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="m-q">Q. 运行时与执行治理（P0）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Q1</td>
+<td>运行时矩阵：探测命令、是否支持会话恢复、是否托管 MCP、能否选模型、Skill 注入目录；一个界面看各工具可用性</td>
+<td>未安装工具给出安装 / 登录引导；能力差异在界面标注</td>
+</tr>
+<tr>
+<td>Q2</td>
+<td>执行隔离：每 run 独立 workdir；独立 Agent 状态目录（如 <code>CODEX_HOME</code>）与运行级 token；工作目录锁</td>
+<td>并发 run 不共享 checkout；token 不能越权访问其他 run</td>
+</tr>
+<tr>
+<td>Q3</td>
+<td>用量与审计：token（输入 / 输出 / 缓存）、耗时、运行数、失败数、估算费用；按 Agent / 项目 / 时间范围</td>
+<td>合计与分项对得上；已删除 Agent 合并成一行</td>
+</tr>
+<tr>
+<td>Q4</td>
+<td>失败分类与重试：认证 / 限流 / 超时 / 工具 / 其他；保留原始错误码；自动重试上限与退避；可手动重试</td>
+<td>错误码可复制；重试生成新 run</td>
+</tr>
+<tr>
+<td>Q5</td>
+<td>并发与超时：全局与每 Agent 并发上限；run 超时；排队原因（等运行时 / 等目录 / 等并发）可见</td>
+<td>超限排队而非失败；超时标失败并可重试</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="m-r">R. 工作树与代码审阅（P0）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>R1</td>
+<td>worktree 生命周期：每 run 独立 worktree；可复用已有 checkout；关键节点打快照（checkpoint）；磁盘占用可见并可清理</td>
+<td>清理不影响未采纳 run 的记录</td>
+</tr>
+<tr>
+<td>R2</td>
+<td>并行对比：N 个 worktree 并列 diff + 文件树；采纳其一后合并，其余保留可追溯或丢弃</td>
+<td>采纳与丢弃都写审计；合并失败可回退</td>
+</tr>
+<tr>
+<td>R3</td>
+<td>Diff 批注：按行评论并回传给对应 Agent（作为新指令，不直接改代码）</td>
+<td>批注能定位到文件 + 行 + run</td>
+</tr>
+<tr>
+<td>R4</td>
+<td>提交与推送：Agent 自己提交时只交付其提交；未提交内容存隐藏 ref；分支命名与任务编号关联；推送后可开 PR</td>
+<td>未提交产物不丢失；分支名可反查任务</td>
+</tr>
+<tr>
+<td>R5</td>
+<td>变更归属：每行改动归属到 Agent / run（<strong>全系统唯一的归属来源</strong>，M4 只记产物 origin）；审阅时可切换归属视角</td>
+<td>多 Agent 并发时归属不串</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="m-s">S. 通知与检索（P1）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>S1</td>
+<td>通知与未读：完成 / 失败 / 需要输入 / 被 @；可归档、标记未读；每类可单独开关</td>
+<td>不产生逐步骤通知；未读数与列表一致</td>
+</tr>
+<tr>
+<td>S2</td>
+<td>全局搜索：页面、命令、成员、Agent、项目、任务（含描述与评论）；中文支持拼音</td>
+<td>P95 &lt; 300ms；命中片段高亮</td>
+</tr>
+<tr>
+<td>S3</td>
+<td>快捷键与命令面板：⌘K 搜索、新建任务、切换侧栏、发送、归档；可自定义</td>
+<td>冲突时给出提示</td>
+</tr>
+<tr>
+<td>S4</td>
+<td>活动流：按时间轴看 run / 评论 / 状态变更 / 产物</td>
+<td>可按任务、Agent、日期过滤</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="m-t">T. 集成与客户端（P2）</h3>
+<div class="tbl tbl-id"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>需求</th>
+<th>验收</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>T1</td>
+<td>代码托管：GitHub App（PR 关联、CI 状态、可合并性、合并后改状态）；Linear / Jira；Gitea / GitLab（自托管 webhook + 签名）</td>
+<td>关联关系可双向追溯；webhook 验签失败被拒</td>
+</tr>
+<tr>
+<td>T2</td>
+<td>聊天 Bot：Slack / 飞书 / 钉钉 / 企微 / Telegram；私聊与 @Bot 触发；<code>/issue</code> 建任务、<code>/new</code> 新会话、<code>/clear</code> 清上下文；账号绑定</td>
+<td>群聊需 @Bot；多副本部署回复不丢</td>
+</tr>
+<tr>
+<td>T3</td>
+<td>客户端：桌面三平台 + 移动端（通知 + 追问 / 停止，不做完整编辑）</td>
+<td>移动端与桌面同一账号；离线可看最近状态</td>
+</tr>
+<tr>
+<td>T4</td>
+<td>自动化接口（<strong>给人 / CI 用</strong>）：CLI（<code>worktree create</code> / <code>snapshot</code> / <code>prompt</code> / <code>click</code> / <code>fill</code>）+ HTTP orchestration API</td>
+<td>可脚本化驱动控制台；操作留审计（Agent 回写接口见 L1）</td>
+</tr>
+<tr>
+<td>T5</td>
+<td>自托管与权限：本地单用户默认为主；工作区 / 成员 / 角色（owner / admin / member）为多用户扩展；环境变量与安全边界文档化</td>
+<td>单用户模式不暴露权限面</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2 id="s4">4. 三条关键流程（必须端到端跑通）</h2>
+<p><strong>① 早会（Plan）</strong>
+生成今日 TODO → 看板出现卡片 → 逐条指派（或按模板自动指派）→ Agent 排队并开跑。</p>
+<p><strong>② 纠偏（Steer）</strong>
+看板发现某卡片"当前动作"不对 → 卡上直接发一句纠正（≤ 1 步）→ 标注"已注入"→ Agent 调整后继续，TODO 状态不变。需看上下文时才展开右侧会话。</p>
+<p><strong>③ 收工（Close）</strong>
+Agent 改状态为"待验收"+ 评论结论与产物 → 收件箱提醒 → 用户采纳/打回 → 打回则自动新起一个 run，重试计数 +1。</p>
+<hr />
+<h2 id="s5">5. 最小数据模型</h2>
+<pre><code>Host      id, name, kind(local|ssh), addr, status, last_heartbeat, version
+Agent     id, host_id, name, cli, cwd, max_concurrency, skills[], tool_policy, enabled
+Todo      id, key, title, desc, acceptance[{text, done}], assignee_agent_id, status,
+          priority, due_at, parent_id, project_id, tags[], blocked_by[], template_id,
+          rolled_from, cwd, manual_override_at, created_by, updated_at
+Run       id, todo_id, agent_id, host_id,
+          status(queued|running|needs_input|done|failed|cancelled|abandoned),
+          started_at, ended_at, trigger(assign|mention|schedule|retry|broadcast), parent_run_id
+Message   id, run_id, role(user|agent|system|tool), content, injected(bool), created_at
+Event     id, type, todo_id, run_id, payload, created_at
+Plan      id, date, todo_ids[], generator(template|manual|agent)
+Template  id, kind(plan|quick_action), name, body, target_agent_id, created_at
+
+# 产物与桥（域数据实体在 IDE 侧）
+Artifact  id, run_id, todo_id, kind(dataset|figure|canvas|file),
+          origin(ide|agent), ref, deep_link, context_snapshot, created_at
+Context   scope(dataset|figure|canvas|selection), payload,
+          pinned(bool), stale(bool)          # 由 IDE publish，harness 缓存
+Workspace active_dataset, active_selection, updated_at   # 只存当前指针
+Preview   artifact_id, thumb_ref, meta{}     # 只读预览，不编辑
+
+# 协作
+Comment    id, todo_id, author(kind=user|agent), body, parent_id, resolved, reactions{}, created_at
+Mention    id, comment_id, target_kind(user|agent|squad|todo|all), target_id, triggered_run_id
+Attachment id, todo_id, comment_id, name, version, ref, size
+Property   id, scope(todo|project), name, kind(text|number|select|multi|date), options[]
+View       id, scope, name, filter{}, group_by, swimlane, sort, columns[]
+Subscription id, user_id, target_kind(todo|project|squad), target_id, notify_types[]
+
+# 项目、工作流、小队
+Project    id, name, desc, status, priority, lead_id, start_at, due_at, workflow_id
+Resource   id, project_id, kind(github|local_dir), ref, host_id, path
+Workflow   id, name, stages[{name, assignee_kind(agent|human), assignee_id}]
+Squad      id, name, leader_agent_id, members[], role_notes, instructions
+
+# 技能、自动化、运行时
+Skill      id, name, source(manual|local|url|runtime), files, assigned_agents[], enabled
+Autopilot  id, name, runbook, executor(agent|squad), project_id,
+           output(create_todo|run_only), trigger(cron|webhook), tz, filter, secret
+Wakeup     id, todo_id, conditions[], repeat(max), max_wait, on_timeout(agent|end), state
+Runtime    id, host_id, cli, detected, caps{session_resume, mcp, model, skill_dir}
+
+# 代码审阅
+Worktree   id, run_id, repo, path, branch, base_ref, snapshot_ref, state, disk_bytes
+Annotation id, worktree_id, file, line, body, sent_as_message_id
+
+# 集成
+Integration id, kind(github|linear|jira|gitea|gitlab|slack|lark|dingtalk|wecom|telegram),
+            secret_ref, enabled
+</code></pre>
+<p>Run 状态由 <code>Event</code> 投影生成（append-only），不直接改状态字段；回放与重试都以日志为准。</p>
+<p><strong>Todo 状态的两条写入来源与优先级</strong>：</p>
+<ol>
+<li><code>run.*</code> 事件（自动投影）—— 只在「事件时间 &gt; <code>todo.manual_override_at</code>」时生效；</li>
+<li>人工操作（拖拽 / 验收 / 取消）—— 写 <code>todo.status_changed</code> 并刷新 <code>manual_override_at</code>。</li>
+</ol>
+<p>因此<strong>人工改完不会被仍在跑的旧 run 回写覆盖</strong>；反过来，人工改完再起的新 run 正常驱动状态。</p>
+<hr />
+<h2 id="s6">6. 对外接口</h2>
+<p><strong>① 给 Agent 用的 CLI（闭环成立的关键，必须有）</strong></p>
+<pre><code>todo list --date today --assignee me
+todo show &lt;id&gt;
+todo claim &lt;id&gt;
+todo status &lt;id&gt; waiting|in_progress|in_review|done --reason &quot;...&quot;   # 写 status_changed 事件
+todo accept &lt;id&gt; --item 2 | --all            # 勾选验收项
+todo comment &lt;id&gt; -m &quot;...&quot;
+todo ask &lt;id&gt; -m &quot;...&quot;          # 主动置为等待输入并向用户提问
+run log &lt;run_id&gt; --tail
+artifact link &lt;todo_id&gt; &lt;url&gt;
+</code></pre>
+<p><strong>协作与运维（先有 CLI，再进界面）</strong></p>
+<pre><code>todo comments &lt;id&gt; --unresolved
+comment resolve &lt;comment_id&gt;
+run list --todo &lt;id&gt;
+worktree create &lt;todo_id&gt; --agent &lt;id&gt;
+worktree list --todo &lt;id&gt;
+worktree remove &lt;worktree_id&gt;
+skill list | attach &lt;skill_id&gt; --agent &lt;id&gt; | detach &lt;skill_id&gt; --agent &lt;id&gt;
+autopilot run &lt;autopilot_id&gt;
+search &quot;&lt;query&gt;&quot; --scope todo|comment|all
+</code></pre>
+<p><strong>② 控制台 API</strong>：REST 管对象 + WebSocket 推事件。
+<strong>③ 事件</strong>：<code>todo.created / todo.assigned / todo.status_changed / run.started / run.message / run.needs_input / run.finished / run.failed / comment.created / mention.triggered / worktree.created / context.changed / artifact.created</code>。</p>
+<p><strong>④ Context 注入格式</strong>（发给 Agent，统一一个 envelope，沿用 <code>&lt;ui-context&gt;</code> 思路）</p>
+<pre><code class="language-xml">&lt;context&gt;
+  &lt;dataset name=&quot;YM3D-FT-1103&quot; rows=&quot;48210&quot; path=&quot;...&quot;/&gt;
+  &lt;selection kind=&quot;die&quot; keys=&quot;[\&quot;W03,D12\&quot;,\&quot;W03,D13\&quot;]&quot;/&gt;
+  &lt;figure type=&quot;pareto&quot; channels=&quot;x=Bin,y=Count&quot;/&gt;
+  &lt;canvas selector=&quot;#hero &gt; .title&quot; tag=&quot;h1&quot; text=&quot;良率提升方案&quot;/&gt;
+&lt;/context&gt;
+</code></pre>
+<hr />
+<h3 id="5-ide">⑤ IDE 交接协议</h3>
+<p><strong>深链（harness → IDE）</strong></p>
+<pre><code>yieldmind-ide://open?path=/data/w03.parquet&amp;selection=W03,D13-W03,D15&amp;todo=#12
+</code></pre>
+<p><strong>Context Bridge（IDE 扩展 → harness）</strong></p>
+<pre><code>POST /api/context
+{ &quot;envelope&quot;: { &quot;dataset&quot;: &quot;ds_1103&quot;,
+                &quot;selection&quot;: [&quot;W03,D13&quot;,&quot;W03,D14&quot;],
+                &quot;canvasElement&quot;: &quot;#hero &gt; .title&quot; },
+  &quot;source&quot;: &quot;ide&quot;, &quot;ts&quot;: 1730000000 }
+</code></pre>
+<p>Agent 侧统一用 <code>context get</code> 读取；IDE 不在线时返回最后一次并带 <code>stale=true</code>。</p>
+<hr />
+<h3 id="6-executor-adapter">⑥ 执行器适配（Executor Adapter）</h3>
+<p>Run 不直接绑死某个 CLI：执行层抽象为适配器。默认走各家 CLI；dsh 走 ACP（P1），一次性任务走 headless。</p>
+<pre><code>session.create → { cwd, model, tools, approval }
+session.prompt  → stream(agent/*)
+session.cancel  → 写入 run.cancelled   # 取消即 cancel，不 kill 整棵进程树
+session.close
+</code></pre>
+<p>该适配器不可用时回退到原生 CLI 执行器。</p>
+<hr />
+<h2 id="s7">7. 非功能要求</h2>
+<ul>
+<li><strong>并发</strong>：单控制台支持 ≥ 20 个并发 run，≥ 10 台主机。</li>
+<li><strong>性能</strong>：状态推送端到端 &lt; 1s；看板 100 张卡首屏 &lt; 1s；IDE → harness context 同步 ≤ 200ms；深链唤起 IDE ≤ 2s。</li>
+<li><strong>可靠</strong>：控制台重启后 run 不丢、可恢复；Agent 进程崩溃需标为失败并可重试。</li>
+<li><strong>安全</strong>：SSH 凭据本地密钥库存储；每 Agent 单独的工具/命令白名单；所有注入与命令可审计。</li>
+<li><strong>许可</strong>：仅使用 MIT / Apache-2.0 等无"禁止对外提供服务"限制的依赖；不引入带品牌保留条款的 UI 代码。</li>
+<li><strong>部署</strong>：主形态是<strong>独立桌面安装包</strong>（见第 8 节），控制面与执行器随壳启动，数据落本地 SQLite，不依赖外部数据库、不依赖 Docker。</li>
+<li><strong>可降级</strong>：同一套代码支持「headless 服务 + 浏览器访问」，用于无 GUI 的服务器或团队共享（P2）。</li>
+<li><strong>包体</strong>：安装包 ≤ 200MB（Electron + Monaco diff）。</li>
+<li><strong>冷启动</strong>到可交互 ≤ 3s。</li>
+<li><strong>隔离</strong>：IDE 崩溃 / 关闭不影响 harness 与正在跑的 run；Agent 子进程与 UI 进程隔离。</li>
+<li><strong>离线</strong>：看板 / 收件箱 / 本地数据在断网时可用；仅集成（代码托管 / Bot / context 同步）需网络。</li>
+<li><strong>检索</strong>：全局搜索 P95 &lt; 300ms，10 万任务 + 评论量级。</li>
+<li><strong>通知</strong>：事件 → 收件箱 / 移动推送端到端 &lt; 2s。</li>
+<li><strong>磁盘</strong>：worktree 与快照占用可见；默认保留 7 天，可配。</li>
+<li><strong>集成</strong>：Webhook 必须验签通过；Bot 回复走单副本或 Redis 中继，不得丢消息。</li>
+<li><strong>无人值守</strong>：Agent 默认不弹审批；首次启用 <code>bypass</code> 类策略需显式确认，并写入审计。</li>
+</ul>
+<hr />
+<h2 id="s8">8. 分发与打包清单</h2>
+<h3 id="81">8.1 壳与运行时</h3>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>项</th>
+<th>规定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>壳</td>
+<td>Electron（一期）；控制面/执行器为普通 Node 服务，壳只做系统集成，便于日后换 Tauri</td>
+</tr>
+<tr>
+<td>进程拓扑</td>
+<td>主进程 = 控制面 + 本地执行器（pty 拉起 agent CLI）；渲染进程 = UI；远程能力走 <code>ssh2</code></td>
+</tr>
+<tr>
+<td>数据</td>
+<td>本地 SQLite（单文件，可备份/迁移）；不上传云端</td>
+</tr>
+<tr>
+<td>首启</td>
+<td>探测本机已装 Agent CLI（claude/codex/pi/opencode…）→ 一键纳管；未装时给安装与登录引导</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="82">8.2 产物与签名</h3>
+<ul>
+<li>三平台产物：<code>.dmg</code>(arm64/x64)、<code>.exe</code>、<code>.AppImage</code></li>
+<li>macOS：Developer ID 签名 + notarization（不签客户装不上）</li>
+<li>Windows：EV 证书；一期无证书则接受 SmartScreen 警告并在安装页说明</li>
+<li>自动更新：<code>electron-updater</code> + 自有 update 端点（签名校验安装包）</li>
+<li>分发渠道：官网直下 + Homebrew Cask；商店渠道推迟</li>
+<li>与 YieldMind-IDE <strong>版本解耦</strong>，各自 semver，互不阻塞</li>
+</ul>
+<h3 id="83">8.3 远程主机代理</h3>
+<ul>
+<li>安装方式：控制台生成一条 <code>curl … | sh</code> 命令（含一次性 token），在远端执行后回连上线</li>
+<li>代理职责仅限于：领取 run、拉起 CLI、回传事件；不承载业务逻辑</li>
+<li>断线重连 60s 内恢复，run 不重复执行</li>
+</ul>
+<hr />
+<h2 id="s9">9. 验收清单（最小可交付）</h2>
+<ol>
+<li>本机 3 个 Agent 同时接到 3 条 TODO 并各自完成、各自回写。</li>
+<li>远程主机通过一次性安装命令纳管，跑完一条 TODO，断网 30s 后重连不重复执行。</li>
+<li>一条 TODO 广播给 2 个 Agent，产出并列可对比，采纳其一后另一条自动标为"已放弃"。</li>
+<li>运行中注入一条纠偏消息，Agent 在下一步动作前收到。</li>
+<li>Agent 主动提问 → 界面置顶 → 回答后原 run 继续而非新起。</li>
+<li>每日定时任务按时生成当日 TODO 列表，看板刷新正确。</li>
+<li>三平台安装包可安装、可自动更新；全新机器首启能在 5 分钟内纳管一个本机 Agent 并跑完一条 TODO。</li>
+<li><strong>IDE 往返闭环</strong>：IDE 选中一片 die → harness「交给 Agent」→ run 产出 figure → 看板卡片出现只读预览 → 点深链回 IDE，选区仍保留（全程 ≤ 3 次点击）。</li>
+<li>关闭 IDE 后，harness 看板 / 会话仍显示最后一次 Context 与产物（标 stale），验收不被阻塞。</li>
+<li>会话里能看到本次注入的 Context（数据集 / 选区 / 画布元素），可手动钉住或移除；产物可一键在 IDE 打开。</li>
+<li><strong>早会时效</strong>：生成当日计划 → 分派完成 ≤ 5 分钟、≤ 5 次点击；看板一屏内可见全部 Agent 的在线 / 忙碌 / 当前动作。</li>
+<li><strong>纠偏时效</strong>：从看板发现问题到纠正送达 ≤ 10 秒；不支持注入的 CLI 显示「已排队至下一轮」，不得显示「已注入」。</li>
+<li><strong>远程一致性</strong>：本地与 SSH 各一个 Agent 执行同类 TODO，分派 / 纠偏 / 回写的操作路径与界面完全一致。</li>
+<li><strong>协作路由</strong>：评论里 @Agent 起一次 run；@小队由队长接单并 @成员；非成员评论触发队长重评，显式 @ 时不触发。</li>
+<li><strong>项目与工作流</strong>：任务按阶段交接（开发 → 审查 → QA），退回重新起 run；项目进度自动汇总。</li>
+<li><strong>自动化</strong>：cron（带时区）与 Webhook 各触发一次；输出模式「仅运行」不产生任务；唤醒条件满足后按规则起 run。</li>
+<li><strong>并行 worktree</strong>：2 个 Agent 各自 worktree 并行，diff 并列；采纳后合并，未采纳保留可追溯。</li>
+<li><strong>用量与错误</strong>：按 Agent / 项目 / 时间查到 token、费用、耗时、运行数与失败分类；错误码可复制。</li>
+<li><strong>worktree 判据</strong>：并发 2 个 run 后 <code>git worktree list</code> 出现 2 条独立路径；各自 <code>git status</code> 不含对方文件。</li>
+<li><strong>注入判据</strong>：注入消息时间戳早于下一次 tool call；不支持注入时界面文案必须是「已排队至下一轮」。</li>
+<li><strong>回写判据</strong>：故意让 Agent 不回写，5 秒内卡片变黄并进入收件箱。</li>
+</ol>
+<hr />
+<h2 id="s10">10. 分期</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>内容</th>
+<th>周期</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>M0</td>
+<td>骨架：Electron 壳 + 本地服务 + SQLite + Agent 探测纳管 + <strong>固定四区 / 可缩放侧栏</strong>（无 dock、无面板契约）</td>
+<td>1.5 周</td>
+</tr>
+<tr>
+<td>M1</td>
+<td><strong>A1 升级（Runtime 模型）</strong> + A3/A4 + B1–B4 + C1/C3 + D1–D3 + E1/E2 + N1/N2 + <strong>R1 worktree</strong> —— <strong>编排闭环可跑</strong></td>
+<td>2.5 周</td>
+</tr>
+<tr>
+<td>M2</td>
+<td>A2/A5 + F3 + 任务详情 + 收件箱 / 统计（E3/E4）+ C4 + Q1–Q5 + R2/R4 —— <strong>远程与运行时打通</strong></td>
+<td>2.5 周</td>
+</tr>
+<tr>
+<td>M3</td>
+<td>F1/F2 + <strong>K/M 深链与 Context Bridge</strong> + C2 广播对比 + R3/R5 + O1/O2</td>
+<td>2 周</td>
+</tr>
+<tr>
+<td>M4</td>
+<td>三平台打包 / 签名 / 自动更新 —— <strong>可对外发版</strong></td>
+<td>1.5 周</td>
+</tr>
+<tr>
+<td>M5</td>
+<td>协作与自动化：N3–N6 + O3/O4 + P1–P3 + S1–S4</td>
+<td>2 周</td>
+</tr>
+<tr>
+<td>M6</td>
+<td>集成与客户端：T1–T5（代码托管 / 聊天 Bot / 移动端 / CLI 自动化 / 多用户）</td>
+<td>2 周</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>合计 ≈ 14 周</strong>（M0–M3 约 8 周出内测，M4 后可对外发版；M5–M6 为协作与集成增量）。</p>
+<hr />
+<h2 id="s11">11. 与现有 YieldMind-IDE 的关系</h2>
+<ul>
+<li><strong>域工作区</strong>：H–J（数据 / 绘图 / HTML 画布）由 IDE 承载，IDE 是唯一编辑入口；本文档不描述其需求。</li>
+<li><strong>替换</strong>：单 Agent 助手（<code>yieldmind.yieldmind-assistant</code> 的会话面板）不再是主编排入口。</li>
+<li><strong>不复用</strong>：<strong>VSCodium 不作架构底座</strong>。IDE 的 216–238MB 包体、底座版本绑定、MS 扩展许可限制与本次需求无关，不作为控制台的运行环境。</li>
+<li><strong>保留（若 IDE 继续存在）</strong>：便携分发思路、Git 同步通道、<code>/config/product.json</code> 构建链、客户品牌入口。</li>
+<li><strong>衔接</strong>：harness 只做只读产物预览 + 深链回跳（<code>yieldmind-ide://open</code>）；两边只通过 Context Bridge 与深链耦合，不共享数据库。</li>
+<li><strong>迁移</strong>：旧助手会话可作为一条 TODO 的历史消息导入；不做双向同步。</li>
+<li><strong>不做</strong>：模型训练与推理服务、代码托管、CI/CD 编排、UI 设计器、多租户 SaaS、一期手机端。</li>
+</ul>
+<hr />
+<h2 id="s12">12. 选型结论（已定，避免反复）</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>决策</th>
+<th>结论</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>是否基于 VSCodium</td>
+<td>否</td>
+<td>用户不写代码，编辑器只提供 diff 审阅；代价是 200MB+ 包体与独立升级线</td>
+</tr>
+<tr>
+<td>是否 fork reference</td>
+<td>否</td>
+<td>MIT 已确认；仓库 391MB / 40,548 文件，形态是完整 IDE，接入即回到代码编辑器路线</td>
+</tr>
+<tr>
+<td>是否 fork reference</td>
+<td>否</td>
+<td>Apache-2.0 + Part I 附加条款：禁止托管第三方、禁止作为售卖产品组件嵌入、禁改品牌；功能覆盖 19 / 43</td>
+</tr>
+<tr>
+<td>执行引擎</td>
+<td>各家 Agent CLI 为主；<strong>dsh 作为可选 runtime（P1）</strong></td>
+<td>不把 agent loop 内置成产品本体；dsh 经 ACP 接入，故障半径限制在单个 run</td>
+</tr>
+<tr>
+<td>复用方式</td>
+<td>只借设计与 MIT 依赖</td>
+<td>xterm.js / node-pty / ssh2 / simple-git / Monaco diff；协议层参考 run 状态机与回写机制，不复制受限代码</td>
+</tr>
+<tr>
+<td>形态</td>
+<td>独立 Electron 发包</td>
+<td>与 IDE 解耦、升级独立、客户无需装环境；一期不含手机端与 relay</td>
+</tr>
+<tr>
+<td>宿主</td>
+<td>自研 Electron + <strong>固定四区</strong>（可缩放侧栏 + 布局保存）</td>
+<td>域面板已迁 IDE，自由 dock 收益低、空壳风险高</td>
+</tr>
+<tr>
+<td>域面板归属</td>
+<td>IDE</td>
+<td>数据 / 绘图 / HTML 需要代码、文件与 diff 在同一处；不在本仓实现</td>
+</tr>
+<tr>
+<td>面板架构</td>
+<td>harness 侧 P2</td>
+<td>只剩会话 / 详情 section 插件，P0 不做通用面板契约</td>
+</tr>
+<tr>
+<td>不做代码编辑器</td>
+<td>只做只读 Diff + 外部打开</td>
+<td>避免重走 VSCodium 的老路；用户不写代码</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="121-deepseek-harness">12.1 从 DeepSeek Harness 吸收的设计</h3>
+<p>dsh（MIT）不做底座——理由见 §12——但它的执行层实现比我们现有条款更成熟。以下吸收机制，并在低耦合处直接复用其代码；不搬它的壳。</p>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>借鉴点</th>
+<th>dsh 的做法</th>
+<th>我们的落地</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>执行器适配</td>
+<td>profiles 提供 ACP / SDK / headless：create / resume / close session、prompt / cancel、attach MCP</td>
+<td>Run 抽象为 Executor Adapter；首选各家 CLI，dsh 走 <code>--profile acp</code>（P1，不替换现有路径）· §6⑥</td>
+</tr>
+<tr>
+<td>审批与工具守卫</td>
+<td>guarded tool pipeline + approval policy，危险操作逐次确认</td>
+<td>工具白名单之外增加 <code>allow / ask / deny</code> 三态，按 Agent 配置 · A3</td>
+</tr>
+<tr>
+<td>事件溯源会话</td>
+<td>append-only <code>SessionEvent</code> + <code>agent/*</code> 实时事件，回放由投影生成</td>
+<td>Run 状态由 Event 投影，不直接改状态；回放 / 重试都基于日志 · D1 / E1 / §5</td>
+</tr>
+<tr>
+<td>Steer 在步边界</td>
+<td>mailbox 消息在最近 step boundary 交付；idle 唤起、inactive 冷恢复</td>
+<td>D2 验收明确"下一步动作前"，并记录投递回执 · D2</td>
+</tr>
+<tr>
+<td>任务 DAG</td>
+<td><code>blockedBy</code> 边、保存时无环校验、<code>writeScopes</code> 仅作 advisory</td>
+<td>C4 增加无环校验与写作用域提示，不做锁 · C4</td>
+</tr>
+<tr>
+<td>显式时区调度</td>
+<td><code>after / at / every</code> 三种形式，时区显式</td>
+<td>B5 支持三种形式；时区必须显式（默认跟随工作区） · B5</td>
+</tr>
+<tr>
+<td>Profile / 补丁装配</td>
+<td>profile + bundle + patch 分层，可 live reload</td>
+<td>G2（P2）用"section 注册 + 配置层"，而不是硬编码 · G2</td>
+</tr>
+<tr>
+<td>Headless / SDK</td>
+<td>一次性 headless、JSON-RPC SDK</td>
+<td>§7 的 headless 降级按 profile 设计，不另起一套服务 · §7</td>
+</tr>
+</tbody>
+</table></div>
+<h4 id="mit-npm">可直接复用的代码（MIT，已发布 npm）</h4>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>资产</th>
+<th>位置 / 包</th>
+<th>复用方式</th>
+<th>耦合度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SDK Protocol</td>
+<td><code>packages/sdk/protocol</code> · <code>@deepseek-ai/dsh-sdk-protocol</code></td>
+<td>零依赖 JSON-RPC 报文与类型，作为 Executor Adapter 协议层</td>
+<td>低，锁版本</td>
+</tr>
+<tr>
+<td>SDK Client</td>
+<td><code>packages/sdk/client</code> · <code>@deepseek-ai/dsh-sdk-client</code></td>
+<td>拉起 <code>dsh --profile sdk</code>，open session / prompt / 事件流 / close；只写映射到 Run</td>
+<td>低；会带入 runtime 依赖</td>
+</tr>
+<tr>
+<td>ACP 服务</td>
+<td><code>dsh --profile acp</code> · <code>packages/acp/acp</code></td>
+<td>标准协议，跨语言；create / resume / close、prompt / cancel、attach MCP</td>
+<td>零代码，自写客户端约 1 天</td>
+</tr>
+<tr>
+<td>Skill 体系</td>
+<td><code>packages/skill/*</code></td>
+<td><code>SKILL.md</code> 目录、多源合并、按需加载，把 A3 的"技能"落成对象</td>
+<td>中，需剥 Cordis 依赖</td>
+</tr>
+<tr>
+<td>会话格式 / 投影</td>
+<td><code>packages/session/session-format*</code>、<code>session-projection</code></td>
+<td>事件 schema 与回放投影，对齐 Event 模型</td>
+<td>中，只借 schema</td>
+</tr>
+<tr>
+<td>审批预设语义</td>
+<td><code>packages/client/ui-permission-presets</code> + approval</td>
+<td><code>allow / ask / deny</code> 分级与文案（A3）</td>
+<td>只借语义</td>
+</tr>
+<tr>
+<td>会话级调度</td>
+<td><code>packages/schedule</code></td>
+<td><code>after / at / every</code> + 显式时区（B5）</td>
+<td>参考实现，可移植</td>
+</tr>
+<tr>
+<td>工具守卫</td>
+<td><code>packages/guard/{timeout-policy,repeat-tool-reminder}</code></td>
+<td>超时策略、重复工具调用提醒</td>
+<td>中，Cordis 插件形态</td>
+</tr>
+</tbody>
+</table></div>
+<blockquote>
+<p><strong>复用边界</strong>：只复用到"协议 / schema / 独立 npm 包"这一层，不搬 Cordis 插件树。<code>packages/client/*</code> 的 UI 质量高但绑定 slot 与 ctx，拆出成本高于自研——只借交互（工具调用折叠、审批、plan 面板）。</p>
+</blockquote>
+<p><strong>不吸收</strong>：① 把 Cordis"一切皆插件"当底座（学习曲线 + 预览期 churn，且会把产品绑成 session 工作台）；② 会话内 3 态 todo（承载不了 B1/B2）；③ 会话中心的 UI 信息架构（与"1 屏舰队"冲突）；④ 实验性 Agent Teams 作为 C2 的依赖（未稳定）。</p>
+<hr />
+<h2 id="s13">13. 复用与改造清单</h2>
+<blockquote>
+<p>路径均相对本仓根目录，外部仓以 <code>../</code> 开头；域面板相关复用见 IDE 需求，不在本表。</p>
+</blockquote>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>资产</th>
+<th>位置</th>
+<th>复用方式</th>
+<th>改造量</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>平台 API（FastAPI / ClickHouse）</td>
+<td><code>../spin-yieldmind-app/backend</code></td>
+<td>仅走 HTTP 适配器</td>
+<td>不 import 后端代码</td>
+</tr>
+<tr>
+<td>VSCodium 底座 / 旧单 Agent 助手面板</td>
+<td><code>../spin-yieldmind-ide</code></td>
+<td><strong>不复用</strong></td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>DeepSeek Harness</strong>（MIT）</td>
+<td><code>../deepseek-harness</code></td>
+<td><strong>可选 runtime + 设计参照</strong>：ACP 执行器、审批守卫、事件溯源、步边界 steer、任务 DAG、时区调度</td>
+<td>只接适配器，不 fork 底座；见 §12.1</td>
+</tr>
+<tr>
+<td><strong>dsh SDK</strong>（MIT）</td>
+<td><code>@deepseek-ai/dsh-sdk-protocol</code> · <code>@deepseek-ai/dsh-sdk-client</code></td>
+<td>Executor Adapter 的 TypeScript 实现：spawn <code>dsh --profile sdk</code>，驱动 session 与事件流</td>
+<td>直接依赖，锁版本</td>
+</tr>
+<tr>
+<td><strong>SKILL.md + skill loader</strong>（MIT）</td>
+<td><code>deepseek-harness/packages/skill/*</code></td>
+<td>A3 技能对象化：格式、多源发现、按需加载</td>
+<td>借格式与逻辑，剥 Cordis 依赖</td>
+</tr>
+<tr>
+<td><strong>reference</strong>（Apache-2.0 + 附加条款）</td>
+<td><code>docs/reference-main</code></td>
+<td><strong>仅作设计参照</strong>：任务详情 section、run 状态机、steer 回执、插件沙箱；不复制 UI 代码</td>
+<td>许可禁止嵌入售卖产品与改品牌</td>
+</tr>
+<tr>
+<td><strong>reference</strong>（MIT）</td>
+<td><code>docs/reference-main</code></td>
+<td>可选参考 / 复用：worktree 广播对比、diff 批注、design mode 交互；不接其 IDE 壳</td>
+<td>保留版权声明，按需摘取</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2 id="s14">14. 待定</h2>
+<ul>
+<li>D2 的运行中注入依赖各 CLI 能力（Claude Code / Codex 支持较好，其余降级）：降级时界面显示「已排队至下一轮」，必须与「已注入」区分；各 CLI 能力矩阵在 M1 实测后填充。</li>
+<li>C2 广播的产物对比是否需要自动 diff 摘要（当前定为人工对比）。</li>
+<li>是否需要把 reference / reference 作为对照验证基线（只用于对齐交互，不复用其受限代码）。</li>
+<li><strong>范围风险</strong>：harness 的差异化只剩 IDE 交接闭环 + TODO 优先回写 + 域感知审计；若这三条也砍，建议直接评估 reference 商业授权而非自研。</li>
+<li><strong>dsh 适配 spike</strong>：ACP create/prompt/cancel + 10 并发 session + 包体测量；通过则列为 P1 runtime，不通过维持原生 CLI。</li>
+<li><strong>三处降级</strong>：D3 暂停/继续、F1 SSH 凭据、G1 自由 dock（依据 §12.1 / 附录 A），需产品确认后改验收。</li>
+<li>K3 的 stale 保留时长（当前建议：保留最后一次，直到 IDE 重新上报；不设 TTL）。</li>
+</ul>
+<hr />
+<h2 id="s15">15. 原文 → 规格追溯</h2>
+<blockquote>
+<p>对照 <a href="#orig"><code>REQ-original.md</code></a> 的 7 条原话。状态：<strong>覆盖</strong> = 有可验收条目；<strong>部分</strong> = 有条目但缺验收口径；<strong>超出</strong> = 原文未要求。</p>
+</blockquote>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>原文</th>
+<th>原文要点</th>
+<th>规格条目</th>
+<th>状态</th>
+<th>距差</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>闭环：规划 / 分发 / 监控 / 纠偏</td>
+<td>§1 指标、§4 三流程、§9 第 11/12 条</td>
+<td>覆盖</td>
+<td>—</td>
+</tr>
+<tr>
+<td>2</td>
+<td>统一管理 Agent（本地 + SSH）</td>
+<td>A1–A5、F1–F3、§9 第 13 条</td>
+<td>部分</td>
+<td>F1/F2 仍在 M3；SSH 密钥方案待确认</td>
+</tr>
+<tr>
+<td>3</td>
+<td>统一对话与调度</td>
+<td>D1–D5、G4</td>
+<td>覆盖</td>
+<td>降级语义已定稿；各 CLI 能力矩阵待实测</td>
+</tr>
+<tr>
+<td>4</td>
+<td>一任务分发给多 Agent</td>
+<td>C1–C4、B2「已放弃」</td>
+<td>覆盖</td>
+<td>产物自动 diff 摘要待定</td>
+</tr>
+<tr>
+<td>5</td>
+<td>每日 TODO + 看板 + 实时纠偏</td>
+<td>B1–B5、B4 卡片操作、E1/E2</td>
+<td>覆盖</td>
+<td>—</td>
+</tr>
+<tr>
+<td>6</td>
+<td>聊天窗口可纠正</td>
+<td>D2（合并）、D5</td>
+<td>覆盖</td>
+<td>—</td>
+</tr>
+<tr>
+<td>7</td>
+<td>跑完回应 TODO</td>
+<td>E2（执行器校验）、M4、L3</td>
+<td>覆盖</td>
+<td>—</td>
+</tr>
+<tr>
+<td>—</td>
+<td>原文未要求（v0.3 扩容）</td>
+<td>G 布局、K 上下文桥、L 接口、M IDE 交接</td>
+<td>超出</td>
+<td>占约 4 周；可按需后置</td>
+</tr>
+<tr>
+<td>—</td>
+<td>原文未要求（参考 reference / reference 补齐）</td>
+<td>N–T，共 32 条</td>
+<td>超出</td>
+<td>M5–M6 约 4 周；P0 部分（N/Q/R）已并入 M1–M3</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2 id="s16">16. 功能来源（reference / reference 对照）</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>来源</th>
+<th>补入的模块</th>
+<th>未吸收（及原因）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>reference</strong>：<a href="https://reference.ai/docs/zh">https://reference.ai/docs/zh</a>（本地 <code>docs/reference-main/apps/docs/content/docs/*.zh.mdx</code>）</td>
+<td>N 任务协作（评论 / @ / 快捷操作 / 附件 / 自定义属性 / 视图）、O 项目与小队（项目资源 / 工作流 / 小队）、P 技能与自动化（Skills / Autopilot / 唤醒）、Q 运行时治理（运行时矩阵 / 隔离 / 用量 / 错误分类 / 并发超时）、S 通知与检索、T 集成与客户端</td>
+<td>多租户 SaaS 与 Docker 自托管（§7 已定本地 SQLite）；聊天平台媒体处理细节；社区维护功能</td>
+</tr>
+<tr>
+<td><strong>reference</strong>：<a href="https://www.reference.dev/docs">https://www.reference.dev/docs</a>（本地 <code>docs/reference-main/docs/site/content/docs</code>）</td>
+<td>R 工作树与审阅（worktree 生命周期 / 并行对比 / Diff 批注 / 提交推送 / 变更归属）、S 快捷键与活动流、T4 CLI 自动化（<code>worktree</code> / <code>snapshot</code> / <code>click</code> / <code>fill</code>）、G 多标签与分屏（P2）</td>
+<td>终端分屏 / 内置浏览器 / Design Mode / 代码编辑器（归 IDE）；插件宿主沙箱（P2 后再评估）</td>
+</tr>
+<tr>
+<td><strong>DeepSeek Harness</strong></td>
+<td>D2 step 边界 steer、C4 依赖 DAG、B5 时区调度、Q 执行器适配与审批守卫</td>
+<td>会话中心 UI、会话内 3 态 todo、Cordis 插件底座（见 §12.1）</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>吸收原则</strong>：只借交互与协议设计，不复制受限代码；新增能力必须落到具体编号与验收，否则不入表。</p>
+<p><strong>模块级对比（含截图与改进建议）</strong>：<a href="#cmp"><code>CMP-modules-reference-reference.md</code></a> —— A–T 逐模块对比 reference / reference / 本项目，图存 <code>docs/assets/cmp/</code>。</p>
+<hr />
+<h2 id="apx">附录 A. 补充说明</h2>
+<h3 id="a1">A.1 计数与分期</h3>
+<ul>
+<li>主线：A–G / K–M / N–T，共 <strong>76 条</strong>（57 P0 + 14 P1 + 5 P2）。</li>
+<li>迁出：H–J 共 15 条 → IDE（不在本文档）。</li>
+<li>分期：<strong>14 周</strong>（M0 1.5 / M1 2 / M2 2.5 / M3 2 / M4 1.5 / M5 2 / M6 2），见 §10。</li>
+</ul>
+<h3 id="a2-k-l">A.2 K / L 说明</h3>
+<ul>
+<li><strong>K1</strong>：Envelope 由 IDE 上报，harness 缓存并广播给 Agent。</li>
+<li><strong>K3</strong>：IDE 关闭后 Context 标 <code>stale</code>，仍可见、可 pin / 移除。</li>
+<li><strong>K4</strong>：Agent 产出 → harness 预览卡 + 深链 → IDE 打开并恢复选中。</li>
+<li><strong>L1</strong>：CLI 收敛为 <code>context get/set</code>、<code>artifact link</code>、<code>run log</code>。</li>
+<li><strong>L2</strong>：随面板归 IDE；harness 只保留工具 / 命令白名单。</li>
+<li><strong>L3</strong>：artifact 增加 <code>origin=ide|agent</code> 与 <code>deep_link</code>。</li>
+</ul>
+<h3 id="a3">A.3 交接协议</h3>
+<pre><code>yieldmind-ide://open?path=/data/w03.parquet&amp;selection=W03,D13-W03,D15&amp;todo=#12
+</code></pre>
+<pre><code>POST /api/context
+{ &quot;envelope&quot;: { &quot;dataset&quot;: &quot;ds_1103&quot;,
+                &quot;selection&quot;: [&quot;W03,D13&quot;,&quot;W03,D14&quot;],
+                &quot;canvasElement&quot;: &quot;#hero &gt; .title&quot; },
+  &quot;source&quot;: &quot;ide&quot;, &quot;ts&quot;: 1730000000 }
+</code></pre>
+<p><code>context get</code> 返回最后一次 Envelope；IDE 不在线时 <code>stale=true</code>。</p>
+<h3 id="a4">A.4 三处建议降级（待产品确认）</h3>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>需求</th>
+<th>现级别</th>
+<th>建议</th>
+<th>依据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>D3 暂停/继续</td>
+<td>P0</td>
+<td>验收改为"停止 + 重试生成新 run"，暂停/继续降 P2</td>
+<td>reference 仅 stop/retry；CLI 进程暂停语义难可靠实现</td>
+</tr>
+<tr>
+<td>F1 SSH 凭据</td>
+<td>P1</td>
+<td>主路径用一次性 token 安装命令（A2 已定），SSH 密钥/端口转发降为高级选项</td>
+<td>reference 用 daemon + token</td>
+</tr>
+<tr>
+<td>G1 自由停靠</td>
+<td>P0</td>
+<td>P0 = 固定四区 + 可缩放/可折叠 + 布局保存；自由 dock 降 P2</td>
+<td>reference 固定 shell + resizable</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="a5-docsmultica-main-docsorca-main">A.5 源码核对（<code>docs/reference-main</code> / <code>docs/reference-main</code>）</h3>
+<p>43 条口径：<strong>完全满足 19（44%）/ 部分 11 / 缺失 13</strong>；与 reference 重叠约 70%，剩余差异为 C2 / C4 / D4 / B3 / F1 / G1 / M。本次按其文档补入 N–T 共 32 条后，原缺失项（评论 / @ 路由、项目 / 工作流 / 小队、Skills / Autopilot / 唤醒、用量与错误分类、Bot / 移动端）已入表；仍未覆盖的只剩多租户与 Docker 自托管。</p>
+<ul>
+<li><strong>reference</strong>：Apache-2.0 + Part I 附加条款（禁止托管第三方、禁止嵌入售卖产品、禁改品牌）→ 只能参照设计，不能复制代码。</li>
+<li><strong>reference</strong>：MIT（可复用，保留声明）；391MB / 40,548 文件的 Electron + Monaco IDE，接壳等于改定位。</li>
+</ul>
+<hr />
+<h2 id="s17">17. 工程约束与风险</h2>
+<h3 id="171">17.1 必须守住的差异化</h3>
+<p>对比 reference（以 worktree 为中心）与 reference（以 issue + 小队为中心），本项目只有三条真差异，任何改动不得破坏：</p>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>差异</th>
+<th>约束</th>
+<th>评审问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TODO 优先回写</td>
+<td>产出必须回到原任务，不能只留在会话</td>
+<td>这个结果能否在任务卡片上看到？</td>
+</tr>
+<tr>
+<td>一屏舰队</td>
+<td>新交互默认落在看板卡片（暂停 / 纠偏 / 验收），不新增页面</td>
+<td>是否 ≤ 1 步、不跳页？</td>
+</tr>
+<tr>
+<td>IDE 交接可离线</td>
+<td>IDE 关闭后 context 与产物仍可读（标 stale）</td>
+<td>验收是否会被 IDE 可用性阻塞？</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="172">17.2 明确不做</h3>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>项</th>
+<th>决定</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>行内 Diff 批注</td>
+<td>先做文件级，行级待定</td>
+<td>行级定位需要 diff 内核</td>
+</tr>
+<tr>
+<td>Autopilot Webhook、9 类唤醒</td>
+<td>先 3 类：时间 / 有人回复 / run 结束</td>
+<td>单机场景没有外部事件源</td>
+</tr>
+<tr>
+<td>小队花名册 / 再触发规则</td>
+<td>只留队长分派</td>
+<td>没有多 Agent 团队前，C2 已够</td>
+</tr>
+<tr>
+<td>终端分屏、Design Mode、账户热切换</td>
+<td>不做</td>
+<td>与定位冲突、维护成本高</td>
+</tr>
+<tr>
+<td>多租户 SaaS、逐步骤通知</td>
+<td>不做</td>
+<td>违背本地单用户与 E3</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="173">17.3 风险与对策</h3>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>风险</th>
+<th>影响</th>
+<th>对策</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>worktree 磁盘膨胀</td>
+<td>单机磁盘被吃满</td>
+<td>采纳后清理未选中的 worktree；占用 &gt; 5GB 提示并允许一键清理</td>
+</tr>
+<tr>
+<td>各家 CLI 注入能力不一</td>
+<td>D2「实时纠偏」不成立</td>
+<td>caps 中标 <code>steer: full</code> 或 <code>steer: queue</code>，界面按能力显示，不统一承诺</td>
+</tr>
+<tr>
+<td>远程目录锁失效</td>
+<td>两个 run 写同一目录</td>
+<td>锁记录在控制面 DB（非文件系统），断线后按心跳回收</td>
+</tr>
+<tr>
+<td>context 长期 stale</td>
+<td>Agent 拿到过期选区</td>
+<td>消息里显式标 stale 并允许「重新获取」，不静默注入</td>
+</tr>
+<tr>
+<td>费用估算偏差</td>
+<td>统计不可信</td>
+<td>只展示 token 与耗时，费用标注「估算」并显示计价版本</td>
+</tr>
+</tbody>
+</table></div></div>
+  <div class="part">
+  <h2 id="proto" style="border-bottom:0">界面原型（Wireframe）</h2>
+  <p class="lead">以下为低保真原型，用于对齐信息结构与交互路径，<b>不是视觉稿</b>。每张图右上角的 ①②③ 编号对应 §3 的需求编号。</p>
+  <p class="mini" style="margin:6px 0 0;color:#6b7684">注：看板已按 B4 决策改为 5 列（「排队」并入「待办」），本图 P1 仍为 6 列，仅作结构示意。</p>
+  <div class="legend" style="margin-bottom:6px">
+    <span><span class="sw"></span>实线 = 常驻区域</span>
+    <span><span class="sw d"></span>虚线 = 可折叠 / 可拖宽</span>
+    <span><span class="ann t">①</span> 需求锚点</span>
+  </div>
+
+  <!-- P1 -->
+  <div class="proto">
+    <div class="proto-title"><span class="n">P1</span><h4>主工作台 · 四区布局</h4><span class="cap">G1 / G3 / B4 / D1 / E1 · 对应「1 屏可见」指标</span></div>
+    <div class="wire">
+      <div class="chrome"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">yieldmind-harness — workspace: 良率日常</span><span style="font-size:10px">⌘K</span></div>
+
+      <div class="ws">
+        <!-- 顶栏 -->
+        <div class="box top">
+          <span class="pill t">工作区：良率日常</span>
+          <span class="tab on">看板</span>
+          <span class="tab">日历</span>
+          <span class="grow"></span>
+          <span class="pill">收件箱 <b>3</b></span>
+          <span class="pill g">● 主机 3/3</span>
+          <span class="pill">布局：已保存 ▾</span>
+          <span class="ann">G1</span>
+        </div>
+
+        <!-- 左：Agent / 任务 -->
+        <div class="box left">
+          <div class="ph"><span><span class="ico"></span> AGENTS</span><span class="mini">3 在线 · 5 run</span><span class="ann">A4</span></div>
+          <div class="body" style="padding:5px">
+            <div class="agent-item on"><span class="avatar av1">C</span><span style="flex:1">claude-main</span><span class="dotl g"></span><span class="faint">2/3</span></div>
+            <div class="agent-item"><span class="avatar av2">X</span><span style="flex:1">codex-local</span><span class="dotl g"></span><span class="faint">1/2</span></div>
+            <div class="agent-item"><span class="avatar av3">P</span><span style="flex:1">pi@lab-gpu</span><span class="dotl y"></span><span class="faint">等待目录</span></div>
+            <div class="agent-item"><span class="avatar">O</span><span style="flex:1">opencode@dev2</span><span class="dotl r"></span><span class="faint">离线 12m</span></div>
+            <div style="height:1px;background:#eef1f4;margin:5px 2px"></div>
+            <div class="ph" style="padding:2px 2px 4px;border:0;background:none"><span class="mini" style="font-weight:700;color:#68737f">TODOS · 今日 12</span><span class="mini">＋</span></div>
+            <div class="todo-line"><span class="dotl b"></span><span class="txt">查 W03 良率掉的根因</span><span class="pill b">进行中</span></div>
+            <div class="todo-line" style="background:#f6f8fa"><span class="dotl y"></span><span class="txt">帕累托图：Top5 Bin</span><span class="pill y">待验收</span></div>
+            <div class="todo-line"><span class="dotl"></span><span class="txt">Hero 页标题改大</span><span class="pill">待办</span></div>
+            <div class="todo-line"><span class="dotl g"></span><span class="txt">列画像：FT-1103</span><span class="pill g">完成</span></div>
+            <div class="todo-line"><span class="dotl r"></span><span class="txt">回写昨晚的测试报告</span><span class="pill r">失败</span></div>
+            <div class="todo-line" style="color:#94a0ad"><span class="dotl"></span><span class="txt">＋ 从昨日滚动 3 条…</span></div>
+          </div>
+        </div>
+
+        <!-- 中：域面板 -->
+        <div class="box center">
+          <div class="tabbar">
+            <span class="t on">▦ 看板</span>
+            <span class="t">任务详情</span>
+            <span class="t">统计</span>
+            <span class="t">收件箱 3</span>
+            <span class="t" style="color:#a3adb8">＋</span>
+            <span style="flex:1"></span><span class="t" style="color:#a3adb8">只读预览</span>
+            <span class="ann i">M3</span>
+          </div>
+          <div class="body">
+            <div class="between" style="font-size:9.5px;color:#77828f">
+              <span>泳道 <b style="color:#3d4753">按 Agent</b> · 今日 12 条 · 30s 内更新</span>
+              <span class="row"><span class="pill">筛选</span><span class="pill">排序：优先级</span></span>
+            </div>
+            <div class="board">
+              <div class="col">
+                <div class="ch"><span>待办 3</span><span class="n">＋</span></div>
+                <div class="kcard"><span class="ttl">Hero 页标题改大</span><span class="pill">未指派</span><div class="meta2"><span>P2</span><span>—</span></div></div>
+                <div class="kcard"><span class="ttl">补 FT-1104 列画像</span><span class="pill b">@codex</span><div class="meta2"><span>P1</span><span>—</span></div></div>
+                <div class="kcard" style="opacity:.6"><span class="ttl">输出周报草稿</span><span class="pill">阻塞中</span><div class="meta2"><span>依赖 #12</span></div></div>
+              </div>
+              <div class="col">
+                <div class="ch"><span>排队 1</span></div>
+                <div class="kcard"><span class="ttl">W03 良率根因</span><span class="pill y">@pi</span><div class="meta2"><span>等待目录释放</span><span>0:42</span></div></div>
+              </div>
+              <div class="col">
+                <div class="ch"><span>进行中 2</span></div>
+                <div class="kcard sel"><span class="ttl">W03 良率掉的根因</span><span class="pill t">@claude</span><div style="color:#68737f;margin-top:2px">正在跑 <code style="font-size:8px;padding:0 2px">sql …group by bin</code></div><div class="meta2"><span>已用 6:12</span><span class="ann">B4</span></div></div>
+                <div class="kcard"><span class="ttl">帕累托图 Top5</span><span class="pill t">@claude</span><div class="meta2"><span>已用 2:30</span></div></div>
+              </div>
+              <div class="col">
+                <div class="ch"><span>等待输入 1</span></div>
+                <div class="kcard" style="border-color:#f0dcb4;background:#fffdf7"><span class="ttl">报告口径确认 ⬆</span><span class="pill y">@codex</span><div style="color:#9a6209;margin-top:2px">问：按 die 还是按 wafer？</div><div class="meta2"><span>已置顶</span><span class="ann">D4</span></div></div>
+              </div>
+              <div class="col">
+                <div class="ch"><span>待验收 2</span></div>
+                <div class="kcard"><span class="ttl">帕累托图：Top5 Bin</span><span class="pill b">@claude</span><div class="meta2"><span>产物 2</span><span>未读</span></div></div>
+                <div class="kcard" style="border-color:#f0dcb4"><span class="ttl">测试报告回写</span><span class="pill y">缺回写</span><div class="meta2"><span>标黄</span><span class="ann w">E2</span></div></div>
+              </div>
+              <div class="col">
+                <div class="ch"><span>完成 3</span></div>
+                <div class="kcard"><span class="ttl">列画像：FT-1103</span><span class="pill g">done</span><div class="meta2"><span>1h20m</span><span>✓</span></div></div>
+                <div class="kcard"><span class="ttl">数据集接入</span><span class="pill g">done</span><div class="meta2"><span>8m</span></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右：会话 -->
+        <div class="box right">
+          <div class="ph"><span>SESSION · #W03</span><span class="row"><span class="dotl g"></span><span class="mini">run 7</span></span><span class="ann">D1</span></div>
+          <div class="chat">
+            <div class="msg sys">run #7 started · claude-main · 14:02</div>
+            <div class="msg a"><b style="font-size:9px">claude</b><br>先按 wafer 维度看 W03 的 bin 分布…</div>
+            <div class="msg a" style="font-family:var(--mono);font-size:8.5px;background:#f8fafc">⚙ sql · select bin,count(*) … <span style="color:#94a0ad">(1.2s)</span></div>
+            <div class="msg u">按 die 维度，只看 FT 段 <span class="inj">已注入</span></div>
+            <div class="msg a" style="border-color:#cbe8e2;background:#f4fbf9">收到，切到 die 维度重跑，范围 FT…</div>
+            <div class="msg a" style="opacity:.65">⏸ 暂停 / ⏹ 中止 / ↻ 重试 <span style="color:#94a0ad">（当前 run 内，不新起）</span></div>
+          </div>
+          <div class="between" style="padding:3px 7px;border-top:1px solid #eef1f4;font-size:8.5px;color:#94a0ad">
+            <span>run 7 · 6:12 · $0.08</span><span>12 tools · 3 files</span>
+          </div>
+          <div class="composer">
+            <span class="fake">发消息 / /steer…</span>
+            <span class="pill t">注入</span>
+            <span class="ann i">D2</span>
+          </div>
+        </div>
+
+        <!-- 下：日志 -->
+        <div class="box bot dash">
+          <div class="ph"><span>LOG · 实时</span><span class="mini">自动滚动 · 过滤 ▾ · 清空</span><span class="ann">E1</span></div>
+          <div class="body" style="padding:4px 9px;overflow:hidden">
+            <div class="logline"><span class="tm">14:02:11</span> <span class="ok">run.started</span> todo=#12 agent=claude-main host=local</div>
+            <div class="logline"><span class="tm">14:02:13</span> exec <span style="color:#3d4753">claude -p "分析 W03 …" --cwd ~/ym/wafer</span></div>
+            <div class="logline"><span class="tm">14:02:19</span> <span class="wn">run.message</span> injected=true len=32</div>
+            <div class="logline"><span class="tm">14:04:02</span> <span class="er">run.failed</span> todo=#19 exit=1 <span style="color:#94a0ad">— 可重试</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <span><b>左</b> Agent + 今日 TODO（G1）</span>
+      <span><b>中</b> 看板 / 任务详情 / 统计（G3）</span>
+      <span><b>右</b> 会话常驻，注入入口（D2）</span>
+      <span><b>下</b> 日志（可折叠虚线）</span>
+      <span>顶栏 ⌘K 命令面板（G4）</span>
+    </div>
+  </div>
+
+  <!-- P2 -->
+  <div class="proto" id="p2">
+    <div class="proto-title"><span class="n">P2</span><h4>任务详情 · 执行日志 / 产物预览 / 上下文</h4><span class="cap">B1 / D1 / E2 / M3 · 看板点开后的主界面</span></div>
+    <div class="wire">
+      <div class="box">
+        <div class="ph" style="padding:8px 12px">
+          <span class="row" style="gap:8px"><span class="mini">看板 / 今日</span><b style="font-size:12px">#12 · W03 良率掉的根因</b></span>
+          <span class="row"><span class="pill t">进行中</span><span class="pill b">@claude-main</span><span class="pill">P1</span><span class="mini">今天 18:00</span></span>
+        </div>
+        <div class="body" style="display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:8px">
+          <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+            <div class="box" style="padding:8px 10px">
+              <div class="tiny faint" style="margin-bottom:4px">描述 · 验收</div>
+              <div style="font-size:10.5px;color:#3d4753;line-height:1.7">W03 段 FT 良率从 96.2% 掉到 94.1%，按 bin 拆解找出主因，给出前 3 个可执行对策。</div>
+              <div class="row" style="margin-top:6px;flex-wrap:wrap;gap:4px">
+                <span class="pill g">验收：Top5 bin 占比</span><span class="pill g">给出对策</span><span class="pill g">附帕累托图</span>
+              </div>
+            </div>
+            <div class="box" style="padding:0">
+              <div class="ph"><span>子任务 2</span><span class="mini">阶段 1/2</span></div>
+              <div class="body" style="padding:5px 8px">
+                <div class="todo-line"><span class="dotl g"></span><span class="txt">拉取 W03 的 bin 明细</span><span class="pill g">完成</span></div>
+                <div class="todo-line"><span class="dotl y"></span><span class="txt">按 die 维度复核 Top5</span><span class="pill y">进行中</span></div>
+              </div>
+            </div>
+            <div class="box" style="padding:0">
+              <div class="ph"><span>动态</span><span class="mini">评论 · 工具调用</span></div>
+              <div class="body" style="padding:6px 8px;display:flex;flex-direction:column;gap:4px">
+                <div class="msg a" style="max-width:100%">先按 wafer 看分布，再下钻 die…</div>
+                <div class="msg a" style="max-width:100%;font-family:var(--mono);font-size:8.5px;background:#f8fafc">⚙ sql · select bin, count(*) … <span class="faint">1.2s</span></div>
+                <div class="msg u" style="max-width:100%">按 die 维度，只看 FT 段 <span class="inj">已注入</span></div>
+                <div class="tiny faint">✓ 已投递 · 在 step #4 前生效 <span class="ann">D2</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+            <div class="box" style="padding:0">
+              <div class="ph"><span>执行日志</span><span class="mini">按次 · 费用</span></div>
+              <div class="body" style="padding:5px 8px">
+                <div class="between" style="font-size:9.5px"><span class="row"><span class="dotl g"></span><b>run 7</b> 进行中</span><span>6:12 · $0.08</span></div>
+                <div class="bar-mini" style="width:100%;margin:3px 0 6px"><i style="width:62%"></i></div>
+                <div class="between" style="font-size:9px;color:#94a0ad"><span>run 6 · 已停止</span><span>3:41 · $0.04</span></div>
+                <div class="between" style="font-size:9px;color:#94a0ad"><span>run 5 · 失败</span><span>exit 1 · $0.02</span></div>
+                <div class="row" style="margin-top:5px"><span class="pill">打开时间线</span><span class="pill">重试</span></div>
+              </div>
+            </div>
+            <div class="box" style="padding:0">
+              <div class="ph"><span>产物 2</span><span class="mini">只读预览</span></div>
+              <div class="body" style="padding:6px 8px;display:flex;flex-direction:column;gap:5px">
+                <div class="row" style="gap:6px">
+                  <div class="box" style="width:54px;height:40px;background:#f7fafc;display:flex;align-items:flex-end;gap:2px;padding:3px">
+                    <i style="flex:1;height:80%;background:#9fd8cf"></i><i style="flex:1;height:55%;background:#9fd8cf"></i><i style="flex:1;height:35%;background:#0d8a7a"></i><i style="flex:1;height:18%;background:#9fd8cf"></i>
+                  </div>
+                  <div style="flex:1;min-width:0"><b style="font-size:10px">fig_28 · pareto</b><br><span class="tiny faint">origin=agent · run 7</span></div>
+                  <span class="pill t">在 IDE 打开</span>
+                </div>
+                <div class="between" style="font-size:9.5px"><span>hero.html · 标题已改</span><span class="pill">打开</span></div>
+                <div class="tiny faint">不跳转先看缩略；编辑在 IDE <span class="ann">M3</span></div>
+              </div>
+            </div>
+            <div class="box" style="padding:0">
+              <div class="ph"><span>上下文</span><span class="mini">IDE 上报</span></div>
+              <div class="body" style="padding:5px 8px;font-size:9.5px;color:#5d6875">
+                <div class="between" style="padding:2px 0;border-bottom:1px dashed #edf1f4"><span>dataset YM3D-FT-1103</span><span class="pill">pinned</span></div>
+                <div class="between" style="padding:2px 0;border-bottom:1px dashed #edf1f4"><span>selection die ×3</span><span class="pill">pinned</span></div>
+                <div class="between" style="padding:2px 0"><span>figure pareto / bin</span><span class="pill g">fresh</span></div>
+                <div class="tiny faint" style="margin-top:3px">关掉 IDE 后标 stale，仍可验收</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <span>左：任务本体（描述 / 验收 / 子任务 / 动态）</span>
+      <span>右：执行日志 + 产物预览 + Context</span>
+      <span>看板点卡片进入，Esc 返回</span>
+    </div>
+  </div>
+
+  <!-- P6 -->
+  <div class="proto" id="p6">
+    <div class="proto-title"><span class="n">P6</span><h4>上下文桥 &amp; IDE 交接</h4><span class="cap">K1 – K4 / M1 – M3 · 跨进程，结构化 Context，不做截图</span></div>
+    <div class="wire">
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <!-- 面板层 -->
+        <div class="bus-layer">
+          <div class="bus-label">IDE 侧 · 面板上报 Context（G2 契约归 IDE）</div>
+          <div class="bus-boxes">
+            <div class="bus-box"><b>Data</b>publish: dataset / selection<br>subscribe: dataset, selection<span class="pill t" style="float:right">H4</span></div>
+            <div class="bus-box"><b>Plot</b>publish: figure / selection<br>subscribe: dataset, selection, figure<span class="pill t" style="float:right">I3</span></div>
+            <div class="bus-box"><b>HTML Canvas</b>publish: canvasElement / activeFile<br>subscribe: activeFile, canvasElement<span class="pill t" style="float:right">J2</span></div>
+          </div>
+        </div>
+
+        <div class="arrow-v"><span class="l">publish ↑</span><span class="glyph">↕</span><span class="l">↓ subscribe / 反向消费（K4）</span></div>
+
+        <!-- 总线 -->
+        <div class="bus-core">
+          <b>CONTEXT BRIDGE</b>
+          <code>{ dataset, selection, figure, canvasElement, activeFile }</code>
+          <span style="color:#8fb3ad">harness 缓存 · stale 标记 · 事件 context.changed</span>
+          <span class="ann t" style="margin-left:auto">K1</span>
+        </div>
+
+        <div class="arrow-v"><span class="l">默认携带（结构化）↓</span><span class="glyph">↕</span><span class="l">↑ context set / artifact link</span></div>
+
+        <!-- Agent 层 -->
+        <div style="display:grid;grid-template-columns:1.25fr 1fr;gap:6px">
+          <div class="bus-layer" style="border-style:solid">
+            <div class="bus-label">执行层 · Agent CLI + 权限</div>
+            <div class="bus-boxes" style="grid-template-columns:1fr 1fr">
+              <div class="bus-box"><b>Run 输入</b>todo + &lt;context&gt;<br><span class="tiny faint">注入内容在消息里可见（K3）</span></div>
+              <div class="bus-box"><b>工具白名单</b>context get/set · run log<br>artifact link <span class="ann">L1</span><div class="tiny faint" style="margin-top:3px">Skill 只组合这些 tools，不持有 UI 状态；面板操作在 IDE</div></div>
+            </div>
+            <div class="tiny" style="margin-top:5px;color:#5d6875">IDE 侧权限：<span class="pill">只读上下文</span> <span class="pill b">可改画布</span> <span class="pill y">可改数据</span> · 越权拒绝 + 审计 <span class="ann w">IDE</span></div>
+          </div>
+          <div class="bus-layer" style="border-style:solid">
+            <div class="bus-label">产出层 · artifact 落点</div>
+            <div class="bus-box" style="height:calc(100% - 18px)">
+              <b>run.finished → artifacts[]</b>
+              dataset · figure(recipe) · canvas · file（origin=ide|agent）<br>
+              <span class="tiny faint">harness 出只读预览卡 + 深链；IDE 打开并恢复选中</span>
+              <div style="margin-top:5px;display:flex;gap:4px;flex-wrap:wrap">
+                <span class="pill">预览</span><span class="pill t">在 IDE 打开</span><span class="pill">pin</span><span class="ann">M3 / M4</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <span>Context 由 IDE 发布、harness 缓存；IDE 关闭后标 stale（§5 / M2）</span>
+      <span>harness 不承载面板：读走 Bridge，写走 IDE 扩展 + 权限</span>
+    </div>
+  </div>
+
+  <!-- P7 -->
+  <div class="proto" id="p7">
+    <div class="proto-title"><span class="n">P7</span><h4>会话与纠偏 · 注入 / 提问 / 重试</h4><span class="cap">D1 – D5 / E2 – E3 · 从发现问题到纠正送达 ≤ 10s</span></div>
+    <div class="wire">
+      <div style="display:grid;grid-template-columns:1fr 1.05fr;gap:6px">
+        <!-- 会话 -->
+        <div class="box">
+          <div class="ph"><span>SESSION · todo #12 · W03 良率根因</span><span class="mini">run 7 ▾</span></div>
+          <div class="chat" style="min-height:250px">
+            <div class="msg sys">run #7 ▶ started · 14:02 · trigger=retry（前两次见时间线）</div>
+            <div class="msg a">我先按 wafer 看 W03 的 bin 分布，再下钻 die…</div>
+            <div class="msg a" style="font-family:var(--mono);font-size:8.5px;background:#f8fafc">⚙ sql · <span style="color:#0d8a7a">select bin, count(*) …</span></div>
+            <div class="msg u">按 die 维度，只看 FT 段 <span class="inj">已注入 · 14:02:19</span></div>
+            <div class="msg a" style="border-color:#cbe8e2;background:#f4fbf9">收到，切到 die 维度重跑，范围限定 FT…</div>
+            <div class="msg a" style="border-color:#cbe8e2;background:#f4fbf9">bin7 集中在 W03 右下角；先把 3 个 die 标出来。</div>
+            <div class="msg sys">artifact.created · fig_28 (pareto) · w03_bin_summary</div>
+            <div class="msg a" style="border-color:#f0dcb4;background:#fffdf7">❓ bin 7 的 3 个 die 要单独标注吗？<br><span class="tiny faint">run 已置「等待输入」· 已回答则原 run 继续</span><span class="ann">D4</span></div>
+          </div>
+          <div class="composer">
+            <span class="fake">回复 Agent，或 /steer 注入到当前 run…</span>
+            <span class="pill t">发送</span>
+          </div>
+        </div>
+
+        <!-- 操作面板 -->
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div class="box">
+            <div class="ph"><span>上下文（本条消息）</span><span class="mini">3 pinned · 1 auto</span></div>
+            <div class="body tiny" style="padding:5px;color:#5d6875">
+              <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>📌 dataset YM3D-FT-1103</span><span class="pill">pinned</span></div>
+              <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>📌 selection die ×3（W03,D13–D15）</span><span class="pill">pinned</span></div>
+              <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>📌 figure pareto / bin</span><span class="pill">pinned</span></div>
+              <div class="between" style="padding:3px 0"><span>auto canvas #hero &gt; .title</span><span class="pill g">已附带</span></div>
+              <div class="row" style="margin-top:5px"><span class="pill">移除</span><span class="pill">全部 pin</span><span class="pill">预览注入</span><span class="ann t">K3</span></div>
+            </div>
+          </div>
+          <div class="box">
+            <div class="ph"><span>Run 控制</span><span class="mini">不覆盖历史</span></div>
+            <div class="body tiny" style="padding:6px;color:#5d6875">
+              <div class="row" style="flex-wrap:wrap;gap:4px">
+                <span class="pill">⏸ 暂停</span><span class="pill">▶ 继续</span><span class="pill r">⏹ 中止</span><span class="pill b">↻ 重试（新 run）</span><span class="ann">D3</span>
+              </div>
+              <div style="margin-top:6px;font-size:9px">
+                <div class="between" style="padding:2px 0"><span>run 7 · 进行中 · 6:12</span><span>token 12.4k / $0.08</span></div>
+                <div class="between" style="padding:2px 0;color:#94a0ad"><span>run 6 · 中止</span><span>3:41</span></div>
+                <div class="between" style="padding:2px 0;color:#94a0ad"><span>run 5 · 失败</span><span>exit 1</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="box dash" style="padding:6px 8px">
+            <div class="between" style="font-size:9.5px;color:#5d6875"><span><b>收件箱 3</b> · 1 提问 / 1 待验收 / 1 失败</span><span class="row"><span class="pill">全部已读</span><span class="ann">E3</span></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- P8 -->
+  <div class="proto" id="p8">
+    <div class="proto-title"><span class="n">P8</span><h4>主机与 Agent 纳管 · 远程上线</h4><span class="cap">A1 – A5 / F1 – F3 · 掉线 30s 标红，重连不重复执行</span></div>
+    <div class="wire">
+      <div style="display:grid;grid-template-columns:1.35fr 1fr;gap:6px">
+        <div class="box">
+          <div class="ph"><span>HOSTS</span><span class="mini">3 在线 · 1 离线</span></div>
+          <div class="body" style="padding:6px">
+            <table class="grid-table" style="font-size:10px">
+              <thead><tr><th>主机</th><th>kind</th><th>Agent</th><th>心跳</th><th>版本</th></tr></thead>
+              <tbody>
+                <tr><td>local-mac</td><td>local</td><td>claude · codex</td><td><span class="dotl g"></span> 2s</td><td>0.3.1</td></tr>
+                <tr><td>lab-gpu</td><td>ssh</td><td>pi</td><td><span class="dotl y"></span> 18s</td><td>0.3.1</td></tr>
+                <tr><td>dev2</td><td>ssh</td><td>opencode</td><td><span class="dotl r"></span> 12m <span class="pill r">掉线</span></td><td>0.2.9</td></tr>
+                <tr><td>win-bench</td><td>ssh</td><td>codex</td><td><span class="dotl g"></span> 5s</td><td>0.3.1</td></tr>
+              </tbody>
+            </table>
+            <div class="row" style="margin-top:6px"><span class="pill t">＋ 添加主机</span><span class="pill">连接测试</span><span class="pill">密钥库</span><span class="ann">F1</span></div>
+
+            <div class="box dash" style="margin-top:8px">
+              <div class="ph"><span>添加远程主机 · 第 2 步</span><span class="mini">一次性 token</span></div>
+              <div class="body tiny" style="padding:6px">
+                <div class="row" style="gap:10px;color:#5d6875">
+                  <span>① 填主机地址（SSH 可选）</span><span class="faint">→</span><span style="font-weight:600;color:#0d8a7a">② 远端执行</span><span class="faint">→</span><span class="faint">③ 自动上线</span>
+                </div>
+                <div class="diff" style="margin-top:5px">curl -fsSL https://ym.local/agent.sh | sh -s -- --token <span class="add">tk_9f2c…</span></div>
+                <div class="row" style="margin-top:5px;font-size:9px;color:#5d6875"><span class="dotl y"></span> 等待回连…（每 2s 探测，超时 90s）<span class="ann">A2</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="box">
+          <div class="ph"><span>Agent 档案 · claude-main</span><span class="mini">修改后新 run 生效</span></div>
+          <div class="body tiny" style="padding:7px;color:#5d6875">
+            <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>CLI</span><b>claude</b></div>
+            <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>主机</span><b>local-mac</b></div>
+            <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>工作目录</span><b>~/ym/wafer</b></div>
+            <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>并发上限</span><b>3</b></div>
+            <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>当前</span><b style="color:#0d8a7a">忙碌 2/3</b></div>
+            <div style="padding:4px 0"><span>技能 / 提示词</span><div style="margin-top:2px"><span class="pill">yield-analysis</span><span class="pill">sql</span><span class="pill">chart</span><span class="ann">A3</span></div></div>
+            <div style="padding:4px 0"><span>审批策略</span><div style="margin-top:2px"><span class="pill">allow</span><span class="pill y">ask（危险命令）</span><span class="pill r">deny</span><span class="ann">A3</span></div></div>
+            <div style="padding:4px 0"><span>工具白名单</span><div style="margin-top:2px"><span class="pill">sql</span><span class="pill">python</span><span class="pill">git</span><span class="pill">file</span><span class="pill r">rm</span></div></div>
+            <div class="box dash" style="margin-top:6px;padding:5px 7px">
+              <b style="color:#3d4753">自动恢复</b><br>
+              主机离线 → run 排队等待，不漂移；恢复后继续，不重复执行
+              <div class="row" style="margin-top:4px"><span class="pill g">tmux 会话保留</span><span class="pill">重连 60s</span><span class="ann">A5 / F3</span></div>
+            </div>
+            <div class="row" style="margin-top:6px"><span class="pill t">保存</span><span class="pill">停用 Agent</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------- 7 NFR ---------- -->
+  </div>
+  <div class="part cmp"><h2 class="part-head" id="cmp">reference / reference / 本项目对比</h2><p class="part-lead">按模块逐一对比，截图为两家官方文档原图；本项目状态 <code>已实现</code> / <code>已排期</code> / <code>缺</code>。建议按 P0 → P2 排序。</p><blockquote>
+<p>按 <a href="#top"><code>REQ-multi-agent-workspace.md</code></a> 的 A–T 模块逐一对比，给出差距与改进建议。
+<strong>截图来源</strong>：reference（<a href="https://www.reference.dev/docs">https://www.reference.dev/docs</a>）与 reference（<a href="https://reference.ai/docs/zh">https://reference.ai/docs/zh</a>）官方文档，取自本地 <code>docs/reference-main</code>、<code>docs/reference-main</code>，已复制到 <code>docs/assets/cmp/</code>，仅作内部对比。
+<strong>本项目状态口径</strong>：<code>已实现</code> = README 已列的单机 MVP；<code>已排期</code> = REQ 有条目未实现；<code>缺</code> = REQ 无对应条目。
+<strong>建议优先级</strong>：P0 = 影响闭环成立；P1 = 影响日常效率；P2 = 可延后或不建议做。</p>
+</blockquote>
+<p><img alt="" class="shot" src="assets/cmp/reference-hero.jpg" /></p>
+<p><em>reference：一个窗口里并行跑多个 Agent（worktree 隔离 + 终端 pane）。</em></p>
+<hr />
+<h2 id="cmp-0">0. 结论速览</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>模块</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>主要差距</th>
+<th>建议</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A Agent / 主机</td>
+<td>任意 CLI + 账户用量</td>
+<td>运行时矩阵 + 守护进程</td>
+<td>部分（本机 5 种 CLI）</td>
+<td>无 Runtime 实体、无远程</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>B TODO / 看板</td>
+<td>无（以 PR/issue 为任务源）</td>
+<td>任务 + 自定义属性 + 多视图</td>
+<td>部分（SQLite + 列表）</td>
+<td>无看板、无视图保存</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>C 分派</td>
+<td>并行 worktree 扇出</td>
+<td>分配给人 / Agent / 小队</td>
+<td>部分（队列/并发）</td>
+<td>无广播对比、无小队</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>D 对话与纠偏</td>
+<td>原生 chat + 终端会话</td>
+<td>任务内对话 + 引导/排队</td>
+<td>部分（steer/停止/重试）</td>
+<td>无提问置顶、无全局对话</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>E 进度 / 回写</td>
+<td>通知 + 未读</td>
+<td>运行状态机 + 收件箱</td>
+<td>部分（inbox、steer）</td>
+<td>回写校验缺失</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>F 远程执行</td>
+<td>SSH worktree + 自动重连</td>
+<td>守护进程 + 机器</td>
+<td>缺</td>
+<td>整块未做</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>G 布局</td>
+<td>无限分屏 + 标签 + 会话恢复</td>
+<td>固定 shell + 可折叠</td>
+<td>部分（三栏）</td>
+<td>布局保存、命令面板</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>K 上下文桥</td>
+<td>Design Mode 抓元素上下文</td>
+<td>对话携带任务上下文</td>
+<td>缺</td>
+<td>无结构化 context</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>L Agent 接口</td>
+<td><code>reference</code> CLI 驱动控制台</td>
+<td><code>reference</code> CLI 全量操作</td>
+<td>缺</td>
+<td>无 CLI</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>M IDE 交接</td>
+<td>内置预览 + 深链回工作区</td>
+<td>PR 关联 + 附件</td>
+<td>缺</td>
+<td>无深链、无预览</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>N 任务协作</td>
+<td>Diff 行内批注</td>
+<td>评论 / @ 路由 / 快捷操作</td>
+<td>缺</td>
+<td>整块未做</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>O 项目 / 工作流 / 小队</td>
+<td>无（用 GitHub/Linear 承接）</td>
+<td>项目 + 阶段 + 小队</td>
+<td>缺</td>
+<td>整块未做</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>P 技能 / 自动化</td>
+<td>CLI skills / automations</td>
+<td>Skills + Autopilot + 唤醒</td>
+<td>缺</td>
+<td>整块未做</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>Q 运行时治理</td>
+<td>用量与限额、会话历史</td>
+<td>错误分类、并发与目录锁</td>
+<td>部分（并发上限）</td>
+<td>用量、错误分类</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>R 工作树 / 审阅</td>
+<td>worktree 全生命周期</td>
+<td>每 run 独立 workdir</td>
+<td>缺</td>
+<td>无 diff 审阅</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>S 通知 / 检索</td>
+<td>⌘K 全局 + 通知中心</td>
+<td>搜索（拼音）+ 快捷键</td>
+<td>缺</td>
+<td>整块未做</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>T 集成 / 客户端</td>
+<td>GitHub/Linear/Jira + 移动端</td>
+<td>5 个聊天平台 + 移动端</td>
+<td>缺</td>
+<td>整块未做</td>
+<td>P2</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>一句话</strong>：reference 强在「执行环境 + 审阅」，reference 强在「协作 + 编排对象模型」；本项目规格已覆盖两者 76 条，但<strong>实现只到「单机 run 跑通」</strong>，真正卡住闭环的是 A/F/L/N/R 五个模块。</p>
+<hr />
+<h2 id="cm-a">A. Agent 与主机管理</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>任意 CLI Agent 接入</td>
+<td>✅ 能跑在终端的都能接</td>
+<td>✅ 20+ 工具矩阵</td>
+<td>⚠️ 5 种（dsh/pi/claude/codex/opencode）</td>
+<td>补齐矩阵</td>
+</tr>
+<tr>
+<td>Runtime = 主机 + 工具的组合</td>
+<td>⚠️ 以 worktree/终端为单位</td>
+<td>✅ runtime 独立实体</td>
+<td>❌ 只有 Agent</td>
+<td>引入 Runtime</td>
+</tr>
+<tr>
+<td>工具能力差异可见</td>
+<td>⚠️ 启动时探测</td>
+<td>✅ 会话恢复 / MCP / 选模型 / skill 目录</td>
+<td>❌</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>远程主机纳管</td>
+<td>✅ SSH worktree</td>
+<td>✅ 守护进程 + 机器</td>
+<td>❌</td>
+<td>P0 缺口</td>
+</tr>
+<tr>
+<td>账户与额度</td>
+<td>✅ 多账号热切换 + 限额重置</td>
+<td>⚠️ 登录态</td>
+<td>❌</td>
+<td>P2</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：CLI Agent 跑在终端 pane</th>
+<th>reference：运行时列表（一机一工具）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-terminal-agent.jpg" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-runtimes-list.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：添加一台机器</th>
+<th>reference：Agent 访问与工具权限</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/mul-add-computer.webp" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-agent-access.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：创建 Agent（选运行时 + 指令）</th>
+<th>reference：机器详情（工具探测结果）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/mul-agent-form.webp" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-machine.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P0｜把 A1 升级为 Runtime 模型</strong>：<code>Runtime = host + cli + caps</code>，Agent 挂 Runtime。这是 A2（远程）、Q1（能力矩阵）、Q2（隔离）共同的前置，改一次省三次。<strong>（已采纳：M1 实施）</strong>
+2. <strong>P0｜探测量化</strong>：纳管时写回 <code>caps{resume, mcp, model, skill_dir}</code>，让 D2（能否注入）、B5（能否定时）按能力降级，而不是运行时才发现不支持。
+3. <strong>P1｜别做账户热切换</strong>：reference 的 Claude/Codex 账号切换解决的是「用量打满」问题，本地单用户场景收益低，P2 再说。</p>
+<hr />
+<h2 id="cm-b">B. TODO 与每日计划</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>任务字段</td>
+<td>⚠️ 以 PR/issue 承载</td>
+<td>✅ 标题/描述/验收/负责人/日期/标签/自定义属性</td>
+<td>⚠️ B1 有字段，无自定义属性</td>
+<td>补属性</td>
+</tr>
+<tr>
+<td>看板</td>
+<td>❌</td>
+<td>✅ 列/泳道/排序/显示字段可配</td>
+<td>⚠️ B4 有规格，未实现</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>视图保存</td>
+<td>❌</td>
+<td>✅ 保存视图 + 批量操作</td>
+<td>❌</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>任务与运行分离</td>
+<td>⚠️ 会话即任务</td>
+<td>✅ 任务 1:N 运行</td>
+<td>✅ 已实现（Run 独立）</td>
+<td>保持</td>
+</tr>
+<tr>
+<td>每日计划</td>
+<td>❌</td>
+<td>⚠️ 靠自动化生成</td>
+<td>✅ B3 三来源</td>
+<td>保持</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：新建任务并选执行方</th>
+<th>reference：Agent 正在处理任务</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/mul-new-issue.webp" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-issue-working.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P0｜看板先做「状态列 + Agent 泳道」两件事</strong>：reference 的视图配置（分组/排序/显示字段）很完整，但那是 P1；本项目 B4 的验收是「1 屏看清」，先满足它。
+2. <strong>P0｜卡片就是操作台</strong>：reference 的卡片点开才是详情，本项目要求「卡片上暂停/纠偏/验收」，这是差异化，别抄成两跳。
+3. <strong>P1｜自定义属性延后</strong>：B1 的标签 + 优先级够用；等真有人按「客户/产线」分组再加。</p>
+<hr />
+<h2 id="cm-c">C. 分派</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>单播</td>
+<td>⚠️ 在某个 worktree 里对话</td>
+<td>✅ 指派给 Agent / 人 / 小队</td>
+<td>✅ C1</td>
+<td>保持</td>
+</tr>
+<tr>
+<td>广播对比</td>
+<td>✅ 一条 prompt 扇出 5 个 worktree，比完采纳</td>
+<td>❌</td>
+<td>⚠️ C2 有规格</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>队列与并发</td>
+<td>⚠️ 手动开新 worktree</td>
+<td>✅ 每 Agent 并发 + 目录锁</td>
+<td>✅ 已实现（队列/上限）</td>
+<td>补目录锁</td>
+</tr>
+<tr>
+<td>依赖</td>
+<td>❌</td>
+<td>⚠️ 子任务/关联，非 DAG</td>
+<td>✅ C4（DAG + 无环）</td>
+<td>差异化</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：并行 worktree 对比</th>
+<th>reference：多 worktree 列表</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-tab-split.jpg" /></td>
+<td><img alt="" class="shot" src="assets/cmp/reference-worktree-md.jpg" /></td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：指派确认（人 / Agent / 小队）</th>
+<th>reference：新建任务时选 Agent 模式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/mul-assign.webp" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-issue-agent-mode.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P0｜C2 的对比要「并排 diff」而不是「并排会话」</strong>：reference 的价值在 diff 并列 + 采纳合并；只并列聊天记录等于让用户读两份日志。
+2. <strong>P0｜采纳即收口</strong>：采纳后其余 run 置「已放弃」并保留产物（B2 已定义），这条比 reference 完整，别退化成「手动关掉」。
+3. <strong>P1｜小队路由不放进 C</strong>：C 只做「任务→执行体」，小队属于 O4，避免分派逻辑过早耦合协作模型。</p>
+<hr />
+<h2 id="cm-d">D. 对话与纠偏</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>任务内会话</td>
+<td>✅ 原生 chat</td>
+<td>✅ 任务内对话 + 时间线</td>
+<td>✅ D1 已实现（会话/日志）</td>
+<td>保持</td>
+</tr>
+<tr>
+<td>运行中注入</td>
+<td>⚠️ 终端里直接打字</td>
+<td>✅ 「引导」抢占当前回合</td>
+<td>✅ D2 已实现</td>
+<td>补回执</td>
+</tr>
+<tr>
+<td>排队消息</td>
+<td>✅ 回复中继续发，自动排队</td>
+<td>✅ 队列 + 清空</td>
+<td>⚠️ 只做注入</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>Agent 提问</td>
+<td>❌</td>
+<td>✅ 等待输入态</td>
+<td>⚠️ D4 有规格</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>全局对话</td>
+<td>✅ 任意页悬浮 chat（⌘J）</td>
+<td>✅ 悬浮 chat + 转任务</td>
+<td>⚠️ D5 有规格</td>
+<td>P1</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference</th>
+<th>reference：任务内对话</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-browser.jpg" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-chat.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：悬浮 chat</th>
+<th>reference：执行转录</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/mul-chat-fab.webp" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-transcript.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：在任务里直接问 Agent</th>
+<th>reference：拖文件 / 图片进 prompt</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/mul-chat-in-issue.webp" /></td>
+<td><img alt="" class="shot" src="assets/cmp/reference-file-drag.jpg" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P0｜把「注入」和「排队」做成两个态</strong>：reference 的「引导」会抢占当前回合、队列消息等回合结束。本项目现在只有注入，用户看不到「已排队」，容易误判送达。
+2. <strong>P0｜提问必须置顶</strong>：D4 是闭环里的「人等机器」分支，漏了它，run 会静默挂在那里直到超时。
+3. <strong>P1｜全局对话先做「转成 TODO」</strong>：悬浮 chat 的入口价值在随手记，但要能一键落成任务，否则又变成第二个会话垃圾桶。</p>
+<hr />
+<h2 id="cm-e">E. 进度、回写与通知</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>运行状态机</td>
+<td>⚠️ 会话状态</td>
+<td>✅ 8 态（deferred→running→completed…）</td>
+<td>✅ B2/E1（7 态）</td>
+<td>对齐</td>
+</tr>
+<tr>
+<td>回写要求</td>
+<td>❌ 无任务对象</td>
+<td>✅ 状态 + 评论 + 产物</td>
+<td>✅ E2</td>
+<td>补校验</td>
+</tr>
+<tr>
+<td>收件箱</td>
+<td>✅ 通知 + 未读</td>
+<td>✅ 收件箱 + 订阅</td>
+<td>✅ 已实现</td>
+<td>保持</td>
+</tr>
+<tr>
+<td>失败分类</td>
+<td>⚠️ 原样透出</td>
+<td>✅ 认证/限流/超时/工具</td>
+<td>❌</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>审计</td>
+<td>⚠️ 无</td>
+<td>✅ 用量 + 错误页签</td>
+<td>⚠️ E4 有规格</td>
+<td>P1</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：一次运行的完整链路</th>
+<th>reference：执行日志</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/mul-run-flow.webp" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-exec-log.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：任务完成后（回写结果与产物）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/mul-issue-done.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P0｜E2 的「校验」要落到执行器退出路径</strong>：现在是「要求 Agent 自己回写」，reference 靠服务端收尾；本项目应在 run 结束时校验 状态+评论+产物，缺一标黄。<strong>（已采纳：写入 E2 与 §9 第 21 条）</strong>
+2. <strong>P1｜通知只留 4 类</strong>：完成 / 失败 / 需要输入 / 被 @。reference 的订阅粒度更细，但会退化成「消息中心」，违背 E3。
+3. <strong>P2｜不做逐步骤通知</strong>：reference 的通知是「Agent 完成」，这正是本项目要的对齐点；步骤级推送坚决不做。</p>
+<hr />
+<h2 id="cm-f">F. 远程执行（SSH）</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>远程主机接入</td>
+<td>✅ SSH + 自动重连 + 端口转发</td>
+<td>✅ 守护进程（一次性 token）</td>
+<td>❌</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>远程工作目录</td>
+<td>✅ 远程 worktree</td>
+<td>✅ 运行目录 + 目录锁</td>
+<td>⚠️ F2 有规格</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>断线恢复</td>
+<td>✅ 会话/终端恢复</td>
+<td>✅ 排队等待、不重复执行</td>
+<td>⚠️ F3 有规格</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>配置可见</td>
+<td>✅ 图形化添加</td>
+<td>✅ 机器详情 + 在线态</td>
+<td>❌</td>
+<td>P1</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：SSH 远程 worktree</th>
+<th>reference：添加远程服务端</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-ssh.jpg" /></td>
+<td><img alt="" class="shot" src="assets/cmp/reference-remote-add.png" /></td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：按工作区选择运行位置（本地 / 远程）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-ways-to-run.png" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P0｜先做「一次性 token 安装 + 心跳」，不要先做 SSH 密钥管理</strong>：reference 的路径证明更省事，用户只需要粘一条命令；SSH 凭据留到 P2。
+2. <strong>P0｜远程必须与本地同一套分派/纠偏/回写</strong>（§9 第 13 条），否则 F 会退化成「另一套系统」。
+3. <strong>P1｜端口转发别自己写</strong>：用 <code>ssh2</code> 现成能力；reference 的 remote-server-share-desktop 是「共享桌面」，与本项目无关。</p>
+<hr />
+<h2 id="cm-g">G. 工作区布局</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>固定布局</td>
+<td>✅ 侧栏 + 标签 + 无限分屏</td>
+<td>✅ 左栏 + 主区 + 右栏，可折叠</td>
+<td>⚠️ 三栏已实现</td>
+<td>补折叠/保存</td>
+</tr>
+<tr>
+<td>布局保存</td>
+<td>✅ 每工作区独立标签组</td>
+<td>⚠️ 记住宽度</td>
+<td>⚠️ G1 有规格</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>命令面板</td>
+<td>✅ ⌘K / ⌘J</td>
+<td>✅ ⌘K + 快捷键表</td>
+<td>⚠️ G4 有规格</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>终端</td>
+<td>✅ Ghostty 级 WebGL</td>
+<td>❌</td>
+<td>❌</td>
+<td>不建议做</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：分屏与标签</th>
+<th>reference：工作区总览</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-splits.jpg" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-workspace.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P1｜只做「折叠 + 命名保存」</strong>，不做自由 dock：G1 已收敛，reference 的分屏成本极高（终端渲染、会话恢复一堆坑）。
+2. <strong>P1｜命令面板优先于快捷键自定义</strong>：先把「切视图 / 派活 / 纠偏」三个动作做成命令，快捷键自然挂上去。
+3. <strong>P2｜不做终端</strong>：日志走只读流；真要交互，交给 IDE。</p>
+<hr />
+<h2 id="cm-k">K. 上下文桥（harness ↔ IDE）</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>结构化 context 入 prompt</td>
+<td>✅ Design Mode 抓 DOM/CSS/截图</td>
+<td>⚠️ 任务描述 + 项目说明</td>
+<td>⚠️ K1 有规格</td>
+<td>P0（差异化）</td>
+</tr>
+<tr>
+<td>用户可见/可钉住</td>
+<td>⚠️ 截图即上下文</td>
+<td>❌</td>
+<td>⚠️ K3 有规格</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>离线保留</td>
+<td>❌</td>
+<td>❌</td>
+<td>⚠️ K3 stale</td>
+<td>差异化</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：Design Mode 选中元素送进 prompt</th>
+<th>reference：内置浏览器上下文</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-design-mode.jpg" /></td>
+<td><img alt="" class="shot" src="assets/cmp/reference-browser.jpg" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P0｜K1 的 envelope 必须带版本号</strong>：IDE 与 harness 独立发版，字段只会加不会减，没有 <code>schemaVersion</code> 就会在客户机上炸。
+2. <strong>P1｜「可见」比「自动」重要</strong>：K3 要求注入内容在消息里展示；reference 的做法是把截图直接贴进 prompt，用户天然可见——本项目要在消息里渲染 context 卡片。
+3. <strong>P1｜stale 不做 TTL</strong>：保留最后一次直到 IDE 重新上报，比「5 分钟后失效」更符合现场使用。</p>
+<hr />
+<h2 id="cm-l">L. Agent ↔ 域工作区接口</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CLI 读写控制台</td>
+<td>✅ <code>reference worktree/snapshot/click/fill</code></td>
+<td>✅ <code>reference issue/run/comment</code></td>
+<td>⚠️ L1 有规格</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>产物登记</td>
+<td>❌ 以 git 为准</td>
+<td>✅ 评论附件 + PR 关联</td>
+<td>⚠️ L3 有规格</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>脚本化编排</td>
+<td>✅ orchestration API</td>
+<td>✅ CLI + Webhook</td>
+<td>⚠️ T4 有规格</td>
+<td>P2</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：CLI 驱动控制台</th>
+<th>reference：CLI 文档（无 UI 截图）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-cli.jpg" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-concepts.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P0｜CLI 先于 UI</strong>：<code>todo claim/status/comment/artifact link</code> 是 Agent 回写的唯一通道，比任何面板都优先。
+2. <strong>P0｜命令要幂等 + 带 run 作用域</strong>：<code>run_id</code> 由环境变量注入，避免 Agent 猜错目标（reference 用运行级 token 做同样的事）。
+3. <strong>P1｜<code>context get</code> 返回结构而非文本</strong>：同时给 <code>stale</code> 与 <code>schemaVersion</code>，Agent 才能判断要不要追问。</p>
+<hr />
+<h2 id="cm-m">M. IDE 交接</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>产物预览</td>
+<td>✅ Markdown/图片/PDF/仓库文档</td>
+<td>✅ 附件与 PR 卡片</td>
+<td>⚠️ M3 有规格</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>深链打开</td>
+<td>✅ 从 PR/issue 开 worktree</td>
+<td>⚠️ 链接到 PR</td>
+<td>⚠️ M1 有规格</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>归属追溯</td>
+<td>⚠️ 以 git blame 为准</td>
+<td>✅ 关联 PR → 任务</td>
+<td>⚠️ M4 有规格</td>
+<td>P0</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：仓库内 Markdown 预览</th>
+<th>reference：任务关联 PR</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-worktree-md.jpg" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-issue-pr.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P0｜深链先做「有 id 就能开」</strong>：<code>yieldmind-ide://open?path=&amp;selection=&amp;todo=</code> 三个参数足够；不要等 IDE 侧全部就绪。
+2. <strong>P1｜预览只做缩略 + 元数据</strong>：reference 的预览是编辑器级（能改），本项目只读，别跟着做渲染内核。
+3. <strong>P1｜PR 关联优先于「自动 diff 摘要」</strong>：先把「产物→run→todo」链路打通，摘要可以手写。</p>
+<hr />
+<h2 id="cm-n">N. 任务协作（评论 / @ / 快捷操作）</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>评论线程</td>
+<td>✅ Diff 行内批注</td>
+<td>✅ 线程 / 解决 / 表情</td>
+<td>❌</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>@ 路由</td>
+<td>⚠️ 仅通知</td>
+<td>✅ 成员/Agent/小队/任务/@all 五种语义</td>
+<td>❌</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>快捷操作</td>
+<td>❌</td>
+<td>✅ 保存请求 + <code>/</code> 调用</td>
+<td>❌</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>附件版本</td>
+<td>❌</td>
+<td>✅ 同名归并</td>
+<td>❌</td>
+<td>P1</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：评论 @ 审查者</th>
+<th>reference：@ 触发预览</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/mul-comment-mention.webp" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-mention-preview.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：Diff 行内批注</th>
+<th>reference：审阅评论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-annotate-full.jpg" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-review-comment.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P0｜先做「@Agent 起 run」一条</strong>：这是 N 模块唯一直接产生执行的动作；评论线程、表情、解决讨论可以晚一轮。<strong>（已排期：N2 进 M1，其余进 M5）</strong>
+2. <strong>P0｜@ 语义必须写死</strong>：reference 的五种目标里，<code>@任务</code> 只插链接、<code>@all</code> 不触发 Agent——这两条最容易做错，会造成误触发。
+3. <strong>P1｜快捷操作与模板合一</strong>：本项目 B3 已有「模板生成」，N3 直接复用模板表，不新造对象。</p>
+<hr />
+<h2 id="cm-o">O. 项目、工作流与小队</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>项目对象</td>
+<td>❌（用 GitHub/Linear 项目）</td>
+<td>✅ 状态/优先级/负责人/日期/进度</td>
+<td>❌</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>项目资源</td>
+<td>✅ worktree 即资源</td>
+<td>✅ 仓库 ref / 本地目录</td>
+<td>⚠️ O2 有规格</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>阶段工作流</td>
+<td>⚠️ PR 流转</td>
+<td>✅ 阶段 + 每阶段处理方</td>
+<td>❌</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>小队</td>
+<td>❌</td>
+<td>✅ 队长路由 + 花名册 + 再触发规则</td>
+<td>❌</td>
+<td>P1</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：项目详情</th>
+<th>reference：小队详情</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/mul-project.webp" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-squad.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：GitHub / Linear 原生看板</th>
+<th>reference：小队派活</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-github-linear.jpg" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-squad-dispatch.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P1｜项目只做「分组 + 资源 + 进度」</strong>，不做独立生命周期（O1 的状态先借用 TODO 的）。
+2. <strong>P1｜工作流只做「顺序阶段 + 交接」</strong>：reference 的完整工作流有退回/跳过/条件，先实现开发→审查→验收三阶段即可。
+3. <strong>P2｜小队先做「队长一人分派」</strong>：花名册、角色说明、再触发规则都是锦上添花；没有多 Agent 团队前，C2 广播已够用。</p>
+<hr />
+<h2 id="cm-p">P. 技能与自动化</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>技能包</td>
+<td>✅ CLI skills</td>
+<td>✅ 建/导入/挂载/启停</td>
+<td>⚠️ A3 只有 skills 字段</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>定时自动化</td>
+<td>✅ automations</td>
+<td>✅ Autopilot（cron + 时区）</td>
+<td>⚠️ B5</td>
+<td>合并</td>
+</tr>
+<tr>
+<td>Webhook 触发</td>
+<td>⚠️ CLI</td>
+<td>✅ + 事件过滤 + 验签</td>
+<td>❌</td>
+<td>P2</td>
+</tr>
+<tr>
+<td>条件唤醒</td>
+<td>❌</td>
+<td>✅ 9 类条件 + 重复上限</td>
+<td>❌</td>
+<td>P2</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：Skills 列表</th>
+<th>reference：Autopilot 创建</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/mul-skills.webp" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-autopilot-create.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：定时配置（显式时区）</th>
+<th>reference：技能详情</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/mul-autopilot-schedule.webp" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-skill-detail.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P1｜P2 与 B5 合并成一张表</strong>：Autopilot = 定时任务 + runbook + 输出模式。<strong>（已采纳：B5 只留 <code>at</code> / <code>after</code>，cron 归 P2）</strong>
+2. <strong>P1｜技能先做「目录挂载」</strong>：<code>&lt;repo&gt;/.harness/skills/*</code> 直接注入，不建管理界面；reference 的四路导入是生态需求，单机不需要。
+3. <strong>P2｜唤醒条件砍到 3 类</strong>：时间 / 有人回复 / run 结束。其余 6 类等有真实需求再加。</p>
+<hr />
+<h2 id="cm-q">Q. 运行时与执行治理</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>能力矩阵</td>
+<td>⚠️ 启动探测</td>
+<td>✅ 对照表（恢复/MCP/模型/skill 目录）</td>
+<td>❌</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>执行隔离</td>
+<td>✅ 每 worktree 独立</td>
+<td>✅ 独立 workdir/HOME/token</td>
+<td>⚠️ Q2 有规格</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>用量与成本</td>
+<td>✅ 限额进度条</td>
+<td>✅ token/费用/耗时/失败数</td>
+<td>❌</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>错误分类与重试</td>
+<td>⚠️ 原样报错</td>
+<td>✅ 5 类 + 错误码 + 重试</td>
+<td>⚠️ 有重试无分类</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>并发与超时</td>
+<td>⚠️ 手动</td>
+<td>✅ 排队原因可见</td>
+<td>✅ 已实现（并发上限）</td>
+<td>补原因</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：账号用量与限额</th>
+<th>reference：机器与运行时详情</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-usage.jpg" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-machine.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P0｜Q2 先做「每 run 独立目录 + 运行级 token」</strong>：这是安全边界，也是 C2 广播能成立的前提（现状是同目录串行）。
+2. <strong>P1｜错误分类只做 4 类</strong>：认证 / 限流 / 超时 / 其他。reference 的 5 类里「工具」可以先并入「其他」。
+3. <strong>P1｜用量先记 token，不算钱</strong>：费用算法依赖各家定价，容易过期；先展示 token 与耗时，费用 P2。</p>
+<hr />
+<h2 id="cm-r">R. 工作树与代码审阅</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>每 run 独立 worktree</td>
+<td>✅ 核心能力</td>
+<td>✅ 独立 workdir</td>
+<td>❌</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>并行对比与采纳合并</td>
+<td>✅ 扇出 → 比 → 合并</td>
+<td>⚠️ 无对比</td>
+<td>⚠️ C2/R2 有规格</td>
+<td>P0</td>
+</tr>
+<tr>
+<td>行内批注回传</td>
+<td>✅ 批注 → 回给 Agent</td>
+<td>⚠️ 评论（非行级）</td>
+<td>⚠️ R3 有规格</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>提交/推送/PR</td>
+<td>✅ 内建</td>
+<td>✅ 分支 + leftovers ref</td>
+<td>⚠️ R4 有规格</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>变更归属</td>
+<td>⚠️ git blame</td>
+<td>⚠️ 分支级</td>
+<td>⚠️ R5 有规格</td>
+<td>P2</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：并行 worktree</th>
+<th>reference：Diff 行内批注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-split-screen.jpg" /></td>
+<td><img alt="" class="shot" src="assets/cmp/reference-annotate.jpg" /></td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：拖文件进 Agent</th>
+<th>reference：仓库/资源设置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-drag-files.jpg" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-repo.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P0｜R1 是 C2 的硬前置</strong>：没有独立 worktree，「广播对比」和「同目录串行」只能二选一。<strong>（已采纳：R1 并入 M1，C2 留 M3）</strong>
+2. <strong>P0｜未提交产物存隐藏 ref</strong>（reference 的 leftovers 做法）：Agent 经常不 commit，直接丢弃会丢产物，直接进分支会污染历史。
+3. <strong>P2｜批注先不做行级</strong>：R3 可以先用「文件级评论」过渡，行级定位需要 diff 内核，成本高。</p>
+<hr />
+<h2 id="cm-s">S. 通知与检索</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>通知中心</td>
+<td>✅ 完成提醒 + 未读标记</td>
+<td>✅ 收件箱 + 订阅 + 分类开关</td>
+<td>⚠️ E3 有收件箱</td>
+<td>补分类</td>
+</tr>
+<tr>
+<td>全局搜索</td>
+<td>✅ ⌘K（worktree/文件/命令）</td>
+<td>✅ ⌘K（页面/命令/成员/任务，支持拼音）</td>
+<td>❌</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>快捷键</td>
+<td>✅ 可自定义</td>
+<td>✅ 固定表</td>
+<td>⚠️ G4</td>
+<td>P1</td>
+</tr>
+<tr>
+<td>活动流</td>
+<td>✅ 按仓库/任务</td>
+<td>✅ 时间线</td>
+<td>❌</td>
+<td>P2</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：⌘K 跳转 worktree</th>
+<th>reference：成员与权限</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-quickopen.jpg" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-members.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P1｜搜索先做「任务 + 评论」两域</strong>：拼音匹配是 reference 的亮点，但可以用 SQLite FTS + 拼音表低成本实现。
+2. <strong>P1｜⌘K 先做命令，不做全文</strong>：切视图 / 派活 / 纠偏三个命令的收益远高于搜历史评论。
+3. <strong>P2｜不做活动流</strong>：看板 + 收件箱已经承载「发生了什么」，再做一个时间线是重复。</p>
+<hr />
+<h2 id="cm-t">T. 集成与客户端</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>reference</th>
+<th>reference</th>
+<th>本项目</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>代码托管</td>
+<td>✅ GitHub / Linear / Jira</td>
+<td>✅ GitHub + Gitea/GitLab</td>
+<td>⚠️ T1 有规格</td>
+<td>P2</td>
+</tr>
+<tr>
+<td>聊天 Bot</td>
+<td>❌</td>
+<td>✅ Slack/飞书/钉钉/企微/Telegram</td>
+<td>⚠️ T2 有规格</td>
+<td>P2</td>
+</tr>
+<tr>
+<td>移动端</td>
+<td>✅ 通知 + 追问</td>
+<td>✅ iOS</td>
+<td>⚠️ T3 有规格</td>
+<td>P2</td>
+</tr>
+<tr>
+<td>CLI 自动化</td>
+<td>✅ <code>reference</code> CLI</td>
+<td>✅ <code>reference</code> CLI</td>
+<td>⚠️ T4 有规格</td>
+<td>P2</td>
+</tr>
+<tr>
+<td>多用户/权限</td>
+<td>⚠️ 单机</td>
+<td>✅ 工作区 + 三角色</td>
+<td>⚠️ T5 有规格</td>
+<td>P2</td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：GitHub / Linear 原生</th>
+<th>reference：工作区归属（站点）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/reference-github-linear.jpg" /></td>
+<td><img alt="" class="shot" src="assets/cmp/mul-site.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>reference：在对话里建仓库并接手</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img alt="" class="shot" src="assets/cmp/mul-chat-repo.webp" /></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>改进建议</strong>
+1. <strong>P2｜集成从「PR 关联」单点切入</strong>：先做「任务关联 PR + 合并后改状态」，这是 T1 里唯一直接影响闭环的部分。
+2. <strong>P2｜Bot 只做一个平台</strong>：选团队实际在用的那个（内部大概率是飞书），其余留在规格里。
+3. <strong>P2｜移动端只做「看 + 追问」</strong>：reference 的移动端定位就是通知+steer，不要试图在手机上编排。</p>
+<hr />
+<h2 id="cmp-skip">附：不建议抄的能力</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>归属</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>终端分屏 / WebGL 渲染 / 会话恢复</td>
+<td>reference</td>
+<td>与「编排控制台」定位冲突，成本极高</td>
+</tr>
+<tr>
+<td>内置浏览器 / Design Mode</td>
+<td>reference</td>
+<td>本项目由 IDE 承载域面板与选区</td>
+</tr>
+<tr>
+<td>代码编辑器 / Monaco 全功能</td>
+<td>reference</td>
+<td>只保留只读 Diff 与外部打开</td>
+</tr>
+<tr>
+<td>插件宿主沙箱 / 主题包</td>
+<td>reference</td>
+<td>面板契约已降为 P2</td>
+</tr>
+<tr>
+<td>多租户 SaaS / Docker 自托管</td>
+<td>reference</td>
+<td>主形态是本地单用户安装包</td>
+</tr>
+<tr>
+<td>逐步骤通知 / 复杂订阅规则</td>
+<td>reference</td>
+<td>与 E3「只在需要决策时打扰」冲突</td>
+</tr>
+</tbody>
+</table></div></div>
+  <div class="part"><h2 class="part-head" id="orig">原话拆解与修改建议</h2><p class="part-lead">项目起点的原话拆解，仅作追溯。</p><div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>序号</th>
+<th>需求</th>
+<th>修改建议</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>多 Agent 编排控制台：把每天的任务规划、分发、进度监控、实时纠偏串成闭环</td>
+<td>拆成三条可验收流程（早会 / 纠偏 / 收工），每条定指标（≤5 分钟派完、≤10 秒送达纠正、1 屏看清状态）</td>
+</tr>
+<tr>
+<td>2</td>
+<td>统一管理多个 Agent，含本地与 SSH 远程</td>
+<td>远程与本地同级：同一套分派、纠偏、回写；补心跳、并发上限、审批策略、工具白名单</td>
+</tr>
+<tr>
+<td>3</td>
+<td>统一对话与调度：同一界面给不同 Agent 发指令、回答问题、纠正方向</td>
+<td>纠偏必须进入<strong>运行中</strong>的 run，在最近 step 边界送达并留回执；不要排到下一轮</td>
+</tr>
+<tr>
+<td>4</td>
+<td>支持把任务分发给多个 Agent 执行</td>
+<td>区分单播 / 广播 / 排队；广播按 worktree 隔离，产出并列对比、用户采纳其一</td>
+</tr>
+<tr>
+<td>5</td>
+<td>每日 TODO List 工作流：TODO 发给对应 Agent，看板看进度与状态，实时纠偏</td>
+<td>补状态机（待办→排队→进行中→等待输入→待验收→完成/取消）、每日计划三来源、定时任务显式时区</td>
+</tr>
+<tr>
+<td>6</td>
+<td>聊天窗口可纠正</td>
+<td>与第 3 条合并为同一个 steer 能力，避免两套写入路径</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Agent 跑完可以回应 TODO</td>
+<td>强制回写：状态 + 结论 + 产物（分支/PR/文件/测试），未回写视为未完成并标黄</td>
+</tr>
+</tbody>
+</table></div>
+<blockquote>
+<p>原话中两处 <code>4）</code> 为编号笔误，已按语义拆为第 5、6 条。</p>
+</blockquote></div>
+  <div class="doc-foot">
+    由 <code>scripts/build-docs-html.py</code> 生成：源文件
+    <code>docs/REQ-multi-agent-workspace.md</code> + <code>docs/CMP-modules-reference-reference.md</code> +
+    <code>docs/REQ-original.md</code>。截图取自 reference / reference 官方文档，仅作内部对比。
+  </div>
+</main>
+</div>
+<script>
+  // 滚动高亮导航
+  const links = [...document.querySelectorAll('.nav a')];
+  const targets = links.map(a => document.querySelector(a.getAttribute('href'))).filter(Boolean);
+  const onScroll = () => {
+    const y = window.scrollY + 120;
+    let idx = 0;
+    targets.forEach((t, i) => { if (t.offsetTop <= y) idx = i; });
+    links.forEach(l => l.classList.remove('active'));
+    if (links[idx]) links[idx].classList.add('active');
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+</script>
+</body>
+</html>

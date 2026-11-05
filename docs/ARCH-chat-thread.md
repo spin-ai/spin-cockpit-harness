@@ -1,0 +1,188 @@
+# CHAT：从「两态」到「单会话（thread）」
+
+> 起因：Chat 在两个状态间切换（未选任务 = 分派表单，选中任务 = 会话），但这不是产品设计，而是数据模型的副作用——消息只能挂在 `todo_id` 上，没有任务就没有地方放消息。
+> 本文记录改造后的模型、`send` 状态机、迁移方式与遗留边界。差距基线见 [`GAP-chat.md`](GAP-chat.md)。
+
+---
+
+## 1. 根因
+
+改造前：
+
+```
+todos(id, ...)
+messages(id, todo_id, ...)     ← todo_id 是消息的宿主
+TaskChat({ todo: Todo | null }) ← 组件唯一输入是“有没有任务”
+dispatch() { 先建 todo，再建 run }
+```
+
+因果被写反了：**先有任务，才有对话**。于是只能加一个 `todo == null` 分支当“分派表单”，两态由此产生。副作用：
+
+- 分派、发送、附件、快捷键……每个能力都要在两条分支写两遍；
+- 分派原话不入会话（`dispatch` 不写 user message），任务会话第一屏只有 `system: run started`；
+- 分派失败（如没有 agent）会先落一个孤儿 todo 再抛错；
+- 真正的“不绑任务的会话”（D5 全局对话）在表结构上无法表达。
+
+---
+
+## 2. 目标与非目标
+
+| 目标 | 非目标（本期不做） |
+|---|---|
+| 一个会话实体，消息挂 session，不挂 task | 无任务的“纯聊天”ACP 会话（需要常驻 client，P1） |
+| Chat 只有一种渲染：永远是一个 thread | 把 Chat 做成看板 / 并行总览 |
+| 派活 = 会话里的一条消息 → 任务草稿 | agent 在 Terminal 内启动、由 harness 捕获完成（P0 遗留） |
+| 纠偏有真实投递回执，不伪造「已注入」 | 消息虚拟化 / Markdown / diff 渲染 |
+| 任务操作只在 TODO 行内维护，Chat 不重复 | 多标签会话、thread 归档 |
+
+---
+
+## 3. 数据模型
+
+### 3.1 新增/变更
+
+```sql
+threads(
+  id, todo_id,            -- todo_id 为空 = 尚未派活的“新任务”会话
+  title, project_id, project, agent_id,
+  created_at, updated_at
+)
+
+messages(
+  id, todo_id, run_id, role, kind, content, injected, created_at,
+  thread_id,              -- 新增：真正的宿主
+  delivery                -- 新增：pending | injected | failed（仅纠偏消息）
+)
+```
+
+- `messages.todo_id` 保留但由 thread 派生，只用于按项目过滤与旧数据兼容。
+- 一个 todo 对应一个 thread；thread 可以先于 todo 存在。
+- `delivery` 只描述“这条纠偏消息投递到 run 的结果”，不是任务状态。
+
+### 3.2 迁移（`electron/db.mjs`）
+
+启动时自动执行，幂等：
+
+1. 读取旧行，`ALTER TABLE messages ADD COLUMN thread_id / delivery`（失败即已存在）；
+2. 每个没有 thread 的 todo 生成一个 thread（`th<seq>`，继承 title / projectId / cwd / agentId）；
+3. 每条 `thread_id` 为空的消息，按 `todo_id` 回填到对应 thread；
+4. 没有任何 todo 归属的孤儿消息丢弃；
+5. 有变更则 `persist()` 一次。
+
+已用「旧 8 列 messages 表 + 1 todo + 1 message」实测：迁移后 thread 自动生成、消息 `threadId` 正确、重开 DB 结果稳定。
+
+---
+
+## 4. 单一发送路径
+
+`send({ threadId, text, agentId, projectId })` 是唯一入口，先落消息，再按会话状态决定行为：
+
+| 会话状态 | 行为 | 返回值 `mode` |
+|---|---|---|
+| 未派活（`thread.todoId == null`） | 建 todo（标题=消息前 120 字）+ 排队 run；消息留在 thread 顶部，`runId` 为空 | `dispatch` / `error` |
+| 有 `running` / `waiting_input` run | 纠偏：消息 `delivery=pending`，对同一 ACP client 发 `session/prompt` | `steer` |
+| 有 `queued` run（还没开跑） | 挂到该 run 上作为补充指令，不另开 run | `queued` |
+| 有 todo、无 run、未确认 | 新建 run，消息 `runId` 指向它，并在 `startRun` 时拼进 prompt | `run` |
+| 已确认 | 只记录 | `note` |
+| 没有可用 agent | 只记录 + 一条 `system/error` 卡片，**不创建任务** | `error` / `note` |
+
+要点：
+
+- **先落消息，再建任务**：失败时用户原话仍在会话里，不再产生孤儿 todo。
+- **不抛错给 UI 清空草稿**：只有 `mode === "error"` 时保留输入框内容。
+- `dispatch` / `comment` 保留为兼容别名（`dispatch` 转发到 `send`，`comment` 只记录）。
+
+### 4.1 run 的 prompt 组装
+
+```
+任务：<todo.title>
+描述：<todo.desc>            （如有）
+验收：<acceptance>           （如有）
+补充指令：
+- <本轮 runId 绑定的 user 消息>
+完成后给出结论；如需改文件请直接修改。
+```
+
+派活原话由标题承载，`text === todo.title` 时不重复拼进“补充指令”。
+
+---
+
+## 5. 投递回执
+
+改造前：`injected: true` 无条件写死，`prompt` 失败只记 event，UI 仍显示「已注入」。
+
+改造后（`deliverSteer`）：
+
+```
+写消息 delivery=pending
+  ├─ 无 handle        → delivery=failed + 错误卡片
+  ├─ prompt 成功       → delivery=injected, injected=true
+  └─ prompt 失败       → delivery=failed（保留消息，可点“重发”）
+run 结束 / 停止时 → settlePendingSteers：所有 pending 一律 failed
+```
+
+UI 三种态可区分：`投递中…` / `已注入` / `投递失败 · 重发`（点击触发 `retryMessage`）。
+
+---
+
+## 6. UI
+
+```
+CHAT
+├── pane-head        状态 pill（来自 todo） + 「＋ 新任务」
+├── thread-bar       key / 项目名 / 标题 / agent 下拉 / 项目下拉 / 运行时长
+├── chat-scroll      消息按 run 分组（run 分隔线：runId · 状态 · 耗时）
+└── composer         textarea（Enter 发送 / Shift+Enter 换行）+ 发送
+```
+
+- **只有一个渲染分支**：`thread == null` 时提示「＋ 新任务」，其余一律渲染会话。
+- **没有第二份操作按钮**：停止 / 确认 / 派活 / 重试只在 TODO 行内（`TaskPane.QuickActions`），Chat 不再重复。
+- **agent 是会话属性**，运行中禁用、空闲可改；**project 只在派活前（草稿会话）可选**，任务一旦绑定项目即锁定（任务 = project → terminal → agent 的前提）。派活时按会话的 project 建任务，不再受全局 `projectPath` 限制。
+- 滚动遵循“贴底才跟随”：用户翻历史时，流式追加不会把视口拽回去。
+- 新任务入口：顶栏「＋ 新任务」/ Chat 内「＋ 新任务」/ ⌘N，全部走 `newThread`，**删除了 NewTodo 表单**（原来的第二分派入口）。
+
+---
+
+## 7. 代码地图
+
+| 文件 | 变更 |
+|---|---|
+| `electron/db.mjs` | `threads` 表；messages 新增 `thread_id` / `delivery`；`addMessage(threadId, …)`；启动迁移；修复 persist 中 projects 重复插入导致事务失败的问题 |
+| `electron/main.mjs` | `threadForTodo` / `ensureThreads` / `newThreadRecord` / `resolveThread` / `queueRun` / `activeRunOf` / `deliverSteer` / `settlePendingSteers`；`send`、`newThread`、`setThreadAgent`、`setThreadProject`、`retryMessage`；`startRun` / `handleUpdate` / 审批 / 确认 / 停止 / 重试 / 采纳全部改为 thread 维度；`files:*` 支持 root |
+| `src/types.ts` | `Thread`、`Delivery`、`Message.threadId`、`State.threads` |
+| `src/App.tsx` | todo + thread 双选择（以 thread 为主）、`selectTodo`、`newTask`、scoped 按 thread 过滤、文件预览跟随 run worktree |
+| `src/components/TaskChat.tsx` | 单态重写：thread bar、run 分隔、投递回执、可保留草稿的发送 |
+| `src/components/FilePanel.tsx` | `root` 参数，可指向 run 的 worktree |
+| `src/components/NewTodo.tsx` | 删除（单入口化） |
+| `src/styles.css` | `.thread-bar` / `.thread-select` / `.run-divider` / `.delivery.*` / `.composer textarea` / `.worktree-tag` |
+
+---
+
+## 8. 遗留边界（明确不做/未做）
+
+| 项 | 说明 |
+|---|---|
+| D5 纯聊天 | 未绑任务的会话目前发一句话就会派活。真正“先聊完再转 TODO”需要 run-less 的常驻 ACP client，属下一阶段 |
+| Chat ↔ Terminal 同源 | Terminal 仍是独立登录 shell，不在里面启动 agent；run 的工作目录（worktree）只在文件预览里体现。终止“双通道”需要把 ACP 会话绑定到终端标签，或反之以 pty 为准 |
+| 多 run 的 thread | 已按 runId 分组展示，但没有折叠/回放控制 |
+| 重试 & worktree | 每次重试新建 worktree，终端标签仍指向项目目录，需要在终端侧支持“跟随 run” |
+| 消息量 | 无虚拟化，全量 state 广播；长会话仍会慢 |
+| 失败重发 | 只支持对“当前 active run”重发；run 已结束则需要重新发送一条消息 |
+
+---
+
+## 9. 验收清单（本版可验证）
+
+1. 顶栏「＋ 新任务」→ Chat 出现空白会话，输入一句话 → 立即出现任务 + 会话首条 user 消息 + run 分隔线。
+2. 任务运行中在同一输入框发消息 → 消息出现「投递中…」→「已注入」；失败时显示「投递失败 · 重发」。
+3. 运行中换 agent：下拉禁用；空闲时可改，下一次 run 生效。草稿会话可切项目（会同步切换工作区项目）；任务一旦派活，项目下拉锁定。
+4. 任务已确认后再发消息 → 只记录，不新建 run。
+5. 没有检测到 agent 时派活 → 会话里出现错误卡片，**不产生任务**，输入框内容保留。
+6. 点 TODO 行 → Chat 切到该任务的会话；发消息后运行 → 文件预览自动切到该 run 的 worktree（显示 `run worktree` 标记）。
+7. 旧数据库启动 → 自动生成 threads，历史消息仍按任务可见。
+
+---
+
+## 10. 回滚
+
+数据库是单文件 `harness.db`，升级前备份即可。回滚到旧版本时，新增的 `threads` 表与 `messages.thread_id` / `delivery` 列会被旧代码忽略；旧代码的 `messages.todo_id` 仍在写入，不会丢历史。
