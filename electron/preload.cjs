@@ -10,9 +10,13 @@ contextBridge.exposeInMainWorld("harness", {
   chooseProject: () => ipcRenderer.invoke("harness:chooseProject"),
   pickProjectFolder: () => ipcRenderer.invoke("harness:pickProjectFolder"),
   createTerminal: (cwd, opts = {}) => ipcRenderer.invoke("terminal:create", { cwd, ...opts }),
+  attachTerminal: (id) => ipcRenderer.invoke("terminal:attach", { id }),
   terminalInput: (id, data) => ipcRenderer.invoke("terminal:input", { id, data }),
   closeTerminal: (id) => ipcRenderer.invoke("terminal:close", { id }),
   terminalResize: (id, cols, rows) => ipcRenderer.invoke("terminal:resize", { id, cols, rows }),
+  clipboardRead: () => ipcRenderer.invoke("clipboard:read"),
+  clipboardWrite: (text) => ipcRenderer.invoke("clipboard:write", { text }),
+  openExternal: (url) => ipcRenderer.invoke("shell:openExternal", { url }),
   filesList: (rel, root) => ipcRenderer.invoke("files:list", { rel, root }),
   filesRead: (rel, root) => ipcRenderer.invoke("files:read", { rel, root }),
   previewPick: (webContentsId, root) => ipcRenderer.invoke("preview:pick", { webContentsId, root }),
@@ -27,5 +31,10 @@ contextBridge.exposeInMainWorld("harness", {
     const handler = (_event, payload) => cb(payload);
     ipcRenderer.on("terminal:url", handler);
     return () => ipcRenderer.removeListener("terminal:url", handler);
+  },
+  onTerminalExit: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("terminal:exit", handler);
+    return () => ipcRenderer.removeListener("terminal:exit", handler);
   },
 });

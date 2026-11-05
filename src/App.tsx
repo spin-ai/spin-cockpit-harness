@@ -279,7 +279,7 @@ export default function App() {
             {collapsed.chat ? (
               <CollapsedPane label="CHAT" title="Chat" icon={<ChatIcon size={16} />} onExpand={() => togglePane("chat")} />
             ) : (
-              <TaskChat state={scoped} thread={thread} now={now} act={act} onSelect={selectTodo} onNewThread={() => void newThread()} context={pendingContext} onClearContext={() => setPendingContext(null)} onCollapse={() => togglePane("chat")} enterToSend={state.settings?.enterToSend ?? true} />
+              <TaskChat state={scoped} thread={thread} now={now} act={act} onSelect={selectTodo} onNewThread={() => void newThread()} context={pendingContext} onClearContext={() => setPendingContext(null)} onCollapse={() => togglePane("chat")} enterToSend={state.settings?.enterToSend ?? true} confirmStop={state.settings?.confirmStop ?? false} />
             )}
             {sep2 === "6px" ? <Splitter onDelta={resizeChat} title="拖拽调整 Chat 列宽度" /> : <div className="splitter-off" />}
             {collapsed.terminal ? (
