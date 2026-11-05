@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, shell, dialog, clipboard } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { spawnSync, execFile } from "node:child_process";
@@ -1039,7 +1039,10 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId } = {}) =
   } catch (err) {
     if (command) throw err;
     store.addEvent("terminal.shell_fallback", `terminal.shell_fallback ${shell} → ${fallbackShell}: ${String(err?.message || err).slice(0, 120)}`);
-    term = pty.spawn(fallbackShell, spawnArgs, spawnOptions);
+    // cwd 可能已被删除（worktree 清理等）：回落到项目根目录，避免终端直接起不来
+    let safeCwd = cwdResolved;
+    try { fs.accessSync(safeCwd); } catch { safeCwd = activeProjectPath(); }
+    term = pty.spawn(fallbackShell, spawnArgs, { ...spawnOptions, cwd: safeCwd });
   }
   let agent = null;
   if (command) {
@@ -1054,10 +1057,13 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId } = {}) =
     store.addEvent("agent.started", `agent.started ${agent.name} @${agent.alias}`);
   }
   const send = (data) => { if (win && !win.isDestroyed()) win.webContents.send("terminal:data", { id, data }); };
-  const info = { url: null, tail: "" };
+  // attached=false 时先把输出攒起来：终端可能在渲染进程挂载前就已经打印了 banner
+  // （例如从下拉框启动 Agent），挂载后通过 terminal:attach 一次性回放，避免首屏空白。
+  const info = { url: null, tail: "", attached: false, buffer: "", exited: false, exitCode: null };
   terminalUrls.set(id, info);
   term.onData((data) => {
-    send(data);
+    if (info.attached) send(data);
+    else info.buffer = (info.buffer + data).slice(-512 * 1024);
     if (settings.autoDetectDevServerUrl === false) return;
     // dev server 地址探测：去 ANSI 后跨 chunk 保留尾部，发现变化就通知渲染进程
     info.tail = (info.tail + data).slice(-4000);
@@ -1067,9 +1073,25 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId } = {}) =
       if (win && !win.isDestroyed()) win.webContents.send("terminal:url", { id, url });
     }
   });
-  term.onExit(() => { terminals.delete(id); terminalUrls.delete(id); send("\r\n[terminal exited]\r\n"); });
+  term.onExit(({ exitCode, signal } = {}) => {
+    terminals.delete(id);
+    info.exited = true;
+    info.exitCode = typeof exitCode === "number" ? exitCode : null;
+    info.buffer = "";
+    if (win && !win.isDestroyed()) win.webContents.send("terminal:exit", { id, exitCode: info.exitCode, signal: signal ?? null });
+  });
   terminals.set(id, term);
   return { id, cwd: cwdResolved, agent };
+});
+
+// 渲染进程挂载后调用：返回挂载前的输出，并切换为实时推送（之后的输出只走 terminal:data）
+ipcMain.handle("terminal:attach", (_e, { id } = {}) => {
+  const info = terminalUrls.get(id);
+  if (!info) return { data: "", exited: true, exitCode: null, missing: true };
+  const data = info.buffer;
+  info.buffer = "";
+  info.attached = true;
+  return { data, exited: info.exited, exitCode: info.exitCode };
 });
 
 ipcMain.handle("terminal:input", (_e, { id, data }) => {
@@ -1082,7 +1104,21 @@ ipcMain.handle("terminal:resize", (_e, { id, cols, rows }) => {
 
 ipcMain.handle("terminal:close", (_e, { id }) => {
   const term = terminals.get(id);
-  if (term) { try { term.kill(); } catch { /* ignore */ } terminals.delete(id); terminalUrls.delete(id); }
+  if (term) { try { term.kill(); } catch { /* ignore */ } terminals.delete(id); }
+  terminalUrls.delete(id);
+});
+
+ipcMain.handle("clipboard:read", () => clipboard.readText());
+
+ipcMain.handle("clipboard:write", (_e, { text } = {}) => {
+  clipboard.writeText(String(text ?? ""));
+});
+
+ipcMain.handle("shell:openExternal", async (_e, { url } = {}) => {
+  const value = String(url || "");
+  if (!/^(https?:|mailto:)/i.test(value)) return false;
+  await shell.openExternal(value);
+  return true;
 });
 
 
