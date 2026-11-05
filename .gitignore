@@ -1,0 +1,29 @@
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+out/
+release/
+
+# 运行数据
+*.sqlite
+*.sqlite3
+*.db
+data/
+logs/
+*.log
+
+# 环境与密钥
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
