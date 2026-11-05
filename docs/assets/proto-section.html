@@ -1,0 +1,392 @@
+
+  <h2 id="p1" style="border-bottom:0">界面原型（Wireframe）</h2>
+  <p class="lead">以下为低保真原型，用于对齐信息结构与交互路径，<b>不是视觉稿</b>。每张图右上角的 ①②③ 编号对应 §3 的需求编号。</p>
+  <p class="mini" style="margin:6px 0 0;color:#6b7684">注：看板已按 B4 决策改为 5 列（「排队」并入「待办」），本图 P1 仍为 6 列，仅作结构示意。</p>
+  <div class="legend" style="margin-bottom:6px">
+    <span><span class="sw"></span>实线 = 常驻区域</span>
+    <span><span class="sw d"></span>虚线 = 可折叠 / 可拖宽</span>
+    <span><span class="ann t">①</span> 需求锚点</span>
+  </div>
+
+  <!-- P1 -->
+  <div class="proto">
+    <div class="proto-title"><span class="n">P1</span><h4>主工作台 · 四区布局</h4><span class="cap">G1 / G3 / B4 / D1 / E1 · 对应「1 屏可见」指标</span></div>
+    <div class="wire">
+      <div class="chrome"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">yieldmind-harness — workspace: 良率日常</span><span style="font-size:10px">⌘K</span></div>
+
+      <div class="ws">
+        <!-- 顶栏 -->
+        <div class="box top">
+          <span class="pill t">工作区：良率日常</span>
+          <span class="tab on">看板</span>
+          <span class="tab">日历</span>
+          <span class="grow"></span>
+          <span class="pill">收件箱 <b>3</b></span>
+          <span class="pill g">● 主机 3/3</span>
+          <span class="pill">布局：已保存 ▾</span>
+          <span class="ann">G1</span>
+        </div>
+
+        <!-- 左：Agent / 任务 -->
+        <div class="box left">
+          <div class="ph"><span><span class="ico"></span> AGENTS</span><span class="mini">3 在线 · 5 run</span><span class="ann">A4</span></div>
+          <div class="body" style="padding:5px">
+            <div class="agent-item on"><span class="avatar av1">C</span><span style="flex:1">claude-main</span><span class="dotl g"></span><span class="faint">2/3</span></div>
+            <div class="agent-item"><span class="avatar av2">X</span><span style="flex:1">codex-local</span><span class="dotl g"></span><span class="faint">1/2</span></div>
+            <div class="agent-item"><span class="avatar av3">P</span><span style="flex:1">pi@lab-gpu</span><span class="dotl y"></span><span class="faint">等待目录</span></div>
+            <div class="agent-item"><span class="avatar">O</span><span style="flex:1">opencode@dev2</span><span class="dotl r"></span><span class="faint">离线 12m</span></div>
+            <div style="height:1px;background:#eef1f4;margin:5px 2px"></div>
+            <div class="ph" style="padding:2px 2px 4px;border:0;background:none"><span class="mini" style="font-weight:700;color:#68737f">TODOS · 今日 12</span><span class="mini">＋</span></div>
+            <div class="todo-line"><span class="dotl b"></span><span class="txt">查 W03 良率掉的根因</span><span class="pill b">进行中</span></div>
+            <div class="todo-line" style="background:#f6f8fa"><span class="dotl y"></span><span class="txt">帕累托图：Top5 Bin</span><span class="pill y">待验收</span></div>
+            <div class="todo-line"><span class="dotl"></span><span class="txt">Hero 页标题改大</span><span class="pill">待办</span></div>
+            <div class="todo-line"><span class="dotl g"></span><span class="txt">列画像：FT-1103</span><span class="pill g">完成</span></div>
+            <div class="todo-line"><span class="dotl r"></span><span class="txt">回写昨晚的测试报告</span><span class="pill r">失败</span></div>
+            <div class="todo-line" style="color:#94a0ad"><span class="dotl"></span><span class="txt">＋ 从昨日滚动 3 条…</span></div>
+          </div>
+        </div>
+
+        <!-- 中：域面板 -->
+        <div class="box center">
+          <div class="tabbar">
+            <span class="t on">▦ 看板</span>
+            <span class="t">任务详情</span>
+            <span class="t">统计</span>
+            <span class="t">收件箱 3</span>
+            <span class="t" style="color:#a3adb8">＋</span>
+            <span style="flex:1"></span><span class="t" style="color:#a3adb8">只读预览</span>
+            <span class="ann i">M3</span>
+          </div>
+          <div class="body">
+            <div class="between" style="font-size:9.5px;color:#77828f">
+              <span>泳道 <b style="color:#3d4753">按 Agent</b> · 今日 12 条 · 30s 内更新</span>
+              <span class="row"><span class="pill">筛选</span><span class="pill">排序：优先级</span></span>
+            </div>
+            <div class="board">
+              <div class="col">
+                <div class="ch"><span>待办 3</span><span class="n">＋</span></div>
+                <div class="kcard"><span class="ttl">Hero 页标题改大</span><span class="pill">未指派</span><div class="meta2"><span>P2</span><span>—</span></div></div>
+                <div class="kcard"><span class="ttl">补 FT-1104 列画像</span><span class="pill b">@codex</span><div class="meta2"><span>P1</span><span>—</span></div></div>
+                <div class="kcard" style="opacity:.6"><span class="ttl">输出周报草稿</span><span class="pill">阻塞中</span><div class="meta2"><span>依赖 #12</span></div></div>
+              </div>
+              <div class="col">
+                <div class="ch"><span>排队 1</span></div>
+                <div class="kcard"><span class="ttl">W03 良率根因</span><span class="pill y">@pi</span><div class="meta2"><span>等待目录释放</span><span>0:42</span></div></div>
+              </div>
+              <div class="col">
+                <div class="ch"><span>进行中 2</span></div>
+                <div class="kcard sel"><span class="ttl">W03 良率掉的根因</span><span class="pill t">@claude</span><div style="color:#68737f;margin-top:2px">正在跑 <code style="font-size:8px;padding:0 2px">sql …group by bin</code></div><div class="meta2"><span>已用 6:12</span><span class="ann">B4</span></div></div>
+                <div class="kcard"><span class="ttl">帕累托图 Top5</span><span class="pill t">@claude</span><div class="meta2"><span>已用 2:30</span></div></div>
+              </div>
+              <div class="col">
+                <div class="ch"><span>等待输入 1</span></div>
+                <div class="kcard" style="border-color:#f0dcb4;background:#fffdf7"><span class="ttl">报告口径确认 ⬆</span><span class="pill y">@codex</span><div style="color:#9a6209;margin-top:2px">问：按 die 还是按 wafer？</div><div class="meta2"><span>已置顶</span><span class="ann">D4</span></div></div>
+              </div>
+              <div class="col">
+                <div class="ch"><span>待验收 2</span></div>
+                <div class="kcard"><span class="ttl">帕累托图：Top5 Bin</span><span class="pill b">@claude</span><div class="meta2"><span>产物 2</span><span>未读</span></div></div>
+                <div class="kcard" style="border-color:#f0dcb4"><span class="ttl">测试报告回写</span><span class="pill y">缺回写</span><div class="meta2"><span>标黄</span><span class="ann w">E2</span></div></div>
+              </div>
+              <div class="col">
+                <div class="ch"><span>完成 3</span></div>
+                <div class="kcard"><span class="ttl">列画像：FT-1103</span><span class="pill g">done</span><div class="meta2"><span>1h20m</span><span>✓</span></div></div>
+                <div class="kcard"><span class="ttl">数据集接入</span><span class="pill g">done</span><div class="meta2"><span>8m</span></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右：会话 -->
+        <div class="box right">
+          <div class="ph"><span>SESSION · #W03</span><span class="row"><span class="dotl g"></span><span class="mini">run 7</span></span><span class="ann">D1</span></div>
+          <div class="chat">
+            <div class="msg sys">run #7 started · claude-main · 14:02</div>
+            <div class="msg a"><b style="font-size:9px">claude</b><br>先按 wafer 维度看 W03 的 bin 分布…</div>
+            <div class="msg a" style="font-family:var(--mono);font-size:8.5px;background:#f8fafc">⚙ sql · select bin,count(*) … <span style="color:#94a0ad">(1.2s)</span></div>
+            <div class="msg u">按 die 维度，只看 FT 段 <span class="inj">已注入</span></div>
+            <div class="msg a" style="border-color:#cbe8e2;background:#f4fbf9">收到，切到 die 维度重跑，范围 FT…</div>
+            <div class="msg a" style="opacity:.65">⏸ 暂停 / ⏹ 中止 / ↻ 重试 <span style="color:#94a0ad">（当前 run 内，不新起）</span></div>
+          </div>
+          <div class="between" style="padding:3px 7px;border-top:1px solid #eef1f4;font-size:8.5px;color:#94a0ad">
+            <span>run 7 · 6:12 · $0.08</span><span>12 tools · 3 files</span>
+          </div>
+          <div class="composer">
+            <span class="fake">发消息 / /steer…</span>
+            <span class="pill t">注入</span>
+            <span class="ann i">D2</span>
+          </div>
+        </div>
+
+        <!-- 下：日志 -->
+        <div class="box bot dash">
+          <div class="ph"><span>LOG · 实时</span><span class="mini">自动滚动 · 过滤 ▾ · 清空</span><span class="ann">E1</span></div>
+          <div class="body" style="padding:4px 9px;overflow:hidden">
+            <div class="logline"><span class="tm">14:02:11</span> <span class="ok">run.started</span> todo=#12 agent=claude-main host=local</div>
+            <div class="logline"><span class="tm">14:02:13</span> exec <span style="color:#3d4753">claude -p "分析 W03 …" --cwd ~/ym/wafer</span></div>
+            <div class="logline"><span class="tm">14:02:19</span> <span class="wn">run.message</span> injected=true len=32</div>
+            <div class="logline"><span class="tm">14:04:02</span> <span class="er">run.failed</span> todo=#19 exit=1 <span style="color:#94a0ad">— 可重试</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <span><b>左</b> Agent + 今日 TODO（G1）</span>
+      <span><b>中</b> 看板 / 任务详情 / 统计（G3）</span>
+      <span><b>右</b> 会话常驻，注入入口（D2）</span>
+      <span><b>下</b> 日志（可折叠虚线）</span>
+      <span>顶栏 ⌘K 命令面板（G4）</span>
+    </div>
+  </div>
+
+  <!-- P2 -->
+  <div class="proto" id="p2">
+    <div class="proto-title"><span class="n">P2</span><h4>任务详情 · 执行日志 / 产物预览 / 上下文</h4><span class="cap">B1 / D1 / E2 / M3 · 看板点开后的主界面</span></div>
+    <div class="wire">
+      <div class="box">
+        <div class="ph" style="padding:8px 12px">
+          <span class="row" style="gap:8px"><span class="mini">看板 / 今日</span><b style="font-size:12px">#12 · W03 良率掉的根因</b></span>
+          <span class="row"><span class="pill t">进行中</span><span class="pill b">@claude-main</span><span class="pill">P1</span><span class="mini">今天 18:00</span></span>
+        </div>
+        <div class="body" style="display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:8px">
+          <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+            <div class="box" style="padding:8px 10px">
+              <div class="tiny faint" style="margin-bottom:4px">描述 · 验收</div>
+              <div style="font-size:10.5px;color:#3d4753;line-height:1.7">W03 段 FT 良率从 96.2% 掉到 94.1%，按 bin 拆解找出主因，给出前 3 个可执行对策。</div>
+              <div class="row" style="margin-top:6px;flex-wrap:wrap;gap:4px">
+                <span class="pill g">验收：Top5 bin 占比</span><span class="pill g">给出对策</span><span class="pill g">附帕累托图</span>
+              </div>
+            </div>
+            <div class="box" style="padding:0">
+              <div class="ph"><span>子任务 2</span><span class="mini">阶段 1/2</span></div>
+              <div class="body" style="padding:5px 8px">
+                <div class="todo-line"><span class="dotl g"></span><span class="txt">拉取 W03 的 bin 明细</span><span class="pill g">完成</span></div>
+                <div class="todo-line"><span class="dotl y"></span><span class="txt">按 die 维度复核 Top5</span><span class="pill y">进行中</span></div>
+              </div>
+            </div>
+            <div class="box" style="padding:0">
+              <div class="ph"><span>动态</span><span class="mini">评论 · 工具调用</span></div>
+              <div class="body" style="padding:6px 8px;display:flex;flex-direction:column;gap:4px">
+                <div class="msg a" style="max-width:100%">先按 wafer 看分布，再下钻 die…</div>
+                <div class="msg a" style="max-width:100%;font-family:var(--mono);font-size:8.5px;background:#f8fafc">⚙ sql · select bin, count(*) … <span class="faint">1.2s</span></div>
+                <div class="msg u" style="max-width:100%">按 die 维度，只看 FT 段 <span class="inj">已注入</span></div>
+                <div class="tiny faint">✓ 已投递 · 在 step #4 前生效 <span class="ann">D2</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+            <div class="box" style="padding:0">
+              <div class="ph"><span>执行日志</span><span class="mini">按次 · 费用</span></div>
+              <div class="body" style="padding:5px 8px">
+                <div class="between" style="font-size:9.5px"><span class="row"><span class="dotl g"></span><b>run 7</b> 进行中</span><span>6:12 · $0.08</span></div>
+                <div class="bar-mini" style="width:100%;margin:3px 0 6px"><i style="width:62%"></i></div>
+                <div class="between" style="font-size:9px;color:#94a0ad"><span>run 6 · 已停止</span><span>3:41 · $0.04</span></div>
+                <div class="between" style="font-size:9px;color:#94a0ad"><span>run 5 · 失败</span><span>exit 1 · $0.02</span></div>
+                <div class="row" style="margin-top:5px"><span class="pill">打开时间线</span><span class="pill">重试</span></div>
+              </div>
+            </div>
+            <div class="box" style="padding:0">
+              <div class="ph"><span>产物 2</span><span class="mini">只读预览</span></div>
+              <div class="body" style="padding:6px 8px;display:flex;flex-direction:column;gap:5px">
+                <div class="row" style="gap:6px">
+                  <div class="box" style="width:54px;height:40px;background:#f7fafc;display:flex;align-items:flex-end;gap:2px;padding:3px">
+                    <i style="flex:1;height:80%;background:#9fd8cf"></i><i style="flex:1;height:55%;background:#9fd8cf"></i><i style="flex:1;height:35%;background:#0d8a7a"></i><i style="flex:1;height:18%;background:#9fd8cf"></i>
+                  </div>
+                  <div style="flex:1;min-width:0"><b style="font-size:10px">fig_28 · pareto</b><br><span class="tiny faint">origin=agent · run 7</span></div>
+                  <span class="pill t">在 IDE 打开</span>
+                </div>
+                <div class="between" style="font-size:9.5px"><span>hero.html · 标题已改</span><span class="pill">打开</span></div>
+                <div class="tiny faint">不跳转先看缩略；编辑在 IDE <span class="ann">M3</span></div>
+              </div>
+            </div>
+            <div class="box" style="padding:0">
+              <div class="ph"><span>上下文</span><span class="mini">IDE 上报</span></div>
+              <div class="body" style="padding:5px 8px;font-size:9.5px;color:#5d6875">
+                <div class="between" style="padding:2px 0;border-bottom:1px dashed #edf1f4"><span>dataset YM3D-FT-1103</span><span class="pill">pinned</span></div>
+                <div class="between" style="padding:2px 0;border-bottom:1px dashed #edf1f4"><span>selection die ×3</span><span class="pill">pinned</span></div>
+                <div class="between" style="padding:2px 0"><span>figure pareto / bin</span><span class="pill g">fresh</span></div>
+                <div class="tiny faint" style="margin-top:3px">关掉 IDE 后标 stale，仍可验收</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <span>左：任务本体（描述 / 验收 / 子任务 / 动态）</span>
+      <span>右：执行日志 + 产物预览 + Context</span>
+      <span>看板点卡片进入，Esc 返回</span>
+    </div>
+  </div>
+
+  <!-- P6 -->
+  <div class="proto" id="p6">
+    <div class="proto-title"><span class="n">P6</span><h4>上下文桥 &amp; IDE 交接</h4><span class="cap">K1 – K4 / M1 – M3 · 跨进程，结构化 Context，不做截图</span></div>
+    <div class="wire">
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <!-- 面板层 -->
+        <div class="bus-layer">
+          <div class="bus-label">IDE 侧 · 面板上报 Context（G2 契约归 IDE）</div>
+          <div class="bus-boxes">
+            <div class="bus-box"><b>Data</b>publish: dataset / selection<br>subscribe: dataset, selection<span class="pill t" style="float:right">H4</span></div>
+            <div class="bus-box"><b>Plot</b>publish: figure / selection<br>subscribe: dataset, selection, figure<span class="pill t" style="float:right">I3</span></div>
+            <div class="bus-box"><b>HTML Canvas</b>publish: canvasElement / activeFile<br>subscribe: activeFile, canvasElement<span class="pill t" style="float:right">J2</span></div>
+          </div>
+        </div>
+
+        <div class="arrow-v"><span class="l">publish ↑</span><span class="glyph">↕</span><span class="l">↓ subscribe / 反向消费（K4）</span></div>
+
+        <!-- 总线 -->
+        <div class="bus-core">
+          <b>CONTEXT BRIDGE</b>
+          <code>{ dataset, selection, figure, canvasElement, activeFile }</code>
+          <span style="color:#8fb3ad">harness 缓存 · stale 标记 · 事件 context.changed</span>
+          <span class="ann t" style="margin-left:auto">K1</span>
+        </div>
+
+        <div class="arrow-v"><span class="l">默认携带（结构化）↓</span><span class="glyph">↕</span><span class="l">↑ context set / artifact link</span></div>
+
+        <!-- Agent 层 -->
+        <div style="display:grid;grid-template-columns:1.25fr 1fr;gap:6px">
+          <div class="bus-layer" style="border-style:solid">
+            <div class="bus-label">执行层 · Agent CLI + 权限</div>
+            <div class="bus-boxes" style="grid-template-columns:1fr 1fr">
+              <div class="bus-box"><b>Run 输入</b>todo + &lt;context&gt;<br><span class="tiny faint">注入内容在消息里可见（K3）</span></div>
+              <div class="bus-box"><b>工具白名单</b>context get/set · run log<br>artifact link <span class="ann">L1</span><div class="tiny faint" style="margin-top:3px">Skill 只组合这些 tools，不持有 UI 状态；面板操作在 IDE</div></div>
+            </div>
+            <div class="tiny" style="margin-top:5px;color:#5d6875">IDE 侧权限：<span class="pill">只读上下文</span> <span class="pill b">可改画布</span> <span class="pill y">可改数据</span> · 越权拒绝 + 审计 <span class="ann w">IDE</span></div>
+          </div>
+          <div class="bus-layer" style="border-style:solid">
+            <div class="bus-label">产出层 · artifact 落点</div>
+            <div class="bus-box" style="height:calc(100% - 18px)">
+              <b>run.finished → artifacts[]</b>
+              dataset · figure(recipe) · canvas · file（origin=ide|agent）<br>
+              <span class="tiny faint">harness 出只读预览卡 + 深链；IDE 打开并恢复选中</span>
+              <div style="margin-top:5px;display:flex;gap:4px;flex-wrap:wrap">
+                <span class="pill">预览</span><span class="pill t">在 IDE 打开</span><span class="pill">pin</span><span class="ann">M3 / M4</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <span>Context 由 IDE 发布、harness 缓存；IDE 关闭后标 stale（§5 / M2）</span>
+      <span>harness 不承载面板：读走 Bridge，写走 IDE 扩展 + 权限</span>
+    </div>
+  </div>
+
+  <!-- P7 -->
+  <div class="proto" id="p7">
+    <div class="proto-title"><span class="n">P7</span><h4>会话与纠偏 · 注入 / 提问 / 重试</h4><span class="cap">D1 – D5 / E2 – E3 · 从发现问题到纠正送达 ≤ 10s</span></div>
+    <div class="wire">
+      <div style="display:grid;grid-template-columns:1fr 1.05fr;gap:6px">
+        <!-- 会话 -->
+        <div class="box">
+          <div class="ph"><span>SESSION · todo #12 · W03 良率根因</span><span class="mini">run 7 ▾</span></div>
+          <div class="chat" style="min-height:250px">
+            <div class="msg sys">run #7 ▶ started · 14:02 · trigger=retry（前两次见时间线）</div>
+            <div class="msg a">我先按 wafer 看 W03 的 bin 分布，再下钻 die…</div>
+            <div class="msg a" style="font-family:var(--mono);font-size:8.5px;background:#f8fafc">⚙ sql · <span style="color:#0d8a7a">select bin, count(*) …</span></div>
+            <div class="msg u">按 die 维度，只看 FT 段 <span class="inj">已注入 · 14:02:19</span></div>
+            <div class="msg a" style="border-color:#cbe8e2;background:#f4fbf9">收到，切到 die 维度重跑，范围限定 FT…</div>
+            <div class="msg a" style="border-color:#cbe8e2;background:#f4fbf9">bin7 集中在 W03 右下角；先把 3 个 die 标出来。</div>
+            <div class="msg sys">artifact.created · fig_28 (pareto) · w03_bin_summary</div>
+            <div class="msg a" style="border-color:#f0dcb4;background:#fffdf7">❓ bin 7 的 3 个 die 要单独标注吗？<br><span class="tiny faint">run 已置「等待输入」· 已回答则原 run 继续</span><span class="ann">D4</span></div>
+          </div>
+          <div class="composer">
+            <span class="fake">回复 Agent，或 /steer 注入到当前 run…</span>
+            <span class="pill t">发送</span>
+          </div>
+        </div>
+
+        <!-- 操作面板 -->
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div class="box">
+            <div class="ph"><span>上下文（本条消息）</span><span class="mini">3 pinned · 1 auto</span></div>
+            <div class="body tiny" style="padding:5px;color:#5d6875">
+              <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>📌 dataset YM3D-FT-1103</span><span class="pill">pinned</span></div>
+              <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>📌 selection die ×3（W03,D13–D15）</span><span class="pill">pinned</span></div>
+              <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>📌 figure pareto / bin</span><span class="pill">pinned</span></div>
+              <div class="between" style="padding:3px 0"><span>auto canvas #hero &gt; .title</span><span class="pill g">已附带</span></div>
+              <div class="row" style="margin-top:5px"><span class="pill">移除</span><span class="pill">全部 pin</span><span class="pill">预览注入</span><span class="ann t">K3</span></div>
+            </div>
+          </div>
+          <div class="box">
+            <div class="ph"><span>Run 控制</span><span class="mini">不覆盖历史</span></div>
+            <div class="body tiny" style="padding:6px;color:#5d6875">
+              <div class="row" style="flex-wrap:wrap;gap:4px">
+                <span class="pill">⏸ 暂停</span><span class="pill">▶ 继续</span><span class="pill r">⏹ 中止</span><span class="pill b">↻ 重试（新 run）</span><span class="ann">D3</span>
+              </div>
+              <div style="margin-top:6px;font-size:9px">
+                <div class="between" style="padding:2px 0"><span>run 7 · 进行中 · 6:12</span><span>token 12.4k / $0.08</span></div>
+                <div class="between" style="padding:2px 0;color:#94a0ad"><span>run 6 · 中止</span><span>3:41</span></div>
+                <div class="between" style="padding:2px 0;color:#94a0ad"><span>run 5 · 失败</span><span>exit 1</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="box dash" style="padding:6px 8px">
+            <div class="between" style="font-size:9.5px;color:#5d6875"><span><b>收件箱 3</b> · 1 提问 / 1 待验收 / 1 失败</span><span class="row"><span class="pill">全部已读</span><span class="ann">E3</span></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- P8 -->
+  <div class="proto" id="p8">
+    <div class="proto-title"><span class="n">P8</span><h4>主机与 Agent 纳管 · 远程上线</h4><span class="cap">A1 – A5 / F1 – F3 · 掉线 30s 标红，重连不重复执行</span></div>
+    <div class="wire">
+      <div style="display:grid;grid-template-columns:1.35fr 1fr;gap:6px">
+        <div class="box">
+          <div class="ph"><span>HOSTS</span><span class="mini">3 在线 · 1 离线</span></div>
+          <div class="body" style="padding:6px">
+            <table class="grid-table" style="font-size:10px">
+              <thead><tr><th>主机</th><th>kind</th><th>Agent</th><th>心跳</th><th>版本</th></tr></thead>
+              <tbody>
+                <tr><td>local-mac</td><td>local</td><td>claude · codex</td><td><span class="dotl g"></span> 2s</td><td>0.3.1</td></tr>
+                <tr><td>lab-gpu</td><td>ssh</td><td>pi</td><td><span class="dotl y"></span> 18s</td><td>0.3.1</td></tr>
+                <tr><td>dev2</td><td>ssh</td><td>opencode</td><td><span class="dotl r"></span> 12m <span class="pill r">掉线</span></td><td>0.2.9</td></tr>
+                <tr><td>win-bench</td><td>ssh</td><td>codex</td><td><span class="dotl g"></span> 5s</td><td>0.3.1</td></tr>
+              </tbody>
+            </table>
+            <div class="row" style="margin-top:6px"><span class="pill t">＋ 添加主机</span><span class="pill">连接测试</span><span class="pill">密钥库</span><span class="ann">F1</span></div>
+
+            <div class="box dash" style="margin-top:8px">
+              <div class="ph"><span>添加远程主机 · 第 2 步</span><span class="mini">一次性 token</span></div>
+              <div class="body tiny" style="padding:6px">
+                <div class="row" style="gap:10px;color:#5d6875">
+                  <span>① 填主机地址（SSH 可选）</span><span class="faint">→</span><span style="font-weight:600;color:#0d8a7a">② 远端执行</span><span class="faint">→</span><span class="faint">③ 自动上线</span>
+                </div>
+                <div class="diff" style="margin-top:5px">curl -fsSL https://ym.local/agent.sh | sh -s -- --token <span class="add">tk_9f2c…</span></div>
+                <div class="row" style="margin-top:5px;font-size:9px;color:#5d6875"><span class="dotl y"></span> 等待回连…（每 2s 探测，超时 90s）<span class="ann">A2</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="box">
+          <div class="ph"><span>Agent 档案 · claude-main</span><span class="mini">修改后新 run 生效</span></div>
+          <div class="body tiny" style="padding:7px;color:#5d6875">
+            <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>CLI</span><b>claude</b></div>
+            <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>主机</span><b>local-mac</b></div>
+            <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>工作目录</span><b>~/ym/wafer</b></div>
+            <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>并发上限</span><b>3</b></div>
+            <div class="between" style="padding:3px 0;border-bottom:1px dashed #edf1f4"><span>当前</span><b style="color:#0d8a7a">忙碌 2/3</b></div>
+            <div style="padding:4px 0"><span>技能 / 提示词</span><div style="margin-top:2px"><span class="pill">yield-analysis</span><span class="pill">sql</span><span class="pill">chart</span><span class="ann">A3</span></div></div>
+            <div style="padding:4px 0"><span>审批策略</span><div style="margin-top:2px"><span class="pill">allow</span><span class="pill y">ask（危险命令）</span><span class="pill r">deny</span><span class="ann">A3</span></div></div>
+            <div style="padding:4px 0"><span>工具白名单</span><div style="margin-top:2px"><span class="pill">sql</span><span class="pill">python</span><span class="pill">git</span><span class="pill">file</span><span class="pill r">rm</span></div></div>
+            <div class="box dash" style="margin-top:6px;padding:5px 7px">
+              <b style="color:#3d4753">自动恢复</b><br>
+              主机离线 → run 排队等待，不漂移；恢复后继续，不重复执行
+              <div class="row" style="margin-top:4px"><span class="pill g">tmux 会话保留</span><span class="pill">重连 60s</span><span class="ann">A5 / F3</span></div>
+            </div>
+            <div class="row" style="margin-top:6px"><span class="pill t">保存</span><span class="pill">停用 Agent</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------- 7 NFR ---------- -->
+  

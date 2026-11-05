@@ -1,0 +1,441 @@
+# 模块对比：Orca / Multica / 本项目
+
+> 按 [`REQ-multi-agent-workspace.md`](REQ-multi-agent-workspace.md) 的 A–T 模块逐一对比，给出差距与改进建议。
+> **截图来源**：Orca（<https://www.onorca.dev/docs>）与 Multica（<https://multica.ai/docs/zh>）官方文档，取自本地 `docs/orca-main`、`docs/multica-main`，已复制到 `docs/assets/cmp/`，仅作内部对比。
+> **本项目状态口径**：`已实现` = README 已列的单机 MVP；`已排期` = REQ 有条目未实现；`缺` = REQ 无对应条目。
+> **建议优先级**：P0 = 影响闭环成立；P1 = 影响日常效率；P2 = 可延后或不建议做。
+
+![](assets/cmp/orca-hero.jpg)
+
+*Orca：一个窗口里并行跑多个 Agent（worktree 隔离 + 终端 pane）。*
+
+---
+
+## 0. 结论速览
+
+| 模块 | Orca | Multica | 本项目 | 主要差距 | 建议 |
+|---|---|---|---|---|---|
+| A Agent / 主机 | 任意 CLI + 账户用量 | 运行时矩阵 + 守护进程 | 部分（本机 5 种 CLI） | 无 Runtime 实体、无远程 | P0 |
+| B TODO / 看板 | 无（以 PR/issue 为任务源） | 任务 + 自定义属性 + 多视图 | 部分（SQLite + 列表） | 无看板、无视图保存 | P0 |
+| C 分派 | 并行 worktree 扇出 | 分配给人 / Agent / 小队 | 部分（队列/并发） | 无广播对比、无小队 | P0 |
+| D 对话与纠偏 | 原生 chat + 终端会话 | 任务内对话 + 引导/排队 | 部分（steer/停止/重试） | 无提问置顶、无全局对话 | P0 |
+| E 进度 / 回写 | 通知 + 未读 | 运行状态机 + 收件箱 | 部分（inbox、steer） | 回写校验缺失 | P0 |
+| F 远程执行 | SSH worktree + 自动重连 | 守护进程 + 机器 | 缺 | 整块未做 | P0 |
+| G 布局 | 无限分屏 + 标签 + 会话恢复 | 固定 shell + 可折叠 | 部分（三栏） | 布局保存、命令面板 | P1 |
+| K 上下文桥 | Design Mode 抓元素上下文 | 对话携带任务上下文 | 缺 | 无结构化 context | P1 |
+| L Agent 接口 | `orca` CLI 驱动控制台 | `multica` CLI 全量操作 | 缺 | 无 CLI | P0 |
+| M IDE 交接 | 内置预览 + 深链回工作区 | PR 关联 + 附件 | 缺 | 无深链、无预览 | P1 |
+| N 任务协作 | Diff 行内批注 | 评论 / @ 路由 / 快捷操作 | 缺 | 整块未做 | P0 |
+| O 项目 / 工作流 / 小队 | 无（用 GitHub/Linear 承接） | 项目 + 阶段 + 小队 | 缺 | 整块未做 | P1 |
+| P 技能 / 自动化 | CLI skills / automations | Skills + Autopilot + 唤醒 | 缺 | 整块未做 | P1 |
+| Q 运行时治理 | 用量与限额、会话历史 | 错误分类、并发与目录锁 | 部分（并发上限） | 用量、错误分类 | P1 |
+| R 工作树 / 审阅 | worktree 全生命周期 | 每 run 独立 workdir | 缺 | 无 diff 审阅 | P0 |
+| S 通知 / 检索 | ⌘K 全局 + 通知中心 | 搜索（拼音）+ 快捷键 | 缺 | 整块未做 | P1 |
+| T 集成 / 客户端 | GitHub/Linear/Jira + 移动端 | 5 个聊天平台 + 移动端 | 缺 | 整块未做 | P2 |
+
+**一句话**：Orca 强在「执行环境 + 审阅」，Multica 强在「协作 + 编排对象模型」；本项目规格已覆盖两者 76 条，但**实现只到「单机 run 跑通」**，真正卡住闭环的是 A/F/L/N/R 五个模块。
+
+---
+
+## A. Agent 与主机管理
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 任意 CLI Agent 接入 | ✅ 能跑在终端的都能接 | ✅ 20+ 工具矩阵 | ⚠️ 5 种（dsh/pi/claude/codex/opencode） | 补齐矩阵 |
+| Runtime = 主机 + 工具的组合 | ⚠️ 以 worktree/终端为单位 | ✅ runtime 独立实体 | ❌ 只有 Agent | 引入 Runtime |
+| 工具能力差异可见 | ⚠️ 启动时探测 | ✅ 会话恢复 / MCP / 选模型 / skill 目录 | ❌ | P1 |
+| 远程主机纳管 | ✅ SSH worktree | ✅ 守护进程 + 机器 | ❌ | P0 缺口 |
+| 账户与额度 | ✅ 多账号热切换 + 限额重置 | ⚠️ 登录态 | ❌ | P2 |
+
+| Orca：CLI Agent 跑在终端 pane | Multica：运行时列表（一机一工具） |
+|---|---|
+| ![](assets/cmp/orca-terminal-agent.jpg) | ![](assets/cmp/mul-runtimes-list.webp) |
+
+| Multica：添加一台机器 | Multica：Agent 访问与工具权限 |
+|---|---|
+| ![](assets/cmp/mul-add-computer.webp) | ![](assets/cmp/mul-agent-access.webp) |
+
+| Multica：创建 Agent（选运行时 + 指令） | Multica：机器详情（工具探测结果） |
+|---|---|
+| ![](assets/cmp/mul-agent-form.webp) | ![](assets/cmp/mul-machine.webp) |
+
+**改进建议**
+1. **P0｜把 A1 升级为 Runtime 模型**：`Runtime = host + cli + caps`，Agent 挂 Runtime。这是 A2（远程）、Q1（能力矩阵）、Q2（隔离）共同的前置，改一次省三次。**（已采纳：M1 实施）**
+2. **P0｜探测量化**：纳管时写回 `caps{resume, mcp, model, skill_dir}`，让 D2（能否注入）、B5（能否定时）按能力降级，而不是运行时才发现不支持。
+3. **P1｜别做账户热切换**：Orca 的 Claude/Codex 账号切换解决的是「用量打满」问题，本地单用户场景收益低，P2 再说。
+
+---
+
+## B. TODO 与每日计划
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 任务字段 | ⚠️ 以 PR/issue 承载 | ✅ 标题/描述/验收/负责人/日期/标签/自定义属性 | ⚠️ B1 有字段，无自定义属性 | 补属性 |
+| 看板 | ❌ | ✅ 列/泳道/排序/显示字段可配 | ⚠️ B4 有规格，未实现 | P0 |
+| 视图保存 | ❌ | ✅ 保存视图 + 批量操作 | ❌ | P1 |
+| 任务与运行分离 | ⚠️ 会话即任务 | ✅ 任务 1:N 运行 | ✅ 已实现（Run 独立） | 保持 |
+| 每日计划 | ❌ | ⚠️ 靠自动化生成 | ✅ B3 三来源 | 保持 |
+
+| Multica：新建任务并选执行方 | Multica：Agent 正在处理任务 |
+|---|---|
+| ![](assets/cmp/mul-new-issue.webp) | ![](assets/cmp/mul-issue-working.webp) |
+
+**改进建议**
+1. **P0｜看板先做「状态列 + Agent 泳道」两件事**：Multica 的视图配置（分组/排序/显示字段）很完整，但那是 P1；本项目 B4 的验收是「1 屏看清」，先满足它。
+2. **P0｜卡片就是操作台**：Multica 的卡片点开才是详情，本项目要求「卡片上暂停/纠偏/验收」，这是差异化，别抄成两跳。
+3. **P1｜自定义属性延后**：B1 的标签 + 优先级够用；等真有人按「客户/产线」分组再加。
+
+---
+
+## C. 分派
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 单播 | ⚠️ 在某个 worktree 里对话 | ✅ 指派给 Agent / 人 / 小队 | ✅ C1 | 保持 |
+| 广播对比 | ✅ 一条 prompt 扇出 5 个 worktree，比完采纳 | ❌ | ⚠️ C2 有规格 | P0 |
+| 队列与并发 | ⚠️ 手动开新 worktree | ✅ 每 Agent 并发 + 目录锁 | ✅ 已实现（队列/上限） | 补目录锁 |
+| 依赖 | ❌ | ⚠️ 子任务/关联，非 DAG | ✅ C4（DAG + 无环） | 差异化 |
+
+| Orca：并行 worktree 对比 | Orca：多 worktree 列表 |
+|---|---|
+| ![](assets/cmp/orca-tab-split.jpg) | ![](assets/cmp/orca-worktree-md.jpg) |
+
+| Multica：指派确认（人 / Agent / 小队） | Multica：新建任务时选 Agent 模式 |
+|---|---|
+| ![](assets/cmp/mul-assign.webp) | ![](assets/cmp/mul-issue-agent-mode.webp) |
+
+**改进建议**
+1. **P0｜C2 的对比要「并排 diff」而不是「并排会话」**：Orca 的价值在 diff 并列 + 采纳合并；只并列聊天记录等于让用户读两份日志。
+2. **P0｜采纳即收口**：采纳后其余 run 置「已放弃」并保留产物（B2 已定义），这条比 Multica 完整，别退化成「手动关掉」。
+3. **P1｜小队路由不放进 C**：C 只做「任务→执行体」，小队属于 O4，避免分派逻辑过早耦合协作模型。
+
+---
+
+## D. 对话与纠偏
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 任务内会话 | ✅ 原生 chat | ✅ 任务内对话 + 时间线 | ✅ D1 已实现（会话/日志） | 保持 |
+| 运行中注入 | ⚠️ 终端里直接打字 | ✅ 「引导」抢占当前回合 | ✅ D2 已实现 | 补回执 |
+| 排队消息 | ✅ 回复中继续发，自动排队 | ✅ 队列 + 清空 | ⚠️ 只做注入 | P1 |
+| Agent 提问 | ❌ | ✅ 等待输入态 | ⚠️ D4 有规格 | P0 |
+| 全局对话 | ✅ 任意页悬浮 chat（⌘J） | ✅ 悬浮 chat + 转任务 | ⚠️ D5 有规格 | P1 |
+
+| Orca | Multica：任务内对话 |
+|---|---|
+| ![](assets/cmp/orca-browser.jpg) | ![](assets/cmp/mul-chat.webp) |
+
+| Multica：悬浮 chat | Multica：执行转录 |
+|---|---|
+| ![](assets/cmp/mul-chat-fab.webp) | ![](assets/cmp/mul-transcript.webp) |
+
+| Multica：在任务里直接问 Agent | Orca：拖文件 / 图片进 prompt |
+|---|---|
+| ![](assets/cmp/mul-chat-in-issue.webp) | ![](assets/cmp/orca-file-drag.jpg) |
+
+**改进建议**
+1. **P0｜把「注入」和「排队」做成两个态**：Multica 的「引导」会抢占当前回合、队列消息等回合结束。本项目现在只有注入，用户看不到「已排队」，容易误判送达。
+2. **P0｜提问必须置顶**：D4 是闭环里的「人等机器」分支，漏了它，run 会静默挂在那里直到超时。
+3. **P1｜全局对话先做「转成 TODO」**：悬浮 chat 的入口价值在随手记，但要能一键落成任务，否则又变成第二个会话垃圾桶。
+
+---
+
+## E. 进度、回写与通知
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 运行状态机 | ⚠️ 会话状态 | ✅ 8 态（deferred→running→completed…） | ✅ B2/E1（7 态） | 对齐 |
+| 回写要求 | ❌ 无任务对象 | ✅ 状态 + 评论 + 产物 | ✅ E2 | 补校验 |
+| 收件箱 | ✅ 通知 + 未读 | ✅ 收件箱 + 订阅 | ✅ 已实现 | 保持 |
+| 失败分类 | ⚠️ 原样透出 | ✅ 认证/限流/超时/工具 | ❌ | P1 |
+| 审计 | ⚠️ 无 | ✅ 用量 + 错误页签 | ⚠️ E4 有规格 | P1 |
+
+| Multica：一次运行的完整链路 | Multica：执行日志 |
+|---|---|
+| ![](assets/cmp/mul-run-flow.webp) | ![](assets/cmp/mul-exec-log.webp) |
+
+| Multica：任务完成后（回写结果与产物） |
+|---|
+| ![](assets/cmp/mul-issue-done.webp) |
+
+**改进建议**
+1. **P0｜E2 的「校验」要落到执行器退出路径**：现在是「要求 Agent 自己回写」，Multica 靠服务端收尾；本项目应在 run 结束时校验 状态+评论+产物，缺一标黄。**（已采纳：写入 E2 与 §9 第 21 条）**
+2. **P1｜通知只留 4 类**：完成 / 失败 / 需要输入 / 被 @。Multica 的订阅粒度更细，但会退化成「消息中心」，违背 E3。
+3. **P2｜不做逐步骤通知**：Orca 的通知是「Agent 完成」，这正是本项目要的对齐点；步骤级推送坚决不做。
+
+---
+
+## F. 远程执行（SSH）
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 远程主机接入 | ✅ SSH + 自动重连 + 端口转发 | ✅ 守护进程（一次性 token） | ❌ | P0 |
+| 远程工作目录 | ✅ 远程 worktree | ✅ 运行目录 + 目录锁 | ⚠️ F2 有规格 | P1 |
+| 断线恢复 | ✅ 会话/终端恢复 | ✅ 排队等待、不重复执行 | ⚠️ F3 有规格 | P0 |
+| 配置可见 | ✅ 图形化添加 | ✅ 机器详情 + 在线态 | ❌ | P1 |
+
+| Orca：SSH 远程 worktree | Orca：添加远程服务端 |
+|---|---|
+| ![](assets/cmp/orca-ssh.jpg) | ![](assets/cmp/orca-remote-add.png) |
+
+| Orca：按工作区选择运行位置（本地 / 远程） |
+|---|
+| ![](assets/cmp/orca-ways-to-run.png) |
+
+**改进建议**
+1. **P0｜先做「一次性 token 安装 + 心跳」，不要先做 SSH 密钥管理**：Multica 的路径证明更省事，用户只需要粘一条命令；SSH 凭据留到 P2。
+2. **P0｜远程必须与本地同一套分派/纠偏/回写**（§9 第 13 条），否则 F 会退化成「另一套系统」。
+3. **P1｜端口转发别自己写**：用 `ssh2` 现成能力；Orca 的 remote-server-share-desktop 是「共享桌面」，与本项目无关。
+
+---
+
+## G. 工作区布局
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 固定布局 | ✅ 侧栏 + 标签 + 无限分屏 | ✅ 左栏 + 主区 + 右栏，可折叠 | ⚠️ 三栏已实现 | 补折叠/保存 |
+| 布局保存 | ✅ 每工作区独立标签组 | ⚠️ 记住宽度 | ⚠️ G1 有规格 | P1 |
+| 命令面板 | ✅ ⌘K / ⌘J | ✅ ⌘K + 快捷键表 | ⚠️ G4 有规格 | P1 |
+| 终端 | ✅ Ghostty 级 WebGL | ❌ | ❌ | 不建议做 |
+
+| Orca：分屏与标签 | Multica：工作区总览 |
+|---|---|
+| ![](assets/cmp/orca-splits.jpg) | ![](assets/cmp/mul-workspace.webp) |
+
+**改进建议**
+1. **P1｜只做「折叠 + 命名保存」**，不做自由 dock：G1 已收敛，Orca 的分屏成本极高（终端渲染、会话恢复一堆坑）。
+2. **P1｜命令面板优先于快捷键自定义**：先把「切视图 / 派活 / 纠偏」三个动作做成命令，快捷键自然挂上去。
+3. **P2｜不做终端**：日志走只读流；真要交互，交给 IDE。
+
+---
+
+## K. 上下文桥（harness ↔ IDE）
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 结构化 context 入 prompt | ✅ Design Mode 抓 DOM/CSS/截图 | ⚠️ 任务描述 + 项目说明 | ⚠️ K1 有规格 | P0（差异化） |
+| 用户可见/可钉住 | ⚠️ 截图即上下文 | ❌ | ⚠️ K3 有规格 | P1 |
+| 离线保留 | ❌ | ❌ | ⚠️ K3 stale | 差异化 |
+
+| Orca：Design Mode 选中元素送进 prompt | Orca：内置浏览器上下文 |
+|---|---|
+| ![](assets/cmp/orca-design-mode.jpg) | ![](assets/cmp/orca-browser.jpg) |
+
+**改进建议**
+1. **P0｜K1 的 envelope 必须带版本号**：IDE 与 harness 独立发版，字段只会加不会减，没有 `schemaVersion` 就会在客户机上炸。
+2. **P1｜「可见」比「自动」重要**：K3 要求注入内容在消息里展示；Orca 的做法是把截图直接贴进 prompt，用户天然可见——本项目要在消息里渲染 context 卡片。
+3. **P1｜stale 不做 TTL**：保留最后一次直到 IDE 重新上报，比「5 分钟后失效」更符合现场使用。
+
+---
+
+## L. Agent ↔ 域工作区接口
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| CLI 读写控制台 | ✅ `orca worktree/snapshot/click/fill` | ✅ `multica issue/run/comment` | ⚠️ L1 有规格 | P0 |
+| 产物登记 | ❌ 以 git 为准 | ✅ 评论附件 + PR 关联 | ⚠️ L3 有规格 | P0 |
+| 脚本化编排 | ✅ orchestration API | ✅ CLI + Webhook | ⚠️ T4 有规格 | P2 |
+
+| Orca：CLI 驱动控制台 | Multica：CLI 文档（无 UI 截图） |
+|---|---|
+| ![](assets/cmp/orca-cli.jpg) | ![](assets/cmp/mul-concepts.webp) |
+
+**改进建议**
+1. **P0｜CLI 先于 UI**：`todo claim/status/comment/artifact link` 是 Agent 回写的唯一通道，比任何面板都优先。
+2. **P0｜命令要幂等 + 带 run 作用域**：`run_id` 由环境变量注入，避免 Agent 猜错目标（Multica 用运行级 token 做同样的事）。
+3. **P1｜`context get` 返回结构而非文本**：同时给 `stale` 与 `schemaVersion`，Agent 才能判断要不要追问。
+
+---
+
+## M. IDE 交接
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 产物预览 | ✅ Markdown/图片/PDF/仓库文档 | ✅ 附件与 PR 卡片 | ⚠️ M3 有规格 | P1 |
+| 深链打开 | ✅ 从 PR/issue 开 worktree | ⚠️ 链接到 PR | ⚠️ M1 有规格 | P1 |
+| 归属追溯 | ⚠️ 以 git blame 为准 | ✅ 关联 PR → 任务 | ⚠️ M4 有规格 | P0 |
+
+| Orca：仓库内 Markdown 预览 | Multica：任务关联 PR |
+|---|---|
+| ![](assets/cmp/orca-worktree-md.jpg) | ![](assets/cmp/mul-issue-pr.webp) |
+
+**改进建议**
+1. **P0｜深链先做「有 id 就能开」**：`yieldmind-ide://open?path=&selection=&todo=` 三个参数足够；不要等 IDE 侧全部就绪。
+2. **P1｜预览只做缩略 + 元数据**：Orca 的预览是编辑器级（能改），本项目只读，别跟着做渲染内核。
+3. **P1｜PR 关联优先于「自动 diff 摘要」**：先把「产物→run→todo」链路打通，摘要可以手写。
+
+---
+
+## N. 任务协作（评论 / @ / 快捷操作）
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 评论线程 | ✅ Diff 行内批注 | ✅ 线程 / 解决 / 表情 | ❌ | P0 |
+| @ 路由 | ⚠️ 仅通知 | ✅ 成员/Agent/小队/任务/@all 五种语义 | ❌ | P0 |
+| 快捷操作 | ❌ | ✅ 保存请求 + `/` 调用 | ❌ | P1 |
+| 附件版本 | ❌ | ✅ 同名归并 | ❌ | P1 |
+
+| Multica：评论 @ 审查者 | Multica：@ 触发预览 |
+|---|---|
+| ![](assets/cmp/mul-comment-mention.webp) | ![](assets/cmp/mul-mention-preview.webp) |
+
+| Orca：Diff 行内批注 | Multica：审阅评论 |
+|---|---|
+| ![](assets/cmp/orca-annotate-full.jpg) | ![](assets/cmp/mul-review-comment.webp) |
+
+**改进建议**
+1. **P0｜先做「@Agent 起 run」一条**：这是 N 模块唯一直接产生执行的动作；评论线程、表情、解决讨论可以晚一轮。**（已排期：N2 进 M1，其余进 M5）**
+2. **P0｜@ 语义必须写死**：Multica 的五种目标里，`@任务` 只插链接、`@all` 不触发 Agent——这两条最容易做错，会造成误触发。
+3. **P1｜快捷操作与模板合一**：本项目 B3 已有「模板生成」，N3 直接复用模板表，不新造对象。
+
+---
+
+## O. 项目、工作流与小队
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 项目对象 | ❌（用 GitHub/Linear 项目） | ✅ 状态/优先级/负责人/日期/进度 | ❌ | P1 |
+| 项目资源 | ✅ worktree 即资源 | ✅ 仓库 ref / 本地目录 | ⚠️ O2 有规格 | P1 |
+| 阶段工作流 | ⚠️ PR 流转 | ✅ 阶段 + 每阶段处理方 | ❌ | P1 |
+| 小队 | ❌ | ✅ 队长路由 + 花名册 + 再触发规则 | ❌ | P1 |
+
+| Multica：项目详情 | Multica：小队详情 |
+|---|---|
+| ![](assets/cmp/mul-project.webp) | ![](assets/cmp/mul-squad.webp) |
+
+| Orca：GitHub / Linear 原生看板 | Multica：小队派活 |
+|---|---|
+| ![](assets/cmp/orca-github-linear.jpg) | ![](assets/cmp/mul-squad-dispatch.webp) |
+
+**改进建议**
+1. **P1｜项目只做「分组 + 资源 + 进度」**，不做独立生命周期（O1 的状态先借用 TODO 的）。
+2. **P1｜工作流只做「顺序阶段 + 交接」**：Multica 的完整工作流有退回/跳过/条件，先实现开发→审查→验收三阶段即可。
+3. **P2｜小队先做「队长一人分派」**：花名册、角色说明、再触发规则都是锦上添花；没有多 Agent 团队前，C2 广播已够用。
+
+---
+
+## P. 技能与自动化
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 技能包 | ✅ CLI skills | ✅ 建/导入/挂载/启停 | ⚠️ A3 只有 skills 字段 | P1 |
+| 定时自动化 | ✅ automations | ✅ Autopilot（cron + 时区） | ⚠️ B5 | 合并 |
+| Webhook 触发 | ⚠️ CLI | ✅ + 事件过滤 + 验签 | ❌ | P2 |
+| 条件唤醒 | ❌ | ✅ 9 类条件 + 重复上限 | ❌ | P2 |
+
+| Multica：Skills 列表 | Multica：Autopilot 创建 |
+|---|---|
+| ![](assets/cmp/mul-skills.webp) | ![](assets/cmp/mul-autopilot-create.webp) |
+
+| Multica：定时配置（显式时区） | Multica：技能详情 |
+|---|---|
+| ![](assets/cmp/mul-autopilot-schedule.webp) | ![](assets/cmp/mul-skill-detail.webp) |
+
+**改进建议**
+1. **P1｜P2 与 B5 合并成一张表**：Autopilot = 定时任务 + runbook + 输出模式。**（已采纳：B5 只留 `at` / `after`，cron 归 P2）**
+2. **P1｜技能先做「目录挂载」**：`<repo>/.harness/skills/*` 直接注入，不建管理界面；Multica 的四路导入是生态需求，单机不需要。
+3. **P2｜唤醒条件砍到 3 类**：时间 / 有人回复 / run 结束。其余 6 类等有真实需求再加。
+
+---
+
+## Q. 运行时与执行治理
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 能力矩阵 | ⚠️ 启动探测 | ✅ 对照表（恢复/MCP/模型/skill 目录） | ❌ | P1 |
+| 执行隔离 | ✅ 每 worktree 独立 | ✅ 独立 workdir/HOME/token | ⚠️ Q2 有规格 | P0 |
+| 用量与成本 | ✅ 限额进度条 | ✅ token/费用/耗时/失败数 | ❌ | P1 |
+| 错误分类与重试 | ⚠️ 原样报错 | ✅ 5 类 + 错误码 + 重试 | ⚠️ 有重试无分类 | P1 |
+| 并发与超时 | ⚠️ 手动 | ✅ 排队原因可见 | ✅ 已实现（并发上限） | 补原因 |
+
+| Orca：账号用量与限额 | Multica：机器与运行时详情 |
+|---|---|
+| ![](assets/cmp/orca-usage.jpg) | ![](assets/cmp/mul-machine.webp) |
+
+**改进建议**
+1. **P0｜Q2 先做「每 run 独立目录 + 运行级 token」**：这是安全边界，也是 C2 广播能成立的前提（现状是同目录串行）。
+2. **P1｜错误分类只做 4 类**：认证 / 限流 / 超时 / 其他。Multica 的 5 类里「工具」可以先并入「其他」。
+3. **P1｜用量先记 token，不算钱**：费用算法依赖各家定价，容易过期；先展示 token 与耗时，费用 P2。
+
+---
+
+## R. 工作树与代码审阅
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 每 run 独立 worktree | ✅ 核心能力 | ✅ 独立 workdir | ❌ | P0 |
+| 并行对比与采纳合并 | ✅ 扇出 → 比 → 合并 | ⚠️ 无对比 | ⚠️ C2/R2 有规格 | P0 |
+| 行内批注回传 | ✅ 批注 → 回给 Agent | ⚠️ 评论（非行级） | ⚠️ R3 有规格 | P1 |
+| 提交/推送/PR | ✅ 内建 | ✅ 分支 + leftovers ref | ⚠️ R4 有规格 | P1 |
+| 变更归属 | ⚠️ git blame | ⚠️ 分支级 | ⚠️ R5 有规格 | P2 |
+
+| Orca：并行 worktree | Orca：Diff 行内批注 |
+|---|---|
+| ![](assets/cmp/orca-split-screen.jpg) | ![](assets/cmp/orca-annotate.jpg) |
+
+| Orca：拖文件进 Agent | Multica：仓库/资源设置 |
+|---|---|
+| ![](assets/cmp/orca-drag-files.jpg) | ![](assets/cmp/mul-repo.webp) |
+
+**改进建议**
+1. **P0｜R1 是 C2 的硬前置**：没有独立 worktree，「广播对比」和「同目录串行」只能二选一。**（已采纳：R1 并入 M1，C2 留 M3）**
+2. **P0｜未提交产物存隐藏 ref**（Multica 的 leftovers 做法）：Agent 经常不 commit，直接丢弃会丢产物，直接进分支会污染历史。
+3. **P2｜批注先不做行级**：R3 可以先用「文件级评论」过渡，行级定位需要 diff 内核，成本高。
+
+---
+
+## S. 通知与检索
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 通知中心 | ✅ 完成提醒 + 未读标记 | ✅ 收件箱 + 订阅 + 分类开关 | ⚠️ E3 有收件箱 | 补分类 |
+| 全局搜索 | ✅ ⌘K（worktree/文件/命令） | ✅ ⌘K（页面/命令/成员/任务，支持拼音） | ❌ | P1 |
+| 快捷键 | ✅ 可自定义 | ✅ 固定表 | ⚠️ G4 | P1 |
+| 活动流 | ✅ 按仓库/任务 | ✅ 时间线 | ❌ | P2 |
+
+| Orca：⌘K 跳转 worktree | Multica：成员与权限 |
+|---|---|
+| ![](assets/cmp/orca-quickopen.jpg) | ![](assets/cmp/mul-members.webp) |
+
+**改进建议**
+1. **P1｜搜索先做「任务 + 评论」两域**：拼音匹配是 Multica 的亮点，但可以用 SQLite FTS + 拼音表低成本实现。
+2. **P1｜⌘K 先做命令，不做全文**：切视图 / 派活 / 纠偏三个命令的收益远高于搜历史评论。
+3. **P2｜不做活动流**：看板 + 收件箱已经承载「发生了什么」，再做一个时间线是重复。
+
+---
+
+## T. 集成与客户端
+
+| 能力 | Orca | Multica | 本项目 | 判定 |
+|---|---|---|---|---|
+| 代码托管 | ✅ GitHub / Linear / Jira | ✅ GitHub + Gitea/GitLab | ⚠️ T1 有规格 | P2 |
+| 聊天 Bot | ❌ | ✅ Slack/飞书/钉钉/企微/Telegram | ⚠️ T2 有规格 | P2 |
+| 移动端 | ✅ 通知 + 追问 | ✅ iOS | ⚠️ T3 有规格 | P2 |
+| CLI 自动化 | ✅ `orca` CLI | ✅ `multica` CLI | ⚠️ T4 有规格 | P2 |
+| 多用户/权限 | ⚠️ 单机 | ✅ 工作区 + 三角色 | ⚠️ T5 有规格 | P2 |
+
+| Orca：GitHub / Linear 原生 | Multica：工作区归属（站点） |
+|---|---|
+| ![](assets/cmp/orca-github-linear.jpg) | ![](assets/cmp/mul-site.webp) |
+
+| Multica：在对话里建仓库并接手 |
+|---|
+| ![](assets/cmp/mul-chat-repo.webp) |
+
+**改进建议**
+1. **P2｜集成从「PR 关联」单点切入**：先做「任务关联 PR + 合并后改状态」，这是 T1 里唯一直接影响闭环的部分。
+2. **P2｜Bot 只做一个平台**：选团队实际在用的那个（内部大概率是飞书），其余留在规格里。
+3. **P2｜移动端只做「看 + 追问」**：Orca 的移动端定位就是通知+steer，不要试图在手机上编排。
+
+---
+
+## 附：不建议抄的能力
+
+| 能力 | 归属 | 原因 |
+|---|---|---|
+| 终端分屏 / WebGL 渲染 / 会话恢复 | Orca | 与「编排控制台」定位冲突，成本极高 |
+| 内置浏览器 / Design Mode | Orca | 本项目由 IDE 承载域面板与选区 |
+| 代码编辑器 / Monaco 全功能 | Orca | 只保留只读 Diff 与外部打开 |
+| 插件宿主沙箱 / 主题包 | Orca | 面板契约已降为 P2 |
+| 多租户 SaaS / Docker 自托管 | Multica | 主形态是本地单用户安装包 |
+| 逐步骤通知 / 复杂订阅规则 | Multica | 与 E3「只在需要决策时打扰」冲突 |
