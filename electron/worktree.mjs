@@ -2,7 +2,12 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-const ROOT = path.join(process.env.HOME || process.cwd(), "Documents", "YieldMind", "worktrees");
+const HOME = process.env.HOME || process.cwd();
+// 老安装仍在 ~/Documents/YieldMind/worktrees；新安装用 Cockpit Harness
+const LEGACY_ROOT = path.join(HOME, "Documents", "YieldMind", "worktrees");
+const ROOT = fs.existsSync(path.join(HOME, "Documents", "YieldMind"))
+  ? LEGACY_ROOT
+  : path.join(HOME, "Documents", "Cockpit Harness", "worktrees");
 
 function run(cmd, args, cwd) {
   const r = spawnSync(cmd, args, { cwd, encoding: "utf8" });

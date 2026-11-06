@@ -30,11 +30,11 @@ harness 的 Terminal 是「Agent 干活 + 人直接敲命令」的同一个 pane
 | 复制 / 粘贴 | `⌘C`（有选区才拦截，无选区仍发 `^C`）、`⌘V`、右键菜单 | Electron `clipboard` IPC；粘贴走 `term.paste()`，保留 bracketed paste |
 | 右键菜单 | 复制 / 粘贴 / 全选 / 查找 / 清屏 / 新建 / 关闭 | `TermMenu`（贴边自动收进窗口） |
 | 清屏 | `⇧⌘K` | `term.clear()` |
-| 字号缩放 | `⌘+` / `⌘-` / `⌘0`；缩放后工具栏出现 `Npx` 复位按钮 | 面板级 `zoom` delta，持久化到 `localStorage["ymh.term.zoom"]`，上限 8–32px |
+| 字号缩放 | `⌘+` / `⌘-` / `⌘0`；缩放后工具栏出现 `Npx` 复位按钮 | 面板级 `zoom` delta，持久化到 `localStorage["cmh.term.zoom"]`，上限 8–32px |
 | 链接 | `http(s)` / `mailto` 可点击，用系统浏览器打开 | `@xterm/addon-web-links` + `shell:openExternal`（仅白名单 scheme） |
 | 拆分窗格 | `⌘D` 向右、`⇧⌘D` 向下（递归嵌套）；拖拽分隔条调比例；`⌘⌥←/→/↑/↓` 按几何方向移动焦点；右键菜单 / 命令面板同入口 | `Tab.root` 二叉树 + `SplitSurface` 绝对定位布局；新窗格继承当前窗格 cwd |
 | 关闭窗格 | `⌘W` 关闭当前窗格，最后一个窗格时关闭整个标签 | `closeFocusedPane` 删除叶子并折叠空的 split |
-| 预览标签 | 预览与终端共用一条标签栏：工具栏「＋ 预览」随时可开（默认地址 = 设置里的预览地址 / 最近识别的 dev server），`打开预览 :PORT` 直接跳到识别出的地址；可切换、双击重命名、`⌘W`/中键关闭；命令面板也有「打开预览标签」 | `Tab.kind = "preview"` + `PreviewPanel`（保留 webview 状态），不再使用“终端/预览”模式切换 |
+| 预览标签 | 预览与终端共用一条标签栏：工具栏「＋ 预览」随时可开（默认地址 = 设置里的预览地址 / 最近识别的 dev server），`打开预览 :PORT` 直接跳到识别出的地址；可切换、双击重命名、`⌘W`/中键关闭；命令面板也有「打开预览标签」 | `Tab.kind = "preview"` + `PreviewSurface`（保留 webview 状态），不再使用“终端/预览”模式切换；HTML 文件标签也使用同一个 `PreviewSurface` |
 | 回到最新 | 向上滚动时右下角出现悬浮按钮 | `term.onScroll` → `scrolledUp` |
 | 退出态 | 进程退出后浮层显示退出码，可「重新启动」（纯 shell 标签）或关闭 | `terminal:exit` + `incarnation` 重建 xterm |
 | 尺寸自适应 | 拖分隔条 / 收起侧栏 / 窗口缩放后重新 `fit` | `ResizeObserver` + rAF 节流 |

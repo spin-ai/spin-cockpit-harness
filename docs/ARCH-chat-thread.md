@@ -140,6 +140,7 @@ CHAT
 - **agent 是会话属性**，运行中禁用、空闲可改。
 - **对话作用域**：未派活的会话默认是**全局对话**（`thread.projectId = null`），不随项目切换隐藏；composer 的 `◎ 全局 / 项目 · xxx` 控制派活目标。全局作用域下派活时按 Agent 所在项目兜底；显式选项目则按该项目建任务。
 - 任务一旦绑定项目即锁定（任务 = project → terminal → agent 的前提）。改作用域只改会话目标，**不再同步切换整个工作区项目**。
+- **模型是会话属性**：`thread.model` / `modelName` / `effort`。Chat 底部选择器调用 `listModels`（主进程起一个 dsh ACP，读 `session/new` 的 `configOptions`，缓存 10 分钟），写入 thread；`startRun` 用 `thread.model || settings.model`。模型切换对**下一次 run** 生效，运行中的 steer 仍用当前 ACP session。空值 = 跟随设置 / dsh 默认。
 - 滚动遵循“贴底才跟随”：用户翻历史时，流式追加不会把视口拽回去。
 - 新任务入口：顶栏「＋ 新任务」/ Chat 内「＋ 新任务」/ ⌘N，全部走 `newThread`，**删除了 NewTodo 表单**（原来的第二分派入口）。
 

@@ -38,11 +38,11 @@
 | 外观 | `chatFontSize` | `13` | CSS 变量 `--chat-font-size`（消息体 + 输入框） |
 | 执行 | `maxConcurrentRuns` | `0`（不限） | `tick()` 全局并发闸门，排队原因「等待全局并发」 |
 | 执行 | `approvalPolicy` | `ask` | ACP `session/request_permission`：ask 弹窗 / allow / deny |
-| 执行 | `dshBinary` / `dshHome` / `model` / `effort` | 空 = 环境默认 | 新建 `AcpClient` 与 `session/set_config_option` |
+| 执行 | `dshBinary` / `dshHome` / `model` / `effort` | 空 = 环境默认 | 新建 `AcpClient` 与 `session/set_config_option`；Chat 的会话级模型覆盖此默认值 |
 | 终端 | `shellPath` | 空 = `$SHELL` | `terminal:create`（失败回落默认 shell 并写事件） |
 | 终端 | `terminalFontSize` / `terminalScrollback` | `12` / `5000` | xterm `options` 实时更新 + fit |
 | 终端 | `autoDetectDevServerUrl` | `true` | pty 输出 URL 探测（`terminal:url`） |
-| 预览 | `previewHomeUrl` | `http://localhost:5173/` | `PreviewPanel` 地址栏默认值 |
+| 预览 | `previewHomeUrl` | `http://localhost:5173/` | `PreviewSurface` 地址栏默认值 |
 | 预览 | `elementScreenshots` | `true` | 元素拾取截图（`preview:pick`） |
 | 预览 | `contextDetail` | `standard` | `formatContext`：compact 去掉组件/盒模型/样式/HTML |
 | 数据 | — | — | 打开数据目录、导出 `.db`、清空收件箱、重置设置 |

@@ -1,7 +1,29 @@
-# spin-cockpit-harness
+# Cockpit Harness
 
-YieldMind Harness · 多 Agent 编排工作台：**Chat 分派任务 → project 下开 Terminal → agent 执行 → 看板看状态 → 确认后进 TODO LIST**。
-Electron 桌面应用，本地 SQLite，执行走 `dsh --profile acp`。
+[![build](https://github.com/spin-ai/spin-cockpit-harness/actions/workflows/build.yml/badge.svg)](https://github.com/spin-ai/spin-cockpit-harness/actions/workflows/build.yml)
+[![release](https://img.shields.io/github/v/release/spin-ai/spin-cockpit-harness?include_prereleases&label=release)](https://github.com/spin-ai/spin-cockpit-harness/releases)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![status](https://img.shields.io/badge/status-alpha-orange)
+
+Cockpit Harness · 多 Agent 编排工作台：**Chat 分派任务 → project 下开 Terminal → agent 执行 → 看板看状态 → 确认后进 TODO LIST**。
+Electron 桌面应用，本地 SQLite，执行走 `dsh --profile acp`；仓库名 `spin-cockpit-harness`。
+
+> **当前版本：`v0.2.0-alpha.1`（Liftoff，首个公开 Alpha）**
+> Alpha 阶段数据库结构、IPC 与 UI 仍可能变化；升级前请备份本地数据。
+
+## 下载
+
+构建产物在 [GitHub Releases](https://github.com/spin-ai/spin-cockpit-harness/releases)：
+
+| 平台 | 产物 |
+|---|---|
+| macOS（Apple Silicon / arm64） | `Cockpit Harness-<version>-arm64.dmg` |
+| Windows（x64） | `Cockpit Harness Setup <version>.exe` |
+| Linux（x86_64） | `Cockpit Harness-<version>.AppImage` |
+
+- 发行版默认内置 dsh 单文件运行时，不需要目标机器安装 dsh。
+- 未做代码签名/公证：macOS 可能被 Gatekeeper 拦截，Windows 可能触发 SmartScreen；Linux AppImage 需 `chmod +x`。
+- 校验和见 Release 的 `SHA256SUMS.txt`。
 
 ## 运行
 
@@ -14,29 +36,33 @@ npm run dist                # macOS dmg → release/
 ```
 
 前置：本机已安装 `dsh` 并配置好模型；启动时自动探测 `dsh / pi / claude / codex / opencode`。
+
+命名：仓库名 `spin-cockpit-harness`，产品名 **Cockpit Harness**（窗口标题 / 安装包 / ACP 客户端标识统一）；
+需要多实例或跑冒烟测试时用 `COCKPIT_USER_DATA=/tmp/xxx` 指定独立的 userData 目录。
 发行版默认把 dsh 的单文件运行时打进 App（`Contents/Resources/dsh`），不再依赖目标机器安装 dsh；开发模式仍可直接用系统 dsh。需要轻量包时用 `npm run dist:system`。
 
 ## 界面（五列）
 
 ```
 导航 | TODO LIST | Chat | Terminal | 资源管理器 / 会话历史
+工作区 / 项目 / 收件箱 / 统计 / 主机 / 设置
 ```
 
-- **导航**：工作区 / 项目 / 统计 / 主机 / 设置（`⌘,`，左分区导航 + 右行式表单，参考 ORCA / Multica）
-- **TODO LIST**：一条任务列表，按状态分组；支持搜索、筛选（全部/进行中/待确认/已确认）、分组折叠、悬停快捷操作
+- **导航**：工作区 / 项目 / 收件箱 / 统计 / 主机 / 设置（`⌘,`，左分区导航 + 右行式表单，参考 ORCA / Multica；收件箱带未读徽标）
+- **TODO LIST**：一条任务列表，按状态分组；支持搜索（标题/编号/描述/标签）、筛选（全部/进行中/待确认/已确认）、分组折叠、悬停或键盘聚焦显示快捷操作
 - **项目**：在 TODO LIST 下方的常驻项目区，本地目录即项目；支持添加 / 切换 / 管理 / 在 Finder 中显示，任务、终端、文件树跟随当前项目
-- **Chat**：单一输入路径。会话（thread）永远存在：说一句话即派活，运行中发消息即纠偏（带投递回执），已确认任务的消息仅记录；**未派活的对话是全局的**（切项目不消失），composer 里用 `◎ 全局 / 项目 · xxx` 选择这次对话的作用域
-- **Terminal**：任务绑定项目的真实 pty（node-pty + xterm），可多标签、可直接输入；**资源管理器里的文件也在终端区按标签预览**；多标签切换（⌃Tab / ⌘⇧[ ] / ⌘⇧1…9）、**终端窗格任意拆分**（⌘D 右拆 / ⇧⌘D 下拆，递归嵌套 + 拖拽分隔条 + ⌘⌥方向键切焦点）、标签重命名与中键关闭、⌘F 查找、右键菜单（复制 / 粘贴 / 清屏 / 重启）、⌘+/- 字号缩放、链接点击打开、进程退出后可重启；挂载前的输出会回放，不会丢 banner；**预览是终端里的一个标签页**（工具栏「＋ 预览」随时可开，默认地址来自设置；终端识别到 dev server 地址时也可一键打开），可在同一标签条里切换/关闭，并**拾取页面元素**
+- **Chat**：单一输入路径。会话（thread）永远存在：说一句话即派活，运行中发消息即纠偏（带投递回执），已确认任务的消息仅记录；**未派活的对话是全局的**（切项目不消失），composer 里用 `◎ 全局 / 项目 · xxx` 选择这次对话的作用域；**模型可按会话选择**（选项来自 dsh ACP `session/new` 的 configOptions，下一次运行生效）；草稿会话发送 = 派活并创建任务
+- **Terminal**：任务绑定项目的真实 pty（node-pty + xterm），可多标签、可直接输入；**资源管理器里的文件也在终端区按标签预览**；多标签切换（⌃Tab / ⌘⇧[ ] / ⌘⇧1…9）、**终端窗格任意拆分**（⌘D 右拆 / ⇧⌘D 下拆，递归嵌套 + 拖拽分隔条 + ⌘⌥方向键切焦点）、标签重命名与中键关闭、⌘F 查找、右键菜单（复制 / 粘贴 / 清屏 / 重启）、⌘+/- 字号缩放、链接点击打开、进程退出后可重启；挂载前的输出会回放，不会丢 banner；**预览是终端里的一个标签页**（工具栏「＋ 预览」随时可开，默认地址来自设置；终端识别到 dev server 地址时也可一键打开），可在同一标签条里切换/关闭，并**拾取页面元素**；网页预览和本地 HTML 文件渲染共用 `PreviewSurface`（同一 webview 生命周期 + 地址栏 + 渲染/源码 + 拾取）
 - **UI 上下文**：预览页里点中元素 → Chat 输入框出现元素 chip（selector / 源文件 / 截图）→ 随消息注入当前会话（运行中即 steer）
 - **右侧栏**：ORCA 风格三块
-  - **资源管理器**：树形展开 / 折叠、文件类型标识、名称筛选、显示点文件、全部折叠；**右键菜单**（新建文件/文件夹、在终端打开、Finder 显示、复制路径/相对路径、重命名 F2、复制副本、删除 ⌫）、工具栏新建、行内重命名、自动刷新（窗口重新聚焦时）
+  - **资源管理器**：树形展开 / 折叠、文件类型标识、名称筛选（默认隐藏点文件）、全部折叠；**右键菜单**（新建文件/文件夹、在终端打开、Finder 显示、复制路径/相对路径、重命名 F2、复制副本、删除 ⌫）、工具栏新建、行内重命名、自动刷新（窗口重新聚焦时）
   - **会话历史**：按今天 / 昨天 / 更早分组；每行显示标题、状态、Agent、项目、消息数、最近一条消息；点行回到对应 Chat 会话，可展开最近消息
-  - **会话历史**之外不再挤一个预览 tab：点击文件 / 右键「预览」会在**终端区**新开一个文件预览标签（文本 / 图片 / Markdown / HTML；Markdown 和 HTML 支持「渲染 / 源码」切换，可 Finder 显示、复制路径、刷新、关闭）
+  - **会话历史**之外不再挤一个预览 tab：点击文件 / 右键「预览」会在**终端区**新开一个文件预览标签（文本 / 图片 / Markdown / HTML；Markdown 和 HTML 支持「渲染 / 源码」切换；HTML 渲染里可直接**拾取元素**并把 selector / 源码位置注入 Chat；Markdown 相对文档链接可直接跳转；HTML 标签切换 / 源码渲染 / 刷新都不会重载 webContents；可 Finder 显示、复制路径、刷新、关闭）
 - **可拖拽布局**：TODO / Chat / Terminal / 文件四列之间的分隔条可左右拖动，TODO 列表与项目区之间的分隔条可上下拖动；尺寸自动记住，`⌘K → 重置面板宽度 / 高度` 可恢复默认
 - **可收起面板**：TODO / Chat / Terminal / 右侧栏都能收起成窄条，点击窄条展开；项目区也可单独折叠；状态自动记住
 - 状态分组就是看板：纵向排列在 TODO 列里
-- 主机页：本机 + SSH 主机卡片，一次往返探测 CLI / 版本 / git / 远端目录（`caps`），页面可见时 60s 心跳（连续 2 次失败才标离线），每主机并发上限，Agent 运行位置可切；主机离线时 Chat 顶部提示并可一键改用本机（见 [docs/ARCH-hosts-stats.md](docs/ARCH-hosts-stats.md)）
-- 统计页：成功率 / 中位耗时 / 排队 p50 / Token（未上报就显示未上报，不写 0）+ 每日趋势 + 4 类失败分类 + 按 Agent/项目/主机分组 + 失败下钻 + CSV 导出；不估算费用
+- 主机页：本机 + SSH 主机卡片，一次往返探测 CLI / 版本 / git / 远端目录（`caps`），页面可见时 60s 心跳（连续 2 次失败才标离线），每主机并发上限（失焦提交），SSH 主机可编辑地址/用户/端口/远端 cwd，Agent 运行位置切换有确认；主机离线时 Chat 顶部提示并可一键改用本机（见 [docs/ARCH-hosts-stats.md](docs/ARCH-hosts-stats.md)）
+- 统计页：**全部项目 / 单项目范围切换** + 成功率 / 中位耗时 / 排队 p50 / Token（未上报就显示未上报，不写 0）+ 每日趋势（图例 + 空态）+ 4 类失败分类 + 按 Agent/项目/主机分组 + 失败下钻 + CSV 导出；不估算费用
 - 主机只显示机器与可用 CLI；Agent 在项目 Terminal 里启动，带项目内唯一 `@别名`
 
 ## 已实现
@@ -56,8 +82,8 @@ npm run dist                # macOS dmg → release/
 - 终端（真实 pty）、项目文件树；文件预览与网页预览统一在终端标签区
 - 终端易用性（参考 ORCA terminal）：多标签快捷键、**窗格拆分**（二进制布局 / 拖拽比例 / 方向键切焦点）、查找高亮、右键菜单、链接打开、字号缩放、标签重命名 / 运行中提示点、退出重启、挂载前输出回放（见 [docs/ARCH-terminal-ux.md](docs/ARCH-terminal-ux.md)）
 - 前端预览 + 元素拾取（CDP）：预览作为终端标签页（与 pty 标签并列，⌘W / 中键关闭），终端打印的 dev server 地址自动识别；拾取元素 → 结构化 `<ui-context>` 注入 Agent；源码位置优先 `data-ym-src` / React `_debugSource`；截图落 `userData/ui-context`，不污染 worktree
-- 审批弹窗（ACP `session/request_permission`），可在设置里改为自动批准 / 自动拒绝
-- 设置页（通用 / 外观 / 执行 / 终端 / 预览与元素 / 数据 / 快捷键 / 关于）：SQLite 持久化、即时生效；含深浅色主题、默认 Agent、全局并发、dsh 路径/模型、终端字号与回滚、预览地址、备份导出与重置
+- 审批弹窗（ACP `session/request_permission`）：按 ACP 选项渲染（允许一次 / 总是允许 / 拒绝），支持多审批队列提示、焦点陷阱/aria；可在设置里改为自动批准 / 自动拒绝
+- 设置页（通用 / 外观 / 执行 / 终端 / 预览与元素 / 数据 / 快捷键 / 关于）：SQLite 持久化、即时生效；含分区说明/行内 hint、深浅色主题、默认 Agent、全局并发、dsh 路径/模型、终端字号与回滚、预览地址、备份导出与重置
 - 每日模板、产物预览
 - macOS dmg 打包（未签名）
 
@@ -138,6 +164,24 @@ npm run pack:system
 - Windows / Linux 产物由 CI 在原生 runner 上构建 + `smoke:dsh` 验证（见 `.github/workflows/build.yml`）；本地 macOS 可以交叉准备 dsh 资源并打 Windows 包，但 Linux 的 node-pty 必须在 Linux 上重建。
 - 正式分发需要签名/公证，内置的 `dsh`、`dsh-rg`、`dsh-spawn-helper` 也要一起签。
 
+发布构建目标（CI 会在原生 runner 上构建并做 dsh smoke）：
+
+| 平台 | 产物 | 验证 |
+|---|---|---|
+| macOS arm64 | `Cockpit Harness-0.2.0-alpha.1-arm64.dmg` | CI `macos-14`；dsh `--version` + ACP initialize/session/new |
+| Linux x86_64 | `Cockpit Harness-0.2.0-alpha.1.AppImage` | CI `ubuntu-24.04`；dsh ACP、node-pty（ELF）与 Electron 启动通过 |
+| Windows x64 | `Cockpit Harness Setup 0.2.0-alpha.1.exe` | CI `windows-2022`；内置 dsh/PTY 与 `app.asar` 结构通过 |
+
+## 开源与参与
+
+- **License**：[MIT](LICENSE) · 版权归 spin-ai
+- **贡献指南**：[CONTRIBUTING.md](CONTRIBUTING.md)
+- **行为准则**：[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- **安全报告**：[SECURITY.md](SECURITY.md)（请走私密漏洞报告，不要开公开 Issue）
+- **第三方许可**：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)（含内置 dsh 的 MIT 许可、ORCA/Multica 对比截图归属）
+- **变更记录**：[CHANGELOG.md](CHANGELOG.md) · [Release Notes](RELEASE_NOTES.md)
+- 本项目是本地优先工具，不包含遥测；Agent CLI 自身的数据发送取决于对应服务的配置。
+
 ## 文档
 
 - [docs/REQ-original.md](docs/REQ-original.md)（纠正版需求）
@@ -149,5 +193,6 @@ npm run pack:system
 - [docs/ARCH-hosts-stats.md](docs/ARCH-hosts-stats.md)（主机探测/心跳/运行位置 + 统计口径：未上报不写 0）
 - [docs/ARCH-terminal-ux.md](docs/ARCH-terminal-ux.md)（终端易用性：标签 / 拆分 / 查找 / 右键菜单 / 输入回放）
 - [docs/ARCH-chat-ui.md](docs/ARCH-chat-ui.md)（Chat UI：扁平消息 / 工具折叠 / 卡片 composer，参考 Multica + ORCA）
+- [docs/ARCH-usability-pass.md](docs/ARCH-usability-pass.md)（易用性改进：已完成项与仍待做的重型能力）
 - [docs/ARCH-file-explorer.md](docs/ARCH-file-explorer.md)（资源管理器：右键菜单 / 文件操作 / 安全边界）
 - [docs/GAP-chat.md](docs/GAP-chat.md)（CHAT 实现现状与需求差距）

@@ -20,7 +20,7 @@
 Renderer
   TerminalPanel  标签栏（pty 标签 + 预览标签）
     ├─ SplitSurface（pty 标签内的窗格拆分树）
-    └─ PreviewPanel（kind=preview 的标签）
+    └─ PreviewSurface（kind=preview 的网页标签 / HTML 文件标签）
          <webview src=... partition="preview">   ← 独立进程，无 preload
          「拾取元素」→ window.harness.previewPick(wcId)
 Main
@@ -108,7 +108,7 @@ HTML：<h1 class="hero">hello</h1>
 | `electron/main.mjs` | `preview:pick / cancel / detach` IPC；`webviewTag: true`；`send` 接收 `context`；`startRun` / steer / retry 拼 `<ui-context>` |
 | `electron/db.mjs` | `messages.context`（JSON）列 + 迁移 + 持久化 |
 | `electron/preload.cjs` | `previewPick / previewCancel / previewDetach` |
-| `src/components/PreviewPanel.tsx`（新） | 地址栏、webview、「拾取元素」、错误/结果提示 |
+| `src/components/PreviewSurface.tsx` | **统一预览表面**：网页地址栏 / 本地 HTML 路径、渲染/源码、webview、「拾取元素」、刷新/Finder/复制；同一标签只保留一个 webContents |
 | `src/components/TerminalPanel.tsx` | 预览作为标签页（`Tab.kind=preview`）与 pty 标签并列；终端保持挂载（切回不丢 pty） |
 | `src/components/TaskChat.tsx` | composer 上方的 context chip；消息气泡里的只读元素标记；`send` 带 context |
 | `src/App.tsx` | `pendingContext`；切会话时清空，避免串任务 |

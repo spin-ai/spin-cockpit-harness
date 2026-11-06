@@ -4,12 +4,13 @@
  *
  * 前置：一个**隔离了 userData** 的实例带调试端口在跑（避免动到正在用的 harness.db）：
  *
- *   YMH_USER_DATA=/tmp/ymh-e2e VITE_DEV_SERVER_URL="http://[::1]:5299/" \
+ *   COCKPIT_USER_DATA=/tmp/cockpit-e2e VITE_DEV_SERVER_URL="http://[::1]:5299/" \
  *     ./node_modules/electron/dist/Electron.app/Contents/MacOS/Electron . --remote-debugging-port=9223
  *
  * 用法：node scripts/e2e-smoke.mjs [port]
  * 说明：
  * - 依赖 Node 内置 WebSocket + fetch（Node ≥ 22）
+ * - COCKPIT_USER_DATA 指向临时目录，避免动到正在使用的 harness.db
  * - 「问清楚」会真的失败一次 run（本机 dsh 无 API key 也算预期结果），用于验证统计采集
  */
 const port = Number(process.argv[2] || 9223);
