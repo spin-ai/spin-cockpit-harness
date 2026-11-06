@@ -213,19 +213,19 @@ def main() -> None:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>YieldMind Harness — 需求与模块对比</title>
+<title>Cockpit Harness — 需求与模块对比</title>
 <style>{style}{EXTRA_CSS}</style>
 </head>
 <body>
 <div class="shell">
 <nav class="nav">
-  <div class="brand">YieldMind Harness<span>MULTI-AGENT ORCHESTRATION CONSOLE</span></div>
+  <div class="brand">Cockpit Harness<span>MULTI-AGENT ORCHESTRATION CONSOLE</span></div>
   <div class="ver">需求 76 条 · 模块 A–T</div>
   {nav}
 </nav>
 <main>
   <header class="doc-head" id="top">
-    <h1>YieldMind Harness — 需求与模块对比</h1>
+    <h1>Cockpit Harness — 需求与模块对比</h1>
     <p class="lead">独立发包的多 Agent 编排控制台：TODO / 看板 / 分派 / 纠偏 / 回写，<b>域面板留在 YieldMind-IDE</b>。
     本文合并三份内容：现行需求（A–T）、界面原型、与 reference / reference 的模块级对比。</p>
     <div class="lede-chips">

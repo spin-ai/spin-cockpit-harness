@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS hosts (id TEXT PRIMARY KEY, name TEXT, kind TEXT, add
 CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT, host_id TEXT, cli TEXT, cwd TEXT, max_concurrency INTEGER, approval TEXT, color TEXT, skills TEXT, alias TEXT, project_id TEXT, terminal_id TEXT);
 CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, key TEXT, title TEXT, desc TEXT, acceptance TEXT, status TEXT, agent_id TEXT, priority TEXT, due TEXT, parent_id TEXT, tags TEXT, subtasks TEXT, blocked_by TEXT, missing_writeback INTEGER, last_run_failed INTEGER, cwd TEXT, created_at INTEGER, updated_at INTEGER, confirmed INTEGER, project_id TEXT);
 CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, todo_id TEXT, agent_id TEXT, status TEXT, trigger TEXT, started_at INTEGER, ended_at INTEGER, cost REAL, tokens INTEGER, error TEXT, parent_run_id TEXT, cwd TEXT, branch TEXT, host_id TEXT, created_at INTEGER, tokens_in INTEGER, tokens_out INTEGER, usage_source TEXT, error_class TEXT, exit_code INTEGER, queue_wait_ms INTEGER, duration_ms INTEGER, queue_reason TEXT);
-CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, todo_id TEXT, title TEXT, project_id TEXT, project TEXT, agent_id TEXT, created_at INTEGER, updated_at INTEGER);
+CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, todo_id TEXT, title TEXT, project_id TEXT, project TEXT, agent_id TEXT, created_at INTEGER, updated_at INTEGER, model TEXT, model_name TEXT, effort TEXT);
 CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, todo_id TEXT, run_id TEXT, role TEXT, kind TEXT, content TEXT, injected INTEGER, created_at INTEGER, thread_id TEXT, delivery TEXT, context TEXT);
 CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, todo_id TEXT, run_id TEXT, kind TEXT, title TEXT, origin TEXT, ref TEXT, deep_link TEXT, created_at INTEGER);
 CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, ts INTEGER, type TEXT, text TEXT);
@@ -73,6 +73,9 @@ export async function openDb(dir) {
     "ALTER TABLE agents ADD COLUMN project_id TEXT",
     "ALTER TABLE agents ADD COLUMN terminal_id TEXT",
     "ALTER TABLE messages ADD COLUMN thread_id TEXT",
+    "ALTER TABLE threads ADD COLUMN model TEXT",
+    "ALTER TABLE threads ADD COLUMN model_name TEXT",
+    "ALTER TABLE threads ADD COLUMN effort TEXT",
     "ALTER TABLE messages ADD COLUMN delivery TEXT",
     "ALTER TABLE messages ADD COLUMN context TEXT",
     // 主机：能力矩阵 / 探测时间 / 负载上限 / 默认远端目录（见 docs/ARCH-hosts-stats.md）
@@ -140,6 +143,7 @@ export async function openDb(dir) {
   state.threads = rows("SELECT * FROM threads").map((r) => ({
     id: r.id, todoId: r.todo_id || null, title: r.title || "", projectId: r.project_id || null,
     project: r.project || "", agentId: r.agent_id || null,
+    model: r.model || "", modelName: r.model_name || "", effort: r.effort || "",
     createdAt: r.created_at || Date.now(), updatedAt: r.updated_at || r.created_at || Date.now(),
   }));
   state.messages = rows("SELECT * FROM messages").map((r) => ({
@@ -173,7 +177,8 @@ export async function openDb(dir) {
     const thread = {
       id: `th${++state.seq}`, todoId: todo.id, title: todo.title,
       projectId: todo.projectId || null, project: todo.cwd || "",
-      agentId: todo.agentId || null, createdAt: todo.createdAt || Date.now(), updatedAt: Date.now(),
+      agentId: todo.agentId || null, model: "", modelName: "", effort: "",
+      createdAt: todo.createdAt || Date.now(), updatedAt: Date.now(),
     };
     state.threads.push(thread);
     map.set(todo.id, thread);
@@ -206,7 +211,7 @@ export async function openDb(dir) {
         r.createdAt || null, r.tokensIn ?? null, r.tokensOut ?? null, r.usageSource || "unknown", r.errorClass || null,
         r.exitCode ?? null, r.queueWaitMs ?? null, r.durationMs ?? null, r.queueReason || null],
     );
-    for (const t of state.threads) db.run("INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)", [t.id, t.todoId || null, t.title || "", t.projectId || null, t.project || "", t.agentId || null, t.createdAt || Date.now(), t.updatedAt || Date.now()]);
+    for (const t of state.threads) db.run("INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.todoId || null, t.title || "", t.projectId || null, t.project || "", t.agentId || null, t.createdAt || Date.now(), t.updatedAt || Date.now(), t.model || null, t.modelName || null, t.effort || null]);
     for (const m of state.messages) db.run("INSERT INTO messages VALUES (?,?,?,?,?,?,?,?,?,?,?)", [m.id, m.todoId || null, m.runId || null, m.role, m.kind || "text", m.content, m.injected ? 1 : 0, m.createdAt, m.threadId || null, m.delivery || null, m.context ? JSON.stringify(m.context) : null]);
     for (const a of state.artifacts) db.run("INSERT INTO artifacts VALUES (?,?,?,?,?,?,?,?,?)", [a.id, a.todoId, a.runId, a.kind, a.title, a.origin, a.ref, a.deepLink, a.createdAt || Date.now()]);
     for (const e of state.events) db.run("INSERT INTO events VALUES (?,?,?,?)", [e.id, e.ts, e.type, e.text]);

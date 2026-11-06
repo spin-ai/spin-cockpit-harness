@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>YieldMind Harness — 需求与模块对比</title>
+<title>Cockpit Harness — 需求与模块对比</title>
 <style>
   :root{
     --bg:#f5f7f9;
@@ -390,7 +390,7 @@
 <body>
 <div class="shell">
 <nav class="nav">
-  <div class="brand">YieldMind Harness<span>MULTI-AGENT ORCHESTRATION CONSOLE</span></div>
+  <div class="brand">Cockpit Harness<span>MULTI-AGENT ORCHESTRATION CONSOLE</span></div>
   <div class="ver">需求 76 条 · 模块 A–T</div>
   <div class="group">需求</div>
 <a href="#s1">1. 目标</a>
@@ -453,10 +453,17 @@
 <a href="#cmp-skip">附：不建议抄的能力</a>
 <div class="group">附录</div>
 <a href="#orig">原话拆解与修改建议</a>
+<a href="#1">1. 界面结构（固定）</a>
+<a href="#2">2. 核心流程</a>
+<a href="#3">3. 需求</a>
+<a href="#4">4. 验收场景</a>
+<a href="#5">5. 与上一版的差异</a>
+<a href="#51">5.1 别名规则（新增）</a>
+<a href="#6">6. 待确认</a>
 </nav>
 <main>
   <header class="doc-head" id="top">
-    <h1>YieldMind Harness — 需求与模块对比</h1>
+    <h1>Cockpit Harness — 需求与模块对比</h1>
     <p class="lead">独立发包的多 Agent 编排控制台：TODO / 看板 / 分派 / 纠偏 / 回写，<b>域面板留在 YieldMind-IDE</b>。
     本文合并三份内容：现行需求（A–T）、界面原型、与 reference / reference 的模块级对比。</p>
     <div class="lede-chips">
@@ -466,7 +473,7 @@
     </div>
   </header>
   <div class="part" id="req"><blockquote>
-<p><strong>仓库</strong>：<code>spin-yieldmind-harness</code>（与同级目录 <code>spin-yieldmind-ide</code> 并列的独立仓）。
+<p><strong>仓库</strong>：<code>spin-cockpit-harness</code>（与同级目录 <code>spin-yieldmind-ide</code> 并列的独立仓）。
 <strong>定位</strong>：<strong>独立发包</strong>的桌面编排控制台 —— 左侧 Agent 与任务，中间看板 / 任务详情，右侧会话与日志；<strong>数据 / 绘图 / HTML 画布在 YieldMind-IDE</strong>，harness 只做只读产物预览与深链。
 冲突时以本文为准；未列入第 11 节的内容一律不做。
 <strong>原始需求存档</strong>（原文要点与修改建议）见 <a href="#orig"><code>REQ-original.md</code></a>，仅作追溯，不参与迭代。</p>
@@ -1931,7 +1938,7 @@ session.close
   <div class="proto">
     <div class="proto-title"><span class="n">P1</span><h4>主工作台 · 四区布局</h4><span class="cap">G1 / G3 / B4 / D1 / E1 · 对应「1 屏可见」指标</span></div>
     <div class="wire">
-      <div class="chrome"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">yieldmind-harness — workspace: 良率日常</span><span style="font-size:10px">⌘K</span></div>
+      <div class="chrome"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">cockpit-harness — workspace: 良率日常</span><span style="font-size:10px">⌘K</span></div>
 
       <div class="ws">
         <!-- 顶栏 -->
@@ -2335,9 +2342,9 @@ session.close
 <td>A Agent / 主机</td>
 <td>任意 CLI + 账户用量</td>
 <td>运行时矩阵 + 守护进程</td>
-<td>部分（本机 5 种 CLI）</td>
-<td>无 Runtime 实体、无远程</td>
-<td>P0</td>
+<td>部分（本机 5 种 CLI + SSH 主机探测/心跳/并发）</td>
+<td>无 Runtime 实体、无守护进程</td>
+<td>P1</td>
 </tr>
 <tr>
 <td>B TODO / 看板</td>
@@ -2439,8 +2446,8 @@ session.close
 <td>Q 运行时治理</td>
 <td>用量与限额、会话历史</td>
 <td>错误分类、并发与目录锁</td>
-<td>部分（并发上限）</td>
-<td>用量、错误分类</td>
+<td>部分（并发上限 + 4 类错误 + token 可缺省）</td>
+<td>限额/费用</td>
 <td>P1</td>
 </tr>
 <tr>
@@ -2469,7 +2476,7 @@ session.close
 </tr>
 </tbody>
 </table></div>
-<p><strong>一句话</strong>：reference 强在「执行环境 + 审阅」，reference 强在「协作 + 编排对象模型」；本项目规格已覆盖两者 76 条，但<strong>实现只到「单机 run 跑通」</strong>，真正卡住闭环的是 A/F/L/N/R 五个模块。</p>
+<p><strong>一句话</strong>：reference 强在「执行环境 + 审阅」，reference 强在「协作 + 编排对象模型」；本项目规格已覆盖两者 76 条，实现到「单机 run 跑通 + 主机探测/统计口径」（见 <a href="ARCH-hosts-stats.md">ARCH-hosts-stats.md</a>），真正卡住闭环的还剩 F/L/N/R 四个模块。</p>
 <hr />
 <h2 id="cm-a">A. Agent 与主机管理</h2>
 <div class="tbl tbl-plain"><table>
@@ -2501,15 +2508,15 @@ session.close
 <td>工具能力差异可见</td>
 <td>⚠️ 启动时探测</td>
 <td>✅ 会话恢复 / MCP / 选模型 / skill 目录</td>
-<td>❌</td>
+<td>⚠️ caps 探测（CLI/版本/git/目录），无 resume/mcp/model</td>
 <td>P1</td>
 </tr>
 <tr>
 <td>远程主机纳管</td>
 <td>✅ SSH worktree</td>
 <td>✅ 守护进程 + 机器</td>
-<td>❌</td>
-<td>P0 缺口</td>
+<td>⚠️ SSH 主机纳管 + 探测/心跳（页面可见时），无守护进程</td>
+<td>P1</td>
 </tr>
 <tr>
 <td>账户与额度</td>
@@ -2994,10 +3001,10 @@ session.close
 </tr>
 <tr>
 <td>终端</td>
-<td>✅ Ghostty 级 WebGL</td>
+<td>✅ Ghostty 级 WebGL + 无限分屏</td>
 <td>❌</td>
-<td>❌</td>
-<td>不建议做</td>
+<td>⚠️ xterm + 窗格拆分（无 WebGL / 会话恢复）</td>
+<td>基础拆分已补</td>
 </tr>
 </tbody>
 </table></div>
@@ -3016,7 +3023,7 @@ session.close
 </tbody>
 </table></div>
 <p><strong>改进建议</strong>
-1. <strong>P1｜只做「折叠 + 命名保存」</strong>，不做自由 dock：G1 已收敛，reference 的分屏成本极高（终端渲染、会话恢复一堆坑）。
+1. <strong>P1｜只做「折叠 + 命名保存」</strong>，不做自由 dock：G1 已收敛。终端已补二进制窗格拆分（⌘D / ⇧⌘D + 拖拽比例）；reference 的会话恢复、拖拽 pane 重排仍是高成本项，不跟进。
 2. <strong>P1｜命令面板优先于快捷键自定义</strong>：先把「切视图 / 派活 / 纠偏」三个动作做成命令，快捷键自然挂上去。
 3. <strong>P2｜不做终端</strong>：日志走只读流；真要交互，交给 IDE。</p>
 <hr />
@@ -3423,7 +3430,7 @@ session.close
 <td>能力矩阵</td>
 <td>⚠️ 启动探测</td>
 <td>✅ 对照表（恢复/MCP/模型/skill 目录）</td>
-<td>❌</td>
+<td>⚠️ <code>caps</code>：CLI/版本/git/目录；无 resume/mcp/model</td>
 <td>P1</td>
 </tr>
 <tr>
@@ -3437,22 +3444,22 @@ session.close
 <td>用量与成本</td>
 <td>✅ 限额进度条</td>
 <td>✅ token/费用/耗时/失败数</td>
-<td>❌</td>
+<td>⚠️ token + 耗时（未上报就显未上报）；不估算费用</td>
 <td>P1</td>
 </tr>
 <tr>
 <td>错误分类与重试</td>
 <td>⚠️ 原样报错</td>
 <td>✅ 5 类 + 错误码 + 重试</td>
-<td>⚠️ 有重试无分类</td>
-<td>P1</td>
+<td>✅ 4 类（认证/限流/超时/其他）+ 重试</td>
+<td>—</td>
 </tr>
 <tr>
 <td>并发与超时</td>
 <td>⚠️ 手动</td>
 <td>✅ 排队原因可见</td>
-<td>✅ 已实现（并发上限）</td>
-<td>补原因</td>
+<td>✅ 全局 + 主机级并发，排队原因可见</td>
+<td>—</td>
 </tr>
 </tbody>
 </table></div>
@@ -3709,9 +3716,9 @@ session.close
 </thead>
 <tbody>
 <tr>
-<td>终端分屏 / WebGL 渲染 / 会话恢复</td>
+<td>终端 WebGL 渲染 / 会话恢复 / pane 拖拽重排</td>
 <td>reference</td>
-<td>与「编排控制台」定位冲突，成本极高</td>
+<td>窗格拆分已做；剩下三项成本高，暂不跟进</td>
 </tr>
 <tr>
 <td>内置浏览器 / Design Mode</td>
@@ -3740,55 +3747,173 @@ session.close
 </tr>
 </tbody>
 </table></div></div>
-  <div class="part"><h2 class="part-head" id="orig">原话拆解与修改建议</h2><p class="part-lead">项目起点的原话拆解，仅作追溯。</p><div class="tbl tbl-plain"><table>
+  <div class="part"><h2 class="part-head" id="orig">原话拆解与修改建议</h2><p class="part-lead">项目起点的原话拆解，仅作追溯。</p><blockquote>
+<p>本文件替代前两版。界面结构以你给的线框为准：<strong>导航 + TODO LIST + Chat + Terminal + 文件目录/预览</strong> 五列；执行模型为 <strong>project → terminal → agent</strong>。</p>
+</blockquote>
+<h2 id="1">1. 界面结构（固定）</h2>
+<pre><code>┌────┬────────────┬────────────┬──────────────────────────┬───────────────┐
+│导航│ TODO LIST  │    Chat    │         Terminal         │ 文件目录/预览  │
+│    │            │            │                          │               │
+│    │ 已确认任务  │ 分派/对话   │ 任务绑定的真实终端        │ 项目树/文件/产物│
+└────┴────────────┴────────────┴──────────────────────────┴───────────────┘
+</code></pre>
+<div class="tbl tbl-plain"><table>
 <thead>
 <tr>
-<th>序号</th>
+<th>区域</th>
+<th>必须包含</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>导航</strong></td>
+<td>最窄的一列；入口切换（工作区 / 统计 / 主机 / 设置），当前项高亮</td>
+</tr>
+<tr>
+<td><strong>TODO LIST</strong></td>
+<td>一条任务列表，按状态分组（待执行 / 运行中 / 等待输入 / 待确认 / 已确认）；没有列表/看板两套视图；点选任务同步 Chat 与 Terminal</td>
+</tr>
+<tr>
+<td><strong>Chat</strong></td>
+<td>普通对话；只有输入 <code>@别名</code> 且带任务内容时才创建任务并派活；项目创建时自动生成别名，agent 也有别名</td>
+</tr>
+<tr>
+<td><strong>Terminal</strong></td>
+<td>最宽的主区域；任务绑定的真实 pty；支持多标签；显示 agent 输出，可直接输入</td>
+</tr>
+<tr>
+<td><strong>文件目录/预览</strong></td>
+<td>当前项目的文件树；文件与产物预览；点击文件在预览区打开</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>只有一条任务列表，按状态分组</strong>，既不是列表/看板切换，也不是两份数据：</p>
+<pre><code>TODO LIST
+├── 待执行
+├── 运行中
+├── 等待输入
+├── 待确认   ← 可「确认」
+└── 已确认
+</code></pre>
+<ul>
+<li>每个分组就是看板的一列，只是纵向排列，适配左栏宽度</li>
+<li>任务确认后就地进入「已确认」分组</li>
+<li>点任务行 → 同步选中 Chat 与 Terminal</li>
+</ul>
+<h2 id="2">2. 核心流程</h2>
+<pre><code>在 Chat 里输入 @别名 + 任务内容（普通消息不派活）
+  → 生成任务草稿（出现在 TODO LIST 的待执行）
+  → 在 project 下开 Terminal，启动并登录 agent
+  → TODO LIST 的分组反映执行状态，Terminal 看真实进展
+  → 直接输入纠偏
+  → 执行完成，结果回到任务
+  → 用户确认
+  → 任务标记为已确认（仍在同一条 TODO LIST）
+</code></pre>
+<h2 id="3">3. 需求</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>#</th>
 <th>需求</th>
-<th>修改建议</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>1</td>
-<td>多 Agent 编排控制台：把每天的任务规划、分发、进度监控、实时纠偏串成闭环</td>
-<td>拆成三条可验收流程（早会 / 纠偏 / 收工），每条定指标（≤5 分钟派完、≤10 秒送达纠正、1 屏看清状态）</td>
+<td><strong>固定五列</strong>：导航 / TODO LIST / Chat / Terminal / 文件目录预览；除 Terminal 外均可折叠。</td>
 </tr>
 <tr>
 <td>2</td>
-<td>统一管理多个 Agent，含本地与 SSH 远程</td>
-<td>远程与本地同级：同一套分派、纠偏、回写；补心跳、并发上限、审批策略、工具白名单</td>
+<td><strong>Chat 是唯一分派入口</strong>：不通过表单、不从其他列表新建；一句话里能指定 project、agent、要做的事。</td>
 </tr>
 <tr>
 <td>3</td>
-<td>统一对话与调度：同一界面给不同 Agent 发指令、回答问题、纠正方向</td>
-<td>纠偏必须进入<strong>运行中</strong>的 run，在最近 step 边界送达并留回执；不要排到下一轮</td>
+<td><strong>每个任务 = project → terminal → agent</strong>：任务绑定一个项目；在项目目录下开独立 terminal；agent 是在该 terminal 中启动并登录的 CLI（pi / dsh / …）。harness 不预注册 Agent。</td>
 </tr>
 <tr>
 <td>4</td>
-<td>支持把任务分发给多个 Agent 执行</td>
-<td>区分单播 / 广播 / 排队；广播按 worktree 隔离，产出并列对比、用户采纳其一</td>
+<td><strong>Terminal 是主区域</strong>：真实 pty、多标签、可交互；默认打开当前任务的项目目录与 agent；输出就是进展。</td>
 </tr>
 <tr>
 <td>5</td>
-<td>每日 TODO List 工作流：TODO 发给对应 Agent，看板看进度与状态，实时纠偏</td>
-<td>补状态机（待办→排队→进行中→等待输入→待验收→完成/取消）、每日计划三来源、定时任务显式时区</td>
+<td><strong>状态分组即看板</strong>：TODO LIST 按状态分组；行内显示 project、agent、状态、耗时；点行回到任务工作区。</td>
 </tr>
 <tr>
 <td>6</td>
-<td>聊天窗口可纠正</td>
-<td>与第 3 条合并为同一个 steer 能力，避免两套写入路径</td>
+<td><strong>文件目录/预览</strong>：当前项目文件树；点击文件或产物在右侧预览（文本/图片/HTML 预览等）。</td>
 </tr>
 <tr>
 <td>7</td>
-<td>Agent 跑完可以回应 TODO</td>
-<td>强制回写：状态 + 结论 + 产物（分支/PR/文件/测试），未回写视为未完成并标黄</td>
+<td><strong>完成回任务</strong>：agent 结束或主动回写后，结论 / 产物 / 退出状态回到任务。</td>
+</tr>
+<tr>
+<td>8</td>
+<td><strong>确认即状态</strong>：任务确认后标记「已确认」，仍留在同一条 TODO LIST；不产生第二份数据。</td>
+</tr>
+<tr>
+<td>9</td>
+<td><strong>纠偏进运行中</strong>：在 Terminal 输入或 Chat 注入，必须进入当前运行，不重开任务。</td>
+</tr>
+<tr>
+<td>10</td>
+<td><strong>多任务并行</strong>：不同 project / terminal / agent 同时跑；同一 project 允许多个 terminal。</td>
 </tr>
 </tbody>
 </table></div>
-<blockquote>
-<p>原话中两处 <code>4）</code> 为编号笔误，已按语义拆为第 5、6 条。</p>
-</blockquote></div>
+<h2 id="4">4. 验收场景</h2>
+<ol>
+<li>Chat 里说“@project-two 把首页标题改大”（切换项目时别名自动生成）→ TODO LIST 出现任务 → Terminal 在 <code>spin-publish</code> 启动 pi（已登录）→ 任务进入「运行中」分组 → Terminal 输出实时可见 → 文件预览可看改动 → 完成后进入「待确认」→ 确认 → 就地进入「已确认」。</li>
+<li>运行中在 Terminal 直接输入纠正 → 当前 agent 回合立即收到，不另起任务。</li>
+<li>两个任务在不同项目、不同 Terminal、不同 agent 并行 → TODO LIST 分组里可切换。</li>
+<li>任务完成后不确认 → 仍为待确认；确认后标记已确认。</li>
+<li>文件树里点开产物 → 右侧预览显示内容。</li>
+</ol>
+<h2 id="5">5. 与上一版的差异</h2>
+<div class="tbl tbl-plain"><table>
+<thead>
+<tr>
+<th>上一版</th>
+<th>纠正版 v3</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>看板是中间主区域</td>
+<td><strong>Terminal 是主区域；看板就是 TODO 的状态分组</strong></td>
+</tr>
+<tr>
+<td>只有 TODO / 会话两栏</td>
+<td><strong>固定五列：导航 + TODO + Chat + Terminal + 文件预览</strong></td>
+</tr>
+<tr>
+<td>任务都直接进 TODO</td>
+<td><strong>同一列表，确认是状态</strong></td>
+</tr>
+<tr>
+<td>文件/产物只在详情里</td>
+<td><strong>独立文件目录 + 预览栏</strong></td>
+</tr>
+<tr>
+<td>Agent 列表/终端独立</td>
+<td><strong>agent 在任务 Terminal 里登录</strong></td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="51">5.1 别名规则（新增）</h2>
+<ul>
+<li>创建项目时自动生成唯一别名（如 <code>@project-two</code>），用于在 Chat 里定位该项目的 Agent。</li>
+<li><strong>主机只显示机器与可用 CLI</strong>，不自动注册 Agent；Agent 在项目 Terminal 里启动后才出现，并带项目内唯一别名（如 <code>@dsh</code>）。</li>
+<li>Chat 输入框打 <code>@</code> 出现候选；只有消息里出现已存在的别名才创建任务，否则只记一条聊天。</li>
+<li>项目别名 → 该项目当前会话选中的 Agent；agent 别名 → 该 Agent。</li>
+</ul>
+<h2 id="6">6. 待确认</h2>
+<ol>
+<li><strong>状态分组是否够用</strong>：不再提供横向看板（当前按“分组即看板”实现）。</li>
+<li><strong>确认是否允许撤销</strong>（当前确认后即标记，不提供撤回）。</li>
+<li><strong>一个任务一个 Terminal 吗</strong>：重试是复用当前 Terminal，还是新开标签？</li>
+<li><strong>完成判定</strong>：以 agent 进程退出为准，还是必须由 agent 主动回写“完成 + 产物”？</li>
+</ol></div>
   <div class="doc-foot">
     由 <code>scripts/build-docs-html.py</code> 生成：源文件
     <code>docs/REQ-multi-agent-workspace.md</code> + <code>docs/CMP-modules-reference-reference.md</code> +

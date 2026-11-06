@@ -5,7 +5,7 @@ import { TaskPane } from "./components/TaskPane";
 import { TaskChat } from "./components/TaskChat";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { FilePanel } from "./components/FilePanel";
-import { Hosts, Projects, Stats } from "./components/Views";
+import { Hosts, Inbox, Projects, Stats } from "./components/Views";
 import { ApprovalModal } from "./components/ApprovalModal";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { Splitter, useStoredSize } from "./components/Splitter";
@@ -13,7 +13,7 @@ import { CollapsedPane } from "./components/CollapsedPane";
 import { ChatIcon, FilesIcon, ListIcon, TerminalIcon } from "./components/Icons";
 import { Settings } from "./components/Settings";
 
-type View = "workspace" | "projects" | "stats" | "hosts" | "settings";
+type View = "workspace" | "projects" | "inbox" | "stats" | "hosts" | "settings";
 type PaneId = "todo" | "chat" | "terminal" | "files";
 const COLLAPSED_PANE_W = 34;
 
@@ -25,19 +25,19 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingContext, setPendingContext] = useState<ElementContext | null>(null);
   const [now, setNow] = useState(Date.now());
-  const [todoW, setTodoW] = useStoredSize("ymh.layout.todoW", 220, 180, 520);
-  const [chatW, setChatW] = useStoredSize("ymh.layout.chatW", 300, 220, 700);
-  const [filesW, setFilesW] = useStoredSize("ymh.layout.filesW", 280, 180, 640);
+  const [todoW, setTodoW] = useStoredSize("cmh.layout.todoW", 220, 180, 520);
+  const [chatW, setChatW] = useStoredSize("cmh.layout.chatW", 300, 220, 700);
+  const [filesW, setFilesW] = useStoredSize("cmh.layout.filesW", 280, 180, 640);
   const [collapsed, setCollapsed] = useState<Record<PaneId, boolean>>(() => {
     try {
-      const raw = JSON.parse(localStorage.getItem("ymh.layout.collapsed") || "{}");
+      const raw = JSON.parse(localStorage.getItem("cmh.layout.collapsed") || "{}");
       return { todo: !!raw.todo, chat: !!raw.chat, terminal: !!raw.terminal, files: !!raw.files };
     } catch {
       return { todo: false, chat: false, terminal: false, files: false };
     }
   });
   useEffect(() => {
-    try { localStorage.setItem("ymh.layout.collapsed", JSON.stringify(collapsed)); } catch { /* ignore */ }
+    try { localStorage.setItem("cmh.layout.collapsed", JSON.stringify(collapsed)); } catch { /* ignore */ }
   }, [collapsed]);
   useEffect(() => {
     const reset = () => setCollapsed({ todo: false, chat: false, terminal: false, files: false });
@@ -48,12 +48,9 @@ export default function App() {
   // 资源管理器里的「预览 / 在终端中打开」：如果终端面板收起了，先展开再交给 TerminalPanel
   useEffect(() => {
     const expandTerminal = () => setCollapsed((c) => (c.terminal ? { ...c, terminal: false } : c));
-    window.addEventListener("harness:open-file-preview", expandTerminal);
-    window.addEventListener("harness:open-terminal-at", expandTerminal);
-    return () => {
-      window.removeEventListener("harness:open-file-preview", expandTerminal);
-      window.removeEventListener("harness:open-terminal-at", expandTerminal);
-    };
+    const events = ["harness:open-file-preview", "harness:open-terminal-at", "harness:new-terminal", "harness:open-preview", "harness:split-terminal"];
+    for (const name of events) window.addEventListener(name, expandTerminal);
+    return () => { for (const name of events) window.removeEventListener(name, expandTerminal); };
   }, []);
   const togglePane = useCallback((id: PaneId) => {
     setCollapsed((current) => ({ ...current, [id]: !current[id] }));
@@ -68,13 +65,13 @@ export default function App() {
 
   // 拖拽时按窗口宽度限制，避免把中间/右侧面板挤出可视区。
   const resizeTodo = useCallback((d: number) => {
-    setTodoW((w) => Math.min(w + d, Math.max(180, window.innerWidth - 362 - chatW - filesW)));
+    setTodoW((w) => Math.min(w + d, Math.max(180, window.innerWidth - 378 - chatW - filesW)));
   }, [setTodoW, chatW, filesW]);
   const resizeChat = useCallback((d: number) => {
-    setChatW((w) => Math.min(w + d, Math.max(220, window.innerWidth - 362 - todoW - filesW)));
+    setChatW((w) => Math.min(w + d, Math.max(220, window.innerWidth - 378 - todoW - filesW)));
   }, [setChatW, todoW, filesW]);
   const resizeFiles = useCallback((d: number) => {
-    setFilesW((w) => Math.min(w - d, Math.max(180, window.innerWidth - 362 - todoW - chatW)));
+    setFilesW((w) => Math.min(w - d, Math.max(180, window.innerWidth - 378 - todoW - chatW)));
   }, [setFilesW, todoW, chatW]);
 
   useEffect(() => {
@@ -166,7 +163,7 @@ export default function App() {
     for (const t of state?.todos ?? []) if (t.projectId) counts[t.projectId] = (counts[t.projectId] ?? 0) + 1;
     return counts;
   }, [state?.todos]);
-  const unread = scoped?.inbox.filter((i) => !i.read).length ?? 0;
+  const unread = state?.inbox.filter((i) => !i.read).length ?? 0;
 
   const selectTodo = useCallback((todoId: string) => {
     const t = state?.threads.find((x) => x.todoId === todoId);
@@ -215,31 +212,75 @@ export default function App() {
     if (t?.id) { setThreadId(t.id); setView("workspace"); }
   }, [act]);
 
+  const dispatchInWorkspace = useCallback((makeEvent: () => Event) => {
+    setView("workspace");
+    // 等 workspace / TaskPane / TerminalPanel 挂载后再派发，避免跨页面命令静默空操作
+    window.setTimeout(() => window.dispatchEvent(makeEvent()), 90);
+  }, []);
+
+  const openTodoFromPalette = useCallback(async (todoId: string) => {
+    const todo = state?.todos.find((t) => t.id === todoId);
+    if (!todo) return;
+    if (todo.projectId && todo.projectId !== state?.activeProjectId) {
+      await act("switchProject", { id: todo.projectId });
+    }
+    const thread = state?.threads.find((t) => t.todoId === todoId);
+    if (thread) setThreadId(thread.id);
+    setView("workspace");
+  }, [state, act]);
+
+  const openThreadFromPalette = useCallback(async (threadId: string) => {
+    const thread = state?.threads.find((t) => t.id === threadId);
+    if (!thread) return;
+    if (thread.projectId && thread.projectId !== state?.activeProjectId) {
+      await act("switchProject", { id: thread.projectId });
+    }
+    setThreadId(thread.id);
+    setView("workspace");
+  }, [state, act]);
+
   const commands: Command[] = useMemo(() => {
     if (!state) return [];
     const list: Command[] = [
-      { id: "view-workspace", label: "工作区", hint: "⌘1", run: () => setView("workspace") },
-      { id: "view-projects", label: "项目", run: () => setView("projects") },
-      { id: "view-stats", label: "统计", run: () => setView("stats") },
-      { id: "view-hosts", label: "主机", run: () => setView("hosts") },
-      { id: "new-thread", label: "新建会话", hint: "⌘N", run: () => void newThread() },
-      { id: "new-task", label: "新建任务", hint: "⌘⇧N", run: () => window.dispatchEvent(new Event("harness:new-task")) },
-      { id: "new-terminal", label: "新建终端标签", hint: "⌘T", run: () => window.dispatchEvent(new Event("harness:new-terminal")) },
-      { id: "split-right", label: "向右拆分终端", hint: "⌘D", run: () => window.dispatchEvent(new CustomEvent("harness:split-terminal", { detail: "row" })) },
-      { id: "split-down", label: "向下拆分终端", hint: "⇧⌘D", run: () => window.dispatchEvent(new CustomEvent("harness:split-terminal", { detail: "col" })) },
-      { id: "open-preview", label: "打开预览标签", run: () => window.dispatchEvent(new Event("harness:open-preview")) },
-      { id: "close-terminal", label: "关闭窗格", hint: "⌘W", run: () => window.dispatchEvent(new Event("harness:close-terminal")) },
-      { id: "edit-todo", label: "编辑任务", hint: "⌘E", run: () => window.dispatchEvent(new Event("harness:edit-todo")) },
-      { id: "open-project", label: "打开 / 添加项目…", hint: "⌘P", run: () => void addProject() },
-      { id: "open-settings", label: "打开设置", hint: "⌘,", run: () => setView("settings") },
-      { id: "reset-layout", label: "重置面板尺寸", run: () => window.dispatchEvent(new Event("harness:reset-layout")) },
+      { id: "view-workspace", label: "工作区", hint: "⌘1", group: "导航", run: () => setView("workspace") },
+      { id: "view-projects", label: "项目", group: "导航", run: () => setView("projects") },
+      { id: "view-inbox", label: "收件箱", group: "导航", run: () => setView("inbox") },
+      { id: "view-stats", label: "统计", group: "导航", run: () => setView("stats") },
+      { id: "view-hosts", label: "主机", group: "导航", run: () => setView("hosts") },
+      { id: "new-thread", label: "新建会话", hint: "⌘N", group: "任务", run: () => void newThread() },
+      { id: "new-task", label: "新建任务", hint: "⌘⇧N", group: "任务", run: () => dispatchInWorkspace(() => new Event("harness:new-task")) },
+      { id: "new-terminal", label: "新建终端标签", hint: "⌘T", group: "终端", run: () => dispatchInWorkspace(() => new Event("harness:new-terminal")) },
+      { id: "split-right", label: "向右拆分终端", hint: "⌘D", group: "终端", run: () => dispatchInWorkspace(() => new CustomEvent("harness:split-terminal", { detail: "row" })) },
+      { id: "split-down", label: "向下拆分终端", hint: "⇧⌘D", group: "终端", run: () => dispatchInWorkspace(() => new CustomEvent("harness:split-terminal", { detail: "col" })) },
+      { id: "open-preview", label: "打开预览标签", group: "终端", run: () => dispatchInWorkspace(() => new Event("harness:open-preview")) },
+      { id: "close-terminal", label: "关闭窗格", hint: "⌘W", group: "终端", run: () => dispatchInWorkspace(() => new Event("harness:close-terminal")) },
+      { id: "edit-todo", label: "编辑任务", hint: "⌘E", group: "任务", run: () => dispatchInWorkspace(() => new Event("harness:edit-todo")) },
+      { id: "open-project", label: "打开 / 添加项目…", hint: "⌘P", group: "项目", run: () => void addProject() },
+      { id: "open-settings", label: "打开设置", hint: "⌘,", group: "导航", run: () => setView("settings") },
+      { id: "reset-layout", label: "重置面板尺寸", group: "布局", run: () => window.dispatchEvent(new Event("harness:reset-layout")) },
     ];
     for (const p of state.projects) {
-      list.push({ id: `switch-${p.id}`, label: `切换项目：${p.name}`, hint: p.path, run: () => void switchProject(p.id) });
+      list.push({
+        id: `switch-${p.id}`, label: `切换项目：${p.name}`,
+        hint: `${p.id === state.activeProjectId ? "当前 · " : ""}${p.path}`,
+        group: "项目", run: () => void switchProject(p.id),
+      });
+    }
+    for (const t of state.todos) {
+      list.push({
+        id: `todo-${t.id}`, label: `任务：${t.key} ${t.title}`, hint: t.projectId ? state.projects.find((p) => p.id === t.projectId)?.name : "全局",
+        group: "任务", run: () => void openTodoFromPalette(t.id),
+      });
+    }
+    for (const t of state.threads) {
+      list.push({
+        id: `thread-${t.id}`, label: `会话：${t.title || "新任务"}`, hint: t.projectId ? state.projects.find((p) => p.id === t.projectId)?.name : "全局",
+        group: "会话", run: () => void openThreadFromPalette(t.id),
+      });
     }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state?.projects, newThread]);
+  }, [state?.projects, state?.todos, state?.threads, state?.activeProjectId, newThread, dispatchInWorkspace, openTodoFromPalette, openThreadFromPalette, addProject, switchProject]);
 
   useEffect(() => {
     // 自定义菜单去掉了 Select All 角色（否则 ⌘A 会被应用菜单吞掉，终端无法选择缓冲区）。
@@ -258,6 +299,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const runInWorkspace = (make: () => Event) => {
+      if (view === "workspace") { window.dispatchEvent(make()); return; }
+      setView("workspace");
+      window.setTimeout(() => window.dispatchEvent(make()), 90);
+    };
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       const tag = (e.target as HTMLElement)?.tagName;
@@ -265,12 +311,12 @@ export default function App() {
       // 终端内的 ⌘T / ⌘W 由 TerminalPanel 自己处理；也避免 Windows/Linux 的 ⌃T / ⌃W 抢 shell 按键
       const inTerminal = !!(e.target as HTMLElement)?.closest?.(".term-instance");
       if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); setPaletteOpen((v) => !v); return; }
-      if (mod && e.key.toLowerCase() === "t" && !inTerminal) { e.preventDefault(); window.dispatchEvent(new Event("harness:new-terminal")); return; }
+      if (mod && e.key.toLowerCase() === "t" && !inTerminal) { e.preventDefault(); runInWorkspace(() => new Event("harness:new-terminal")); return; }
       if (mod && e.key.toLowerCase() === "w" && !inTerminal) { e.preventDefault(); window.dispatchEvent(new Event("harness:close-terminal")); return; }
       if (mod && e.key.toLowerCase() === "p") { e.preventDefault(); void addProject(); return; }
-      if (mod && e.shiftKey && e.key.toLowerCase() === "n") { e.preventDefault(); window.dispatchEvent(new Event("harness:new-task")); return; }
+      if (mod && e.shiftKey && e.key.toLowerCase() === "n") { e.preventDefault(); runInWorkspace(() => new Event("harness:new-task")); return; }
       if (mod && e.key.toLowerCase() === "n") { e.preventDefault(); void newThread(); return; }
-      if (mod && e.key.toLowerCase() === "e" && !inTerminal) { e.preventDefault(); window.dispatchEvent(new Event("harness:edit-todo")); return; }
+      if (mod && e.key.toLowerCase() === "e" && !inTerminal) { e.preventDefault(); runInWorkspace(() => new Event("harness:edit-todo")); return; }
       if (mod && e.key === ",") { e.preventDefault(); setView("settings"); return; }
       if (mod && /^[1-9]$/.test(e.key)) {
         const p = state?.projects[Number(e.key) - 1];
@@ -289,7 +335,7 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state?.projects, scoped?.threads, threadId, paletteOpen]);
+  }, [state?.projects, scoped?.threads, threadId, paletteOpen, view]);
 
   if (!state) return <div className="boot">启动中…</div>;
 
@@ -360,13 +406,14 @@ export default function App() {
           </>
         )}
         {view === "projects" && <div className="wide"><Projects state={state} now={now} act={act} notify={notify} onAdd={() => void addProject()} onSwitch={(id) => void switchProject(id)} /></div>}
-        {view === "stats" && scoped && <div className="wide"><Stats state={scoped} onOpen={selectTodo} /></div>}
+        {view === "inbox" && <div className="wide"><Inbox state={state} now={now} act={act} onOpen={(id) => void openTodoFromPalette(id)} /></div>}
+        {view === "stats" && scoped && <div className="wide"><Stats state={state} onOpen={(id) => void openTodoFromPalette(id)} /></div>}
         {view === "hosts" && <div className="wide"><Hosts state={state} act={act} notify={notify} now={now} /></div>}
         {view === "settings" && <div className="wide settings-wide"><Settings state={state} act={act} notify={notify} /></div>}
       </div>
 
       <CommandPalette open={paletteOpen} state={state} onClose={() => setPaletteOpen(false)} commands={commands} />
-      {state.approvals?.length > 0 && <ApprovalModal approval={state.approvals[0]} act={act} />}      {toast && <div className="toast">{toast}</div>}
+      {state.approvals?.length > 0 && <ApprovalModal approval={state.approvals[0]} pendingCount={state.approvals.length} act={act} />}      {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
     </div>
   );
 }

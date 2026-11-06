@@ -4,6 +4,7 @@ import DOMPurify from "dompurify";
 import { CopyIcon, RefreshIcon, RevealIcon, XIcon } from "./Icons";
 import { FileVisual, extOf } from "./FileVisual";
 import type { ElementContext } from "../types";
+import { requestFilePreview } from "../terminal-events";
 
 // Electron <webview>：独立进程、无 preload；HTML 用文件协议加载，相对资源能正确解析
 const Webview: any = "webview";
@@ -15,8 +16,8 @@ type Mode = "render" | "source";
  * 文件预览（终端区的标签）：文本 / 图片 / Markdown / HTML。
  * Markdown 与 HTML 支持「渲染 / 源码」切换；HTML 在 sandboxed webview 里渲染。
  */
-export function FilePreviewPane({ name, rel, root, active = true, onClose, onPicked }: {
-  name: string; rel: string; root?: string; active?: boolean; onClose: () => void;
+export function FilePreviewPane({ name, rel, root, onClose, onPicked }: {
+  name: string; rel: string; root?: string; onClose: () => void;
   onPicked?: (ctx: ElementContext) => void;
 }) {
   const ext = extOf(name);
@@ -37,15 +38,20 @@ export function FilePreviewPane({ name, rel, root, active = true, onClose, onPic
   // 切文件时回到默认视图：Markdown / HTML 默认渲染，其余源码
   useEffect(() => { setMode(canToggle ? "render" : "source"); }, [rel, canToggle]);
 
-  // 激活标签 / 手动刷新时重新读文件，避免 agent 改完后看到旧内容
+  // 同一文件刷新时保留旧内容（避免刷新/切标签时闪一下空白），只有换文件才清空
+  const fileKeyRef = useRef("");
   useEffect(() => {
+    const key = `${root || ""}\n${rel}`;
     let alive = true;
-    setData(null);
+    if (fileKeyRef.current !== key) {
+      fileKeyRef.current = key;
+      setData(null);
+    }
     window.harness.filesRead(rel, root)
       .then((res) => { if (alive) setData(res); })
       .catch((e) => { if (alive) setData({ error: String((e as Error)?.message || e) }); });
     return () => { alive = false; };
-  }, [rel, root, active, nonce]);
+  }, [rel, root, nonce]);
 
   const absPath = useMemo(() => (root ? `${root.replace(/[\\/]+$/, "")}/${rel}` : ""), [root, rel]);
   const fileUrl = useMemo(() => (absPath ? `file://${encodeURI(absPath)}` : ""), [absPath]);
@@ -65,7 +71,7 @@ export function FilePreviewPane({ name, rel, root, active = true, onClose, onPic
   // HTML 渲染 = 和网页预览同一套 webview / 元素拾取（grab）能力
   useEffect(() => {
     const el = viewRef.current;
-    if (!el || !htmlRender) { setReady(false); wcIdRef.current = null; return; }
+    if (!el || !isHtml) { setReady(false); wcIdRef.current = null; return; }
     const onReady = () => {
       try { wcIdRef.current = el.getWebContentsId(); setReady(true); } catch { setReady(false); }
     };
@@ -93,7 +99,7 @@ export function FilePreviewPane({ name, rel, root, active = true, onClose, onPic
       setPicked(null);
       setPickError("");
     };
-  }, [htmlRender, fileUrl, nonce, data]);
+  }, [isHtml, fileUrl, data]);
 
   const pickElement = async () => {
     const id = wcIdRef.current;
@@ -118,6 +124,14 @@ export function FilePreviewPane({ name, rel, root, active = true, onClose, onPic
     setPicking(false);
   };
 
+  const refresh = () => {
+    setNonce((n) => n + 1);
+    // HTML：webview 保持挂载，直接 reload，不重建 iframe/webContents
+    if (isHtml && viewRef.current) {
+      try { viewRef.current.reload(); } catch { /* 还没 ready 时由 data 更新兜底 */ }
+    }
+  };
+
   const reveal = async () => {
     try { await window.harness.filesReveal(rel, root); } catch { /* ignore */ }
   };
@@ -138,7 +152,21 @@ export function FilePreviewPane({ name, rel, root, active = true, onClose, onPic
       return;
     }
     e.preventDefault();
-    if (/^(https?:|mailto:)/i.test(href)) void window.harness.openExternal(href);
+    if (/^(https?:|mailto:)/i.test(href)) { void window.harness.openExternal(href); return; }
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//")) return;
+    // Markdown 里的相对文档链接：在当前 root 下打开为新的预览标签
+    const raw = href.split("#")[0].split("?")[0];
+    if (!raw || raw.endsWith("/")) return;
+    const baseDir = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
+    const parts = (raw.startsWith("/") ? raw.slice(1) : `${baseDir}/${raw}`).split("/");
+    const out: string[] = [];
+    for (const part of parts) {
+      if (!part || part === ".") continue;
+      if (part === "..") out.pop();
+      else out.push(part);
+    }
+    const target = out.join("/");
+    if (target) requestFilePreview({ rel: target, name: target.split("/").pop(), root });
   };
 
   const bodyClass = `file-preview-body${htmlRender ? " frame" : mdRender ? " doc" : ""}`;
@@ -165,7 +193,7 @@ export function FilePreviewPane({ name, rel, root, active = true, onClose, onPic
               : <button className="btn tiny-btn primary" disabled={!ready} title="在渲染的 HTML 里点选元素，注入 Chat" onClick={() => void pickElement()}>拾取元素</button>
           )}
           <div className="row gap4">
-            <button className="icon-btn" title="刷新" aria-label="刷新" onClick={() => setNonce((n) => n + 1)}><RefreshIcon size={13} /></button>
+            <button className="icon-btn" title="刷新" aria-label="刷新" onClick={refresh}><RefreshIcon size={13} /></button>
             <button className="icon-btn" title="在 Finder 中显示" aria-label="在 Finder 中显示" onClick={() => void reveal()}><RevealIcon size={13} /></button>
             <button className="icon-btn" title="复制相对路径" aria-label="复制相对路径" onClick={() => void copyPath()}><CopyIcon size={13} /></button>
             <button className="icon-btn" title="关闭预览" aria-label="关闭预览" onClick={onClose}><XIcon size={13} /></button>
@@ -185,11 +213,11 @@ export function FilePreviewPane({ name, rel, root, active = true, onClose, onPic
         {!data && <div className="pane-empty">加载中…</div>}
         {data?.error && <div className="preview-error">{data.error}</div>}
         {data?.dataUrl && <img src={data.dataUrl} alt={name} className="file-preview-img" />}
-        {data?.text != null && htmlRender && (
-          <div className="file-preview-frame">
+        {data?.text != null && isHtml && fileUrl && (
+          <div className="file-preview-frame" style={{ display: htmlRender ? "flex" : "none" }}>
             <Webview
               ref={viewRef}
-              key={`${fileUrl}-${nonce}`}
+              key={fileUrl}
               src={fileUrl}
               partition="preview"
               webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=yes"

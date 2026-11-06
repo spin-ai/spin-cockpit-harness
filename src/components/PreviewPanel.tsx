@@ -5,7 +5,7 @@ import { ChevronRightIcon, DevtoolsIcon, ExternalIcon, RefreshIcon, SearchIcon, 
 // Electron <webview>：独立进程、无 preload，页面拿不到 window.harness
 const Webview: any = "webview";
 
-const RECENT_KEY = "ymh.preview.recent";
+const RECENT_KEY = "cmh.preview.recent";
 const DEVICE_WIDTH = { auto: 0, tablet: 834, mobile: 390 } as const;
 type Device = keyof typeof DEVICE_WIDTH;
 

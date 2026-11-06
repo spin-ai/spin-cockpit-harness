@@ -4,15 +4,15 @@ import type { Settings as SettingsModel, State } from "../types";
 type Act = (type: string, payload?: unknown) => Promise<any>;
 type Section = "general" | "appearance" | "execution" | "terminal" | "preview" | "data" | "shortcuts" | "about";
 
-const SECTIONS: { id: Section; label: string }[] = [
-  { id: "general", label: "通用" },
-  { id: "appearance", label: "外观" },
-  { id: "execution", label: "执行" },
-  { id: "terminal", label: "终端" },
-  { id: "preview", label: "预览与元素" },
-  { id: "data", label: "数据" },
-  { id: "shortcuts", label: "快捷键" },
-  { id: "about", label: "关于" },
+const SECTIONS: { id: Section; label: string; desc: string }[] = [
+  { id: "general", label: "通用", desc: "启动视图、默认 Agent、发送与停止行为；改动即时生效。" },
+  { id: "appearance", label: "外观", desc: "主题与字号；跟随系统时会随系统深浅色切换。" },
+  { id: "execution", label: "执行", desc: "Agent 并发、审批策略和 dsh 启动参数；新 run 生效。" },
+  { id: "terminal", label: "终端", desc: "pty 的 shell、字号、回滚缓冲和 dev server 地址识别。" },
+  { id: "preview", label: "预览与元素", desc: "前端预览地址、元素拾取截图和注入 Chat 的上下文详细度。" },
+  { id: "data", label: "数据", desc: "本地数据库位置、备份导出和清理。" },
+  { id: "shortcuts", label: "快捷键", desc: "当前版本可用的键盘操作。" },
+  { id: "about", label: "关于", desc: "版本、运行环境与本地数据。" },
 ];
 
 export function Settings({ state, act, notify }: { state: State; act: Act; notify: (m: string) => void }) {
@@ -43,6 +43,7 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
       <div className="settings-body">
         <header className="settings-head">
           <h2>{current.label}</h2>
+          <p>{current.desc}</p>
         </header>
 
         {section === "general" && (
@@ -97,11 +98,8 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
               </Row>
             </Card>
             <Card title="字号">
-              <Row title="Chat">
+              <Row title="Chat 字号" hint="消息正文和输入框；11–16px">
                 <NumberSetting value={settings.chatFontSize} min={11} max={16} onCommit={(v) => void set({ chatFontSize: v })} />
-              </Row>
-              <Row title="终端">
-                <NumberSetting value={settings.terminalFontSize} min={10} max={18} onCommit={(v) => void set({ terminalFontSize: v })} />
               </Row>
             </Card>
           </>
@@ -140,7 +138,7 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
               <Row title="DSH_HOME">
                 <TextSetting value={settings.dshHome} placeholder="默认" onCommit={(v) => void set({ dshHome: v })} />
               </Row>
-              <Row title="模型">
+              <Row title="默认模型（高级）" hint="推荐在 Chat 底部选择（选项来自 dsh ACP）；这里填 ACP 的 option value，纯模型 ID 可能被 dsh 拒绝">
                 <TextSetting value={settings.model} placeholder="默认" onCommit={(v) => void set({ model: v })} />
               </Row>
               <Row title="Reasoning effort">
@@ -171,10 +169,13 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
         {section === "terminal" && (
           <>
             <Card title="Shell">
-              <Row title="Shell 路径">
+              <Row title="Shell 路径" hint="留空使用 $SHELL；Windows 默认 powershell">
                 <TextSetting value={settings.shellPath} placeholder="/bin/zsh" onCommit={(v) => void set({ shellPath: v })} />
               </Row>
-              <Row title="回滚缓冲">
+              <Row title="终端字号" hint="10–18px；也可以在终端里用 ⌘+ / ⌘- 临时缩放">
+                <NumberSetting value={settings.terminalFontSize} min={10} max={18} onCommit={(v) => void set({ terminalFontSize: v })} />
+              </Row>
+              <Row title="回滚缓冲" hint="每个终端保留的历史行数；越大越占内存">
                 <NumberSetting value={settings.terminalScrollback} min={1000} max={50000} step={500} onCommit={(v) => void set({ terminalScrollback: v })} />
               </Row>
             </Card>
@@ -248,7 +249,7 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
         )}
 
         {section === "about" && (
-          <Card title="YieldMind Harness">
+          <Card title="Cockpit Harness">
             <div className="about-grid">
               <span>版本</span><b>{state.appVersion ?? "0.2.0"}</b>
               <span>执行</span><b>dsh --profile acp（{state.dshRuntime?.source === "bundled" ? `内置 ${state.dshRuntime.version || ""}`.trim() : state.dshRuntime?.source === "custom" ? "自定义路径" : "系统 PATH"}）</b>
@@ -298,10 +299,10 @@ function Card({ title, children }: { title?: string; children: ReactNode }) {
   );
 }
 
-function Row({ title, children }: { title: string; children: ReactNode }) {
+function Row({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
     <div className="set-row">
-      <div className="set-row-main"><div className="set-row-title">{title}</div></div>
+      <div className="set-row-main"><div className="set-row-title">{title}</div>{hint && <div className="set-row-hint">{hint}</div>}</div>
       <div className="set-row-control">{children}</div>
     </div>
   );

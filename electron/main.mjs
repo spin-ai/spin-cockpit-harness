@@ -13,8 +13,13 @@ import { pickElement, cancelPick, detachPreview } from "./preview.mjs";
 import { formatContext, detectDevUrl } from "./ui-context.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const appIconPath = app.isPackaged ? path.join(process.resourcesPath, "icon.png") : path.join(__dirname, "../resources/icon.png");
 const devUrl = process.env.VITE_DEV_SERVER_URL;
-const workspaceRoot = path.join(app.getPath("documents"), "YieldMind", "workspace");
+// 目录名统一为 Cockpit Harness；老安装继续用 ~/Documents/YieldMind，避免已存任务路径失效
+const legacyWorkspaceRoot = path.join(app.getPath("documents"), "YieldMind", "workspace");
+const workspaceRoot = fs.existsSync(legacyWorkspaceRoot)
+  ? legacyWorkspaceRoot
+  : path.join(app.getPath("documents"), "Cockpit Harness", "workspace");
 const DSH_BUNDLE_DIR = "dsh";
 const DSH_BUNDLE_ENTRY = process.platform === "win32" ? "dsh.exe" : "dsh";
 let dshBundlePathCache; // undefined = 未计算；null = 没有内置运行时
@@ -197,6 +202,7 @@ function newThreadRecord({ projectId = null, agentId = null, title = "新任务"
     id: store.nextId("th"), todoId: null, title,
     projectId: project?.id || null, project: project?.path || "",
     agentId: agentId || defaultChatAgent(project?.id || store.state.activeProjectId)?.id || null,
+    model: "", modelName: "", effort: "",
     createdAt: Date.now(), updatedAt: Date.now(),
   };
 }
@@ -207,7 +213,7 @@ function threadForTodo(todo) {
   thread = {
     id: store.nextId("th"), todoId: todo.id, title: todo.title || "",
     projectId: todo.projectId || null, project: todo.cwd || activeProjectPath(),
-    agentId: todo.agentId || null,
+    agentId: todo.agentId || null, model: "", modelName: "", effort: "",
     createdAt: todo.createdAt || Date.now(), updatedAt: Date.now(),
   };
   store.state.threads.push(thread);
@@ -373,7 +379,7 @@ function seed() {
     store.persist();
     return;
   }
-  const local = { id: "h-local", name: "local", kind: "local", addr: "127.0.0.1", status: "online", heartbeat: 0, version: "0.2.0", port: 22, user: "", caps: [], lastProbe: null, latencyMs: null, maxConcurrency: 0, defaultCwd: "", probeError: null };
+  const local = { id: "h-local", name: "local", kind: "local", addr: "127.0.0.1", status: "online", heartbeat: 0, version: app.getVersion(), port: 22, user: "", caps: [], lastProbe: null, latencyMs: null, maxConcurrency: 0, defaultCwd: "", probeError: null };
   state.hosts.push(local);
   try { probeLocalHost(local); } catch { /* ignore */ }
   fs.mkdirSync(activeProjectPath(), { recursive: true });
@@ -463,8 +469,9 @@ async function startRun(run, todo, agent) {
     // 本地：设置覆盖 > 内置单文件运行时 > PATH 里的 dsh
     bin: isRemote ? remoteDshBin() : (store.state.settings?.dshBinary || bundledDshPath() || undefined),
     home: store.state.settings?.dshHome || undefined,
-    model: store.state.settings?.model || undefined,
-    effort: store.state.settings?.effort || undefined,
+    // 会话级模型优先（Chat 里选过），否则跟随设置；模型值是 ACP 的 option value
+    model: thread.model || store.state.settings?.model || undefined,
+    effort: thread.effort || store.state.settings?.effort || undefined,
   });
   const handle = { client, threadId: thread.id, streamId: null, thoughtId: null, tools: new Map(), done: false, stderr: "" };
   active.set(run.id, handle);
@@ -890,6 +897,64 @@ async function runCockpitCommand(command, thread) {
   return { message: COCKPIT_HELP };
 }
 
+// ── Chat 模型目录：走 ACP session/new 的 configOptions（cache 10 分钟）──
+const modelCatalogCache = new Map();
+const modelCatalogPending = new Map();
+
+async function probeModels(agent) {
+  const settings = store.state.settings || {};
+  const host = agent ? store.state.hosts.find((h) => h.id === agent.hostId) : null;
+  const isRemote = host?.kind === "ssh";
+  const bin = isRemote ? remoteDshBin() : (settings.dshBinary || bundledDshPath() || undefined);
+  const key = `${isRemote ? host.id : "local"}|${bin || "dsh"}|${settings.dshHome || ""}`;
+  const cached = modelCatalogCache.get(key);
+  if (cached && Date.now() - cached.at < 10 * 60 * 1000) return cached.value;
+  if (modelCatalogPending.has(key)) return modelCatalogPending.get(key);
+  const cwd = agent?.cwd || store.state.projectPath || workspaceRoot;
+  const task = (async () => {
+    const client = new AcpClient({
+      cwd,
+      ssh: isRemote ? { host: host.addr, port: host.port, user: host.user } : null,
+      bin,
+      home: settings.dshHome || undefined,
+    });
+    try {
+      await client.start();
+      const session = await client.newSession(cwd);
+      const configs = session.configOptions || [];
+      const modelOpt = configs.find((c) => c.id === "model");
+      const effortOpt = configs.find((c) => c.id === "reasoning_effort");
+      const models = [];
+      for (const group of modelOpt?.options || []) {
+        if (Array.isArray(group.options)) {
+          for (const item of group.options) {
+            if (item.value === undefined) continue;
+            models.push({ value: item.value, name: item.name || item.value, group: group.name || group.group || "" });
+          }
+        } else if (group.value !== undefined) {
+          models.push({ value: group.value, name: group.name || group.value, group: "" });
+        }
+      }
+      const efforts = (effortOpt?.options || [])
+        .filter((o) => o.value !== undefined)
+        .map((o) => ({ value: o.value, name: o.name || o.value }));
+      return { models, efforts, currentModel: modelOpt?.currentValue || "", currentEffort: effortOpt?.currentValue || "" };
+    } finally {
+      await client.close().catch(() => {});
+    }
+  })();
+  modelCatalogPending.set(key, task);
+  try {
+    const value = await task;
+    modelCatalogCache.set(key, { at: Date.now(), value });
+    return value;
+  } catch (err) {
+    return { models: [], efforts: [], error: String(err?.message || err).slice(0, 300) };
+  } finally {
+    modelCatalogPending.delete(key);
+  }
+}
+
 const actions = {
   setSettings: (patch) => {
     const next = sanitizeSettings(patch || {});
@@ -1169,6 +1234,22 @@ const actions = {
   },
   // 对话作用域：projectId=null 表示全局（不绑定项目），否则绑定到指定项目。
   // 注意：只改会话目标，不切换整个工作区，避免「改对话作用域把整个应用切走」。
+  setThreadModel: ({ threadId, model = "", modelName = "", effort = "" }) => {
+    const thread = store.state.threads.find((t) => t.id === threadId);
+    if (!thread) throw new Error("thread not found");
+    thread.model = String(model || "");
+    thread.modelName = String(modelName || "");
+    thread.effort = String(effort || "");
+    thread.updatedAt = now();
+    store.addEvent("thread.model", `thread.model ${thread.id} → ${thread.modelName || thread.model || "默认"}`);
+    return thread;
+  },
+  listModels: async ({ agentId } = {}) => {
+    const agent = store.state.agents.find((a) => a.id === agentId) || null;
+    const cli = String(agent?.cli || "dsh").trim().toLowerCase();
+    if (agent && cli !== "dsh") return { models: [], efforts: [], error: null };
+    return probeModels(agent);
+  },
   setThreadProject: ({ threadId, projectId }) => {
     const thread = store.state.threads.find((t) => t.id === threadId);
     if (!thread) throw new Error("thread not found");
@@ -1415,17 +1496,20 @@ const actions = {
     store.state.context = { ...payload, updatedAt: now(), stale: false, source: "ide" };
     store.addEvent("context.changed", "context.changed source=ide");
   },
-  approval: ({ id, allow }) => {
+  approval: ({ id, allow, optionId }) => {
     const approval = approvals.get(id);
     if (!approval) throw new Error("approval not found");
     const handle = active.get(approval.runId);
-    const ok = handle?.client.respondPermission(approval.requestId, Boolean(allow));
+    const option = approval.options.find((o) => o.id === optionId);
+    const allowIt = option ? option.kind.startsWith("allow") : Boolean(allow);
+    const ok = handle?.client.respondPermission(approval.requestId, allowIt, optionId);
     approvals.delete(id);
     const run = store.state.runs.find((r) => r.id === approval.runId);
     if (run && run.status === "waiting_input") run.status = "running";
-    store.addEvent("run.approval", `run.approval ${approval.title} ${allow ? "allow" : "deny"} ok=${ok}`);
+    const label = option?.name || (allowIt ? "允许" : "拒绝");
+    store.addEvent("run.approval", `run.approval ${approval.title} ${label} ok=${ok}`);
     const approvalTodo = store.state.todos.find((t) => t.id === approval.todoId);
-    store.addMessage(approvalTodo ? threadForTodo(approvalTodo).id : null, approval.runId, "system", "system", `审批：${allow ? "允许" : "拒绝"} · ${approval.title}`);
+    store.addMessage(approvalTodo ? threadForTodo(approvalTodo).id : null, approval.runId, "system", "system", `审批：${label} · ${approval.title}`);
   },
   cleanupWorktree: ({ runId }) => {
     const run = store.state.runs.find((r) => r.id === runId);
@@ -1442,6 +1526,21 @@ const actions = {
     };
     store.state.hosts.push(host);
     store.addEvent("host.added", `host.added ${name} ${addr}`);
+    const result = await withProbe(host);
+    if (result.ok) probeFails.delete(host.id);
+    return result;
+  },
+  updateHost: async ({ id, name, addr, user = "", port = 22, path = "" }) => {
+    const host = store.state.hosts.find((h) => h.id === id);
+    if (!host) throw new Error("host not found");
+    if (host.kind === "local") throw new Error("本机地址不能修改");
+    if (!String(name || "").trim() || !String(addr || "").trim()) throw new Error("主机名和地址必填");
+    host.name = String(name).trim();
+    host.addr = String(addr).trim();
+    host.user = String(user || "").trim();
+    host.port = Number(port) || 22;
+    host.defaultCwd = String(path || "").trim();
+    store.addEvent("host.updated", `host.updated ${host.name} ${host.addr}`);
     const result = await withProbe(host);
     if (result.ok) probeFails.delete(host.id);
     return result;
@@ -1823,6 +1922,22 @@ ipcMain.handle("harness:action", async (_e, { type, payload }) => {
   return { ok: true, result };
 });
 
+/**
+ * 产品改名后 userData 目录随之变化（app.getPath("userData") 取自产品名）。
+ * 新目录不存在而老目录存在时复制一次，避免老用户的 harness.db 看起来「丢了」。
+ */
+function migrateUserData(legacyName) {
+  try {
+    const current = app.getPath("userData");
+    const legacy = path.join(app.getPath("appData"), legacyName);
+    if (current === legacy || fs.existsSync(current) || !fs.existsSync(legacy)) return;
+    fs.cpSync(legacy, current, { recursive: true });
+    console.log(`[userdata] migrated ${legacy} → ${current}`);
+  } catch (err) {
+    console.warn(`[userdata] migrate failed: ${String(err?.message || err)}`);
+  }
+}
+
 function installMenu() {
   // 去掉默认菜单里的几个冲突加速键：⌘W（关窗口而不是关终端标签）、
   // ⌘+/-/0（webContents 缩放而不是终端字号）、⌘R（重载应用）、⌘A（全选文本域而不是终端缓冲区）。
@@ -1857,7 +1972,7 @@ function installMenu() {
 async function createWindow() {
   win = new BrowserWindow({
     width: 1500, height: 980, minWidth: 1180, minHeight: 760,
-    backgroundColor: "#f2f5f7", title: "YieldMind Harness",
+    backgroundColor: "#f2f5f7", title: "Cockpit Harness",
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, webviewTag: true },
   });
   // 预览用 <webview>：强制去掉 preload / nodeIntegration，并禁止弹新窗口
@@ -1883,9 +1998,23 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  // dev 模式 Electron 默认用原子图标；把 Dock / About 面板换成应用图标
+  if (process.platform === "darwin" && app.dock?.setIcon) {
+    try { app.dock.setIcon(appIconPath); } catch { /* ignore */ }
+  }
+  try {
+    app.setAboutPanelOptions({
+      applicationName: "Cockpit Harness",
+      applicationVersion: app.getVersion(),
+      version: app.getVersion(),
+      iconPath: appIconPath,
+    });
+  } catch { /* ignore */ }
   installMenu();
   // 多实例 / E2E 隔离：显式指定 userData 目录，避免与正在使用的窗口抢同一个 harness.db
-  if (process.env.YMH_USER_DATA) app.setPath("userData", process.env.YMH_USER_DATA);
+  const isolatedData = process.env.COCKPIT_USER_DATA || process.env.YMH_USER_DATA; // 旧变量名保留兼容
+  if (isolatedData) app.setPath("userData", isolatedData);
+  else migrateUserData("YieldMind Harness"); // 产品名改为 Cockpit Harness：老数据目录一次性搬过来
   store = await openDb(app.getPath("userData"));
   seed();
   await createWindow();

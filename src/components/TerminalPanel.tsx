@@ -4,9 +4,9 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import type { ElementContext, State, Todo } from "../types";
-import { PreviewPanel } from "./PreviewPanel";
 import { FilePreviewPane } from "./FilePreviewPane";
-import { FileVisual } from "./FileVisual";
+import { FileVisual, extOf } from "./FileVisual";
+import { PreviewSurface } from "./PreviewSurface";
 import { takeTerminalRequests } from "../terminal-events";
 import { Splitter } from "./Splitter";
 import { ChevronDownIcon, ChevronUpIcon, EyeIcon, PanelCollapseIcon, SearchIcon, SplitDownIcon, SplitRightIcon, XIcon } from "./Icons";
@@ -45,7 +45,7 @@ type MenuPoint = { x: number; y: number };
 type SplitDir = "row" | "col";
 type FocusDir = "left" | "right" | "up" | "down";
 
-const ZOOM_KEY = "ymh.term.zoom";
+const ZOOM_KEY = "cmh.term.zoom";
 const MIN_FONT = 8;
 const MAX_FONT = 32;
 const SEARCH_DECORATIONS = {
@@ -573,30 +573,42 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
       <div className="term-body">
         {tabs.map((t) => {
           if (t.kind === "file") {
+            const html = ["html", "htm"].includes(extOf(t.title));
             return (
               <div key={t.id} className="term-tab-surface" style={{ display: t.id === active ? "flex" : "none" }}>
-                <FilePreviewPane
-                  name={t.title}
-                  rel={t.rel || ""}
-                  root={t.rootDir}
-                  active={t.id === active}
-                  onClose={() => close(t.id)}
-                  onPicked={onPickedContext}
-                />
+                {html ? (
+                  <PreviewSurface
+                    mode="file"
+                    file={{ name: t.title, rel: t.rel || "", root: t.rootDir }}
+                    onClose={() => close(t.id)}
+                    onPicked={onPickedContext}
+                  />
+                ) : (
+                  <FilePreviewPane
+                    name={t.title}
+                    rel={t.rel || ""}
+                    root={t.rootDir}
+                    onClose={() => close(t.id)}
+                    onPicked={onPickedContext}
+                  />
+                )}
               </div>
             );
           }
           if (t.kind === "preview") {
             return (
-              <PreviewPanel
-                key={t.id}
-                hidden={t.id !== active}
-                onPicked={onPickedContext}
-                root={previewRoot}
-                defaultUrl={t.url || previewHomeUrl || "http://localhost:5173/"}
-                autoOpenUrl={previewReq?.url}
-                autoOpenKey={previewReq?.n}
-              />
+              <div key={t.id} className="term-tab-surface" style={{ display: t.id === active ? "flex" : "none" }}>
+                <PreviewSurface
+                  mode="web"
+                  url={t.url}
+                  root={previewRoot}
+                  defaultUrl={previewHomeUrl || "http://localhost:5173/"}
+                  autoOpenUrl={previewReq?.url}
+                  autoOpenKey={previewReq?.n}
+                  onPicked={onPickedContext}
+                  onClose={() => close(t.id)}
+                />
+              </div>
             );
           }
           const focusedId = t.root ? (t.focusedPaneId ?? firstPane(t.root).id) : "";
@@ -778,7 +790,7 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
       allowProposedApi: true,
       rightClickSelectsWord: true,
       scrollOnUserInput: true,
-      theme: { background: "#101012", foreground: "#d4d4d8", cursor: "#d4d4d8", selectionBackground: "#3f3f46" },
+      theme: { background: "#1a1b20", foreground: "#d9dae0", cursor: "#d9dae0", selectionBackground: "#3a3d46" },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -1049,8 +1061,8 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
     >
       <div className="term-host" ref={hostRef} onClick={() => { onFocus(); focusTerm(); }} />
       {searchOpen && searchAddon && <TermSearch addon={searchAddon} onClose={onCloseSearch} />}
-      {multi && !searchOpen && (
-        <div className="term-pane-actions">
+      {!searchOpen && (
+        <div className={`term-pane-actions ${multi ? "" : "single"}`}>
           <button title="向右拆分（⌘D）" aria-label="向右拆分" onClick={() => onSplit("row")}><SplitRightIcon size={12} /></button>
           <button title="向下拆分（⇧⌘D）" aria-label="向下拆分" onClick={() => onSplit("col")}><SplitDownIcon size={12} /></button>
         </div>

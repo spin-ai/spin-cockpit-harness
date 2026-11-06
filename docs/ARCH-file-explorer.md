@@ -11,7 +11,7 @@
 |---|---|
 | 展开 / 折叠 | 点击目录行、`→` / `←`、全部折叠 |
 | 打开预览 | 点击文件 / 右键「预览」；在**终端区**作为标签打开（不再挤在 280px 右侧栏），新建文件后自动打开 |
-| Markdown / HTML | 默认「渲染」，可切「源码」；Markdown 用 `marked` + DOMPurify（支持标题锚点跳转），HTML 在 sandboxed `<webview>` 里用 `file://` 渲染（相对资源可解析） |
+| Markdown / HTML | 默认「渲染」，可切「源码」；Markdown 用 `marked` + DOMPurify（支持标题锚点跳转），HTML 在 sandboxed `<webview>` 里用 `file://` 渲染（相对资源可解析）；HTML 渲染支持**拾取元素**注入 Chat（与网页预览同一套 `previewPick`） |
 | 名称筛选 | 顶部搜索框，匹配当前已加载的树 |
 | 显示点文件 | 工具栏眼睛按钮 |
 | 刷新 | 工具栏刷新；窗口重新聚焦时自动刷新（有行内编辑/菜单时不打断） |
@@ -28,6 +28,8 @@
 
 - Markdown：`marked` 解析 → `DOMPurify.sanitize`（禁用 script / iframe / form 等）→ 渲染；标题自动补 id，README 的 `#目录` 锚点可以平滑滚动。
 - HTML：用 `<webview partition="preview" sandbox=yes>` 加载 `file://` 地址，相对图片 / CSS 可正常解析；脚本在独立进程里跑，拿不到 `window.harness`。
+- **同一个 HTML 标签只保留一个 webContents**：切标签、切「源码/渲染」都不会重建/重新加载；刷新按钮原地 `webview.reload()`，只有换文件或换根目录才重置。文件读取也保留旧内容，避免切换时闪空白。
+- **HTML 渲染 = 网页预览同一套能力**：webview 就绪后可以直接「拾取元素」，走 `previewPick(webContentsId, root)`，和 dev server 预览共用 CDP inspect / 源码映射 / 截图，拾取结果直接进 Chat composer。
 - 源码模式：原始文本直接展示（等宽），方便对照 agent 改了哪里。
 - 刷新 / 切回标签会重新读文件；HTML 会重新加载 webview。
 

@@ -60,3 +60,16 @@ export function activeRun(todo: Todo, runs: Run[]) {
 export function lastRun(todo: Todo, runs: Run[]) {
   const mine = runs.filter((r) => r.todoId === todo.id); return mine.length ? mine[mine.length - 1] : null;
 }
+
+/** 早期键名是 ymh.*；产品统一为 Cockpit Harness 后迁到 cmh.*（只迁一次，保留面板布局等偏好） */
+export function migrateLocalStorage() {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith("ymh.")) continue;
+      const next = `cmh.${key.slice(4)}`;
+      const value = localStorage.getItem(key);
+      if (value != null && localStorage.getItem(next) == null) localStorage.setItem(next, value);
+      localStorage.removeItem(key);
+    }
+  } catch { /* ignore */ }
+}

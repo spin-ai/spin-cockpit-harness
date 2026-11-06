@@ -1,6 +1,6 @@
-# YieldMind Harness（多 Agent 编排控制台）— 需求
+# Cockpit Harness（多 Agent 编排控制台）— 需求
 
-> **仓库**：`spin-yieldmind-harness`（与同级目录 `spin-yieldmind-ide` 并列的独立仓）。
+> **仓库**：`spin-cockpit-harness`（与同级目录 `spin-yieldmind-ide` 并列的独立仓）。
 > **定位**：**独立发包**的桌面编排控制台 —— 左侧 Agent 与任务，中间看板 / 任务详情，右侧会话与日志；**数据 / 绘图 / HTML 画布在 YieldMind-IDE**，harness 只做只读产物预览与深链。
 > 冲突时以本文为准；未列入第 11 节的内容一律不做。
 > **原始需求存档**（原文要点与修改建议）见 [`REQ-original.md`](REQ-original.md)，仅作追溯，不参与迭代。

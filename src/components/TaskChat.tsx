@@ -4,6 +4,11 @@ import { RUN_STATUS, STATUS, activeRun, agentOf, duration, lastRun, timeAgo } fr
 import { ChevronRightIcon, PanelCollapseIcon, SendIcon } from "./Icons";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
+type ModelOption = { value: string; name: string; group?: string };
+type ModelCatalog = { models: ModelOption[]; efforts: { value: string; name: string }[]; currentModel?: string; currentEffort?: string; error?: string | null };
+
+// 同一 Agent 的模型目录在应用生命周期内只探测一次（主进程还有 10 分钟缓存）
+const modelCatalogCache = new Map<string, ModelCatalog>();
 
 /**
  * Chat 只有一种形态：一个会话（thread）。
@@ -37,13 +42,15 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [showTool, setShowTool] = useState(() => {
-    try { return localStorage.getItem("ymh.chat.showTool") !== "0"; } catch { return true; }
+    try { return localStorage.getItem("cmh.chat.showTool") !== "0"; } catch { return true; }
   });
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [unseen, setUnseen] = useState(0);
   const [mentionIndex, setMentionIndex] = useState(0);
   const [mentionDismissed, setMentionDismissed] = useState(false);
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalog>({ models: [], efforts: [] });
+  const [modelLoading, setModelLoading] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [inputHistoryIndex, setInputHistoryIndex] = useState<number | null>(null);
   const historyRef = useRef<HTMLDivElement>(null);
@@ -61,6 +68,28 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
   const scopeProjectId = thread?.projectId ?? "";
   const projectId = scopeProjectId || state.activeProjectId || "";
   const lastContent = msgs.length ? msgs[msgs.length - 1].content : "";
+
+  // 模型目录：ACP session/new 的 configOptions（模型 / reasoning effort）
+  useEffect(() => {
+    if (!agentId) { setModelCatalog({ models: [], efforts: [] }); return; }
+    const cached = modelCatalogCache.get(agentId);
+    if (cached) { setModelCatalog(cached); return; }
+    let alive = true;
+    setModelLoading(true);
+    void act("listModels", { agentId })
+      .then((res) => {
+        const catalog: ModelCatalog = res && Array.isArray(res.models)
+          ? res
+          : { models: [], efforts: [], error: String(res?.error || "") };
+        if (!catalog.error) modelCatalogCache.set(agentId, catalog);
+        if (alive) setModelCatalog(catalog);
+      })
+      .catch((e) => { if (alive) setModelCatalog({ models: [], efforts: [], error: String((e as Error)?.message || e) }); })
+      .finally(() => { if (alive) setModelLoading(false); });
+    return () => { alive = false; };
+  }, [agentId, act]);
+
+  const showModelPicker = Boolean(thread && (modelLoading || modelCatalog.models.length > 0 || thread.model || String(agent?.cli || "").toLowerCase() === "dsh"));
   const threadMsgCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const m of state.messages) counts[m.threadId] = (counts[m.threadId] || 0) + 1;
@@ -77,7 +106,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
     return () => window.removeEventListener("mousedown", onDown, true);
   }, [historyOpen]);
 
-  useEffect(() => { try { localStorage.setItem("ymh.chat.showTool", showTool ? "1" : "0"); } catch { /* ignore */ } }, [showTool]);
+  useEffect(() => { try { localStorage.setItem("cmh.chat.showTool", showTool ? "1" : "0"); } catch { /* ignore */ } }, [showTool]);
 
   // TODO 行「问清楚」：把预填的澄清问题灌进对应任务的输入框（不自动发送，用户可改）
   const pendingDraft = useRef<Record<string, string>>({});
@@ -323,7 +352,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
   const placeholder = context
     ? "描述改动…"
     : !todo
-      ? "输入消息…"
+      ? "描述要完成的事，发送后创建任务并派活…"
       : todo.confirmed
         ? "仅记录…"
         : active
@@ -429,6 +458,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
                 {scopeProjectId ? project?.name ?? "项目" : "全局"}
               </span>
               {agent && <><span className="thread-meta-sep">/</span><span className="ellipsis" title={agent.name}>@{agent.alias || agent.name}</span></>}
+              {thread.modelName && <><span className="thread-meta-sep">·</span><span className="ellipsis" title={thread.modelName}>{thread.modelName}</span></>}
               <span className="spacer" />
               {active ? (
                 <>
@@ -607,6 +637,29 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
                 </select>
               </div>
               <div className="composer-actions">
+                {showModelPicker && (
+                  <>
+                    <span className="composer-label" title="模型">模型</span>
+                    <select
+                      className="composer-select model-select"
+                      value={thread.model || ""}
+                      title={modelCatalog.error ? `模型列表不可用：${modelCatalog.error}` : "选择模型（对下一次运行生效）"}
+                      onChange={async (e) => {
+                        const value = e.target.value;
+                        const item = modelCatalog.models.find((m) => m.value === value);
+                        await act("setThreadModel", { threadId: thread.id, model: value, modelName: item?.name || "" });
+                      }}
+                    >
+                      <option value="">默认{state.settings?.model ? ` · ${state.settings.model}` : ""}</option>
+                      {modelLoading && modelCatalog.models.length === 0 && <option value="__loading" disabled>加载模型…</option>}
+                      {modelCatalog.models.map((m) => (
+                        <option key={m.value} value={m.value} title={m.group || undefined}>
+                          {m.name}{m.group ? ` · ${m.group}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
                 <button
                   className={`chat-toggle ${showTool ? "on" : ""}`}
                   title={showTool ? "隐藏工具与思考" : "显示工具与思考"}
@@ -618,7 +671,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
                 <button
                   className={`composer-submit mode-${baseMode}`}
                   disabled={!text.trim() || sending}
-                  title={blockedReason ?? sendLabel}
+                  title={blockedReason ?? `${sendLabel} · ${enterToSend ? "Enter 发送 / Shift+Enter 换行" : "⌘Enter 发送"}`}
                   onClick={() => void send()}
                 >
                   {sending ? "发送中…" : sendLabel}
