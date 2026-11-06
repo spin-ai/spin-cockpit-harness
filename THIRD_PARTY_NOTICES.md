@@ -42,7 +42,7 @@ The packaged Electron app also contains Chromium/Electron license files generate
 ## Reference material and trademarks
 
 - The design/behavior comparisons in `docs/CMP-modules-reference-reference.md` reference **reference** (<https://www.reference.dev/>) and **reference** (<https://reference.ai/>).
-- Screenshots under `docs/assets/cmp/` are captured from those products' public documentation for comparison and attribution. Copyright and trademarks remain with their respective owners.
+- Comparison screenshots are kept locally and are **not** distributed with this repository. The repository links to the products' public documentation and text comparisons only. Copyright and trademarks remain with their respective owners.
 - External source snapshots (`docs/reference-main/`, `docs/reference-main/`) are **not** distributed; they are local reference clones and are gitignored.
 - The names reference, reference and their logos are trademarks of their owners. Cockpit Harness is not affiliated with or endorsed by them.
 
