@@ -8,9 +8,9 @@
 
 在下方 Assets 中选择对应平台：
 
-- **macOS（Apple Silicon / arm64）**：`Cockpit Harness-0.2.0-alpha.1-arm64.dmg`
-- **Windows（x64）**：`Cockpit Harness Setup 0.2.0-alpha.1.exe`
-- **Linux（x86_64）**：`Cockpit Harness-0.2.0-alpha.1.AppImage`
+- **macOS（Apple Silicon / arm64）**：`Cockpit.Harness-0.2.0-alpha.1-arm64.dmg`
+- **Windows（x64）**：`Cockpit.Harness.Setup.0.2.0-alpha.1.exe`
+- **Linux（x86_64）**：`Cockpit.Harness-0.2.0-alpha.1.AppImage`
 
 安装前请确认平台；`SHA256SUMS.txt` 可用于校验。
 
@@ -23,7 +23,7 @@
 - **Windows**：未签名，SmartScreen 可能提示；选择「更多信息 → 仍要运行」。
 - **Linux**：
   ```sh
-  chmod +x "Cockpit Harness-0.2.0-alpha.1.AppImage"
+  chmod +x "Cockpit.Harness-0.2.0-alpha.1.AppImage"
   ./Cockpit\ Harness-0.2.0-alpha.1.AppImage
   ```
 
