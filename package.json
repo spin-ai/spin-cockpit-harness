@@ -10,8 +10,18 @@
     "dev:electron": "electron .",
     "build": "vite build",
     "start": "electron .",
-    "dist": "vite build && electron-builder --mac dmg",
-    "pack": "vite build && electron-builder --dir",
+    "dist": "node scripts/bundle-dsh.mjs && vite build && electron-builder",
+    "pack": "node scripts/bundle-dsh.mjs && vite build && electron-builder --dir",
+    "dist:mac": "node scripts/bundle-dsh.mjs --platform macos && vite build && electron-builder --mac dmg",
+    "dist:win": "node scripts/bundle-dsh.mjs --platform win --arch x64 && vite build && electron-builder --win nsis --x64",
+    "dist:linux": "node scripts/bundle-dsh.mjs --platform linux && vite build && electron-builder --linux AppImage",
+    "dist:linux:x64": "node scripts/bundle-dsh.mjs --platform linux --arch x64 && vite build && electron-builder --linux AppImage --x64",
+    "dist:linux:arm64": "node scripts/bundle-dsh.mjs --platform linux --arch arm64 && vite build && electron-builder --linux AppImage --arm64",
+    "dist:system": "vite build && electron-builder",
+    "pack:system": "vite build && electron-builder --dir",
+    "bundle:dsh": "node scripts/bundle-dsh.mjs",
+    "bundle:dsh:optional": "node scripts/bundle-dsh.mjs --optional",
+    "smoke:dsh": "node scripts/smoke-dsh.mjs",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
@@ -19,6 +29,8 @@
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
+    "dompurify": "^3.4.17",
+    "marked": "^18.1.3",
     "node-pty": "^1.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -44,6 +56,21 @@
       "electron/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "resources/dsh",
+        "to": "dsh",
+        "filter": [
+          "dsh",
+          "dsh.exe",
+          "dsh-rg",
+          "dsh-rg.exe",
+          "dsh-spawn-helper",
+          "dsh-spawn-helper.exe",
+          "manifest.json"
+        ]
+      }
+    ],
     "asar": true,
     "asarUnpack": [
       "node_modules/sql.js/dist/*.wasm",
@@ -66,6 +93,7 @@
         "AppImage"
       ]
     },
-    "icon": "resources/icon.png"
+    "icon": "resources/icon.png",
+    "npmRebuild": false
   }
 }

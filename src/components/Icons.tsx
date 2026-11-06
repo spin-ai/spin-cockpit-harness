@@ -94,6 +94,10 @@ export const InfoIcon = (p: IconProps) => (
   <Svg {...p}><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></Svg>
 );
 
+export const SendIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></Svg>
+);
+
 export const SearchIcon = (p: IconProps) => (
   <Svg {...p}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></Svg>
 );
@@ -116,6 +120,38 @@ export const TerminalIcon = (p: IconProps) => (
 
 export const PanelCollapseIcon = (p: IconProps) => (
   <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M14 4v16" /><path d="m10 10-2 2 2 2" /></Svg>
+);
+
+export const FilePlusIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" /><path d="M14 3v5h5" /><path d="M12 12v6M9 15h6" /></Svg>
+);
+
+export const FolderPlusIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" /><path d="M12 11v6M9 14h6" /></Svg>
+);
+
+export const CopyIcon = (p: IconProps) => (
+  <Svg {...p}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></Svg>
+);
+
+export const ExternalIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M14 4h6v6" /><path d="m20 4-9 9" /><path d="M19 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4" /></Svg>
+);
+
+export const DevtoolsIcon = (p: IconProps) => (
+  <Svg {...p}><path d="m8 8-4 4 4 4M16 8l4 4-4 4" /><path d="m13 5-2 14" /></Svg>
+);
+
+export const RevealIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" /><circle cx="11" cy="13" r="2.2" /><path d="m13 15 2 2" /></Svg>
+);
+
+export const SplitRightIcon = (p: IconProps) => (
+  <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M12 4v16" /></Svg>
+);
+
+export const SplitDownIcon = (p: IconProps) => (
+  <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 12h18" /></Svg>
 );
 
 export const PanelExpandIcon = (p: IconProps) => (

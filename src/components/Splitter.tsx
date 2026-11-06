@@ -37,10 +37,9 @@ type Orientation = "vertical" | "horizontal";
  * - vertical：竖条，左右拖拽调宽度
  * - horizontal：横条，上下拖拽调高度
  */
-export function Splitter({ orientation = "vertical", onDelta, title }: {
+export function Splitter({ orientation = "vertical", onDelta }: {
   orientation?: Orientation;
   onDelta: (delta: number) => void;
-  title?: string;
 }) {
   const [dragging, setDragging] = useState(false);
   const last = useRef(0);
@@ -85,7 +84,6 @@ export function Splitter({ orientation = "vertical", onDelta, title }: {
       role="separator"
       aria-orientation={orientation}
       tabIndex={0}
-      title={title ?? (orientation === "vertical" ? "拖拽调整宽度" : "拖拽调整高度")}
       onMouseDown={(e) => {
         e.preventDefault();
         last.current = orientation === "vertical" ? e.clientX : e.clientY;

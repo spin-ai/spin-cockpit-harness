@@ -24,7 +24,31 @@ export function duration(run: Run | null | undefined, now = Date.now()) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 export function money(n: number) { return `$${Number(n || 0).toFixed(2)}`; }
-export function tokens(n: number) { return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n || 0); }
+/** null = 未上报，必须与 0 区分开 */
+export function tokens(n: number | null | undefined) {
+  if (n == null) return "未上报";
+  return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+/** 毫秒 → 12s / 2m41s / 1h12m */
+export function fmtMs(ms: number | null | undefined) {
+  if (ms == null || !Number.isFinite(ms)) return "—";
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m${s % 60 ? `${s % 60}s` : ""}`;
+  return `${Math.floor(m / 60)}h${m % 60 ? `${m % 60}m` : ""}`;
+}
+export function p50(values: number[]) {
+  const xs = values.filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+  if (!xs.length) return null;
+  return xs[Math.floor((xs.length - 1) / 2)];
+}
+export function pct(part: number, total: number) {
+  if (!total) return "—";
+  return `${Math.round((part / total) * 100)}%`;
+}
+export const ERROR_CLASS: Record<string, string> = { auth: "认证", rate_limit: "限流", timeout: "超时", other: "其他" };
+export const FINISHED = ["completed", "failed", "cancelled"];
 export const RUN_STATUS: Record<string, string> = {
   queued: "排队", running: "进行中", waiting_input: "等待输入",
   completed: "完成", failed: "失败", cancelled: "已停止",
