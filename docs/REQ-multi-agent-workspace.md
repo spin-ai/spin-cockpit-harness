@@ -578,7 +578,7 @@ dsh（MIT）不做底座——理由见 §12——但它的执行层实现比我
 
 **吸收原则**：只借交互与协议设计，不复制受限代码；新增能力必须落到具体编号与验收，否则不入表。
 
-**模块级对比（含截图与改进建议）**：[`CMP-modules-orca-multica.md`](CMP-modules-orca-multica.md) —— A–T 逐模块对比 Orca / Multica / 本项目，图存 `docs/assets/cmp/`。
+**模块级对比（含截图与改进建议）**：[`CMP-modules-orca-multica.md`](CMP-modules-orca-multica.md) —— A–T 逐模块对比 Orca / Multica / 本项目，截图见 Orca / Multica 官方文档。
 
 ---
 

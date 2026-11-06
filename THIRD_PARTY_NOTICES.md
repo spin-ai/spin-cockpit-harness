@@ -42,7 +42,7 @@ The packaged Electron app also contains Chromium/Electron license files generate
 ## Reference material and trademarks
 
 - The design/behavior comparisons in `docs/CMP-modules-orca-multica.md` reference **ORCA** (<https://www.onorca.dev/>) and **Multica** (<https://multica.ai/>).
-- Screenshots under `docs/assets/cmp/` are captured from those products' public documentation for comparison and attribution. Copyright and trademarks remain with their respective owners.
+- Comparison screenshots are kept locally and are **not** distributed with this repository. The repository links to the products' public documentation and text comparisons only. Copyright and trademarks remain with their respective owners.
 - External source snapshots (`docs/orca-main/`, `docs/multica-main/`) are **not** distributed; they are local reference clones and are gitignored.
 - The names ORCA, Multica and their logos are trademarks of their owners. Cockpit Harness is not affiliated with or endorsed by them.
 
