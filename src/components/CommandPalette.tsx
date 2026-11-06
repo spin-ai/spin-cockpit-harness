@@ -30,7 +30,7 @@ export function CommandPalette({ open, state, onClose, commands }: { open: boole
             if (e.key === "ArrowUp") { e.preventDefault(); setIdx((i) => Math.max(i - 1, 0)); }
             if (e.key === "Enter") { e.preventDefault(); exec(list[idx]); }
           }}
-          placeholder="搜索命令、项目、动作…"
+          placeholder="搜索…"
         />
         <div className="palette-list">
           {list.map((c, i) => (
@@ -40,7 +40,6 @@ export function CommandPalette({ open, state, onClose, commands }: { open: boole
           ))}
           {list.length === 0 && <div className="pane-empty">没有匹配的命令</div>}
         </div>
-        <div className="palette-foot tiny muted">↑↓ 选择 · ↵ 执行 · Esc 关闭</div>
       </div>
     </div>
   );

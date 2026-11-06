@@ -1,23 +1,49 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import type { ElementContext, State, Todo } from "../types";
 import { PreviewPanel } from "./PreviewPanel";
-import { ChevronDownIcon, ChevronUpIcon, PanelCollapseIcon, SearchIcon, XIcon } from "./Icons";
+import { FilePreviewPane } from "./FilePreviewPane";
+import { FileVisual } from "./FileVisual";
+import { takeTerminalRequests } from "../terminal-events";
+import { Splitter } from "./Splitter";
+import { ChevronDownIcon, ChevronUpIcon, EyeIcon, PanelCollapseIcon, SearchIcon, SplitDownIcon, SplitRightIcon, XIcon } from "./Icons";
+
+/** 一个终端窗格 = 一个 pty（重启会新建 pty） */
+type PaneState = {
+  id: string; cwd: string; title: string;
+  terminalId?: string; agentId?: string;
+  /** 启动 Agent 的命令：带命令的窗格重启时会重复建 Agent 记录，故不提供重启。 */
+  command?: string; projectId?: string;
+};
+
+/** 二进制拆分树：row = 左右，col = 上下；ratio 是第一个子节点占比 */
+type PaneNode =
+  | { type: "pane"; pane: PaneState }
+  | { type: "split"; id: string; dir: "row" | "col"; ratio: number; a: PaneNode; b: PaneNode };
 
 type Tab = {
-  id: string; cwd: string; title: string; taskId?: string; terminalId?: string; agentId?: string;
-  /** 启动 Agent 的命令：带命令的标签页重启时会重复建 Agent 记录，故不提供重启。 */
-  command?: string; projectId?: string;
+  id: string;
+  /** terminal = 可拆分的 pty 会话；preview = 单个网页预览；file = 文件预览 */
+  kind: "terminal" | "preview" | "file";
+  title: string; cwd: string;
+  root?: PaneNode;
+  focusedPaneId?: string;
+  url?: string;
+  /** 文件预览标签：相对路径 + 根目录 */
+  rel?: string; rootDir?: string;
+  taskId?: string;
   /** 用户手动重命名后不再跟随 shell 标题。 */
   renamed?: boolean;
   /** 后台标签页收到 bell（命令完成 / 需要输入）时的提示点。 */
   attention?: boolean;
 };
-type Mode = "terminal" | "preview";
+
 type MenuPoint = { x: number; y: number };
+type SplitDir = "row" | "col";
+type FocusDir = "left" | "right" | "up" | "down";
 
 const ZOOM_KEY = "ymh.term.zoom";
 const MIN_FONT = 8;
@@ -36,6 +62,83 @@ function readZoom() {
   return Number.isFinite(n) ? Math.max(-4, Math.min(16, Math.round(n))) : 0;
 }
 
+function firstPane(node: PaneNode): PaneState {
+  return node.type === "pane" ? node.pane : firstPane(node.a);
+}
+
+function findPaneById(node: PaneNode | undefined, id: string): PaneState | null {
+  if (!node) return null;
+  if (node.type === "pane") return node.pane.id === id ? node.pane : null;
+  return findPaneById(node.a, id) ?? findPaneById(node.b, id);
+}
+
+function updatePaneNode(node: PaneNode, id: string, patch: Partial<PaneState>): PaneNode {
+  if (node.type === "pane") return node.pane.id === id ? { type: "pane", pane: { ...node.pane, ...patch } } : node;
+  const a = updatePaneNode(node.a, id, patch);
+  const b = updatePaneNode(node.b, id, patch);
+  return a === node.a && b === node.b ? node : { ...node, a, b };
+}
+
+function insertSplitNode(node: PaneNode, targetPaneId: string, pane: PaneState, dir: SplitDir, splitId: string): PaneNode {
+  if (node.type === "pane") {
+    if (node.pane.id !== targetPaneId) return node;
+    return { type: "split", id: splitId, dir, ratio: 0.5, a: node, b: { type: "pane", pane } };
+  }
+  const a = insertSplitNode(node.a, targetPaneId, pane, dir, splitId);
+  const b = insertSplitNode(node.b, targetPaneId, pane, dir, splitId);
+  return a === node.a && b === node.b ? node : { ...node, a, b };
+}
+
+function removePaneNode(node: PaneNode, paneId: string): PaneNode | null {
+  if (node.type === "pane") return node.pane.id === paneId ? null : node;
+  const a = removePaneNode(node.a, paneId);
+  const b = removePaneNode(node.b, paneId);
+  if (a && b) return { ...node, a, b };
+  return a ?? b; // 只剩一边时折叠掉这层 split
+}
+
+function updateRatioNode(node: PaneNode, splitId: string, delta: number): PaneNode {
+  if (node.type === "pane") return node;
+  if (node.id === splitId) {
+    const ratio = Math.max(0.15, Math.min(0.85, node.ratio + delta));
+    return { ...node, ratio };
+  }
+  const a = updateRatioNode(node.a, splitId, delta);
+  const b = updateRatioNode(node.b, splitId, delta);
+  return a === node.a && b === node.b ? node : { ...node, a, b };
+}
+
+function paneCount(node: PaneNode): number {
+  return node.type === "pane" ? 1 : paneCount(node.a) + paneCount(node.b);
+}
+
+function collectPaneIds(node: PaneNode | undefined): string[] {
+  if (!node) return [];
+  return node.type === "pane" ? [node.pane.id] : [...collectPaneIds(node.a), ...collectPaneIds(node.b)];
+}
+
+function basename(p: string) {
+  return p.split("/").filter(Boolean).slice(-1)[0] || p;
+}
+
+function previewTitle(url: string) {
+  return `预览 ${portOf(url).replace(/^:/, "")}`;
+}
+
+function portOf(url: string) {
+  try {
+    const u = new URL(url);
+    return u.port ? `:${u.port}` : u.host;
+  } catch {
+    return url;
+  }
+}
+
+/** 去掉 shell/Agent 常带的前缀装饰，限制标题宽度。 */
+function cleanTitle(raw: string) {
+  return String(raw || "").replace(/[\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
+}
+
 export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, previewRoot, onCollapse, terminalFontSize = 12, terminalScrollback = 5000, previewHomeUrl }: {
   state: State; todo: Todo | null; onOpenProject: () => void;
   onPickedContext: (ctx: ElementContext) => void;
@@ -47,43 +150,250 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
 }) {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [active, setActive] = useState<string | null>(null);
-  const [mode, setMode] = useState<Mode>("terminal");
-  const [urlByTab, setUrlByTab] = useState<Record<string, string>>({});
+  const [urlByPane, setUrlByPane] = useState<Record<string, string>>({});
+  const [lastUrl, setLastUrl] = useState("");
   const [previewReq, setPreviewReq] = useState<{ url: string; n: number } | null>(null);
-  const [searchTab, setSearchTab] = useState<string | null>(null);
+  const [searchPaneId, setSearchPaneId] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [zoom, setZoom] = useState(readZoom);
   const [focusToken, setFocusToken] = useState(0);
-  const termToTab = useRef<Record<string, string>>({});
+  const termToPane = useRef<Record<string, string>>({});
   const seq = useRef(1);
   const tabsRef = useRef<HTMLDivElement>(null);
 
   const fontSize = Math.max(MIN_FONT, Math.min(MAX_FONT, Math.round(terminalFontSize + zoom)));
+  const activeTab = tabs.find((t) => t.id === active) ?? null;
+  const activeFocusedId = activeTab?.root ? (activeTab.focusedPaneId ?? firstPane(activeTab.root).id) : null;
+  const activePane = activeTab?.root && activeFocusedId ? findPaneById(activeTab.root, activeFocusedId) : null;
+  const activeUrl = activePane ? urlByPane[activePane.id] : undefined;
 
   useEffect(() => { try { localStorage.setItem(ZOOM_KEY, String(zoom)); } catch { /* ignore */ } }, [zoom]);
 
   // 终端里打印出 dev server 地址 → 记住并给出「打开预览」入口
   useEffect(() => window.harness.onTerminalUrl(({ id, url }) => {
-    const tabId = termToTab.current[id];
-    if (tabId) setUrlByTab((map) => ({ ...map, [tabId]: url }));
+    const paneId = termToPane.current[id];
+    if (paneId) setUrlByPane((map) => ({ ...map, [paneId]: url }));
+    if (url) setLastUrl(url);
   }), []);
 
-  const addTab = useCallback((init: Omit<Tab, "id">) => {
-    const tab: Tab = { ...init, id: `t${seq.current++}` };
+  // 切标签 / 切窗格时关闭查找，避免搜索栏留在别的终端上
+  useEffect(() => { setSearchPaneId(null); }, [active, activeFocusedId]);
+
+  const makePane = useCallback((init: { cwd: string; title?: string; terminalId?: string; agentId?: string; command?: string; projectId?: string }): PaneState => ({
+    id: `p${seq.current++}`,
+    cwd: init.cwd,
+    title: init.title || basename(init.cwd),
+    terminalId: init.terminalId,
+    agentId: init.agentId,
+    command: init.command,
+    projectId: init.projectId,
+  }), []);
+
+  const addTab = useCallback((init: { cwd: string; title?: string; taskId?: string; terminalId?: string; agentId?: string; command?: string; projectId?: string }) => {
+    const pane = makePane(init);
+    const tab: Tab = {
+      id: `t${seq.current++}`,
+      kind: "terminal",
+      cwd: pane.cwd,
+      title: pane.title,
+      taskId: init.taskId,
+      root: { type: "pane", pane },
+      focusedPaneId: pane.id,
+    };
     setTabs((list) => [...list, tab]);
     setActive(tab.id);
     setFocusToken((n) => n + 1);
-    setMode("terminal");
     return tab;
-  }, []);
+  }, [makePane]);
 
-  const activate = useCallback((id: string) => {
-    setActive(id);
+  const openFilePreviewTab = useCallback((req: { rel: string; name?: string; root?: string }) => {
+    if (!req.rel) return;
+    const root = req.root || "";
+    const existing = tabs.find((t) => t.kind === "file" && t.rel === req.rel && (t.rootDir || "") === root);
+    if (existing) {
+      if (req.name && req.name !== existing.title) {
+        setTabs((list) => list.map((t) => (t.id === existing.id ? { ...t, title: req.name as string } : t)));
+      }
+      setActive(existing.id);
+      setFocusToken((n) => n + 1);
+      return;
+    }
+    const tab: Tab = {
+      id: `t${seq.current++}`, kind: "file",
+      cwd: root || state.projectPath,
+      title: req.name || req.rel.split("/").pop() || "预览",
+      rel: req.rel, rootDir: root,
+    };
+    setTabs((list) => [...list, tab]);
+    setActive(tab.id);
+    setFocusToken((n) => n + 1);
+  }, [tabs, state.projectPath]);
+
+  const activate = useCallback((tabId: string, paneId?: string) => {
+    setActive(tabId);
+    if (paneId) setTabs((list) => list.map((t) => (t.id === tabId ? { ...t, focusedPaneId: paneId } : t)));
     setFocusToken((n) => n + 1);
   }, []);
 
-  const patchTab = useCallback((id: string, patch: Partial<Tab>) => {
-    setTabs((list) => list.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  const patchTab = useCallback((tabId: string, patch: Partial<Tab>) => {
+    setTabs((list) => list.map((t) => (t.id === tabId ? { ...t, ...patch } : t)));
+  }, []);
+
+  const patchPane = useCallback((tabId: string, paneId: string, patch: Partial<PaneState>) => {
+    setTabs((list) => list.map((t) => (t.id === tabId && t.root ? { ...t, root: updatePaneNode(t.root, paneId, patch) } : t)));
+  }, []);
+
+  const focusPane = useCallback((tabId: string, paneId: string) => {
+    setTabs((list) => list.map((t) => (t.id === tabId ? { ...t, focusedPaneId: paneId } : t)));
+    setActive(tabId);
+    setFocusToken((n) => n + 1);
+  }, []);
+
+  const newTerminal = useCallback(() => {
+    const cwd = activePane?.cwd || state.projectPath;
+    addTab({ cwd, title: basename(cwd) });
+  }, [activePane?.cwd, state.projectPath, addTab]);
+
+  // 预览是终端的一个标签页（与 Orca 一致）：已存在就导航 + 激活，否则新建
+  const openPreview = useCallback((url: string) => {
+    if (!url) return;
+    setPreviewReq({ url, n: Date.now() });
+    const existing = tabs.find((t) => t.kind === "preview");
+    if (existing) {
+      setTabs((list) => list.map((t) => (t.id === existing.id
+        ? { ...t, url, title: t.renamed ? t.title : previewTitle(url) }
+        : t)));
+      setActive(existing.id);
+    } else {
+      const tab: Tab = { id: `t${seq.current++}`, kind: "preview", cwd: state.projectPath, title: previewTitle(url), url };
+      setTabs((list) => [...list, tab]);
+      setActive(tab.id);
+    }
+    setFocusToken((n) => n + 1);
+  }, [tabs, state.projectPath]);
+
+  // 工具栏「＋ 预览」/ 命令面板入口：优先复用已打开的预览标签，否则用
+  // 当前窗格识别的地址 → 最近一次识别 → 设置里的默认预览地址
+  const showPreview = useCallback(() => {
+    const existing = tabs.find((t) => t.kind === "preview");
+    if (existing) { activate(existing.id); return; }
+    openPreview(activeUrl || lastUrl || previewHomeUrl || "http://localhost:5173/");
+  }, [tabs, activate, openPreview, activeUrl, lastUrl, previewHomeUrl]);
+
+  const splitFocused = useCallback((dir: SplitDir) => {
+    const tab = tabs.find((t) => t.id === active);
+    if (!tab || tab.kind !== "terminal" || !tab.root) return;
+    const focusedId = tab.focusedPaneId ?? firstPane(tab.root).id;
+    const src = findPaneById(tab.root, focusedId) ?? firstPane(tab.root);
+    const pane = makePane({ cwd: src.cwd, title: basename(src.cwd) });
+    const root = insertSplitNode(tab.root, src.id, pane, dir, `s${seq.current++}`);
+    setTabs(tabs.map((t) => (t.id === tab.id ? { ...t, root, focusedPaneId: pane.id } : t)));
+    setFocusToken((n) => n + 1);
+    setSearchPaneId(null);
+  }, [tabs, active, makePane]);
+
+  const forgetPanes = useCallback((paneIds: string[]) => {
+    if (!paneIds.length) return;
+    setUrlByPane((map) => {
+      const next = { ...map };
+      for (const id of paneIds) delete next[id];
+      return next;
+    });
+    for (const [termId, paneId] of Object.entries(termToPane.current)) {
+      if (paneIds.includes(paneId)) delete termToPane.current[termId];
+    }
+  }, []);
+
+  const close = useCallback((tabId: string) => {
+    const idx = tabs.findIndex((t) => t.id === tabId);
+    if (idx < 0) return;
+    const tab = tabs[idx];
+    forgetPanes(collectPaneIds(tab.root));
+    const next = tabs.filter((t) => t.id !== tabId);
+    setTabs(next);
+    if (active === tabId) {
+      const fallback = next[Math.min(idx, next.length - 1)] ?? next.at(-1) ?? null;
+      setActive(fallback?.id ?? null);
+      if (fallback) setFocusToken((n) => n + 1);
+    }
+    setSearchPaneId(null);
+    setRenaming((cur) => (cur === tabId ? null : cur));
+  }, [tabs, active, forgetPanes]);
+
+  // 关闭当前窗格；最后一个窗格时关闭整个标签
+  const closeFocusedPane = useCallback((tabId: string) => {
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    if (tab.kind !== "terminal" || !tab.root || tab.root.type === "pane") { close(tabId); return; }
+    const focusedId = tab.focusedPaneId ?? firstPane(tab.root).id;
+    const root = removePaneNode(tab.root, focusedId);
+    if (!root) { close(tabId); return; }
+    forgetPanes([focusedId]);
+    const focusId = findPaneById(root, focusedId) ? focusedId : firstPane(root).id;
+    setTabs(tabs.map((t) => (t.id === tabId ? { ...t, root, focusedPaneId: focusId } : t)));
+    setFocusToken((n) => n + 1);
+    setSearchPaneId(null);
+  }, [tabs, close, forgetPanes]);
+
+  const closeActiveSurface = useCallback(() => {
+    if (!activeTab) return;
+    if (activeTab.kind === "terminal") closeFocusedPane(activeTab.id);
+    else close(activeTab.id);
+  }, [activeTab, close, closeFocusedPane]);
+
+  const cycleTab = useCallback((dir: 1 | -1) => {
+    if (!tabs.length) return;
+    const idx = Math.max(0, tabs.findIndex((t) => t.id === active));
+    const next = tabs[(idx + dir + tabs.length) % tabs.length];
+    if (next) activate(next.id);
+  }, [tabs, active, activate]);
+
+  const changeRatio = useCallback((tabId: string, splitId: string, delta: number) => {
+    setTabs((list) => list.map((t) => {
+      if (t.id !== tabId || !t.root) return t;
+      return { ...t, root: updateRatioNode(t.root, splitId, delta) };
+    }));
+  }, []);
+
+  // ⌘⌥←/→/↑/↓：按屏幕几何位置把焦点移到相邻窗格
+  const focusDir = useCallback((dir: FocusDir) => {
+    const tab = tabs.find((t) => t.id === active);
+    if (!tab?.root) return;
+    const curId = tab.focusedPaneId ?? firstPane(tab.root).id;
+    const nodes = Array.from(document.querySelectorAll<HTMLElement>(".term-pane-leaf[data-pane-id]"));
+    const curEl = nodes.find((el) => el.dataset.paneId === curId);
+    if (!curEl) return;
+    const c = curEl.getBoundingClientRect();
+    const cx = c.left + c.width / 2;
+    const cy = c.top + c.height / 2;
+    let best: { id: string; dist: number } | null = null;
+    for (const el of nodes) {
+      const id = el.dataset.paneId;
+      if (!id || id === curId) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) continue;
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      const ok = dir === "left" ? x < cx - 4 : dir === "right" ? x > cx + 4 : dir === "up" ? y < cy - 4 : y > cy + 4;
+      if (!ok) continue;
+      const dist = Math.abs(x - cx) + Math.abs(y - cy);
+      if (!best || dist < best.dist) best = { id, dist };
+    }
+    if (best) focusPane(active!, best.id);
+  }, [tabs, active, focusPane]);
+
+  const changeZoom = useCallback((delta: number) => {
+    setZoom((z) => Math.max(MIN_FONT - terminalFontSize, Math.min(MAX_FONT - terminalFontSize, z + delta)));
+  }, [terminalFontSize]);
+
+  // 终端里调标题：更新窗格；聚焦窗格再同步到标签标题（用户重命名过则不动）
+  const onPaneTitle = useCallback((tabId: string, paneId: string, title: string) => {
+    setTabs((list) => list.map((t) => {
+      if (t.id !== tabId || !t.root) return t;
+      const root = updatePaneNode(t.root, paneId, { title });
+      const focused = t.focusedPaneId ?? firstPane(t.root).id;
+      return { ...t, root, title: t.renamed ? t.title : paneId === focused ? title : t.title };
+    }));
   }, []);
 
   // one terminal per opened project (a new tab when the project changes)
@@ -105,10 +415,13 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
         setFocusToken((n) => n + 1);
         return list;
       }
-      const tab: Tab = { id: `t${seq.current++}`, cwd: todo.cwd || state.projectPath, title: `${todo.key} ${todo.title}`, taskId: todo.id };
+      const pane = makePane({ cwd: todo.cwd || state.projectPath, title: `${todo.key} ${todo.title}` });
+      const tab: Tab = {
+        id: `t${seq.current++}`, kind: "terminal", cwd: pane.cwd, title: pane.title,
+        taskId: todo.id, root: { type: "pane", pane }, focusedPaneId: pane.id,
+      };
       setActive(tab.id);
       setFocusToken((n) => n + 1);
-      setMode("terminal");
       return [...list, tab];
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -120,47 +433,33 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
     setTabs((list) => list.map((t) => (t.id === active && t.attention ? { ...t, attention: false } : t)));
   }, [active]);
 
-  const close = useCallback((id: string) => {
-    setTabs((list) => {
-      const idx = list.findIndex((t) => t.id === id);
-      const next = list.filter((t) => t.id !== id);
-      const closed = list[idx];
-      if (closed?.terminalId) delete termToTab.current[closed.terminalId];
-      if (active === id) {
-        const fallback = next[Math.min(idx, next.length - 1)] ?? next.at(-1);
-        setActive(fallback?.id ?? null);
-        if (fallback) setFocusToken((n) => n + 1);
-      }
-      return next;
-    });
-    setSearchTab((cur) => (cur === id ? null : cur));
-    setRenaming((cur) => (cur === id ? null : cur));
-  }, [active]);
-
-  // 新终端继承当前标签页的启动目录（任务标签页是任务 workdir）
-  const newTerminal = useCallback(() => {
-    const cur = tabs.find((t) => t.id === active);
-    const cwd = cur?.cwd || state.projectPath;
-    addTab({ cwd, title: basename(cwd) });
-  }, [tabs, active, state.projectPath, addTab]);
-
-  const closeActive = useCallback(() => { if (active) close(active); }, [active, close]);
-
-  const cycleTab = useCallback((dir: 1 | -1) => {
-    if (!tabs.length) return;
-    const idx = Math.max(0, tabs.findIndex((t) => t.id === active));
-    const next = tabs[(idx + dir + tabs.length) % tabs.length];
-    if (next) activate(next.id);
-  }, [tabs, active, activate]);
-
   useEffect(() => {
     const onNew = () => newTerminal();
-    const onClose = () => closeActive();
-    // ⌘⇧[ / ⌘⇧] 从任何位置切换终端标签（App 层只处理标签自身的事件）
+    const onClose = () => closeActiveSurface();
+    const onPreview = () => showPreview();
+    const onSplit = (e: Event) => splitFocused((e as CustomEvent).detail === "col" ? "col" : "row");
+    // 文件预览 / 在终端打开：消费共享队列（面板收起时由 App 先展开，挂载后再消费）
+    const consumeRequests = () => {
+      const pending = takeTerminalRequests();
+      if (pending.cwd) addTab({ cwd: pending.cwd, title: basename(pending.cwd) });
+      if (pending.file) openFilePreviewTab(pending.file);
+    };
+    consumeRequests();
     window.addEventListener("harness:new-terminal", onNew);
     window.addEventListener("harness:close-terminal", onClose);
-    return () => { window.removeEventListener("harness:new-terminal", onNew); window.removeEventListener("harness:close-terminal", onClose); };
-  }, [newTerminal, closeActive]);
+    window.addEventListener("harness:open-preview", onPreview);
+    window.addEventListener("harness:split-terminal", onSplit);
+    window.addEventListener("harness:open-file-preview", consumeRequests);
+    window.addEventListener("harness:open-terminal-at", consumeRequests);
+    return () => {
+      window.removeEventListener("harness:new-terminal", onNew);
+      window.removeEventListener("harness:close-terminal", onClose);
+      window.removeEventListener("harness:open-preview", onPreview);
+      window.removeEventListener("harness:split-terminal", onSplit);
+      window.removeEventListener("harness:open-file-preview", consumeRequests);
+      window.removeEventListener("harness:open-terminal-at", consumeRequests);
+    };
+  }, [newTerminal, closeActiveSurface, showPreview, splitFocused, addTab, openFilePreviewTab]);
 
   // 标签过多时：滚轮纵向滚动 → 横向滚动，激活标签自动滚进可视区
   useEffect(() => {
@@ -181,48 +480,40 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
     el?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [active, tabs.length]);
 
-  const activeUrl = active ? urlByTab[active] : undefined;
-  const activeTab = tabs.find((t) => t.id === active) ?? null;
-
-  const changeZoom = useCallback((delta: number) => {
-    setZoom((z) => Math.max(MIN_FONT - terminalFontSize, Math.min(MAX_FONT - terminalFontSize, z + delta)));
-  }, [terminalFontSize]);
-
   return (
     <section className="terminal-pane">
       <div className="terminal-bar">
         <div className="row gap6" style={{ minWidth: 0 }}>
           <span className="term-brand">TERMINAL</span>
-          <div className="term-mode">
-            <button className={mode === "terminal" ? "on" : ""} onClick={() => setMode("terminal")}>终端</button>
-            <button className={mode === "preview" ? "on" : ""} onClick={() => setMode("preview")}>预览</button>
-          </div>
           <button className="link" onClick={onOpenProject}>打开项目</button>
+          {activeTab?.kind === "terminal" && activeTab.root && paneCount(activeTab.root) > 1 && (
+            <span className="term-pane-count">{paneCount(activeTab.root)} 窗格</span>
+          )}
           {activeUrl && (
-            <button className="link" title={activeUrl} onClick={() => { setPreviewReq({ url: activeUrl, n: Date.now() }); setMode("preview"); }}>
+            <button className="link" title={activeUrl} onClick={() => openPreview(activeUrl)}>
               打开预览 {portOf(activeUrl)}
             </button>
           )}
         </div>
         <div className="row gap4">
-          <div className="term-zoom" title="终端字号（⌘+ / ⌘- / ⌘0 重置）">
-            <button onClick={() => changeZoom(-1)} disabled={fontSize <= MIN_FONT} aria-label="缩小字号">−</button>
-            <span>{fontSize}</span>
-            <button onClick={() => changeZoom(1)} disabled={fontSize >= MAX_FONT} aria-label="放大字号">+</button>
-          </div>
+          {zoom !== 0 && activeTab?.kind === "terminal" && (
+            <button className="term-zoom-chip" onClick={() => setZoom(0)}>{fontSize}px</button>
+          )}
           <button
             className="term-icon-btn"
             title="在终端中查找（⌘F）"
             aria-label="查找"
-            disabled={!activeTab}
-            onClick={() => { if (active) setMode("terminal"); setSearchTab((cur) => (cur === active ? null : active)); }}
+            disabled={!activePane}
+            onClick={() => {
+              if (!activePane) return;
+              setSearchPaneId((cur) => (cur === activePane.id ? null : activePane.id));
+            }}
           >
             <SearchIcon size={14} />
           </button>
           <select
             className="agent-launch"
             value=""
-            title="在项目终端启动 Agent"
             onChange={async (e) => {
               const command = e.target.value;
               if (!command) return;
@@ -234,7 +525,8 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
             <option value="">＋ Agent</option>
             {(state.cliCapabilities || []).map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
-          <button className="btn tiny-btn" title="新建终端（⌘T）" onClick={newTerminal}>＋ 终端</button>
+          <button className="btn tiny-btn" onClick={showPreview}>＋ 预览</button>
+          <button className="btn tiny-btn" onClick={newTerminal}>＋ 终端</button>
           {onCollapse && (
             <button className="pane-collapse dark" title="收起终端" aria-label="收起终端" onClick={onCollapse}>
               <PanelCollapseIcon size={13} />
@@ -242,18 +534,22 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
           )}
         </div>
       </div>
-      <div className="term-tabs" ref={tabsRef} style={{ display: mode === "terminal" ? "flex" : "none" }}>
-        {tabs.map((t, i) => (
+      <div className="term-tabs" ref={tabsRef}>
+        {tabs.map((t) => (
           <div
             key={t.id}
             data-tab-id={t.id}
             className={`term-tab ${t.id === active ? "on" : ""} ${t.attention ? "attention" : ""}`}
-            title={`${t.cwd}\n⌘⇧${i + 1} 直达 · 双击重命名 · 中键关闭`}
+            title={t.kind === "preview" ? (t.url || "预览") : t.cwd}
             onClick={() => activate(t.id)}
             onDoubleClick={() => { setRenaming(t.id); }}
             onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); close(t.id); } }}
           >
-            <span className={`dot ${t.attention ? "amber" : t.taskId ? "green" : "slate"}`} />
+            {t.kind === "file"
+              ? <FileVisual name={t.title} size={12} />
+              : t.kind === "preview"
+                ? <EyeIcon size={12} className="term-tab-icon" />
+                : <span className={`dot ${t.attention ? "amber" : t.taskId ? "green" : "slate"}`} />}
             {renaming === t.id ? (
               <input
                 className="term-rename"
@@ -267,73 +563,193 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
                 }}
               />
             ) : (
-              <span className="ellipsis">{t.title || "终端"}</span>
+              <span className="ellipsis">{t.title || (t.kind === "preview" ? "预览" : "终端")}</span>
             )}
-            <span className="term-close" title="关闭（⌘W）" onClick={(e) => { e.stopPropagation(); close(t.id); }}>×</span>
+            <span className="term-close" onClick={(e) => { e.stopPropagation(); close(t.id); }}>×</span>
           </div>
         ))}
-        <button className="term-tab add" title="新建终端（⌘T）" onClick={newTerminal}>＋</button>
+        <button className="term-tab add" title="新建终端" onClick={newTerminal}>＋</button>
       </div>
-      <div className="term-body" style={{ display: mode === "terminal" ? "block" : "none" }}>
-        {tabs.map((t) => (
-          <TermTab
-            key={t.id}
-            tab={t}
-            active={t.id === active}
-            visible={mode === "terminal"}
-            focusToken={focusToken}
-            searchOpen={searchTab === t.id}
-            fontSize={fontSize}
-            scrollback={terminalScrollback}
-            onOpenSearch={() => setSearchTab(t.id)}
-            onCloseSearch={() => setSearchTab(null)}
-            onNewTab={newTerminal}
-            onCloseTab={() => close(t.id)}
-            onTermId={(termId) => { termToTab.current[termId] = t.id; patchTab(t.id, { terminalId: termId }); }}
-            onTitle={(title) => patchTab(t.id, { title })}
-            onBell={() => patchTab(t.id, { attention: true })}
-          />
-        ))}
-        {tabs.length === 0 && <div className="pane-empty">没有终端 · 点击「＋ 终端」或按 ⌘T 新建</div>}
+      <div className="term-body">
+        {tabs.map((t) => {
+          if (t.kind === "file") {
+            return (
+              <div key={t.id} className="term-tab-surface" style={{ display: t.id === active ? "flex" : "none" }}>
+                <FilePreviewPane
+                  name={t.title}
+                  rel={t.rel || ""}
+                  root={t.rootDir}
+                  active={t.id === active}
+                  onClose={() => close(t.id)}
+                  onPicked={onPickedContext}
+                />
+              </div>
+            );
+          }
+          if (t.kind === "preview") {
+            return (
+              <PreviewPanel
+                key={t.id}
+                hidden={t.id !== active}
+                onPicked={onPickedContext}
+                root={previewRoot}
+                defaultUrl={t.url || previewHomeUrl || "http://localhost:5173/"}
+                autoOpenUrl={previewReq?.url}
+                autoOpenKey={previewReq?.n}
+              />
+            );
+          }
+          const focusedId = t.root ? (t.focusedPaneId ?? firstPane(t.root).id) : "";
+          const multi = t.root ? paneCount(t.root) > 1 : false;
+          return (
+            <div key={t.id} className="term-tab-surface" style={{ display: t.id === active ? "flex" : "none" }}>
+              {t.root && (
+                <SplitSurface
+                  node={t.root}
+                  focusedId={focusedId}
+                  renderPane={(pane) => (
+                    <TermTab
+                      key={pane.id}
+                      pane={pane}
+                      multi={multi}
+                      visible={t.id === active}
+                      focused={focusedId === pane.id}
+                      focusToken={focusToken}
+                      searchOpen={searchPaneId === pane.id}
+                      fontSize={fontSize}
+                      scrollback={terminalScrollback}
+                      onOpenSearch={() => setSearchPaneId(pane.id)}
+                      onCloseSearch={() => setSearchPaneId(null)}
+                      onNewTab={newTerminal}
+                      onClosePane={() => closeFocusedPane(t.id)}
+                      onSplit={splitFocused}
+                      onFocusDir={focusDir}
+                      onFocus={() => focusPane(t.id, pane.id)}
+                      onCycleTab={cycleTab}
+                      onGotoTab={(index) => { const target = tabs[index]; if (target) activate(target.id); }}
+                      onZoom={(delta) => { if (delta === 0) setZoom(0); else changeZoom(delta); }}
+                      onTermId={(termId) => { termToPane.current[termId] = pane.id; patchPane(t.id, pane.id, { terminalId: termId }); }}
+                      onUrl={(url) => setUrlByPane((map) => ({ ...map, [pane.id]: url }))}
+                      onTitle={(title) => onPaneTitle(t.id, pane.id, title)}
+                      onBell={() => { if (t.id !== active) patchTab(t.id, { attention: true }); }}
+                    />
+                  )}
+                  onRatio={(splitId, delta) => changeRatio(t.id, splitId, delta)}
+                />
+              )}
+            </div>
+          );
+        })}
+        {tabs.length === 0 && <div className="pane-empty">没有终端</div>}
       </div>
-      <PreviewPanel hidden={mode !== "preview"} onPicked={onPickedContext} root={previewRoot} defaultUrl={previewHomeUrl || "http://localhost:5173/"} autoOpenUrl={previewReq?.url} autoOpenKey={previewReq?.n} />
-      {/* 终端快捷键提示条：仅在终端面板内生效 */}
-      {mode === "terminal" && tabs.length > 1 && (
-        <div className="term-hint">⌘⇧[ / ⌘⇧] 或 ⌃Tab 切换标签 · ⌘⇧1…9 直达 · ⌘F 查找 · ⌘W 关闭</div>
-      )}
     </section>
   );
 }
 
-function basename(p: string) {
-  return p.split("/").filter(Boolean).slice(-1)[0] || p;
-}
+/** 拆分树 → 绝对定位的窗格/分隔条（所有窗格保持挂载，拆分不会重建已有 pty） */
+type LayoutRect = { x: number; y: number; w: number; h: number };
+type PanePlacement = { pane: PaneState; rect: LayoutRect };
+type SplitPlacement = { split: Extract<PaneNode, { type: "split" }>; rect: LayoutRect };
 
-function portOf(url: string) {
-  try {
-    const u = new URL(url);
-    return u.port ? `:${u.port}` : u.host;
-  } catch {
-    return url;
+function computeLayout(node: PaneNode, rect: LayoutRect, panes: PanePlacement[], splits: SplitPlacement[]) {
+  if (node.type === "pane") { panes.push({ pane: node.pane, rect }); return; }
+  splits.push({ split: node, rect });
+  if (node.dir === "row") {
+    const w = rect.w * node.ratio;
+    computeLayout(node.a, { ...rect, w }, panes, splits);
+    computeLayout(node.b, { x: rect.x + w, y: rect.y, w: rect.w - w, h: rect.h }, panes, splits);
+  } else {
+    const h = rect.h * node.ratio;
+    computeLayout(node.a, { ...rect, h }, panes, splits);
+    computeLayout(node.b, { x: rect.x, y: rect.y + h, w: rect.w, h: rect.h - h }, panes, splits);
   }
 }
 
-/** 去掉 shell/Agent 常带的前缀装饰，限制标签宽度。 */
-function cleanTitle(raw: string) {
-  return String(raw || "").replace(/[\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
+function SplitSurface({ node, focusedId, renderPane, onRatio }: {
+  node: PaneNode;
+  focusedId: string;
+  renderPane: (pane: PaneState) => ReactNode;
+  onRatio: (splitId: string, delta: number) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const panes: PanePlacement[] = [];
+  const splits: SplitPlacement[] = [];
+  computeLayout(node, { x: 0, y: 0, w: 1, h: 1 }, panes, splits);
+  return (
+    <div className={`term-split-canvas ${panes.length > 1 ? "multi" : ""}`} ref={ref}>
+      {panes.map(({ pane, rect }) => (
+        <div
+          key={pane.id}
+          data-pane-id={pane.id}
+          className={`term-pane-leaf ${pane.id === focusedId ? "focused" : ""}`}
+          style={{
+            left: `calc(${rect.x * 100}% + 3px)`,
+            top: `calc(${rect.y * 100}% + 3px)`,
+            width: `calc(${rect.w * 100}% - 6px)`,
+            height: `calc(${rect.h * 100}% - 6px)`,
+          }}
+        >
+          {renderPane(pane)}
+        </div>
+      ))}
+      {splits.map(({ split, rect }) => {
+        const style = split.dir === "row"
+          ? {
+              left: `calc(${(rect.x + rect.w * split.ratio) * 100}% - 3px)`,
+              top: `calc(${rect.y * 100}% + 3px)`,
+              width: 6,
+              height: `calc(${rect.h * 100}% - 6px)`,
+            }
+          : {
+              left: `calc(${rect.x * 100}% + 3px)`,
+              top: `calc(${(rect.y + rect.h * split.ratio) * 100}% - 3px)`,
+              width: `calc(${rect.w * 100}% - 6px)`,
+              height: 6,
+            };
+        return (
+          <div key={split.id} className="term-gutter" style={style}>
+            <Splitter
+              orientation={split.dir === "row" ? "vertical" : "horizontal"}
+              onDelta={(delta) => {
+                const el = ref.current;
+                if (!el) return;
+                const extent = split.dir === "row" ? rect.w * el.clientWidth : rect.h * el.clientHeight;
+                onRatio(split.id, delta / Math.max(1, extent - 6));
+              }}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 type TermTabProps = {
-  tab: Tab; active: boolean; visible: boolean; focusToken: number; searchOpen: boolean;
-  fontSize: number; scrollback: number;
-  onOpenSearch: () => void; onCloseSearch: () => void;
-  onNewTab: () => void; onCloseTab: () => void;
+  pane: PaneState;
+  multi: boolean;
+  visible: boolean;
+  focused: boolean;
+  focusToken: number;
+  searchOpen: boolean;
+  fontSize: number;
+  scrollback: number;
+  onOpenSearch: () => void;
+  onCloseSearch: () => void;
+  onNewTab: () => void;
+  onClosePane: () => void;
+  onSplit: (dir: SplitDir) => void;
+  onFocusDir: (dir: FocusDir) => void;
+  onFocus: () => void;
+  onCycleTab: (dir: 1 | -1) => void;
+  onGotoTab: (index: number) => void;
+  onZoom: (delta: number) => void;
   onTermId: (termId: string) => void;
+  onUrl: (url: string) => void;
   onTitle: (title: string) => void;
   onBell: () => void;
 };
 
-function TermTab({ tab, active, visible, focusToken, searchOpen, fontSize, scrollback, onOpenSearch, onCloseSearch, onNewTab, onCloseTab, onTermId, onTitle, onBell }: TermTabProps) {
+function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSize, scrollback, onOpenSearch, onCloseSearch, onNewTab, onClosePane, onSplit, onFocusDir, onFocus, onCycleTab, onGotoTab, onZoom, onTermId, onUrl, onTitle, onBell }: TermTabProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -346,8 +762,12 @@ function TermTab({ tab, active, visible, focusToken, searchOpen, fontSize, scrol
   const [menu, setMenu] = useState<MenuPoint | null>(null);
   const onTitleRef = useRef(onTitle);
   const onBellRef = useRef(onBell);
+  const onTermIdRef = useRef(onTermId);
+  const onUrlRef = useRef(onUrl);
   onTitleRef.current = onTitle;
   onBellRef.current = onBell;
+  onTermIdRef.current = onTermId;
+  onUrlRef.current = onUrl;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -375,7 +795,15 @@ function TermTab({ tab, active, visible, focusToken, searchOpen, fontSize, scrol
     setExited(false);
     setExitCode(null);
 
-    // 尺寸自适应：拖分隔条 / 收起侧栏 / 窗口缩放都会触发，避免行列数停留在旧值
+    // 先按当前容器算一次尺寸：pty 必须按 xterm 的实际 cols/rows 启动，
+    // 否则 shell 按默认 120×32 排版，窄面板里的提示符会被折成两行。
+    const fitNow = () => {
+      if (host.clientWidth < 20 || host.clientHeight < 20) return;
+      try { fit.fit(); } catch { /* ignore */ }
+    };
+    fitNow();
+
+    // 尺寸自适应：拖分隔条 / 拆分 / 收起侧栏 / 窗口缩放都会触发
     let frame = 0;
     const scheduleFit = () => {
       if (frame) return;
@@ -393,7 +821,6 @@ function TermTab({ tab, active, visible, focusToken, searchOpen, fontSize, scrol
     let disposed = false;
     let ready = false;
     const pending: string[] = [];
-
     const write = (data: string) => { if (data) term.write(data); };
 
     const offData = window.harness.onTerminalData(({ id, data }) => {
@@ -413,20 +840,28 @@ function TermTab({ tab, active, visible, focusToken, searchOpen, fontSize, scrol
       void window.harness.attachTerminal(id).then((res) => {
         if (disposed) return;
         write(res?.data || "");
+        if (res?.url) onUrlRef.current(res.url);
         ready = true;
         for (const chunk of pending.splice(0)) write(chunk);
+        // attach 后再校一次：分辨率与 pty 对齐，让 shell 按当前宽度重绘提示符
+        fitNow();
+        void window.harness.terminalResize(id, term.cols, term.rows);
         if (res?.exited) {
           setExitCode(typeof res.exitCode === "number" ? res.exitCode : null);
           setExited(true);
         }
         scheduleFit();
+      }).catch((err) => {
+        if (disposed) return;
+        term.write(`\r\n\x1b[31m[无法恢复终端输出] ${String((err as Error)?.message || err)}\x1b[0m\r\n`);
       });
     };
 
-    if (tab.terminalId) {
-      attach(tab.terminalId);
+    // 只有首次挂载才复用外部（Agent 启动时）创建的 pty；重启后的 incarnation 要新建
+    if (pane.terminalId && incarnation === 0) {
+      attach(pane.terminalId);
     } else {
-      window.harness.createTerminal(tab.cwd).then(({ id }) => {
+      window.harness.createTerminal(pane.cwd, { cols: term.cols, rows: term.rows }).then(({ id }) => {
         if (disposed) { void window.harness.closeTerminal(id); return; }
         attach(id);
       }).catch((err) => {
@@ -466,17 +901,24 @@ function TermTab({ tab, active, visible, focusToken, searchOpen, fontSize, scrol
       setSearchAddon(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab.id, incarnation]);
+  }, [pane.id, incarnation]);
 
-  // 激活 / 取消隐藏时重新 fit，并在用户主动切标签时把焦点交回终端
+  // 标签可见 / 窗格获得焦点时重新 fit，并把焦点交回终端
   useEffect(() => {
-    if (!active || !visible) return;
+    if (!visible || !focused) return;
     const t = setTimeout(() => {
       try { fitRef.current?.fit(); } catch { /* ignore */ }
       if (focusToken > 0) termRef.current?.focus();
     }, 30);
     return () => clearTimeout(t);
-  }, [active, visible, focusToken]);
+  }, [visible, focused, focusToken]);
+
+  // 拆分 / 拖拽分隔条后容器尺寸变化：ResizeObserver 已覆盖，这里补一次可见性切换
+  useEffect(() => {
+    if (!visible) return;
+    const t = setTimeout(() => { try { fitRef.current?.fit(); } catch { /* ignore */ } }, 40);
+    return () => clearTimeout(t);
+  }, [visible]);
 
   useEffect(() => {
     const term = termRef.current;
@@ -490,9 +932,6 @@ function TermTab({ tab, active, visible, focusToken, searchOpen, fontSize, scrol
     const term = termRef.current;
     if (term) term.options.scrollback = scrollback;
   }, [scrollback]);
-
-  const onTermIdRef = useRef(onTermId);
-  onTermIdRef.current = onTermId;
 
   const focusTerm = useCallback(() => { termRef.current?.focus(); }, []);
 
@@ -523,47 +962,63 @@ function TermTab({ tab, active, visible, focusToken, searchOpen, fontSize, scrol
     const wrap = wrapRef.current;
     if (!wrap) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
+      // 搜索框内保持原生编辑快捷键（xterm 自己的 helper textarea 不算）
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      const inSearch = !!el?.closest?.(".term-search");
+      if (inSearch || tag === "INPUT" || tag === "SELECT") return;
+      if (tag === "TEXTAREA" && !el?.classList.contains("xterm-helper-textarea")) return;
       const key = e.key.toLowerCase();
-      const isMac = e.metaKey;
+      const cmd = e.metaKey;                       // macOS ⌘
+      const ctrlShift = e.ctrlKey && e.shiftKey;   // Windows / Linux 的替代组合
+      const accel = cmd || ctrlShift;
       const stop = () => { e.preventDefault(); e.stopPropagation(); };
-      // 查找
-      if (mod && key === "f") { stop(); onOpenSearch(); return; }
-      if (mod && key === "g" && searchOpen) { stop(); return; }
-      // 新建 / 关闭标签（截获 App 的同名快捷键，避免重复执行）
-      if (isMac && key === "t") { stop(); onNewTab(); return; }
-      if (isMac && key === "w") { stop(); onCloseTab(); return; }
-      // 标签切换
-      if (e.ctrlKey && e.key === "Tab") { stop(); window.dispatchEvent(new CustomEvent("harness:cycle-terminal-tab", { detail: e.shiftKey ? -1 : 1 })); return; }
-      if (isMac && e.shiftKey && (e.code === "BracketLeft" || e.code === "BracketRight")) {
+      // 拆分窗格（Orca 风格）
+      if (cmd && e.shiftKey && key === "d") { stop(); onSplit("col"); return; }
+      if ((cmd && !e.shiftKey && key === "d") || (ctrlShift && key === "d")) { stop(); onSplit("row"); return; }
+      if ((cmd || e.ctrlKey) && e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown")) {
         stop();
-        window.dispatchEvent(new CustomEvent("harness:cycle-terminal-tab", { detail: e.code === "BracketRight" ? 1 : -1 }));
+        onFocusDir(e.key === "ArrowLeft" ? "left" : e.key === "ArrowRight" ? "right" : e.key === "ArrowUp" ? "up" : "down");
         return;
       }
-      if (isMac && e.shiftKey && /^[1-9]$/.test(e.key)) { stop(); window.dispatchEvent(new CustomEvent("harness:goto-terminal-tab", { detail: Number(e.key) - 1 })); return; }
+      // 查找（⌘F / ⌃⇧F；不抢 shell 的 ⌃F）
+      if ((cmd && !e.shiftKey && key === "f") || (ctrlShift && key === "f")) { stop(); onOpenSearch(); return; }
+      // 新建标签 / 关闭窗格
+      if (accel && !e.shiftKey && key === "t") { stop(); onNewTab(); return; }
+      if (accel && !e.shiftKey && key === "w") { stop(); onClosePane(); return; }
+      // 标签切换：⌃Tab / ⌘⇧[ ] / ⌘⇧1…9
+      if (e.ctrlKey && e.key === "Tab") { stop(); onCycleTab(e.shiftKey ? -1 : 1); return; }
+      if (cmd && e.shiftKey && (e.code === "BracketLeft" || e.code === "BracketRight")) {
+        stop();
+        onCycleTab(e.code === "BracketRight" ? 1 : -1);
+        return;
+      }
+      if (cmd && e.shiftKey && /^Digit[1-9]$/.test(e.code)) { stop(); onGotoTab(Number(e.code.slice(-1)) - 1); return; }
       // 字号缩放
-      if (isMac && (e.key === "=" || e.key === "+")) { stop(); window.dispatchEvent(new CustomEvent("harness:terminal-zoom", { detail: 1 })); return; }
-      if (isMac && (e.key === "-" || e.key === "_")) { stop(); window.dispatchEvent(new CustomEvent("harness:terminal-zoom", { detail: -1 })); return; }
-      if (isMac && e.key === "0") { stop(); window.dispatchEvent(new CustomEvent("harness:terminal-zoom", { detail: 0 })); return; }
-      // 清屏 / 复制 / 粘贴 / 全选
-      if (isMac && e.shiftKey && key === "k") { stop(); clearScreen(); return; }
-      if (isMac && key === "a") { stop(); selectAll(); return; }
-      if (isMac && key === "c") {
+      if (cmd && (e.key === "=" || e.key === "+")) { stop(); onZoom(1); return; }
+      if (cmd && (e.key === "-" || e.key === "_")) { stop(); onZoom(-1); return; }
+      if (cmd && e.key === "0") { stop(); onZoom(0); return; }
+      // 清屏 / 全选 / 复制 / 粘贴（⌃A、⌃C 在 shell 里有含义，不抢）
+      if ((cmd && e.shiftKey && key === "k") || (ctrlShift && key === "k")) { stop(); clearScreen(); return; }
+      if ((cmd && key === "a") || (ctrlShift && key === "a")) { stop(); selectAll(); return; }
+      if ((cmd && key === "c") || (ctrlShift && key === "c")) {
         if (termRef.current?.hasSelection()) { stop(); void copySelection(); }
         return; // 无选区时保留 ^C 给 shell
       }
-      if (isMac && key === "v") { stop(); void paste(); return; }
+      // ⌘V 交给 Electron 默认菜单 / xterm 原生粘贴事件，避免与菜单加速键重复粘贴
+      if (ctrlShift && key === "v") { stop(); void paste(); return; }
+      if (cmd && key === "r" && exited && !pane.command) { stop(); restart(); return; }
       if (e.key === "Escape" && searchOpen) { stop(); onCloseSearch(); }
     };
     wrap.addEventListener("keydown", onKeyDown, true);
     return () => wrap.removeEventListener("keydown", onKeyDown, true);
-  }, [searchOpen, onOpenSearch, onCloseSearch, onNewTab, onCloseTab, clearScreen, selectAll, copySelection, paste]);
+  }, [searchOpen, onOpenSearch, onCloseSearch, onNewTab, onClosePane, onSplit, onFocusDir, onCycleTab, onGotoTab, onZoom, clearScreen, selectAll, copySelection, paste, exited, pane.command, restart]);
 
   const menuItems: MenuItem[] = exited
     ? [
-        ...(tab.command ? [] : [{ label: "重新启动", hint: "⌘R", run: restart } as MenuItem]),
+        ...(pane.command ? [] : [{ label: "重新启动", hint: "⌘R", run: restart } as MenuItem]),
         { label: "复制", hint: "⌘C", run: () => void copySelection() },
-        { label: "关闭标签", hint: "⌘W", danger: true, run: onCloseTab },
+        { label: "关闭窗格", hint: "⌘W", danger: true, run: onClosePane },
       ]
     : [
         { label: "复制", hint: "⌘C", disabled: !termRef.current?.hasSelection(), run: () => void copySelection() },
@@ -573,19 +1028,33 @@ function TermTab({ tab, active, visible, focusToken, searchOpen, fontSize, scrol
         { label: "查找…", hint: "⌘F", run: onOpenSearch },
         { label: "清屏", hint: "⇧⌘K", run: clearScreen },
         "sep",
+        { label: "向右拆分", hint: "⌘D", run: () => onSplit("row") },
+        { label: "向下拆分", hint: "⇧⌘D", run: () => onSplit("col") },
+        "sep",
         { label: "新建终端", hint: "⌘T", run: onNewTab },
-        { label: "关闭标签", hint: "⌘W", run: onCloseTab },
+        { label: multi ? "关闭窗格" : "关闭标签", hint: "⌘W", run: onClosePane },
       ];
 
   return (
     <div
-      className={`term-instance ${active ? "on" : ""}`}
-      style={{ display: active ? "block" : "none" }}
+      className="term-instance"
       ref={wrapRef}
-      onContextMenu={(e) => { e.preventDefault(); termRef.current?.focus(); setMenu({ x: e.clientX, y: e.clientY }); }}
+      onMouseDown={() => { if (!focused) onFocus(); }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onFocus();
+        termRef.current?.focus();
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
     >
-      <div className="term-host" ref={hostRef} onClick={focusTerm} />
+      <div className="term-host" ref={hostRef} onClick={() => { onFocus(); focusTerm(); }} />
       {searchOpen && searchAddon && <TermSearch addon={searchAddon} onClose={onCloseSearch} />}
+      {multi && !searchOpen && (
+        <div className="term-pane-actions">
+          <button title="向右拆分（⌘D）" aria-label="向右拆分" onClick={() => onSplit("row")}><SplitRightIcon size={12} /></button>
+          <button title="向下拆分（⇧⌘D）" aria-label="向下拆分" onClick={() => onSplit("col")}><SplitDownIcon size={12} /></button>
+        </div>
+      )}
       {scrolledUp && !exited && (
         <button className="term-jump-bottom" title="回到最新输出" aria-label="回到最新输出" onClick={scrollToBottom}>
           <ChevronDownIcon size={14} />
@@ -595,8 +1064,8 @@ function TermTab({ tab, active, visible, focusToken, searchOpen, fontSize, scrol
         <div className="term-exited">
           <span>进程已退出{exitCode !== null && exitCode !== 0 ? ` · code ${exitCode}` : ""}</span>
           <div className="row gap8">
-            {!tab.command && <button className="btn tiny-btn" onClick={restart}>重新启动</button>}
-            <button className="link" onClick={onCloseTab}>关闭标签</button>
+            {!pane.command && <button className="btn tiny-btn" onClick={restart}>重新启动</button>}
+            <button className="link" onClick={onClosePane}>关闭窗格</button>
           </div>
         </div>
       )}
@@ -631,7 +1100,6 @@ function TermMenu({ point, items, onClose }: { point: MenuPoint; items: MenuItem
     };
   }, [onClose]);
 
-  // 贴边时向内收，避免菜单跑出窗口
   const left = Math.min(point.x, window.innerWidth - 200);
   const top = Math.min(point.y, window.innerHeight - (items.length * 30 + 16));
 
@@ -720,7 +1188,7 @@ function TermSearch({ addon, onClose }: { addon: SearchAddon; onClose: () => voi
       <span className="term-search-count">{status}</span>
       <button title="上一个（⇧Enter）" onClick={() => find(true)}><ChevronUpIcon size={13} /></button>
       <button title="下一个（Enter）" onClick={() => find(false)}><ChevronDownIcon size={13} /></button>
-      <button title="关闭（Esc）" onClick={onClose}><XIcon size={13} /></button>
+      <button title="关闭（Esc）" onClick={() => onClose()}><XIcon size={13} /></button>
     </div>
   );
 }

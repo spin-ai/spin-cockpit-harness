@@ -8,8 +8,8 @@ declare global {
       chooseProject(): Promise<string | null>;
       switchProject(id: string): Promise<string>;
       pickProjectFolder(): Promise<string | null>;
-      createTerminal(cwd: string, opts?: { command?: string; projectId?: string }): Promise<{ id: string; cwd: string; agent?: unknown }>;
-      attachTerminal(id: string): Promise<{ data: string; exited?: boolean; exitCode?: number | null; missing?: boolean }>;
+      createTerminal(cwd: string, opts?: { command?: string; projectId?: string; cols?: number; rows?: number }): Promise<{ id: string; cwd: string; agent?: unknown }>;
+      attachTerminal(id: string): Promise<{ data: string; url?: string | null; exited?: boolean; exitCode?: number | null; missing?: boolean }>;
       terminalInput(id: string, data: string): Promise<void>;
       closeTerminal(id: string): Promise<void>;
       terminalResize(id: string, cols: number, rows: number): Promise<void>;
@@ -21,9 +21,15 @@ declare global {
       onTerminalExit(cb: (p: { id: string; exitCode: number | null; signal: string | null }) => void): () => void;
       filesList(rel?: string, root?: string): Promise<{ root: string; rel: string; entries: { name: string; dir: boolean; path: string }[] }>;
       filesRead(rel: string, root?: string): Promise<{ text?: string; dataUrl?: string; size?: number; ext?: string; error?: string }>;
+      filesCreate(rel: string, kind: "file" | "folder", name: string, root?: string): Promise<{ path: string; name: string }>;
+      filesRename(rel: string, name: string, root?: string): Promise<{ path: string; name: string }>;
+      filesDuplicate(rel: string, root?: string): Promise<{ path: string; name: string }>;
+      filesTrash(rel: string, root?: string): Promise<boolean>;
+      filesReveal(rel: string, root?: string): Promise<boolean>;
       previewPick(webContentsId: number, root?: string): Promise<ElementContext>;
       previewCancel(webContentsId: number): Promise<void>;
       previewDetach(webContentsId: number): Promise<void>;
+      ensureGrape(): Promise<{ url: string; started: boolean }>;
     };
   }
 }
