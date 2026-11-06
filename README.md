@@ -17,9 +17,9 @@ Electron 桌面应用，本地 SQLite，执行走 `dsh --profile acp`；仓库�
 
 | 平台 | 产物 |
 |---|---|
-| macOS（Apple Silicon / arm64） | `Cockpit Harness-<version>-arm64.dmg` |
-| Windows（x64） | `Cockpit Harness Setup <version>.exe` |
-| Linux（x86_64） | `Cockpit Harness-<version>.AppImage` |
+| macOS（Apple Silicon / arm64） | `Cockpit.Harness-<version>-arm64.dmg` |
+| Windows（x64） | `Cockpit.Harness.Setup.<version>.exe` |
+| Linux（x86_64） | `Cockpit.Harness-<version>.AppImage` |
 
 - 发行版默认内置 dsh 单文件运行时，不需要目标机器安装 dsh。
 - 未做代码签名/公证：macOS 可能被 Gatekeeper 拦截，Windows 可能触发 SmartScreen；Linux AppImage 需 `chmod +x`。
@@ -168,9 +168,9 @@ npm run pack:system
 
 | 平台 | 产物 | 验证 |
 |---|---|---|
-| macOS arm64 | `Cockpit Harness-0.2.0-alpha.1-arm64.dmg` | CI `macos-14`；dsh `--version` + ACP initialize/session/new |
-| Linux x86_64 | `Cockpit Harness-0.2.0-alpha.1.AppImage` | CI `ubuntu-24.04`；dsh ACP、node-pty（ELF）与 Electron 启动通过 |
-| Windows x64 | `Cockpit Harness Setup 0.2.0-alpha.1.exe` | CI `windows-2022`；内置 dsh/PTY 与 `app.asar` 结构通过 |
+| macOS arm64 | `Cockpit.Harness-0.2.0-alpha.1-arm64.dmg` | CI `macos-14`；dsh `--version` + ACP initialize/session/new |
+| Linux x86_64 | `Cockpit.Harness-0.2.0-alpha.1.AppImage` | CI `ubuntu-24.04`；dsh ACP、node-pty（ELF）与 Electron 启动通过 |
+| Windows x64 | `Cockpit.Harness.Setup.0.2.0-alpha.1.exe` | CI `windows-2022`；内置 dsh/PTY 与 `app.asar` 结构通过 |
 
 ## 开源与参与
 
