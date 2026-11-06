@@ -24,7 +24,7 @@
 - **Linux**：
   ```sh
   chmod +x "Cockpit.Harness-0.2.0-alpha.1.AppImage"
-  ./Cockpit\ Harness-0.2.0-alpha.1.AppImage
+  ./Cockpit.Harness-0.2.0-alpha.1.AppImage
   ```
 
 ## 这版包含
