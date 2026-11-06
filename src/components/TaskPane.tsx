@@ -29,12 +29,12 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
   const createRef = useRef<HTMLTextAreaElement | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ confirmed: true });
-  const [projectH, setProjectH] = useStoredSize("ymh.layout.projectH", 150, 80, 420);
+  const [projectH, setProjectH] = useStoredSize("cmh.layout.projectH", 150, 80, 420);
   const [projectCollapsed, setProjectCollapsed] = useState(() => {
-    try { return localStorage.getItem("ymh.layout.projectCollapsed") === "1"; } catch { return false; }
+    try { return localStorage.getItem("cmh.layout.projectCollapsed") === "1"; } catch { return false; }
   });
   useEffect(() => {
-    try { localStorage.setItem("ymh.layout.projectCollapsed", projectCollapsed ? "1" : "0"); } catch { /* ignore */ }
+    try { localStorage.setItem("cmh.layout.projectCollapsed", projectCollapsed ? "1" : "0"); } catch { /* ignore */ }
   }, [projectCollapsed]);
   useEffect(() => {
     const reset = () => setProjectCollapsed(false);
@@ -83,7 +83,9 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return state.todos.filter((t) => {
-      if (q && !t.title.toLowerCase().includes(q) && !t.key.toLowerCase().includes(q)) return false;
+      if (q && !t.title.toLowerCase().includes(q) && !t.key.toLowerCase().includes(q)
+        && !(t.desc || "").toLowerCase().includes(q)
+        && !(t.tags || []).some((tag) => tag.toLowerCase().includes(q))) return false;
       if (filter === "active") return !t.confirmed;
       if (filter === "review") return t.status === "in_review" && !t.confirmed;
       if (filter === "confirmed") return t.confirmed;
@@ -142,7 +144,6 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
       </div>
       <div className="task-tools">
         <input className="task-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索标题 / 编号" />
-        <div className="task-edit-hint">双击标题或按 <kbd>⌘E</kbd> 编辑任务文字</div>
         <div className="task-filters">
           {([["all", "全部"], ["active", "进行中"], ["review", "待确认"], ["confirmed", "已确认"]] as [Filter, string][]).map(([id, label]) => (
             <button key={id} className={filter === id ? "on" : ""} onClick={() => setFilter(id)}>{label}</button>
@@ -188,7 +189,16 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
                   key={t.id}
                   ref={(el) => { rowRefs.current[t.id] = el; }}
                   className={`task-row ${t.id === selectedId ? "on" : ""}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-current={t.id === selectedId ? "true" : undefined}
                   onClick={() => onSelect(t.id)}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key !== "Enter" && e.key !== " ") return;
+                    e.preventDefault();
+                    onSelect(t.id);
+                  }}
                 >
                   <div className="row between gap6">
                     <span className="row gap4"><span className={`priority-dot ${t.priority}`} /><span className="mono tiny faint">{t.key}</span></span>

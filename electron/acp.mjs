@@ -76,7 +76,7 @@ export class AcpClient extends EventEmitter {
   async start() {
     await this.request("initialize", {
       protocolVersion: 2,
-      info: { name: "yieldmind-harness", version: "0.2.0" },
+      info: { name: "cockpit-harness", version: "0.2.0" },
       capabilities: {},
     }, 20000);
   }
@@ -118,15 +118,16 @@ export class AcpClient extends EventEmitter {
 
   notify(method, params) { this.#send({ jsonrpc: "2.0", method, params }); }
 
-  respondPermission(requestId, allow) {
+  respondPermission(requestId, allow, optionId = "") {
     const record = this.permissions.get(String(requestId));
     if (!record) return false;
     this.permissions.delete(String(requestId));
     const { id, params } = record;
     const options = params.options || [];
-    const option = allow
-      ? options.find((o) => String(o.kind || "").startsWith("allow")) || options[0]
-      : options.find((o) => String(o.kind || "").startsWith("reject")) || options[options.length - 1];
+    const option = (optionId && options.find((o) => String(o.optionId) === String(optionId)))
+      || (allow
+        ? options.find((o) => String(o.kind || "").startsWith("allow")) || options[0]
+        : options.find((o) => String(o.kind || "").startsWith("reject")) || options[options.length - 1]);
     this.#send({
       jsonrpc: "2.0", id,
       result: option?.optionId

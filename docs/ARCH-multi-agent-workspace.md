@@ -1,4 +1,4 @@
-# YieldMind Harness 架构方案（4+1 视图）
+# Cockpit Harness 架构方案（4+1 视图）
 
 > 对应需求 `docs/REQ-multi-agent-workspace.md`（76 条）· 参考 `docs/reference-main` 与 `docs/deepseek-harness`
 >
@@ -218,9 +218,9 @@ docs/                  需求与架构
 
 ```
 macOS / Windows / Linux
-└── YieldMind Harness.app
+└── Cockpit Harness.app
     ├── Electron Main + Renderer
-    ├── SQLite  ~/Library/Application Support/yieldmind-harness/state.db
+    ├── SQLite  ~/Library/Application Support/Cockpit Harness/harness.db
     ├── 日志 / 缓存 / 截图
     └── 内置 dsh（或首启下载，校验签名）
 外部依赖：git；可选 IDE
@@ -232,7 +232,7 @@ macOS / Windows / Linux
 Harness ──ssh──> host
                  ├── dsh（同版本，校验）
                  ├── git
-                 └── ~/.yieldmind/worktrees/<repo>/<run>
+                 └── ~/Documents/Cockpit Harness/worktrees/<repo>/<run>
 ```
 
 无守护进程；SSH 通道上跑 ACP stdio。断线重连 60s 内；离线队列保留。
@@ -240,7 +240,7 @@ Harness ──ssh──> host
 ### 4.3 数据与产物
 
 - SQLite：Todo/Run/Message/Event/Inbox/Audit；WAL。
-- 产物：`~/.yieldmind/artifacts/<run>/`（预览缩略 + 元数据）。
+- 产物：`userData/artifacts/<run>/`（预览缩略 + 元数据）。
 - IDE：只存深链与 Context 快照；数据实体在 IDE 侧。
 - 备份/迁移：单文件 + 版本号；导出 JSON。
 

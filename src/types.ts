@@ -21,6 +21,10 @@ export type Delivery = "pending" | "injected" | "failed";
 export interface Thread {
   id: string; todoId: string | null; title: string;
   projectId: string | null; project: string; agentId: string | null;
+  /** Chat 里选的模型（ACP config option value，通常是 ["provider","model"] 的 JSON 字符串） */
+  model?: string;
+  modelName?: string;
+  effort?: string;
   createdAt: number; updatedAt: number;
 }
 export interface Todo {

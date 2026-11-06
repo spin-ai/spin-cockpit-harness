@@ -21,7 +21,8 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
   const saveRename = async (id: string) => {
     const name = draft.trim();
     if (!name) return;
-    await act("renameProject", { id, name });
+    const res = await act("renameProject", { id, name });
+    if (!res) return; // 失败时保留编辑态；act 已经弹过错误
     setEditing(null);
     notify("项目已重命名");
   };
@@ -123,6 +124,8 @@ const HOST_STATUS: Record<string, string> = { online: "在线", offline: "离线
 export function Hosts({ state, act, notify, now }: { state: State; act: Act; notify: (m: string) => void; now: number }) {
   const [open, setOpen] = useState(false);
   const [probing, setProbing] = useState<Record<string, boolean>>({});
+  const [probingAll, setProbingAll] = useState(false);
+  const [editingHost, setEditingHost] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", addr: "", user: "", port: "22", path: "" });
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const online = state.hosts.filter((h) => h.status === "online").length;
@@ -136,18 +139,45 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
     return () => { alive = false; clearInterval(timer); };
   }, [act]);
 
+  const resetForm = () => {
+    setForm({ name: "", addr: "", user: "", port: "22", path: "" });
+    setEditingHost(null);
+  };
+  const openAdd = () => {
+    resetForm();
+    setOpen(true);
+  };
+  const openEdit = (host: State["hosts"][number]) => {
+    setEditingHost(host.id);
+    setForm({ name: host.name, addr: host.addr, user: host.user || "", port: String(host.port || 22), path: host.defaultCwd || "" });
+    setOpen(true);
+  };
+  const probeAll = async () => {
+    setProbingAll(true);
+    try { await act("probeHosts", {}); } finally { setProbingAll(false); }
+  };
   const probe = async (id: string) => {
     setProbing((p) => ({ ...p, [id]: true }));
     const res = await act("probeHost", { id });
     setProbing((p) => ({ ...p, [id]: false }));
     if (res && res.ok === false) notify(res.error || "探测失败");
   };
-  const add = async () => {
-    if (!form.name.trim() || !form.addr.trim()) return;
-    const res = await act("addHost", { name: form.name.trim(), addr: form.addr.trim(), user: form.user.trim(), port: Number(form.port) || 22, path: form.path.trim() });
+  const saveHost = async () => {
+    if (!form.name.trim() || !form.addr.trim()) { notify("主机名和地址必填"); return; }
+    const payload = { name: form.name.trim(), addr: form.addr.trim(), user: form.user.trim(), port: Number(form.port) || 22, path: form.path.trim() };
+    if (editingHost) {
+      const res = await act("updateHost", { id: editingHost, ...payload });
+      if (!res?.ok) { notify(`探测失败：${res?.error || "未知原因"}`); return; }
+      setOpen(false);
+      resetForm();
+      notify("主机已更新");
+      return;
+    }
+    const res = await act("addHost", payload);
+    // addHost 即使探测失败也已经把主机加进列表；这里关闭表单，避免重复添加
     setOpen(false);
-    setForm({ name: "", addr: "", user: "", port: "22", path: "" });
-    notify(res?.ok ? "已添加" : `探测失败：${res?.error || "未知原因"}`);
+    resetForm();
+    notify(res?.ok ? "已添加" : `已添加，探测失败：${res?.error || "未知原因"}`);
   };
   const remove = async (id: string, name: string) => {
     if (!window.confirm(`移除主机「${name}」？已绑定的 Agent 需要先移回本机。`)) return;
@@ -160,13 +190,14 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
       <div className="page-head">
         <div><h2>主机</h2><span className="muted">{online}/{state.hosts.length} 在线</span></div>
         <div className="row gap8">
-          <button className="btn" onClick={() => void act("probeHosts", {})}>全部探测</button>
-          <button className="btn primary" onClick={() => setOpen((v) => !v)}>＋ 添加主机</button>
+          <button className="btn" disabled={probingAll} onClick={() => void probeAll()}>{probingAll ? "探测中…" : "全部探测"}</button>
+          <button className="btn primary" onClick={() => (open ? setOpen(false) : openAdd())}>＋ 添加主机</button>
         </div>
       </div>
 
       {open && (
         <section className="panel host-form">
+          <div className="panel-head">{editingHost ? "编辑主机" : "添加主机"}<span className="tiny muted">保存后会立即探测一次</span></div>
           <div className="form-row">
             <label>名称<input value={form.name} onChange={set("name")} placeholder="lab-gpu" /></label>
             <label>host / IP<input value={form.addr} onChange={set("addr")} placeholder="10.0.8.21" /></label>
@@ -177,8 +208,10 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
             <label>远端 cwd<input value={form.path} onChange={set("path")} placeholder="/home/spin/work" /></label>
           </div>
           <div className="row gap8" style={{ justifyContent: "flex-end" }}>
-            <button className="btn" onClick={() => setOpen(false)}>取消</button>
-            <button className="btn primary" onClick={() => void add()}>添加并探测</button>
+            <button className="btn" onClick={() => { setOpen(false); resetForm(); }}>取消</button>
+            <button className="btn primary" onClick={() => void saveHost()} disabled={!form.name.trim() || !form.addr.trim()}>
+              {editingHost ? "保存并探测" : "添加并探测"}
+            </button>
           </div>
         </section>
       )}
@@ -233,10 +266,16 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
                       <select
                         className="project-status-select"
                         value={a.hostId}
+                        title="切换 Agent 运行主机（下一次运行生效）"
                         onChange={(e) => {
                           const hostId = e.target.value;
+                          const targetName = state.hosts.find((x) => x.id === hostId)?.name || hostId;
+                          if (hostId !== a.hostId && !window.confirm(`把「${a.name}」移到 ${targetName}？下一次运行生效。`)) {
+                            e.currentTarget.value = a.hostId;
+                            return;
+                          }
                           void act("setAgentHost", { agentId: a.id, hostId }).then((r) => {
-                            if (r) notify(`${a.name} → ${state.hosts.find((x) => x.id === hostId)?.name}`);
+                            if (r) notify(`${a.name} → ${targetName}`);
                           });
                         }}
                       >
@@ -248,15 +287,12 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
               )}
 
               <div className="host-actions">
-                <button className="btn tiny-btn" disabled={isProbing} onClick={() => void probe(h.id)}>重新探测</button>
-                <label className="tiny muted row gap6">
+                <button className="btn tiny-btn" disabled={isProbing} onClick={() => void probe(h.id)}>{isProbing ? "探测中…" : "重新探测"}</button>
+                <label className="tiny muted row gap6" title="并发上限；0 = 不限">
                   并发
-                  <input
-                    className="host-max-input"
-                    value={limit}
-                    onChange={(e) => void act("setHostMax", { id: h.id, max: Number(e.target.value) || 0 })}
-                  />
+                  <HostMaxInput value={limit} onCommit={(max) => void act("setHostMax", { id: h.id, max })} />
                 </label>
+                {h.kind !== "local" && <button className="btn tiny-btn" onClick={() => openEdit(h)}>编辑</button>}
                 {h.kind !== "local" && <button className="btn tiny-btn danger" onClick={() => void remove(h.id, h.name)}>移除</button>}
               </div>
             </section>
@@ -275,8 +311,32 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
   );
 }
 
+function HostMaxInput({ value, onCommit }: { value: number; onCommit: (max: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const commit = () => {
+    const next = Math.max(0, Math.round(Number(draft) || 0));
+    if (next !== value) onCommit(next);
+    else setDraft(String(value));
+  };
+  return (
+    <input
+      className="host-max-input"
+      value={draft}
+      inputMode="numeric"
+      aria-label="并发上限（0 为不限）"
+      onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ""))}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === "Escape") { setDraft(String(value)); e.currentTarget.blur(); }
+      }}
+    />
+  );
+}
+
 const RANGES: { id: string; label: string; ms: number }[] = [
-  { id: "today", label: "今天", ms: 24 * 3600e3 },
+  { id: "today", label: "24h", ms: 24 * 3600e3 },
   { id: "7d", label: "7 天", ms: 7 * 24 * 3600e3 },
   { id: "30d", label: "30 天", ms: 30 * 24 * 3600e3 },
   { id: "all", label: "全部", ms: 0 },
@@ -284,6 +344,7 @@ const RANGES: { id: string; label: string; ms: number }[] = [
 
 export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string) => void }) {
   const [range, setRange] = useState("7d");
+  const [scope, setScope] = useState("all");
   const [errFilter, setErrFilter] = useState<string | null>(null);
   const [groupBy, setGroupBy] = useState<"agent" | "project" | "host">("agent");
 
@@ -291,7 +352,12 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
   const cutoff = rangeMs ? Date.now() - rangeMs : 0;
   const runs = state.runs.filter((r) => {
     const ts = r.createdAt || r.startedAt || 0;
-    return ts >= cutoff;
+    if (ts < cutoff) return false;
+    if (scope !== "all") {
+      const projectId = state.todos.find((t) => t.id === r.todoId)?.projectId;
+      if (projectId !== scope) return false;
+    }
+    return true;
   });
   const done = runs.filter((r) => r.status === "completed" || r.status === "failed");
   const completed = runs.filter((r) => r.status === "completed").length;
@@ -318,6 +384,16 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
     return { start, ok: mine.filter((r) => r.status === "completed").length, bad: mine.filter((r) => r.status === "failed").length };
   });
   const maxBucket = Math.max(1, ...buckets.map((b) => b.ok + b.bad));
+  const yMax = Math.max(4, Math.ceil(maxBucket / 4) * 4);
+  const yTicks = [yMax, Math.round((yMax * 3) / 4), Math.round(yMax / 2), Math.round(yMax / 4), 0];
+  const labelEvery = days <= 7 ? 1 : days <= 14 ? 2 : 5;
+  const bucketLabel = (start: number) => {
+    const d = new Date(start);
+    if (range === "today") return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    if (range === "7d") return d.toLocaleDateString(undefined, { weekday: "short" });
+    if (range === "30d") return String(d.getDate());
+    return d.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
+  };
 
   const groups = (() => {
     const map = new Map<string, { label: string; color: string; runs: number; ok: number; bad: number; ms: number[]; tokens: number }>();
@@ -372,8 +448,12 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
   return (
     <div className="page">
       <div className="page-head">
-        <div><h2>统计</h2></div>
+        <div><h2>统计</h2><span className="muted">{scope === "all" ? "全部项目" : state.projects.find((p) => p.id === scope)?.name || "项目"}</span></div>
         <div className="row gap6">
+          <select className="settings-control stats-scope" value={scope} onChange={(e) => setScope(e.target.value)} title="统计范围">
+            <option value="all">全部项目</option>
+            {state.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
           {RANGES.map((r) => (
             <button key={r.id} className={`btn tiny-btn ${range === r.id ? "primary" : ""}`} onClick={() => setRange(r.id)}>{r.label}</button>
           ))}
@@ -390,18 +470,42 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
 
       <div className="grid2">
         <section className="panel">
-          <div className="panel-head">每日运行</div>
-          <div className="trend">
-            {buckets.map((b, i) => (
-              <div className="trend-col" key={i} title={`${new Date(b.start).toLocaleString()} · 成功 ${b.ok} / 失败 ${b.bad}`}>
-                <div className="trend-stack">
-                  <i className="bad" style={{ height: `${(b.bad / maxBucket) * 100}%` }} />
-                  <i className="ok" style={{ height: `${(b.ok / maxBucket) * 100}%` }} />
-                </div>
-                <span>{days <= 7 ? new Date(b.start).toLocaleDateString(undefined, { weekday: "short" }) : new Date(b.start).getDate()}</span>
-              </div>
-            ))}
+          <div className="panel-head">
+            每日运行
+            <div className="trend-legend">
+              <span><i className="ok" />成功 {runs.filter((r) => r.status === "completed").length}</span>
+              <span><i className="bad" />失败 {runs.filter((r) => r.status === "failed").length}</span>
+            </div>
           </div>
+          {runs.length === 0 ? <div className="muted small">所选范围内没有运行</div> : (
+          <div className="trend-chart" role="img" aria-label={`每日运行趋势：成功 ${runs.filter((r) => r.status === "completed").length}，失败 ${runs.filter((r) => r.status === "failed").length}`}>
+            <div className="trend-yaxis">
+              {yTicks.map((t) => <span key={t}>{t}</span>)}
+            </div>
+            <div className="trend-plot">
+              <div className="trend-grid">
+                {yTicks.map((t) => <i key={t} />)}
+              </div>
+              <div className="trend-bars">
+                {buckets.map((b, i) => {
+                  const showLabel = i % labelEvery === 0 || i === buckets.length - 1;
+                  return (
+                    <div className="trend-col" key={i} title={`${new Date(b.start).toLocaleString()} · 成功 ${b.ok} / 失败 ${b.bad}`}>
+                      <div className="trend-stack">
+                        {(b.bad + b.ok) > 0 && (
+                          <b className="trend-value" style={{ bottom: `${((b.bad + b.ok) / yMax) * 100}%` }}>{b.bad + b.ok}</b>
+                        )}
+                        {b.bad > 0 && <i className="bad" style={{ height: `${(b.bad / yMax) * 100}%` }} />}
+                        {b.ok > 0 && <i className="ok" style={{ height: `${(b.ok / yMax) * 100}%` }} />}
+                      </div>
+                      <span>{showLabel ? bucketLabel(b.start) : ""}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+          )}
         </section>
         <section className="panel">
           <div className="panel-head">失败分类</div>
@@ -434,7 +538,7 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
           <div className="agent-stat" key={g.label}>
             <span className={`dot ${g.color}`} />
             <span className="name ellipsis">{g.label}</span>
-            <div className="bar"><i style={{ width: `${(g.runs / maxGroup) * 100}%` }} /></div>
+            <div className="bar" title={`${g.runs} runs · ${pct(g.ok, g.ok + g.bad)} 成功`}><i style={{ width: `${(g.runs / maxGroup) * 100}%` }} /></div>
             <span className="mono tiny">{g.runs} run</span>
             <span className="mono tiny">{pct(g.ok, g.ok + g.bad)}</span>
             <span className="tiny muted">{fmtMs(p50(g.ms))}</span>

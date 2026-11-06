@@ -73,7 +73,8 @@
 ### 3.5 Composer
 
 - 输入卡与 transcript 用 `--page-canvas` 分隔；卡片 `--surface` + 1px 边框，focus-within 变 brand 并加 2px 外圈。
-- footer 左侧 `@ Agent` / `◎ 作用域` 两个紧凑 select（无边框，hover 才浮出背景），右侧「工具」开关 + 发送。
+- footer 左侧 `@ Agent` / `◎ 作用域` 两个紧凑 select（无边框，hover 才浮出背景）；第二行 `模型` 选择（ACP catalog，按会话保存，下一次运行生效）+「工具」开关 + 发送。
+- Agent 头部 meta 同时显示当前模型名，切换后立即更新。
 - 发送按钮按语义变色并显示动作：`派活` / `纠偏` / `发送并运行` / `发送` / `不可派活`（disabled）。
 - 窄面板通过 **container query**（`.chat-pane` 为容器，≤360px）隐藏 Enter 提示、压缩 select、把发送行收到第二行，避免 287px 默认宽度下换行凌乱。
 - 没有 Agent 时显示「未检测到 Agent · 用 dsh」一个按钮（创建 dsh Agent 并绑定当前会话），不再同时出现空 select 和 `＋dsh`。

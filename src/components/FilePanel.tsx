@@ -86,7 +86,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
   const [loading, setLoading] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
-  const [showHidden, setShowHidden] = useState(true);
+  const [showHidden, setShowHidden] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [activePath, setActivePath] = useState("");
   const [activeDir, setActiveDir] = useState("");
@@ -556,10 +556,10 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
                 {base !== state.projectPath && <span className="worktree-tag">worktree</span>}
               </div>
               <div className="explorer-actions">
-                <button className="icon-btn" title="新建文件" aria-label="新建文件" onClick={() => startCreate(activeDir, "file")}>
+                <button className="icon-btn" title={`新建文件${activeDir ? `到 ${activeDir}` : "到项目根目录"}`} aria-label="新建文件" onClick={() => startCreate(activeDir, "file")}>
                   <FilePlusIcon size={13} />
                 </button>
-                <button className="icon-btn" title="新建文件夹" aria-label="新建文件夹" onClick={() => startCreate(activeDir, "folder")}>
+                <button className="icon-btn" title={`新建文件夹${activeDir ? `到 ${activeDir}` : "到项目根目录"}`} aria-label="新建文件夹" onClick={() => startCreate(activeDir, "folder")}>
                   <FolderPlusIcon size={13} />
                 </button>
                 <button className="icon-btn" title={showHidden ? "隐藏点文件" : "显示点文件"} aria-label={showHidden ? "隐藏点文件" : "显示点文件"} onClick={() => setShowHidden((v) => !v)}>

@@ -1,6 +1,6 @@
 {
   "name": "spin-cockpit-harness",
-  "version": "0.2.0",
+  "version": "0.2.0-alpha.1",
   "private": true,
   "type": "module",
   "main": "electron/main.mjs",
@@ -22,7 +22,8 @@
     "bundle:dsh": "node scripts/bundle-dsh.mjs",
     "bundle:dsh:optional": "node scripts/bundle-dsh.mjs --optional",
     "smoke:dsh": "node scripts/smoke-dsh.mjs",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -46,8 +47,8 @@
     "vite": "^6.3.0"
   },
   "build": {
-    "appId": "ai.yieldmind.harness",
-    "productName": "YieldMind Harness",
+    "appId": "ai.cockpit.harness",
+    "productName": "Cockpit Harness",
     "directories": {
       "output": "release"
     },
@@ -69,6 +70,18 @@
           "dsh-spawn-helper.exe",
           "manifest.json"
         ]
+      },
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE.txt"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
       }
     ],
     "asar": true,
@@ -81,19 +94,47 @@
         "dmg"
       ],
       "category": "public.app-category.developer-tools",
-      "identity": null
+      "identity": null,
+      "icon": "resources/icon.icns"
     },
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "resources/icon.ico"
     },
     "linux": {
       "target": [
         "AppImage"
-      ]
+      ],
+      "icon": "resources/icon.png"
     },
     "icon": "resources/icon.png",
     "npmRebuild": false
+  },
+  "description": "Cockpit Harness — a local-first multi-agent cockpit: Chat → tasks, terminal panes, agent runs, review and confirmation.",
+  "license": "MIT",
+  "author": "spin-ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spin-ai/spin-cockpit-harness.git"
+  },
+  "bugs": {
+    "url": "https://github.com/spin-ai/spin-cockpit-harness/issues"
+  },
+  "homepage": "https://github.com/spin-ai/spin-cockpit-harness#readme",
+  "keywords": [
+    "electron",
+    "agent",
+    "multi-agent",
+    "terminal",
+    "xterm",
+    "acp",
+    "dsh",
+    "cockpit",
+    "developer-tools"
+  ],
+  "engines": {
+    "node": ">=22"
   }
 }
