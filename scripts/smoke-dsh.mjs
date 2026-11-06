@@ -76,12 +76,29 @@ child.on("exit", (code) => {
   }
 });
 
+let cleaned = false;
 function cleanup(code) {
+  if (cleaned) return;
+  cleaned = true;
   clearTimeout(timeout);
   try { child.kill("SIGTERM"); } catch { /* ignore */ }
-  rmSync(home, { recursive: true, force: true });
-  rmSync(cwd, { recursive: true, force: true });
-  process.exit(code);
+
+  // On Windows the dsh process can release its temp-directory handles slightly
+  // after exit. Wait for close, then retry the removal instead of failing the
+  // whole package job on a transient EPERM.
+  const remove = () => {
+    for (const dir of [home, cwd]) {
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+      } catch (err) {
+        console.warn(`[smoke:dsh] cleanup warning for ${dir}: ${err.message}`);
+      }
+    }
+    process.exit(code);
+  };
+  const delay = () => setTimeout(remove, 500);
+  if (child.exitCode !== null) delay();
+  else child.once("close", delay);
 }
 
 send({
