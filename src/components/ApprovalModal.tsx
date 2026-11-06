@@ -8,7 +8,7 @@ export function ApprovalModal({ approval, act }: { approval: Approval; act: Act 
   return (
     <div className="modal-mask">
       <div className="modal approval">
-        <div className="row gap8"><span className="approval-dot">!</span><div><h3>需要审批</h3><div className="tiny muted">run 正在等待你的决定</div></div></div>
+        <div className="row gap8"><span className="approval-dot">!</span><h3>需要审批</h3></div>
         <div className="approval-title">{approval.title}</div>
         {approval.description && <div className="approval-desc">{approval.description}</div>}
         {approval.options.length > 0 && (

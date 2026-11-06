@@ -2,15 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Agent, Message, Run, State, Thread, Todo } from "../types";
 import { agentOf, timeAgo } from "../ui";
 import {
-  BotIcon, ChevronDownIcon, ChevronRightIcon, CollapseIcon, EyeIcon, EyeOffIcon,
-  FileCodeIcon, FileIcon, FileImageIcon, FileTextIcon, FilesIcon, FolderIcon,
-  FolderOpenIcon, HistoryIcon, InfoIcon, PanelCollapseIcon, RefreshIcon, SearchIcon, UserIcon, WrenchIcon, XIcon,
+  BotIcon, ChevronDownIcon, ChevronRightIcon, CollapseIcon, CopyIcon, EyeIcon, EyeOffIcon,
+  FileIcon, FilePlusIcon, FilesIcon, FolderIcon,
+  FolderOpenIcon, FolderPlusIcon, HistoryIcon, InfoIcon, PanelCollapseIcon, RefreshIcon, RevealIcon,
+  SearchIcon, UserIcon, WrenchIcon, XIcon,
 } from "./Icons";
+import { FileVisual } from "./FileVisual";
+import { requestFilePreview, requestTerminalAt } from "../terminal-events";
 
 type Entry = { name: string; dir: boolean; path: string };
-type Preview = { name: string; rel: string; text?: string; dataUrl?: string; error?: string };
-type Tab = "explorer" | "sessions" | "preview";
+type Tab = "explorer" | "sessions";
 type SessionStatus = { label: string; cls: string };
+type FsMenuPoint = { x: number; y: number; entry: Entry | null; dir: string };
+type FsMenuItem = { label: string; hint?: string; danger?: boolean; disabled?: boolean; run: () => void } | "sep";
 
 type SessionView = {
   thread: Thread;
@@ -22,32 +26,6 @@ type SessionView = {
   title: string;
   status: SessionStatus;
 };
-
-const EXT_COLORS: Record<string, string> = {
-  ts: "#3178c6", tsx: "#3178c6", js: "#ca8a04", jsx: "#0284c7",
-  json: "#b45309", md: "#64748b", mdx: "#64748b", css: "#2563eb", scss: "#db2777",
-  html: "#ea580c", vue: "#059669", svelte: "#ea580c", py: "#2563eb", go: "#0891b2",
-  rs: "#b45309", sh: "#16a34a", yml: "#7c3aed", yaml: "#7c3aed",
-  png: "#7c3aed", jpg: "#7c3aed", jpeg: "#7c3aed", webp: "#7c3aed", gif: "#7c3aed", svg: "#7c3aed",
-  lock: "#71717a",
-};
-
-const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "webp", "gif", "svg", "ico", "bmp"]);
-const CODE_EXT = new Set(["ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "go", "rs", "sh", "bash", "css", "scss", "html", "vue", "svelte", "json", "yml", "yaml", "toml"]);
-const TEXT_EXT = new Set(["md", "mdx", "txt", "log", "csv"]);
-
-function extOf(name: string) {
-  return name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
-}
-
-function FileVisual({ name }: { name: string }) {
-  const ext = extOf(name);
-  const color = EXT_COLORS[ext] ?? "#a1a1aa";
-  if (IMAGE_EXT.has(ext)) return <FileImageIcon size={14} className="file-ico" style={{ color }} />;
-  if (CODE_EXT.has(ext)) return <FileCodeIcon size={14} className="file-ico" style={{ color }} />;
-  if (TEXT_EXT.has(ext)) return <FileTextIcon size={14} className="file-ico" style={{ color }} />;
-  return <FileIcon size={14} className="file-ico" style={{ color }} />;
-}
 
 function RoleGlyph({ role }: { role: string }) {
   if (role === "user") return <UserIcon size={11} />;
@@ -101,7 +79,6 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
   baseRef.current = base;
 
   const [tab, setTab] = useState<Tab>("explorer");
-  const [preview, setPreview] = useState<Preview | null>(null);
 
   // explorer
   const [children, setChildren] = useState<Record<string, Entry[]>>({});
@@ -111,6 +88,17 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
   const [query, setQuery] = useState("");
   const [showHidden, setShowHidden] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [activePath, setActivePath] = useState("");
+  const [activeDir, setActiveDir] = useState("");
+  const [menu, setMenu] = useState<FsMenuPoint | null>(null);
+  const [creating, setCreating] = useState<{ dir: string; kind: "file" | "folder" } | null>(null);
+  const [draft, setDraft] = useState("");
+  const [renaming, setRenaming] = useState<{ rel: string; name: string; dir: boolean } | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const creatingRef = useRef(false);
+  const renameRef = useRef(false);
+  const createCancelled = useRef(false);
+  const renameCancelled = useRef(false);
 
   // sessions
   const [sessionQuery, setSessionQuery] = useState("");
@@ -137,7 +125,6 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
   useEffect(() => {
     setChildren({});
     setExpanded(new Set([""]));
-    setPreview(null);
     setError("");
     setQuery("");
     void loadDir("");
@@ -154,31 +141,156 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
     if (!children[path]) void loadDir(path);
   };
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setRefreshing(true);
     setChildren({});
     const paths = ["", ...[...expanded].filter(Boolean)];
     await Promise.all(paths.map((p) => loadDir(p)));
     setRefreshing(false);
-  };
+  }, [expanded, loadDir]);
 
   const collapseAll = () => setExpanded(new Set([""]));
 
-  const openFile = async (entry: Entry) => {
-    setPreview({ name: entry.name, rel: entry.path, text: "加载中…" });
-    setTab("preview");
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+  useEffect(() => {
+    const onFocus = () => {
+      if (tab !== "explorer" || creating || renaming || menu) return;
+      if (document.visibilityState !== "visible") return;
+      void refreshRef.current();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [tab, creating, renaming, menu]);
+
+  const parentOf = (rel: string) => (rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "");
+  const joinPath = (dir: string, name: string) => [dir, name].filter(Boolean).join("/");
+  const absOf = (rel: string) => `${base.replace(/[\\/]+$/, "")}/${rel || ""}`.replace(/\/+/g, "/");
+  const errText = (e: unknown) => String((e as Error)?.message || e);
+
+  const startCreate = (dir: string, kind: "file" | "folder") => {
+    setMenu(null);
+    setRenaming(null);
+    createCancelled.current = false;
+    if (dir) setExpanded((prev) => new Set(prev).add(dir));
+    if (dir && !children[dir]) void loadDir(dir);
+    setDraft("");
+    setCreating({ dir, kind });
+  };
+
+  const cancelCreate = () => { createCancelled.current = true; setCreating(null); setDraft(""); };
+
+  const commitCreate = async () => {
+    if (!creating || creatingRef.current) return;
+    const name = draft.trim();
+    if (!name) { cancelCreate(); return; }
+    creatingRef.current = true;
     try {
-      const res = await window.harness.filesRead(entry.path, base);
+      const res = await window.harness.filesCreate(creating.dir, creating.kind, name, base);
       if (baseRef.current !== base) return;
-      setPreview({ name: entry.name, rel: entry.path, ...res });
+      setError("");
+      setCreating(null);
+      setDraft("");
+      setActivePath(res.path);
+      setActiveDir(creating.kind === "folder" ? res.path : creating.dir);
+      setExpanded((prev) => new Set(prev).add(creating.dir));
+      await loadDir(creating.dir);
+      if (creating.kind === "file") openPreviewInTerminal({ name: res.name, dir: false, path: res.path });
     } catch (e) {
-      setPreview({ name: entry.name, rel: entry.path, error: String((e as Error)?.message || e) });
+      setError(errText(e));
+    } finally {
+      creatingRef.current = false;
     }
   };
 
-  const closePreview = () => {
-    setPreview(null);
-    setTab("explorer");
+  const startRename = (entry: Entry) => {
+    setMenu(null);
+    setCreating(null);
+    renameCancelled.current = false;
+    setRenaming({ rel: entry.path, name: entry.name, dir: entry.dir });
+    setRenameDraft(entry.name);
+  };
+
+  const cancelRename = () => { renameCancelled.current = true; setRenaming(null); };
+
+  const commitRename = async () => {
+    if (!renaming || renameRef.current) return;
+    const name = renameDraft.trim();
+    if (!name || name === renaming.name) { setRenaming(null); return; }
+    const target = renaming;
+    renameRef.current = true;
+    setRenaming(null);
+    try {
+      const res = await window.harness.filesRename(target.rel, name, base);
+      if (baseRef.current !== base) return;
+      setError("");
+      setActivePath(res.path);
+      setActiveDir(target.dir ? res.path : parentOf(res.path));
+      if (target.dir) {
+        collapseAll();
+        setChildren({});
+        await loadDir("");
+      } else {
+        await loadDir(parentOf(target.rel));
+      }
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      renameRef.current = false;
+    }
+  };
+
+  const duplicateEntry = async (entry: Entry) => {
+    try {
+      const res = await window.harness.filesDuplicate(entry.path, base);
+      if (baseRef.current !== base) return;
+      setError("");
+      setActivePath(res.path);
+      setActiveDir(parentOf(res.path));
+      await loadDir(parentOf(entry.path));
+    } catch (e) {
+      setError(errText(e));
+    }
+  };
+
+  const trashEntry = async (entry: Entry) => {
+    if (entry.path === "") return;
+    if (!window.confirm(`删除「${entry.name}」？会移到废纸篓。`)) return;
+    try {
+      await window.harness.filesTrash(entry.path, base);
+      if (baseRef.current !== base) return;
+      setError("");
+      if (activePath === entry.path) setActivePath("");
+      if (activeDir === entry.path || activeDir.startsWith(entry.path + "/")) setActiveDir(parentOf(entry.path));
+      setExpanded((prev) => new Set([...prev].filter((p) => p !== entry.path && !p.startsWith(entry.path + "/"))));
+      await loadDir(parentOf(entry.path));
+    } catch (e) {
+      setError(errText(e));
+    }
+  };
+
+  const revealEntry = async (rel: string) => {
+    try {
+      await window.harness.filesReveal(rel, base);
+      setError("");
+    } catch (e) {
+      setError(errText(e));
+    }
+  };
+
+  const copyPathText = async (rel: string, relative: boolean) => {
+    await window.harness.clipboardWrite(relative ? rel : absOf(rel));
+  };
+
+  const openInTerminal = (rel: string) => {
+    requestTerminalAt(absOf(rel));
+  };
+
+  // 文件预览走终端区的标签（不再挤在右侧 280px 的侧栏里）
+  const openPreviewInTerminal = (entry: Entry) => {
+    requestFilePreview({ rel: entry.path, name: entry.name, root: base });
+    setActivePath(entry.path);
+    setActiveDir(parentOf(entry.path));
   };
 
   const q = query.trim().toLowerCase();
@@ -196,45 +308,110 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
   }, [children, q, showHidden, matchesBelow]);
 
   const renderDir = (rel: string, depth: number): React.ReactNode => {
-    if (loading.has(rel && rel !== "" ? rel : "")) {
-      return <div className="tree-status" style={{ paddingLeft: 10 + depth * 14 }}>加载中…</div>;
-    }
+    const loadingNow = loading.has(rel);
     const list = visibleEntries(rel);
-    if (!list.length) {
-      return rel === "" ? <div className="tree-status" style={{ paddingLeft: 10 }}>{q ? "没有匹配的文件" : "目录为空"}</div> : null;
+    const createRow = creating?.dir === rel ? (
+      <div className="tree-row creating" style={{ paddingLeft: 8 + depth * 14 }} key="__create">
+        {creating!.kind === "folder" ? <FolderIcon size={14} className="tree-folder" /> : <FileIcon size={14} className="file-ico" />}
+        <input
+          className="tree-input"
+          autoFocus
+          value={draft}
+          placeholder={creating!.kind === "folder" ? "新文件夹名称" : "新文件名称"}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { e.preventDefault(); void commitCreate(); }
+            else if (e.key === "Escape") { e.preventDefault(); cancelCreate(); }
+          }}
+          onBlur={() => {
+            if (createCancelled.current) { createCancelled.current = false; return; }
+            if (draft.trim()) void commitCreate(); else cancelCreate();
+          }}
+        />
+      </div>
+    ) : null;
+    if (loadingNow) {
+      return <>{createRow}<div className="tree-status" style={{ paddingLeft: 10 + depth * 14 }}>加载中…</div></>;
     }
-    return list.map((entry) => {
-      const open = expanded.has(entry.path) || (q && matchesBelow(entry.path));
-      const selected = preview?.rel === entry.path;
+    if (!list.length) {
       return (
-        <div key={entry.path}>
-          <div
-            className={`tree-row ${selected ? "on" : ""}`}
-            style={{ paddingLeft: 8 + depth * 14 }}
-            role="button"
-            tabIndex={0}
-            title={entry.path}
-            onClick={() => { if (entry.dir) toggleDir(entry.path); else void openFile(entry); }}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter" && e.key !== " ") return;
-              e.preventDefault();
-              if (entry.dir) toggleDir(entry.path); else void openFile(entry);
-            }}
-          >
-            {entry.dir ? (
-              <>
-                <span className={`tree-chev ${open ? "open" : ""}`}><ChevronRightIcon size={11} /></span>
-                {open ? <FolderOpenIcon size={14} className="tree-folder" /> : <FolderIcon size={14} className="tree-folder" />}
-              </>
-            ) : (
-              <FileVisual name={entry.name} />
-            )}
-            <span className="ellipsis">{entry.name}</span>
-          </div>
-          {entry.dir && open && renderDir(entry.path, depth + 1)}
-        </div>
+        <>
+          {createRow}
+          {rel === "" ? <div className="tree-status" style={{ paddingLeft: 10 }}>{q ? "没有匹配的文件" : creating ? null : "目录为空"}</div> : null}
+        </>
       );
-    });
+    }
+    return (
+      <>
+        {createRow}
+        {list.map((entry) => {
+          const open = expanded.has(entry.path) || (q && matchesBelow(entry.path));
+          const selected = activePath === entry.path;
+          return (
+            <div key={entry.path}>
+              <div
+                className={`tree-row ${selected ? "on" : ""}`}
+                style={{ paddingLeft: 8 + depth * 14 }}
+                role="button"
+                tabIndex={0}
+                title={entry.path}
+                onClick={() => {
+                  setActivePath(entry.path);
+                  setActiveDir(entry.dir ? entry.path : parentOf(entry.path));
+                  if (entry.dir) toggleDir(entry.path); else openPreviewInTerminal(entry);
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setActivePath(entry.path);
+                  setActiveDir(entry.dir ? entry.path : parentOf(entry.path));
+                  setMenu({ x: e.clientX, y: e.clientY, entry, dir: entry.dir ? entry.path : parentOf(entry.path) });
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "F2") { e.preventDefault(); startRename(entry); return; }
+                  if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); void trashEntry(entry); return; }
+                  if (e.key === "ArrowRight" && entry.dir && !open) { e.preventDefault(); toggleDir(entry.path); return; }
+                  if (e.key === "ArrowLeft" && entry.dir && open) { e.preventDefault(); toggleDir(entry.path); return; }
+                  if (e.key !== "Enter" && e.key !== " ") return;
+                  e.preventDefault();
+                  if (entry.dir) toggleDir(entry.path); else openPreviewInTerminal(entry);
+                }}
+              >
+                {entry.dir ? (
+                  <>
+                    <span className={`tree-chev ${open ? "open" : ""}`}><ChevronRightIcon size={11} /></span>
+                    {open ? <FolderOpenIcon size={14} className="tree-folder" /> : <FolderIcon size={14} className="tree-folder" />}
+                  </>
+                ) : (
+                  <FileVisual name={entry.name} />
+                )}
+                {renaming?.rel === entry.path ? (
+                  <input
+                    className="tree-input"
+                    autoFocus
+                    value={renameDraft}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.preventDefault(); void commitRename(); }
+                      else if (e.key === "Escape") { e.preventDefault(); cancelRename(); }
+                    }}
+                    onBlur={() => {
+                      if (renameCancelled.current) { renameCancelled.current = false; return; }
+                      void commitRename();
+                    }}
+                  />
+                ) : (
+                  <span className="ellipsis">{entry.name}</span>
+                )}
+              </div>
+              {entry.dir && open && renderDir(entry.path, depth + 1)}
+            </div>
+          );
+        })}
+      </>
+    );
   };
 
   const sessions = useMemo<SessionView[]>(() => {
@@ -294,6 +471,49 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
 
   const rootName = base.split("/").filter(Boolean).slice(-1)[0] || base;
 
+  const menuItems = (m: FsMenuPoint): FsMenuItem[] => {
+    const entry = m.entry;
+    if (!entry) {
+      return [
+        { label: "新建文件", run: () => startCreate("", "file") },
+        { label: "新建文件夹", run: () => startCreate("", "folder") },
+        "sep",
+        { label: refreshing ? "刷新中…" : "刷新", disabled: refreshing, run: () => void refresh() },
+        { label: "全部折叠", run: collapseAll },
+        { label: showHidden ? "隐藏点文件" : "显示点文件", run: () => setShowHidden((v) => !v) },
+      ];
+    }
+    const items: FsMenuItem[] = [];
+    if (entry.dir) {
+      items.push(
+        { label: "新建文件", run: () => startCreate(entry.path, "file") },
+        { label: "新建文件夹", run: () => startCreate(entry.path, "folder") },
+        "sep",
+        { label: "在终端中打开", run: () => openInTerminal(entry.path) },
+      );
+    } else {
+      items.push(
+        { label: "预览", run: () => openPreviewInTerminal(entry) },
+        "sep",
+        { label: "在终端中打开所在目录", run: () => openInTerminal(m.dir) },
+      );
+    }
+    items.push(
+      { label: "在 Finder 中显示", run: () => void revealEntry(entry.path) },
+      "sep",
+      { label: "复制路径", run: () => void copyPathText(entry.path, false) },
+      { label: "复制相对路径", run: () => void copyPathText(entry.path, true) },
+      "sep",
+      { label: "重命名", hint: "F2", run: () => startRename(entry) },
+      { label: "复制副本", run: () => void duplicateEntry(entry) },
+      { label: "删除", hint: "⌫", danger: true, run: () => void trashEntry(entry) },
+    );
+    if (entry.dir && expanded.has(entry.path)) {
+      items.push("sep", { label: "折叠此目录", run: () => toggleDir(entry.path) });
+    }
+    return items;
+  };
+
   return (
     <aside className="files-pane right-panel">
       <div className="right-tabs">
@@ -314,16 +534,6 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
           <HistoryIcon size={16} />
           {state.threads.length > 0 && <span className="tab-count">{state.threads.length}</span>}
         </button>
-        {preview && (
-          <button
-            className={`icon-tab ${tab === "preview" ? "on" : ""}`}
-            title="预览"
-            aria-label="预览"
-            onClick={() => setTab("preview")}
-          >
-            <EyeIcon size={16} />
-          </button>
-        )}
         {onCollapse && (
           <button
             className="icon-tab tab-collapse"
@@ -346,6 +556,12 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
                 {base !== state.projectPath && <span className="worktree-tag">worktree</span>}
               </div>
               <div className="explorer-actions">
+                <button className="icon-btn" title="新建文件" aria-label="新建文件" onClick={() => startCreate(activeDir, "file")}>
+                  <FilePlusIcon size={13} />
+                </button>
+                <button className="icon-btn" title="新建文件夹" aria-label="新建文件夹" onClick={() => startCreate(activeDir, "folder")}>
+                  <FolderPlusIcon size={13} />
+                </button>
                 <button className="icon-btn" title={showHidden ? "隐藏点文件" : "显示点文件"} aria-label={showHidden ? "隐藏点文件" : "显示点文件"} onClick={() => setShowHidden((v) => !v)}>
                   {showHidden ? <EyeIcon size={13} /> : <EyeOffIcon size={13} />}
                 </button>
@@ -357,11 +573,21 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
             </div>
             <div className="explorer-search">
               <SearchIcon size={12} className="search-ico" />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="按名称筛选文件…" />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="筛选文件…" />
               {query && <button className="icon-btn" title="清除" aria-label="清除" onClick={() => setQuery("")}><XIcon size={11} /></button>}
             </div>
             {error && <div className="preview-error tree-error">{error}</div>}
-            <div className="explorer-tree">{renderDir("", 0)}</div>
+            <div
+              className="explorer-tree"
+              onContextMenu={(e) => {
+                if ((e.target as HTMLElement).closest(".tree-row")) return;
+                e.preventDefault();
+                setMenu({ x: e.clientX, y: e.clientY, entry: null, dir: "" });
+              }}
+              onClick={(e) => { if (!(e.target as HTMLElement).closest(".tree-row")) { setActivePath(""); setActiveDir(""); } }}
+            >
+              {renderDir("", 0)}
+            </div>
           </>
         )}
 
@@ -376,7 +602,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
             </div>
             <div className="explorer-search">
               <SearchIcon size={12} className="search-ico" />
-              <input value={sessionQuery} onChange={(e) => setSessionQuery(e.target.value)} placeholder="搜索标题 / 消息 / Agent…" />
+              <input value={sessionQuery} onChange={(e) => setSessionQuery(e.target.value)} placeholder="搜索…" />
               {sessionQuery && <button className="icon-btn" title="清除" aria-label="清除" onClick={() => setSessionQuery("")}><XIcon size={11} /></button>}
             </div>
             <div className="session-list">
@@ -449,24 +675,50 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
           </>
         )}
 
-        {tab === "preview" && preview && (
-          <div className="file-preview preview-tab">
-            <div className="row between preview-head">
-              <div className="stack" style={{ gap: 0, minWidth: 0 }}>
-                <div className="row gap4" style={{ minWidth: 0 }}>
-                  <FileVisual name={preview.name} />
-                  <b className="tiny ellipsis">{preview.name}</b>
-                </div>
-                <span className="tiny muted mono ellipsis">{preview.rel}</span>
-              </div>
-              <button className="icon-btn" title="关闭预览" aria-label="关闭预览" onClick={closePreview}><XIcon size={13} /></button>
-            </div>
-            {preview.error && <div className="preview-error">{preview.error}</div>}
-            {preview.dataUrl && <img src={preview.dataUrl} alt={preview.name} className="preview-img" />}
-            {preview.text != null && <pre className="preview-text">{preview.text}</pre>}
-          </div>
-        )}
       </div>
+      {menu && <FsMenu point={menu} items={menuItems(menu)} onClose={() => setMenu(null)} />}
     </aside>
+  );
+}
+
+function FsMenu({ point, items, onClose }: { point: FsMenuPoint; items: FsMenuItem[]; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const onScroll = () => onClose();
+    window.addEventListener("mousedown", onDown, true);
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("blur", onClose);
+    return () => {
+      window.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("blur", onClose);
+    };
+  }, [onClose]);
+
+  const left = Math.min(point.x, window.innerWidth - 210);
+  const top = Math.min(point.y, window.innerHeight - (items.length * 28 + 16));
+  return (
+    <div ref={ref} className="fs-menu" style={{ left, top }} onContextMenu={(e) => e.preventDefault()}>
+      {items.map((item, i) =>
+        item === "sep"
+          ? <div key={`sep-${i}`} className="fs-menu-sep" />
+          : (
+            <button
+              key={item.label}
+              className={`fs-menu-item ${item.danger ? "danger" : ""}`}
+              disabled={item.disabled}
+              onClick={() => { item.run(); onClose(); }}
+            >
+              <span>{item.label}</span>
+              {item.hint && <kbd>{item.hint}</kbd>}
+            </button>
+          ),
+      )}
+    </div>
   );
 }

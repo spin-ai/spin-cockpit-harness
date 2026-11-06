@@ -44,8 +44,26 @@ export default function App() {
     window.addEventListener("harness:reset-layout", reset);
     return () => window.removeEventListener("harness:reset-layout", reset);
   }, []);
+
+  // 资源管理器里的「预览 / 在终端中打开」：如果终端面板收起了，先展开再交给 TerminalPanel
+  useEffect(() => {
+    const expandTerminal = () => setCollapsed((c) => (c.terminal ? { ...c, terminal: false } : c));
+    window.addEventListener("harness:open-file-preview", expandTerminal);
+    window.addEventListener("harness:open-terminal-at", expandTerminal);
+    return () => {
+      window.removeEventListener("harness:open-file-preview", expandTerminal);
+      window.removeEventListener("harness:open-terminal-at", expandTerminal);
+    };
+  }, []);
   const togglePane = useCallback((id: PaneId) => {
     setCollapsed((current) => ({ ...current, [id]: !current[id] }));
+  }, []);
+
+  // 「问清楚」/ 统计失败下钻都要落到 Chat：面板被收起时先展开，否则草稿写进不存在的输入框
+  useEffect(() => {
+    const onFocusChat = () => setCollapsed((current) => (current.chat ? { ...current, chat: false } : current));
+    window.addEventListener("harness:focus-chat", onFocusChat);
+    return () => window.removeEventListener("harness:focus-chat", onFocusChat);
   }, []);
 
   // 拖拽时按窗口宽度限制，避免把中间/右侧面板挤出可视区。
@@ -112,7 +130,8 @@ export default function App() {
     const todos = state.todos.filter((t) => t.projectId === pid);
     const ids = new Set(todos.map((t) => t.id));
     const agents = state.agents.filter((a) => !a.projectId || a.projectId === pid);
-    const threads = state.threads.filter((t) => !t.projectId || t.projectId === pid);
+    // 全局对话（未绑定项目）在任何项目下都可见
+    const threads = state.threads.filter((t) => !t.todoId || !t.projectId || t.projectId === pid);
     const tids = new Set(threads.map((t) => t.id));
     const runs = state.runs.filter((r) => ids.has(r.todoId));
     return {
@@ -156,13 +175,22 @@ export default function App() {
 
   useEffect(() => {
     if (!state) return;
-    const threads = state.threads.filter((t) => !t.projectId || t.projectId === state.activeProjectId);
+    const threads = state.threads.filter((t) => !t.todoId || !t.projectId || t.projectId === state.activeProjectId);
     setThreadId((prev) => {
       if (threads.some((t) => t.id === prev)) return prev;
       return threads.find((t) => !t.todoId)?.id ?? threads[0]?.id ?? null;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.activeProjectId]);
+
+  useEffect(() => {
+    const onView = (e: Event) => {
+      const next = (e as CustomEvent<string>).detail;
+      if (["workspace", "projects", "stats", "hosts", "settings"].includes(next)) setView(next as View);
+    };
+    window.addEventListener("harness:view", onView);
+    return () => window.removeEventListener("harness:view", onView);
+  }, []);
 
   useEffect(() => {
     // 切会话时丢掉未发送的元素上下文，避免把 A 任务的元素发给 B
@@ -182,23 +210,29 @@ export default function App() {
   }, [act]);
 
   const newThread = useCallback(async () => {
-    const t = await act("newThread", { projectId: state?.activeProjectId }) as { id?: string } | null;
+    // 新对话默认全局；需要项目作用域时在 Chat 的「作用域」里选
+    const t = await act("newThread", {}) as { id?: string } | null;
     if (t?.id) { setThreadId(t.id); setView("workspace"); }
-  }, [act, state?.activeProjectId]);
+  }, [act]);
 
   const commands: Command[] = useMemo(() => {
     if (!state) return [];
     const list: Command[] = [
-      { id: "view-workspace", label: "前往：工作区", hint: "⌘1", run: () => setView("workspace") },
-      { id: "view-projects", label: "前往：项目", run: () => setView("projects") },
-      { id: "view-stats", label: "前往：统计", run: () => setView("stats") },
-      { id: "view-hosts", label: "前往：主机", run: () => setView("hosts") },
-      { id: "new-thread", label: "新建会话 / 任务", hint: "⌘N", run: () => void newThread() },
-      { id: "new-terminal", label: "新建终端", hint: "⌘T", run: () => window.dispatchEvent(new Event("harness:new-terminal")) },
-      { id: "close-terminal", label: "关闭当前终端", hint: "⌘W", run: () => window.dispatchEvent(new Event("harness:close-terminal")) },
+      { id: "view-workspace", label: "工作区", hint: "⌘1", run: () => setView("workspace") },
+      { id: "view-projects", label: "项目", run: () => setView("projects") },
+      { id: "view-stats", label: "统计", run: () => setView("stats") },
+      { id: "view-hosts", label: "主机", run: () => setView("hosts") },
+      { id: "new-thread", label: "新建会话", hint: "⌘N", run: () => void newThread() },
+      { id: "new-task", label: "新建任务", hint: "⌘⇧N", run: () => window.dispatchEvent(new Event("harness:new-task")) },
+      { id: "new-terminal", label: "新建终端标签", hint: "⌘T", run: () => window.dispatchEvent(new Event("harness:new-terminal")) },
+      { id: "split-right", label: "向右拆分终端", hint: "⌘D", run: () => window.dispatchEvent(new CustomEvent("harness:split-terminal", { detail: "row" })) },
+      { id: "split-down", label: "向下拆分终端", hint: "⇧⌘D", run: () => window.dispatchEvent(new CustomEvent("harness:split-terminal", { detail: "col" })) },
+      { id: "open-preview", label: "打开预览标签", run: () => window.dispatchEvent(new Event("harness:open-preview")) },
+      { id: "close-terminal", label: "关闭窗格", hint: "⌘W", run: () => window.dispatchEvent(new Event("harness:close-terminal")) },
+      { id: "edit-todo", label: "编辑任务", hint: "⌘E", run: () => window.dispatchEvent(new Event("harness:edit-todo")) },
       { id: "open-project", label: "打开 / 添加项目…", hint: "⌘P", run: () => void addProject() },
       { id: "open-settings", label: "打开设置", hint: "⌘,", run: () => setView("settings") },
-      { id: "reset-layout", label: "重置面板宽度 / 高度", hint: "拖拽分隔条可自由调整", run: () => window.dispatchEvent(new Event("harness:reset-layout")) },
+      { id: "reset-layout", label: "重置面板尺寸", run: () => window.dispatchEvent(new Event("harness:reset-layout")) },
     ];
     for (const p of state.projects) {
       list.push({ id: `switch-${p.id}`, label: `切换项目：${p.name}`, hint: p.path, run: () => void switchProject(p.id) });
@@ -208,15 +242,35 @@ export default function App() {
   }, [state?.projects, newThread]);
 
   useEffect(() => {
+    // 自定义菜单去掉了 Select All 角色（否则 ⌘A 会被应用菜单吞掉，终端无法选择缓冲区）。
+    // 文本输入框仍需要 ⌘A 全选，这里补一条针对 input/textarea 的处理。
+    const onSelectAll = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+      if (e.key.toLowerCase() !== "a") return;
+      const el = e.target as HTMLElement | null;
+      if (!(el instanceof HTMLInputElement) && !(el instanceof HTMLTextAreaElement)) return;
+      if (el.classList.contains("xterm-helper-textarea")) return; // 终端的 ⌘A 由 TerminalPanel 处理
+      e.preventDefault();
+      el.select();
+    };
+    window.addEventListener("keydown", onSelectAll, true);
+    return () => window.removeEventListener("keydown", onSelectAll, true);
+  }, []);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       const tag = (e.target as HTMLElement)?.tagName;
       const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      // 终端内的 ⌘T / ⌘W 由 TerminalPanel 自己处理；也避免 Windows/Linux 的 ⌃T / ⌃W 抢 shell 按键
+      const inTerminal = !!(e.target as HTMLElement)?.closest?.(".term-instance");
       if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); setPaletteOpen((v) => !v); return; }
-      if (mod && e.key.toLowerCase() === "t") { e.preventDefault(); window.dispatchEvent(new Event("harness:new-terminal")); return; }
-      if (mod && e.key.toLowerCase() === "w") { e.preventDefault(); window.dispatchEvent(new Event("harness:close-terminal")); return; }
+      if (mod && e.key.toLowerCase() === "t" && !inTerminal) { e.preventDefault(); window.dispatchEvent(new Event("harness:new-terminal")); return; }
+      if (mod && e.key.toLowerCase() === "w" && !inTerminal) { e.preventDefault(); window.dispatchEvent(new Event("harness:close-terminal")); return; }
       if (mod && e.key.toLowerCase() === "p") { e.preventDefault(); void addProject(); return; }
+      if (mod && e.shiftKey && e.key.toLowerCase() === "n") { e.preventDefault(); window.dispatchEvent(new Event("harness:new-task")); return; }
       if (mod && e.key.toLowerCase() === "n") { e.preventDefault(); void newThread(); return; }
+      if (mod && e.key.toLowerCase() === "e" && !inTerminal) { e.preventDefault(); window.dispatchEvent(new Event("harness:edit-todo")); return; }
       if (mod && e.key === ",") { e.preventDefault(); setView("settings"); return; }
       if (mod && /^[1-9]$/.test(e.key)) {
         const p = state?.projects[Number(e.key) - 1];
@@ -237,7 +291,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.projects, scoped?.threads, threadId, paletteOpen]);
 
-  if (!state) return <div className="boot">正在启动本地控制面…</div>;
+  if (!state) return <div className="boot">启动中…</div>;
 
   // 终端默认吃掉剩余宽度；终端收起时，由仍展开的最右侧面板吃掉剩余宽度。
   const flexPane: PaneId | null = !collapsed.terminal ? "terminal" : !collapsed.files ? "files" : !collapsed.chat ? "chat" : !collapsed.todo ? "todo" : null;
@@ -275,19 +329,23 @@ export default function App() {
                 confirmStop={state.settings?.confirmStop}
               />
             )}
-            {sep1 === "6px" ? <Splitter onDelta={resizeTodo} title="拖拽调整 TODO 列宽度" /> : <div className="splitter-off" />}
+            {sep1 === "6px" ? <Splitter onDelta={resizeTodo} /> : <div className="splitter-off" />}
             {collapsed.chat ? (
               <CollapsedPane label="CHAT" title="Chat" icon={<ChatIcon size={16} />} onExpand={() => togglePane("chat")} />
             ) : (
-              <TaskChat state={scoped} thread={thread} now={now} act={act} onSelect={selectTodo} onNewThread={() => void newThread()} context={pendingContext} onClearContext={() => setPendingContext(null)} onCollapse={() => togglePane("chat")} enterToSend={state.settings?.enterToSend ?? true} confirmStop={state.settings?.confirmStop ?? false} />
+              <TaskChat state={scoped} thread={thread} threads={scoped.threads} now={now} act={act} onSelect={selectTodo} onNewThread={() => void newThread()} onOpenThread={(id) => { setThreadId(id); setView("workspace"); }} context={pendingContext} onClearContext={() => setPendingContext(null)} onCollapse={() => togglePane("chat")} enterToSend={state.settings?.enterToSend ?? true} confirmStop={state.settings?.confirmStop ?? false} />
             )}
-            {sep2 === "6px" ? <Splitter onDelta={resizeChat} title="拖拽调整 Chat 列宽度" /> : <div className="splitter-off" />}
-            {collapsed.terminal ? (
-              <CollapsedPane label="TERM" title="终端" icon={<TerminalIcon size={16} />} onExpand={() => togglePane("terminal")} />
-            ) : (
-              <TerminalPanel state={state} todo={selected} onOpenProject={() => void addProject()} onPickedContext={setPendingContext} previewRoot={workdir} onCollapse={() => togglePane("terminal")} terminalFontSize={state.settings?.terminalFontSize} terminalScrollback={state.settings?.terminalScrollback} previewHomeUrl={state.settings?.previewHomeUrl} />
-            )}
-            {sep3 === "6px" ? <Splitter onDelta={resizeFiles} title="拖拽调整文件列宽度" /> : <div className="splitter-off" />}
+            {sep2 === "6px" ? <Splitter onDelta={resizeChat} /> : <div className="splitter-off" />}
+            {/* 收起只隐藏不卸载：保住 pty / 标签 / 文件预览；展开后 ResizeObserver 会重新 fit */}
+            <div className="terminal-slot">
+              <div className="terminal-slot-main" style={{ display: collapsed.terminal ? "none" : "flex" }}>
+                <TerminalPanel state={state} todo={selected} onOpenProject={() => void addProject()} onPickedContext={setPendingContext} previewRoot={workdir} onCollapse={() => togglePane("terminal")} terminalFontSize={state.settings?.terminalFontSize} terminalScrollback={state.settings?.terminalScrollback} previewHomeUrl={state.settings?.previewHomeUrl} />
+              </div>
+              {collapsed.terminal && (
+                <CollapsedPane label="TERM" title="终端" icon={<TerminalIcon size={16} />} onExpand={() => togglePane("terminal")} />
+              )}
+            </div>
+            {sep3 === "6px" ? <Splitter onDelta={resizeFiles} /> : <div className="splitter-off" />}
             {collapsed.files ? (
               <CollapsedPane label="文件" title="文件 / 会话" icon={<FilesIcon size={16} />} onExpand={() => togglePane("files")} />
             ) : (
@@ -302,8 +360,8 @@ export default function App() {
           </>
         )}
         {view === "projects" && <div className="wide"><Projects state={state} now={now} act={act} notify={notify} onAdd={() => void addProject()} onSwitch={(id) => void switchProject(id)} /></div>}
-        {view === "stats" && scoped && <div className="wide"><Stats state={scoped} /></div>}
-        {view === "hosts" && <div className="wide"><Hosts state={state} act={act} notify={notify} /></div>}
+        {view === "stats" && scoped && <div className="wide"><Stats state={scoped} onOpen={selectTodo} /></div>}
+        {view === "hosts" && <div className="wide"><Hosts state={state} act={act} notify={notify} now={now} /></div>}
         {view === "settings" && <div className="wide settings-wide"><Settings state={state} act={act} notify={notify} /></div>}
       </div>
 

@@ -19,9 +19,15 @@ contextBridge.exposeInMainWorld("harness", {
   openExternal: (url) => ipcRenderer.invoke("shell:openExternal", { url }),
   filesList: (rel, root) => ipcRenderer.invoke("files:list", { rel, root }),
   filesRead: (rel, root) => ipcRenderer.invoke("files:read", { rel, root }),
+  filesCreate: (rel, kind, name, root) => ipcRenderer.invoke("files:create", { rel, kind, name, root }),
+  filesRename: (rel, name, root) => ipcRenderer.invoke("files:rename", { rel, name, root }),
+  filesDuplicate: (rel, root) => ipcRenderer.invoke("files:duplicate", { rel, root }),
+  filesTrash: (rel, root) => ipcRenderer.invoke("files:trash", { rel, root }),
+  filesReveal: (rel, root) => ipcRenderer.invoke("files:reveal", { rel, root }),
   previewPick: (webContentsId, root) => ipcRenderer.invoke("preview:pick", { webContentsId, root }),
   previewCancel: (webContentsId) => ipcRenderer.invoke("preview:cancel", { webContentsId }),
   previewDetach: (webContentsId) => ipcRenderer.invoke("preview:detach", { webContentsId }),
+  ensureGrape: () => ipcRenderer.invoke("grape:ensure"),
   onTerminalData: (cb) => {
     const handler = (_event, payload) => cb(payload);
     ipcRenderer.on("terminal:data", handler);

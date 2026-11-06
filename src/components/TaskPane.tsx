@@ -23,6 +23,10 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
   confirmStop?: boolean;
 }) {
   const [query, setQuery] = useState("");
+  const [editing, setEditing] = useState<{ id: string; title: string; desc: string; acceptance: string; priority: string; due: string; tags: string } | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [captureText, setCaptureText] = useState("");
+  const createRef = useRef<HTMLTextAreaElement | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ confirmed: true });
   const [projectH, setProjectH] = useStoredSize("ymh.layout.projectH", 150, 80, 420);
@@ -38,6 +42,43 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
     return () => window.removeEventListener("harness:reset-layout", reset);
   }, []);
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // ⌘K →「编辑当前任务」/ ⌘E：由 App 派发事件，这里负责找到行并进入编辑
+  useEffect(() => {
+    const onEdit = (e: Event) => {
+      const id = (e as CustomEvent<string | null>).detail || selectedId;
+      const todo = id ? state.todos.find((t) => t.id === id) : null;
+      if (todo) startEdit(todo);
+    };
+    window.addEventListener("harness:edit-todo", onEdit);
+    return () => window.removeEventListener("harness:edit-todo", onEdit);
+  }, [state.todos, selectedId]);
+
+  useEffect(() => {
+    const onNew = () => { setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); };
+    window.addEventListener("harness:new-task", onNew);
+    return () => window.removeEventListener("harness:new-task", onNew);
+  }, []);
+
+  // 标题 / 描述 / 验收 / 优先级 / 截止 / 标签就地编辑：Enter 保存、Esc 取消
+  const startEdit = (t: Todo) => setEditing({
+    id: t.id, title: t.title, desc: t.desc || "",
+    acceptance: (t.acceptance || []).join("\n"), priority: t.priority || "P2",
+    due: t.due || "", tags: (t.tags || []).join(", "),
+  });
+  const saveEdit = async () => {
+    if (!editing) return;
+    const title = editing.title.trim();
+    if (!title) { setEditing(null); return; }
+    const next = { ...editing };
+    setEditing(null);
+    await act("updateTodo", {
+      id: next.id, title, desc: next.desc,
+      acceptance: next.acceptance.split("\n").map((x) => x.trim()).filter(Boolean),
+      priority: next.priority, due: next.due,
+      tags: next.tags.split(/[,，]/).map((x) => x.trim()).filter(Boolean),
+    });
+  };
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -56,12 +97,42 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
 
   const toggle = (id: string) => setCollapsed((c) => ({ ...c, [id]: !c[id] }));
 
+  // 收集箱：一行一条，⌘Enter 一次性全部变成任务（也可以只写一行）
+  const captureLines = (() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const line of captureText.split("\n")) {
+      const title = line.replace(/^\s*(?:[-*•—]|\d+[.)、]|\[\s?x?\])\s*/i, "").replace(/\s+/g, " ").trim();
+      if (!title || seen.has(title)) continue;
+      seen.add(title);
+      out.push(title);
+    }
+    return out;
+  })();
+  const createTasks = async () => {
+    if (!captureLines.length) { setCreating(false); return; }
+    const res = await act("createTodos", { text: captureText });
+    setCaptureText("");
+    setCreating(false);
+    const first = res?.todos?.[0];
+    if (first?.id) onSelect(first.id);
+  };
+
+  // 任务描述不清 → 带着预填问题跳到 Chat，先理清再动手
+  const askInChat = (todo: Todo) => {
+    const text = `先别动手，帮我把这个任务理清楚：${todo.title}\n${todo.desc ? `\n背景：${todo.desc}\n` : ""}\n需要确认：目标、验收标准、涉及哪些文件 / 模块。`;
+    window.dispatchEvent(new Event("harness:focus-chat")); // Chat 收起时先展开
+    onSelect(todo.id);
+    window.setTimeout(() => window.dispatchEvent(new CustomEvent("harness:chat-draft", { detail: { todoId: todo.id, text } })), 90);
+  };
+
   return (
     <aside className="todo-pane">
       <div className="pane-head">
         <span>TODO LIST</span>
         <div className="row gap6">
           <span className="muted">{state.todos.length}</span>
+          <button className="pane-add" title="收集想法 / 新建任务（一行一条，⌘⇧N）" onClick={() => { setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); }}>＋</button>
           {onCollapse && (
             <button className="pane-collapse" title="收起 TODO" aria-label="收起 TODO" onClick={onCollapse}>
               <PanelCollapseIcon size={13} />
@@ -71,6 +142,7 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
       </div>
       <div className="task-tools">
         <input className="task-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索标题 / 编号" />
+        <div className="task-edit-hint">双击标题或按 <kbd>⌘E</kbd> 编辑任务文字</div>
         <div className="task-filters">
           {([["all", "全部"], ["active", "进行中"], ["review", "待确认"], ["confirmed", "已确认"]] as [Filter, string][]).map(([id, label]) => (
             <button key={id} className={filter === id ? "on" : ""} onClick={() => setFilter(id)}>{label}</button>
@@ -78,6 +150,30 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
         </div>
       </div>
       <div className="todo-scroll">
+        {creating && (
+          <div className="task-create">
+            <textarea
+              ref={createRef}
+              rows={4}
+              value={captureText}
+              placeholder={"把今天想到的都写下来，一行一条\n- 修一下登录报错\n- 补 statistics 接口\n- 问清楚 worktree 清理策略"}
+              onChange={(e) => setCaptureText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void createTasks(); }
+                if (e.key === "Escape") { e.preventDefault(); setCreating(false); setCaptureText(""); }
+              }}
+            />
+            <div className="task-create-foot">
+              <span className="tiny muted">一行一条 · <kbd>⌘Enter</kbd> 加入</span>
+              <span className="row gap6">
+                <button className="btn tiny-btn" onClick={() => { setCreating(false); setCaptureText(""); }}>取消</button>
+                <button className="btn tiny-btn primary" disabled={!captureLines.length} onClick={() => void createTasks()}>
+                  加入 {captureLines.length || ""} 条
+                </button>
+              </span>
+            </div>
+          </div>
+        )}
         {GROUPS.map((g) => {
           const items = visible.filter((t) => (g.confirmed ? t.confirmed : !t.confirmed && g.statuses.includes(t.status)));
           const isCollapsed = collapsed[g.id] ?? items.length === 0;
@@ -98,20 +194,100 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
                     <span className="row gap4"><span className={`priority-dot ${t.priority}`} /><span className="mono tiny faint">{t.key}</span></span>
                     <span className={`pill status ${STATUS[t.status].cls}`}>{t.confirmed ? "已确认" : STATUS[t.status].label}</span>
                   </div>
-                  <div className="task-row-title">{t.title}</div>
+                  {editing?.id === t.id ? (
+                    <div className="task-edit" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        className="task-edit-title"
+                        autoFocus
+                        value={editing.title}
+                        onChange={(e) => setEditing({ ...editing, title: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void saveEdit(); }
+                          if (e.key === "Escape") { e.preventDefault(); setEditing(null); }
+                        }}
+                      />
+                      <div className="task-edit-fields">
+                        <label>优先级
+                          <select className="task-edit-input" value={editing.priority} onChange={(e) => setEditing({ ...editing, priority: e.target.value })}>
+                            {["P0", "P1", "P2", "P3"].map((p) => <option key={p} value={p}>{p}</option>)}
+                          </select>
+                        </label>
+                        <label>截止
+                          <input className="task-edit-input" value={editing.due} onChange={(e) => setEditing({ ...editing, due: e.target.value })} placeholder="截止" />
+                          <label>执行 Agent
+                            <select
+                              className="task-edit-input"
+                              value={state.todos.find((x) => x.id === editing.id)?.agentId || ""}
+                              onChange={(e) => void act("assign", { id: editing.id, agentId: e.target.value || null })}
+                            >
+                              <option value="">未分配</option>
+                              {state.agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                            </select>
+                          </label>
+                        </label>
+                      </div>
+                      <textarea
+                        className="task-edit-desc"
+                        rows={2}
+                        placeholder="描述"
+                        value={editing.desc}
+                        onChange={(e) => setEditing({ ...editing, desc: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void saveEdit(); }
+                          if (e.key === "Escape") { e.preventDefault(); setEditing(null); }
+                        }}
+                      />
+                      <textarea
+                        className="task-edit-desc"
+                        rows={2}
+                        placeholder="验收条件"
+                        value={editing.acceptance}
+                        onChange={(e) => setEditing({ ...editing, acceptance: e.target.value })}
+                      />
+                      <input
+                        className="task-edit-input"
+                        value={editing.tags}
+                        onChange={(e) => setEditing({ ...editing, tags: e.target.value })}
+                        placeholder="标签"
+                      />
+                      <div className="row gap6" style={{ justifyContent: "flex-end" }}>
+                        <button className="btn tiny-btn" onClick={() => setEditing(null)}>取消</button>
+                        <button className="btn tiny-btn primary" onClick={() => void saveEdit()}>保存</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div
+                        className="task-row-title"
+                        onDoubleClick={(e) => { e.stopPropagation(); startEdit(t); }}
+                      >
+                        {t.title}
+                      </div>
+                      {t.desc && <div className="task-row-desc ellipsis" title={t.desc}>{t.desc}</div>}
+                    </>
+                  )}
                   <div className="row between gap6 tiny muted">
                     <span className="ellipsis">{projectName(t)}{agentOf(state.agents, t.agentId) ? ` · ${agentOf(state.agents, t.agentId)!.name}` : ""}</span>
                     <span className="mono">{elapsed(t, state, now)}</span>
                   </div>
-                  <QuickActions todo={t} state={state} act={act} confirmStop={confirmStop} />
+                  <QuickActions todo={t} state={state} act={act} confirmStop={confirmStop} onEdit={() => startEdit(t)} onAsk={() => askInChat(t)} />
                 </div>
               ))}
             </section>
           );
         })}
-        {visible.length === 0 && <div className="pane-empty">没有匹配的任务</div>}
+        {visible.length === 0 && !creating && (
+          <div className="pane-empty">
+            {query.trim() ? "没有匹配的任务" : (
+              <>
+                <div>还没有任务</div>
+                <button className="link" onClick={() => { setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); }}>＋ 写下来，逐条变成任务</button>
+              </>
+            )}
+          </div>
+        )}
       </div>
-      {!projectCollapsed && <Splitter orientation="horizontal" onDelta={(d) => setProjectH((h) => h - d)} title="拖拽调整项目区高度" />}
+      {!projectCollapsed && <Splitter orientation="horizontal" onDelta={(d) => setProjectH((h) => h - d)} />}
       <section className={`project-panel ${projectCollapsed ? "collapsed" : ""}`} style={projectCollapsed ? undefined : { height: projectH }}>
         <div className="project-panel-head">
           <span>项目 <em>{state.projects.length}</em></span>
@@ -158,18 +334,29 @@ function elapsed(todo: Todo, state: State, now: number) {
   return duration(run, now);
 }
 
-function QuickActions({ todo, state, act, confirmStop }: { todo: Todo; state: State; act: Act; confirmStop: boolean }) {
+function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk }: { todo: Todo; state: State; act: Act; confirmStop: boolean; onEdit: () => void; onAsk: () => void }) {
   const active = activeRun(todo, state.runs);
   const last = lastRun(todo, state.runs);
+  const runnable = state.agents.filter((a) => a.chatRunnable ?? state.executors?.find((e) => e.id === a.cli)?.implemented);
+  const chatAgent = runnable.find((a) => a.id === todo.agentId) || runnable[0] || null;
   const stop = (runId: string) => {
     if (confirmStop && !window.confirm(`停止 ${todo.key} 的运行？`)) return;
     void act("stop", { runId });
   };
   return (
     <div className="task-quick" onClick={(e) => e.stopPropagation()}>
+      <button className="btn tiny-btn" onClick={onEdit} title="编辑标题 / 描述 / 验收 / 优先级（⌘E）">编辑</button>
+      <button className="btn tiny-btn" onClick={onAsk} title="带着预填问题跳到 Chat，先理清再动手">问清楚</button>
       {active && <button className="btn tiny-btn" onClick={() => stop(active.id)}>停止</button>}
       {!active && !todo.confirmed && todo.status === "in_review" && <button className="btn tiny-btn primary" onClick={() => act("confirm", { id: todo.id })}>确认</button>}
-      {!active && !todo.confirmed && todo.status === "todo" && <button className="btn tiny-btn" onClick={() => act("run", { id: todo.id, agentId: todo.agentId ?? state.agents[0]?.id })}>派活</button>}
+      {!active && !todo.confirmed && todo.status === "todo" && (
+        <button
+          className="btn tiny-btn"
+          disabled={!chatAgent}
+          title={chatAgent ? undefined : "没有可用的 Agent"}
+          onClick={() => chatAgent && act("run", { id: todo.id, agentId: chatAgent.id })}
+        >派活</button>
+      )}
       {!active && last && ["failed", "cancelled"].includes(last.status) && <button className="btn tiny-btn" onClick={() => act("retry", { id: todo.id })}>重试</button>}
     </div>
   );

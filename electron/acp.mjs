@@ -1,9 +1,31 @@
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import os from "node:os";
+import path from "node:path";
 import readline from "node:readline";
 
 const DSH_BIN = process.env.DSH_BIN || "dsh";
 const DSH_HOME = process.env.DSH_HOME || "";
+
+/**
+ * GUI 启动的 Electron 通常拿不到登录 shell 的 PATH；补上常见安装位置，
+ * 否则从 Finder 打开 dmg 时 `spawn("dsh")` 会 ENOENT。
+ */
+export function dshPathEnv(base = process.env) {
+  const extras = [
+    path.join(os.homedir(), ".local", "bin"),
+    path.join(os.homedir(), ".bun", "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+  ];
+  const parts = String(base.PATH || "").split(path.delimiter).filter(Boolean);
+  for (const dir of extras) if (!parts.includes(dir)) parts.push(dir);
+  return { ...base, PATH: parts.join(path.delimiter) };
+}
 
 export class AcpClient extends EventEmitter {
   constructor({ cwd, ssh, bin, home, model, effort }) {
@@ -19,8 +41,9 @@ export class AcpClient extends EventEmitter {
     this.proc = null;
     this.sessionId = null;
     this.closed = false;
+    this.stderrTail = "";
 
-    const env = { ...process.env };
+    const env = dshPathEnv();
     if (this.home) env.DSH_HOME = this.home;
     if (ssh && ssh.host) {
       const target = ssh.user ? `${ssh.user}@${ssh.host}` : ssh.host;
@@ -33,11 +56,20 @@ export class AcpClient extends EventEmitter {
     }
     this.proc.on("exit", (code, signal) => {
       this.closed = true;
-      for (const { reject } of this.pending.values()) reject(new Error(`dsh exited ${code ?? signal}`));
+      const detail = `dsh exited ${code ?? signal}`;
+      for (const { reject } of this.pending.values()) {
+        const err = new Error(detail);
+        err.stderr = this.stderrTail;
+        reject(err);
+      }
       this.pending.clear();
       this.emit("exit", { code, signal });
     });
-    this.proc.stderr.on("data", (b) => this.emit("stderr", b.toString()));
+    this.proc.stderr.on("data", (b) => {
+      const text = b.toString();
+      this.stderrTail = (this.stderrTail + text).slice(-16000);
+      this.emit("stderr", text);
+    });
     readline.createInterface({ input: this.proc.stdout }).on("line", (line) => this.#line(line));
   }
 

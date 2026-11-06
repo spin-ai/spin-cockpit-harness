@@ -4,8 +4,17 @@ export interface Project {
   id: string; name: string; path: string; desc: string; color: string;
   status: ProjectStatus; createdAt: number; lastOpenedAt: number; alias: string;
 }
-export interface Host { id: string; name: string; kind: string; addr: string; status: string; heartbeat: number; version: string; port?: number; user?: string; }
-export interface Agent { id: string; name: string; hostId: string; cli: string; cwd: string; max: number; approval: string; color: string; skills: string[]; alias: string; projectId?: string; terminalId?: string; }
+export interface HostCap { cli: string; path: string; version: string; }
+export interface Host {
+  id: string; name: string; kind: string; addr: string; status: string; heartbeat: number; version: string;
+  port?: number; user?: string;
+  caps?: HostCap[]; lastProbe?: number | null; latencyMs?: number | null;
+  maxConcurrency?: number; defaultCwd?: string; probeError?: string | null;
+}
+export type ErrorClass = "auth" | "rate_limit" | "timeout" | "other";
+export interface Agent { id: string; name: string; hostId: string; cli: string; cwd: string; max: number; approval: string; color: string; skills: string[]; alias: string; projectId?: string; terminalId?: string; chatRunnable?: boolean; }
+/** Chat 执行适配器：只有 implemented=true 的 CLI 能从 Chat 派活。 */
+export interface Executor { id: string; label: string; kind: string; implemented: boolean; supportsSteer: boolean; available: boolean; }
 export interface Subtask { id: string; title: string; status: string; }
 export type Delivery = "pending" | "injected" | "failed";
 /** 会话：消息的宿主。todoId 为空时是尚未派活的“新任务”会话。 */
@@ -22,7 +31,14 @@ export interface Todo {
 }
 export interface Run {
   id: string; todoId: string; agentId: string; status: string; trigger: string;
-  startedAt: number | null; endedAt: number | null; cost: number; tokens: number; error: string | null; parentRunId: string | null; cwd?: string; branch?: string | null;
+  startedAt: number | null; endedAt: number | null; cost: number;
+  /** null = 执行器未上报，界面显示「未上报」而不是 0（见 docs/ARCH-hosts-stats.md） */
+  tokens: number | null;
+  error: string | null; parentRunId: string | null; cwd?: string; branch?: string | null;
+  hostId?: string | null; createdAt?: number | null;
+  tokensIn?: number | null; tokensOut?: number | null; usageSource?: "acp" | "unknown";
+  errorClass?: ErrorClass | null; exitCode?: number | null;
+  queueWaitMs?: number | null; durationMs?: number | null; queueReason?: string | null;
 }
 export interface Approval { id: string; requestId: string; runId: string; todoId: string; title: string; description: string; options: { id: string; name: string; kind: string }[]; }
 /** 预览区拾取的 UI 元素，随消息注入 Agent（见 docs/ARCH-ui-context.md） */
@@ -77,6 +93,9 @@ export interface State {
   activeProjectId: string | null;
   projects: Project[];
   cliCapabilities: string[];
+  executors?: Executor[];
+  /** 当前 Chat run 会使用的 dsh 来源（内置 / 自定义 / 系统 PATH） */
+  dshRuntime?: { source: "bundled" | "system" | "custom"; path: string | null; version: string | null };
   settings: Settings;
   dbPath?: string;
   userDataPath?: string;

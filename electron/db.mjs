@@ -12,10 +12,10 @@ if (!fs.existsSync(wasm) && wasm.includes("app.asar")) {
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT, path TEXT, desc TEXT, color TEXT, status TEXT, created_at INTEGER, last_opened_at INTEGER, alias TEXT);
-CREATE TABLE IF NOT EXISTS hosts (id TEXT PRIMARY KEY, name TEXT, kind TEXT, addr TEXT, status TEXT, heartbeat INTEGER, version TEXT, port INTEGER, user TEXT);
+CREATE TABLE IF NOT EXISTS hosts (id TEXT PRIMARY KEY, name TEXT, kind TEXT, addr TEXT, status TEXT, heartbeat INTEGER, version TEXT, port INTEGER, user TEXT, caps TEXT, last_probe INTEGER, latency_ms INTEGER, max_concurrency INTEGER, default_cwd TEXT, probe_error TEXT);
 CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT, host_id TEXT, cli TEXT, cwd TEXT, max_concurrency INTEGER, approval TEXT, color TEXT, skills TEXT, alias TEXT, project_id TEXT, terminal_id TEXT);
 CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, key TEXT, title TEXT, desc TEXT, acceptance TEXT, status TEXT, agent_id TEXT, priority TEXT, due TEXT, parent_id TEXT, tags TEXT, subtasks TEXT, blocked_by TEXT, missing_writeback INTEGER, last_run_failed INTEGER, cwd TEXT, created_at INTEGER, updated_at INTEGER, confirmed INTEGER, project_id TEXT);
-CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, todo_id TEXT, agent_id TEXT, status TEXT, trigger TEXT, started_at INTEGER, ended_at INTEGER, cost REAL, tokens INTEGER, error TEXT, parent_run_id TEXT, cwd TEXT, branch TEXT);
+CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, todo_id TEXT, agent_id TEXT, status TEXT, trigger TEXT, started_at INTEGER, ended_at INTEGER, cost REAL, tokens INTEGER, error TEXT, parent_run_id TEXT, cwd TEXT, branch TEXT, host_id TEXT, created_at INTEGER, tokens_in INTEGER, tokens_out INTEGER, usage_source TEXT, error_class TEXT, exit_code INTEGER, queue_wait_ms INTEGER, duration_ms INTEGER, queue_reason TEXT);
 CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, todo_id TEXT, title TEXT, project_id TEXT, project TEXT, agent_id TEXT, created_at INTEGER, updated_at INTEGER);
 CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, todo_id TEXT, run_id TEXT, role TEXT, kind TEXT, content TEXT, injected INTEGER, created_at INTEGER, thread_id TEXT, delivery TEXT, context TEXT);
 CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, todo_id TEXT, run_id TEXT, kind TEXT, title TEXT, origin TEXT, ref TEXT, deep_link TEXT, created_at INTEGER);
@@ -75,6 +75,24 @@ export async function openDb(dir) {
     "ALTER TABLE messages ADD COLUMN thread_id TEXT",
     "ALTER TABLE messages ADD COLUMN delivery TEXT",
     "ALTER TABLE messages ADD COLUMN context TEXT",
+    // 主机：能力矩阵 / 探测时间 / 负载上限 / 默认远端目录（见 docs/ARCH-hosts-stats.md）
+    "ALTER TABLE hosts ADD COLUMN caps TEXT",
+    "ALTER TABLE hosts ADD COLUMN last_probe INTEGER",
+    "ALTER TABLE hosts ADD COLUMN latency_ms INTEGER",
+    "ALTER TABLE hosts ADD COLUMN max_concurrency INTEGER",
+    "ALTER TABLE hosts ADD COLUMN default_cwd TEXT",
+    "ALTER TABLE hosts ADD COLUMN probe_error TEXT",
+    // run：用量 / 耗时 / 排队 / 错误分类（统计页的唯一事实来源）
+    "ALTER TABLE runs ADD COLUMN host_id TEXT",
+    "ALTER TABLE runs ADD COLUMN created_at INTEGER",
+    "ALTER TABLE runs ADD COLUMN tokens_in INTEGER",
+    "ALTER TABLE runs ADD COLUMN tokens_out INTEGER",
+    "ALTER TABLE runs ADD COLUMN usage_source TEXT",
+    "ALTER TABLE runs ADD COLUMN error_class TEXT",
+    "ALTER TABLE runs ADD COLUMN exit_code INTEGER",
+    "ALTER TABLE runs ADD COLUMN queue_wait_ms INTEGER",
+    "ALTER TABLE runs ADD COLUMN duration_ms INTEGER",
+    "ALTER TABLE runs ADD COLUMN queue_reason TEXT",
   ]) { try { db.run(sql); } catch { /* exists */ } }
 
   const state = {
@@ -89,7 +107,14 @@ export async function openDb(dir) {
     return res[0].values.map((v) => Object.fromEntries(res[0].columns.map((c, i) => [c, v[i]])));
   };
 
-  state.hosts = rows("SELECT * FROM hosts").map((r) => ({ id: r.id, name: r.name, kind: r.kind, addr: r.addr, status: r.status, heartbeat: r.heartbeat, version: r.version, port: r.port || 22, user: r.user || "" }));
+  // 老库没有 probes/caps：一律回落成空值，页面显示「未探测」而不是假的 0
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  state.hosts = rows("SELECT * FROM hosts").map((r) => ({
+    id: r.id, name: r.name, kind: r.kind, addr: r.addr, status: r.status, heartbeat: r.heartbeat || 0,
+    version: r.version || "—", port: r.port || 22, user: r.user || "",
+    caps: J(r.caps, []), lastProbe: num(r.last_probe), latencyMs: num(r.latency_ms),
+    maxConcurrency: num(r.max_concurrency) || 0, defaultCwd: r.default_cwd || "", probeError: r.probe_error || null,
+  }));
   state.projects = rows("SELECT * FROM projects").map((r) => ({
     id: r.id, name: r.name, path: r.path, desc: r.desc || "", color: r.color || "slate",
     status: r.status || "in_progress", createdAt: r.created_at || Date.now(), lastOpenedAt: r.last_opened_at || r.created_at || 0,
@@ -105,8 +130,12 @@ export async function openDb(dir) {
   }));
   state.runs = rows("SELECT * FROM runs").map((r) => ({
     id: r.id, todoId: r.todo_id, agentId: r.agent_id, status: r.status, trigger: r.trigger,
-    startedAt: r.started_at, endedAt: r.ended_at, cost: r.cost || 0, tokens: r.tokens || 0,
+    startedAt: r.started_at, endedAt: r.ended_at, cost: r.cost || 0, tokens: num(r.tokens),
     error: r.error || null, parentRunId: r.parent_run_id || null, cwd: r.cwd || "", branch: r.branch || null,
+    hostId: r.host_id || null, createdAt: num(r.created_at) || r.started_at || null,
+    tokensIn: num(r.tokens_in), tokensOut: num(r.tokens_out), usageSource: r.usage_source || "unknown",
+    errorClass: r.error_class || null, exitCode: num(r.exit_code),
+    queueWaitMs: num(r.queue_wait_ms), durationMs: num(r.duration_ms), queueReason: r.queue_reason || null,
   }));
   state.threads = rows("SELECT * FROM threads").map((r) => ({
     id: r.id, todoId: r.todo_id || null, title: r.title || "", projectId: r.project_id || null,
@@ -127,6 +156,7 @@ export async function openDb(dir) {
   state.projectPath = rows("SELECT v FROM meta WHERE k='projectPath'")[0]?.v || "";
   state.projectId = rows("SELECT v FROM meta WHERE k='projectId'")[0]?.v || "";
   state.activeProjectId = rows("SELECT v FROM meta WHERE k='activeProjectId'")[0]?.v || null;
+  state.chatScopeMigrated = rows("SELECT v FROM meta WHERE k='chatScopeMigrated'")[0]?.v === "1";
   if (!state.projects.length && state.projectPath) {
     state.projects.push({ id: "p-local", name: state.projectPath.split("/").filter(Boolean).slice(-1)[0] || "project", path: state.projectPath, desc: "", color: "teal", status: "in_progress", createdAt: Date.now(), lastOpenedAt: Date.now() });
     state.projectId = "p-local";
@@ -161,11 +191,21 @@ export async function openDb(dir) {
   const writeNow = () => {
     db.run("BEGIN");
     for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "inbox", "context", "settings", "meta"]) db.run(`DELETE FROM ${t}`);
-    for (const h of state.hosts) db.run("INSERT INTO hosts VALUES (?,?,?,?,?,?,?,?,?)", [h.id, h.name, h.kind, h.addr, h.status, h.heartbeat, h.version, h.port || 22, h.user || ""]);
+    for (const h of state.hosts) db.run(
+      "INSERT INTO hosts (id,name,kind,addr,status,heartbeat,version,port,user,caps,last_probe,latency_ms,max_concurrency,default_cwd,probe_error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [h.id, h.name, h.kind, h.addr, h.status, h.heartbeat || 0, h.version || "—", h.port || 22, h.user || "",
+        JSON.stringify(h.caps || []), h.lastProbe ?? null, h.latencyMs ?? null, h.maxConcurrency || 0, h.defaultCwd || "", h.probeError ?? null],
+    );
     for (const p of state.projects) db.run("INSERT INTO projects VALUES (?,?,?,?,?,?,?,?,?)", [p.id, p.name, p.path, p.desc || "", p.color || "slate", p.status || "in_progress", p.createdAt || Date.now(), p.lastOpenedAt || 0, p.alias || ""]);
     for (const a of state.agents) db.run("INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [a.id, a.name, a.hostId, a.cli, a.cwd, a.max, a.approval, a.color, JSON.stringify(a.skills || []), a.alias || "", a.projectId || "", a.terminalId || ""]);
     for (const t of state.todos) db.run("INSERT INTO todos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.key, t.title, t.desc || "", JSON.stringify(t.acceptance || []), t.status, t.agentId || null, t.priority, t.due || "", t.parentId || null, JSON.stringify(t.tags || []), JSON.stringify(t.subtasks || []), JSON.stringify(t.blockedBy || []), t.missingWriteback ? 1 : 0, t.lastRunFailed ? 1 : 0, t.cwd || "", t.createdAt || Date.now(), t.updatedAt || Date.now(), t.confirmed ? 1 : 0, t.projectId || null]);
-    for (const r of state.runs) db.run("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [r.id, r.todoId, r.agentId, r.status, r.trigger || "assign", r.startedAt || null, r.endedAt || null, r.cost || 0, r.tokens || 0, r.error || null, r.parentRunId || null, r.cwd || "", r.branch || null]);
+    for (const r of state.runs) db.run(
+      "INSERT INTO runs (id,todo_id,agent_id,status,trigger,started_at,ended_at,cost,tokens,error,parent_run_id,cwd,branch,host_id,created_at,tokens_in,tokens_out,usage_source,error_class,exit_code,queue_wait_ms,duration_ms,queue_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [r.id, r.todoId, r.agentId, r.status, r.trigger || "assign", r.startedAt || null, r.endedAt || null, r.cost || 0,
+        r.tokens ?? null, r.error || null, r.parentRunId || null, r.cwd || "", r.branch || null, r.hostId || null,
+        r.createdAt || null, r.tokensIn ?? null, r.tokensOut ?? null, r.usageSource || "unknown", r.errorClass || null,
+        r.exitCode ?? null, r.queueWaitMs ?? null, r.durationMs ?? null, r.queueReason || null],
+    );
     for (const t of state.threads) db.run("INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)", [t.id, t.todoId || null, t.title || "", t.projectId || null, t.project || "", t.agentId || null, t.createdAt || Date.now(), t.updatedAt || Date.now()]);
     for (const m of state.messages) db.run("INSERT INTO messages VALUES (?,?,?,?,?,?,?,?,?,?,?)", [m.id, m.todoId || null, m.runId || null, m.role, m.kind || "text", m.content, m.injected ? 1 : 0, m.createdAt, m.threadId || null, m.delivery || null, m.context ? JSON.stringify(m.context) : null]);
     for (const a of state.artifacts) db.run("INSERT INTO artifacts VALUES (?,?,?,?,?,?,?,?,?)", [a.id, a.todoId, a.runId, a.kind, a.title, a.origin, a.ref, a.deepLink, a.createdAt || Date.now()]);
@@ -177,6 +217,7 @@ export async function openDb(dir) {
     db.run("INSERT INTO meta VALUES ('projectPath', ?)", [state.projectPath || ""]);
     db.run("INSERT INTO meta VALUES ('projectId', ?)", [state.projectId || ""]);
     db.run("INSERT INTO meta VALUES ('activeProjectId', ?)", [state.activeProjectId || ""]);
+    db.run("INSERT INTO meta VALUES ('chatScopeMigrated', ?)", [state.chatScopeMigrated ? "1" : "0"]);
     db.run("INSERT INTO meta VALUES ('cliCapabilities', ?)", [JSON.stringify(state.cliCapabilities || [])]);
     db.run("COMMIT");
     fs.writeFileSync(file, Buffer.from(db.export()));

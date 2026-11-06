@@ -1,0 +1,3 @@
+# 由 scripts/bundle-dsh.mjs 生成，不入库
+*
+!.gitignore

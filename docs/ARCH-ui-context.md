@@ -8,7 +8,7 @@
 ## 1. 操作流程
 
 1. Agent 在终端里起 dev server（`npm run dev`）。
-2. harness 从 pty 输出自动识别 `http://localhost:<port>`，Terminal 栏出现「打开预览 :5173」，点一下即打开（也可在地址栏手动改）。
+2. harness 从 pty 输出自动识别 `http://localhost:<port>`，Terminal 栏出现「打开预览 :5173」，点一下即作为**终端标签页**打开（与 pty 标签并列，可切换/关闭，也可在地址栏手动改）。没有识别到地址时，点工具栏「＋ 预览」也能打开，默认地址来自设置 → 预览。
 3. 点「拾取元素」→ 页面进入 DevTools 式 inspect：悬停高亮、带尺寸/标签提示。
 4. 点中目标元素 → 生成 `ElementContext`，插入 Chat 输入框上方的 chip。
 5. 在 Chat 里补一句「改成品牌蓝、字号 40px」→ 发送。
@@ -18,8 +18,9 @@
 
 ```
 Renderer
-  TerminalPanel  [终端 | 预览]
-    └─ PreviewPanel
+  TerminalPanel  标签栏（pty 标签 + 预览标签）
+    ├─ SplitSurface（pty 标签内的窗格拆分树）
+    └─ PreviewPanel（kind=preview 的标签）
          <webview src=... partition="preview">   ← 独立进程，无 preload
          「拾取元素」→ window.harness.previewPick(wcId)
 Main
@@ -108,11 +109,11 @@ HTML：<h1 class="hero">hello</h1>
 | `electron/db.mjs` | `messages.context`（JSON）列 + 迁移 + 持久化 |
 | `electron/preload.cjs` | `previewPick / previewCancel / previewDetach` |
 | `src/components/PreviewPanel.tsx`（新） | 地址栏、webview、「拾取元素」、错误/结果提示 |
-| `src/components/TerminalPanel.tsx` | `[终端 | 预览]` 模式切换；终端保持挂载（切回不丢 pty） |
+| `src/components/TerminalPanel.tsx` | 预览作为标签页（`Tab.kind=preview`）与 pty 标签并列；终端保持挂载（切回不丢 pty） |
 | `src/components/TaskChat.tsx` | composer 上方的 context chip；消息气泡里的只读元素标记；`send` 带 context |
 | `src/App.tsx` | `pendingContext`；切会话时清空，避免串任务 |
 | `src/types.ts` | `ElementContext`、`Message.context` |
-| `src/styles.css` | `.term-mode` / `.preview-*` / `.composer-ctx` / `.msg-ctx` / `.ctx-tag` |
+| `src/styles.css` | `.term-tabs` / `.preview-*` / `.composer-ctx` / `.msg-ctx` / `.ctx-tag` |
 
 ## 6. 已知限制（下一步）
 
