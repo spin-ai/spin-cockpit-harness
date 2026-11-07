@@ -73,6 +73,29 @@ export interface Run {
   /** 从终端启动的 run：绑定 pty id，停止 / 退出时用它结算 */
   terminalId?: string | null;
 }
+export interface PluginManifest {
+  id: string; name: string; version: string; apiVersion: number;
+  engines?: { cockpit?: string };
+  main?: string;
+  activation?: string[];
+  permissions?: string[];
+  contributes?: {
+    commands?: { id: string; title: string; description?: string }[];
+    events?: string[];
+    settings?: { key: string; type?: string; title?: string; default?: unknown }[];
+    views?: { id: string; title: string; location?: string; icon?: string; entry?: string }[];
+    executors?: unknown[];
+  };
+}
+export interface PluginRecord {
+  id: string; version: string; path: string; enabled: boolean; builtin: boolean;
+  manifest: PluginManifest; permissions: string[]; installedAt: number;
+  lastError: string | null; lastRunAt: number | null;
+}
+export interface PluginCommand { pluginId: string; id: string; title: string; description?: string; }
+export interface TodoLink {
+  id: string; todoId: string; pluginId: string; kind: string; ref: string; title: string; createdAt: number;
+}
 export interface Approval { id: string; requestId: string; runId: string; todoId: string; title: string; description: string; options: { id: string; name: string; kind: string }[]; missionId?: string | null; childTitle?: string | null; }
 /** 预览区拾取的 UI 元素，随消息注入 Agent（见 docs/ARCH-ui-context.md） */
 export interface ElementContext {
@@ -124,6 +147,7 @@ export interface Settings {
 export interface State {
   hosts: Host[]; agents: Agent[]; todos: Todo[]; runs: Run[]; threads: Thread[]; messages: Message[];
   missionPlans?: MissionPlanRecord[]; delegations?: Delegation[];
+  plugins?: PluginRecord[]; pluginCommands?: PluginCommand[]; todoLinks?: TodoLink[];
   artifacts: Artifact[]; events: Event[]; inbox: InboxItem[]; context: ContextState;
   approvals: Approval[];
   summary: { activeRuns: number; cost: number; tokens: number; failures: number };

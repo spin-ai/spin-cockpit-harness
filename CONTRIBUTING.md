@@ -27,7 +27,11 @@ node --check electron/main.mjs
 node --check electron/db.mjs
 node --check electron/acp.mjs
 node --check electron/mcp-bridge.mjs
+node --check electron/plugins/host.mjs
+node --check electron/plugins/runtime.mjs
+node --check plugins/notes/main.mjs
 npm run verify:mission
+npm run verify:plugins
 ```
 
 涉及 dsh 执行/PTY 的改动，请额外运行：

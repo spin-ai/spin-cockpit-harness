@@ -1,7 +1,8 @@
 # Arch · Plugins / 插件宿主（提案）
 
-> **状态：DRAFT / 方案，未实现。**
-> 本文定义 Cockpit Harness 的插件宿主：manifest、生命周期、权限、Host API、执行器、UI view、安装分发与测试。
+> **状态：P0 已实现，P1/P2 持续中。**
+> 已落地：manifest 发现、utilityProcess 加载、命令、事件、插件私有 storage、Settings → 插件、内置 Notes、folder 安装/启用/禁用/卸载。
+> 尚未落地：Executor 注册、Agent tools/MCP、sandbox UI view、zip 安装/签名/市场。
 > 第一个 first-party 插件是 [`PLUGIN-notes.md`](PLUGIN-notes.md)（Obsidian-like Notes）。
 
 ---
@@ -538,22 +539,24 @@ todo_links (
 
 ### 格式
 
+第一版实现 **文件夹安装**；zip / 签名 / 版本回滚是后续。
+
 ```text
-my-plugin.cockpit-plugin     # zip
+my-plugin/
   plugin.json
-  dist/
+  main.mjs
   assets/
 ```
 
 ### 安装流程
 
-1. 选择 zip；
+1. 选择一个包含 `plugin.json` 的目录；
 2. 校验 manifest / apiVersion / engines；
 3. 展示权限；
-4. 解压到 `userData/plugins/<id>/<version>`；
+4. 复制到 `userData/plugins/<id>`；
 5. 先禁用；
 6. 用户启用后加载；
-7. 失败保留上一版本，可回滚。
+7. 失败保留错误信息；版本回滚后续实现。
 
 ### 规则
 
@@ -717,7 +720,37 @@ export async function activate(ctx) {
 
 ---
 
-## 20. 待拍板
+## 20. 已实现（P0）
+
+```text
+electron/plugins/host.mjs       # 发现 / 生命周期 / RPC / 权限 / 命令
+electron/plugins/runtime.mjs    # utilityProcess 入口 + PluginContext
+plugins/notes/plugin.json       # 第一个内置插件
+plugins/notes/main.mjs          # vault 索引 / API / commands / mission event
+src/components/Notes.tsx        # first-party Obsidian-like view
+src/components/Settings.tsx     # 设置 → 插件
+```
+
+已实现：
+
+- 内置插件扫描、userData 插件安装目录
+- manifest / apiVersion / 目录路径校验
+- utilityProcess 启动 / 停止 / 崩溃隔离
+- 命令注册与命令面板触发
+- 只读事件（当前接入了 run.completed / run.failed / mission.finished）
+- 插件 settings / storage
+- `todos.create/update`、`links.attach/list`
+- `fs.pickDirectory`、`ui.openView`、`chat.draft`、`notify`
+- Notes 插件：vault 索引、文件树、预览/编辑、搜索、backlinks、Daily Note、创建任务、发送到 Chat
+
+当前限制：
+
+- 插件 UI 只实现了 first-party Notes 的原生 React 页面；第三方 iframe view 尚未开放
+- Executor 注册 / Agent tools / MCP 尚未接入
+- 安装只支持目录；zip / 签名 / 市场未做
+- 权限是 API 层检查；utilityProcess 不是 OS 沙箱
+
+## 21. 待拍板
 
 1. 第一版只做本地受信插件，还是直接做市场？
 2. Executor 插件是否优先于 UI 插件？

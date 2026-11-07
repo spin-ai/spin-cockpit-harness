@@ -129,6 +129,7 @@ function executorList() {
   return EXECUTORS.map((e) => ({ ...e, available: caps.has(e.id) }));
 }
 const active = new Map();
+let pluginHost = null;
 /** Mission MCP：每个 supervisor run 一个 token，只允许操作自己的 Mission */
 const mcpTokens = new Map();
 let mcpServer = null;
@@ -369,6 +370,9 @@ function snapshot() {
     },
     activeProjectId: current?.id || null,
     approvals: [...approvals.values()],
+    plugins: store.state.plugins || [],
+    pluginCommands: pluginHost?.commands() || [],
+    todoLinks: store.state.todoLinks || [],
     settings: store.state.settings || { ...DEFAULT_SETTINGS },
     // 只给渲染层：哪些 Agent 真的能从 Chat 派活（executor 已接入）
     agents: store.state.agents.map((a) => ({ ...a, chatRunnable: chatRunnable(a) })),
@@ -568,6 +572,7 @@ async function startRun(run, todo, agent) {
   todo.lastRunFailed = false;
   store.addMessage(thread.id, run.id, "system", "system", `run ${run.id} started · ${agent.name}`);
   store.addEvent("run.started", `run.started todo=${todo.key} agent=${agent.name} cwd=${cwd}`);
+  pluginHost?.emit("run.started", { runId: run.id, todoId: todo.id, title: todo.title, agentId: agent.id });
   broadcast();
 
   const extraEnv = parseEnvText(store.state.settings?.dshEnv || "");
@@ -657,6 +662,7 @@ async function startRun(run, todo, agent) {
     todo.updatedAt = now();
     store.addMessage(thread.id, run.id, "system", "system", `run 结束 · ${res?.stopReason || "end_turn"}`);
     store.addEvent("run.finished", `run.finished todo=${todo.key}`);
+    pluginHost?.emit("run.completed", { runId: run.id, todoId: todo.id, status: run.status, title: todo.title });
     const delegation = delegationForChild(todo.id);
     if (delegation) {
       settleDelegation(todo, "completed", missionChildSummary(todo, run).summary, run);
@@ -680,6 +686,7 @@ async function startRun(run, todo, agent) {
       todo.updatedAt = now();
       store.addMessage(thread.id, run.id, "system", "error", `run 失败：${run.error}`);
       store.addEvent("run.failed", `run.failed todo=${todo.key} ${run.error}`);
+      pluginHost?.emit("run.failed", { runId: run.id, todoId: todo.id, status: run.status, error: run.error });
       const delegation = delegationForChild(todo.id);
       if (delegation) {
         settleDelegation(todo, "failed", run.error, run);
@@ -1560,6 +1567,7 @@ function finishMission(mission, summary = "", artifacts = [], source = "supervis
     store.state.inbox.unshift({ id: store.nextId("i"), todoId: mission.id, kind: "mission_review", title: `Mission 待确认 · ${mission.title}`, at: now(), read: false });
   }
   store.addEvent("mission.finished", `mission.finished ${mission.key} source=${source}`);
+  pluginHost?.emit("mission.finished", { missionId: mission.id, title: mission.title, summary: text, status: mission.status });
   broadcast();
   tick();
 }
@@ -1934,6 +1942,23 @@ function startMissionMcpServer() {
 }
 
 const actions = {
+  pluginInvoke: async ({ pluginId, method, args } = {}) => {
+    if (!pluginHost) throw new Error("插件宿主未启动");
+    return pluginHost.invoke(String(pluginId || ""), String(method || ""), args || {});
+  },
+  pluginRunCommand: async ({ pluginId, commandId, args } = {}) => {
+    if (!pluginHost) throw new Error("插件宿主未启动");
+    return pluginHost.executeCommand(String(pluginId || ""), String(commandId || ""), args || {});
+  },
+  pluginEnable: async ({ id } = {}) => pluginHost?.setEnabled(String(id || ""), true),
+  pluginDisable: async ({ id } = {}) => pluginHost?.setEnabled(String(id || ""), false),
+  pluginInstall: async () => {
+    if (!pluginHost) throw new Error("插件宿主未启动");
+    const res = await dialog.showOpenDialog(win, { properties: ["openDirectory"], title: "选择插件目录（包含 plugin.json）" });
+    if (res.canceled || !res.filePaths[0]) return null;
+    return pluginHost.installFromFolder(res.filePaths[0]);
+  },
+  pluginRemove: async ({ id } = {}) => pluginHost?.remove(String(id || "")),
   setSettings: (patch) => {
     const next = sanitizeSettings(patch || {});
     store.state.settings = { ...(store.state.settings || DEFAULT_SETTINGS), ...next };
@@ -2066,6 +2091,7 @@ const actions = {
     store.state.todos.unshift(todo);
     threadForTodo(todo);
     store.addEvent("todo.created", `todo.created ${todo.key} ${title}`);
+    pluginHost?.emit("todo.created", { todoId: todo.id, title: todo.title, status: todo.status });
     return todo;
   },
   /**
@@ -2549,6 +2575,7 @@ const actions = {
     for (const item of store.state.inbox) if (item.todoId === id) item.read = true;
     store.addMessage(threadForTodo(todo).id, null, "system", "system", `已确认 · ${todo.key}`);
     store.addEvent(todo.kind === "mission" ? "mission.confirmed" : "todo.confirmed", `${todo.kind === "mission" ? "mission" : "todo"}.confirmed ${todo.key}`);
+    pluginHost?.emit("todo.confirmed", { todoId: todo.id, title: todo.title, mission: todo.kind === "mission" });
   },
   run: ({ id, agentId }) => {
     const todo = store.state.todos.find((t) => t.id === id);
@@ -3249,6 +3276,16 @@ app.whenReady().then(async () => {
   seed();
   startMissionMcpServer();
   await createWindow();
+  try {
+    const { PluginHost } = await import("./plugins/host.mjs");
+    pluginHost = new PluginHost({
+      app, getWin: () => win, store, actions, dialog,
+      onChange: () => broadcast(),
+    });
+    await pluginHost.start();
+  } catch (err) {
+    console.warn(`[plugins] host start failed: ${String(err?.message || err)}`);
+  }
   broadcast();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
@@ -3257,6 +3294,7 @@ app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(
 app.on("before-quit", () => {
   try { grapeProc?.kill(); } catch { /* ignore */ }
   try { mcpServer?.close(); } catch { /* ignore */ }
+  void pluginHost?.stopAll();
   for (const handle of active.values()) { try { handle.client.close(); } catch { /* ignore */ } }
   // 终端 pty 会随应用消失：先按「用户关闭」结算，否则重启后 TODO 会卡在运行中
   for (const [id, info] of terminalUrls) {
