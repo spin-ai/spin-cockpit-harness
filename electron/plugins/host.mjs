@@ -203,21 +203,26 @@ export class PluginHost {
       this.onChange?.();
     });
     child.stderr?.on("data", (buf) => this.appendLog(plugin.id, "info", buf.toString().slice(-2000)));
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("plugin activate timeout")), 15000);
-      const ready = (evt) => {
-        const msg = evt?.data ?? evt;
-        if (msg?.type === "ready") { clearTimeout(timer); child.off("message", ready); resolve(); }
-        else if (msg?.type === "activate-error") { clearTimeout(timer); child.off("message", ready); reject(new Error(msg.error)); }
-      };
-      child.on("message", ready);
-      child.postMessage({
-        type: "activate",
-        manifest: plugin.manifest,
-        dir,
-        dataDir: this.dataDir(plugin.id),
+    try {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("plugin activate timeout")), 15000);
+        const ready = (evt) => {
+          const msg = evt?.data ?? evt;
+          if (msg?.type === "ready") { clearTimeout(timer); child.off("message", ready); resolve(); }
+          else if (msg?.type === "activate-error") { clearTimeout(timer); child.off("message", ready); reject(new Error(msg.error)); }
+        };
+        child.on("message", ready);
+        child.postMessage({
+          type: "activate",
+          manifest: plugin.manifest,
+          dir,
+          dataDir: this.dataDir(plugin.id),
+        });
       });
-    });
+    } catch (err) {
+      this.stopPlugin(plugin.id, false);
+      throw err;
+    }
     plugin.lastError = null;
     plugin.lastRunAt = Date.now();
     this.appendLog(plugin.id, "info", `activated ${plugin.version}`);

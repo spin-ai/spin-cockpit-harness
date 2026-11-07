@@ -120,7 +120,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: { state: State; a
     if (!note || !dirty) return;
     setBusy(true);
     try {
-      const res = await invoke("notes.save", { path: note.path, content: draft });
+      const res = await invoke("notes.save", { path: note.path, content: draft, mtime: note.mtime });
       if (res) { setNote(res); setDraft(res.content || ""); setDirty(false); setNotice("已保存"); }
       await refreshList();
     } catch (err) { fail(err); } finally { setBusy(false); }
