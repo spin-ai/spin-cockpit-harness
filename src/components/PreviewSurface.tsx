@@ -4,6 +4,11 @@ import { CopyIcon, ListIcon, RefreshIcon, RevealIcon, XIcon } from "./Icons";
 import { FileVisual, extOf } from "./FileVisual";
 import { renderMarkdown, slugifyHeading } from "../markdown";
 import { requestFilePreview } from "../terminal-events";
+import { lazy, Suspense } from "react";
+import type { VisualEditorApi } from "./HtmlVisualEditor";
+
+// GrapesJS 体积大：只在第一次打开「可视化」时加载
+const HtmlVisualEditor = lazy(() => import("./HtmlVisualEditor").then((m) => ({ default: m.HtmlVisualEditor })));
 
 // Electron <webview>：独立进程、无 preload；本地 HTML 用 file://，dev server 用 http(s)
 const Webview: any = "webview";
@@ -79,6 +84,8 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [tocOpen, setTocOpen] = useState(false);
+  const visualApiRef = useRef<VisualEditorApi | null>(null);
+  const [visualDirty, setVisualDirty] = useState(false);
   const editable = isFile && (isHtml || isMarkdown);
   const dirty = editable && data?.text != null && draft !== data.text;
 
@@ -86,7 +93,7 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   // webview 只用于网页 / HTML / 图片；Markdown 与其他文本走 DOM 渲染
   const useWebview = Boolean(src) && (!isFile || isHtml || isImage);
   // HTML 文件即使源码模式也保留 webview，切回来不重新加载
-  const showWebview = useWebview && (!isFile || !isHtml || fileMode !== "source");
+  const showWebview = useWebview && (!isFile || !isHtml || fileMode === "render");
 
   const mdHtml = useMemo(() => {
     if (!isMarkdown || fileMode !== "render" || data?.text == null) return "";
@@ -96,7 +103,7 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   // 同一标签换成另一个文件时回到「渲染」视图
   useEffect(() => {
     setFileMode("render");
-    try { void viewRef.current?.executeJavaScript("try{document.designMode='off'}catch(e){}; true"); } catch { /* ignore */ }
+    setVisualDirty(false);
   }, [file?.rel, file?.root]);
 
   // web：地址栏/自动打开发生变化时导航
@@ -241,48 +248,30 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
     if (target) requestFilePreview({ rel: target, name: target.split("/").pop(), root: file?.root || root });
   };
 
-  /** 调 guest（webview）里的 JS：加超时，避免 webview 未就绪时按钮一直转 */
-  const evalGuest = async (expr: string, ms = 4000) => {
-    const el = viewRef.current;
-    if (!el?.executeJavaScript) throw new Error("预览还没加载完成");
-    return await Promise.race([
-      el.executeJavaScript(expr) as Promise<unknown>,
-      new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("预览未就绪，稍后再试")), ms)),
-    ]);
-  };
-
-  /** 可视化编辑：直接在设计画布里改（designMode），保存时把 outerHTML 写回磁盘 */
-  const enterVisual = () => {
-    setFileMode("visual");
-    // webview 可能正在 reload：重试几次直到 designMode 真的打开
-    let tries = 0;
-    const enable = () => {
-      tries += 1;
-      void evalGuest("document.designMode==='on' ? 'on' : (document.designMode='on', document.body && (document.body.contentEditable='true'), 'on')", 3000)
-        .then((mode) => { if (mode !== "on" && tries < 4) window.setTimeout(enable, 400); })
-        .catch(() => { if (tries < 4) window.setTimeout(enable, 400); });
-    };
-    window.setTimeout(enable, 150);
-  };
-  const leaveVisual = (reload = true) => {
-    void evalGuest("try{document.designMode='off';document.body&&(document.body.contentEditable='false')}catch(e){}; true", 2000).catch(() => { /* ignore */ });
-    if (reload) refresh(); // 丢弃未保存的改动，回到磁盘版本
-  };
+  /** 可视化编辑（GrapesJS）：保存时把编辑器产出的完整 HTML 写回磁盘 */
   const saveVisual = async () => {
     if (!file) return;
+    const api = visualApiRef.current;
+    if (!api) { setError("可视化编辑器还没准备好"); return; }
     setSaving(true);
     try {
-      // 序列化前摘掉我们加的 contenteditable，别把它写进文件
-      const html = await evalGuest(
-        "(() => { const b = document.body; const had = b ? b.getAttribute('contenteditable') : null; if (b) b.removeAttribute('contenteditable'); const out = '<!DOCTYPE html>\\n' + document.documentElement.outerHTML; if (b && had !== null) b.setAttribute('contenteditable', had); return out; })()",
-      );
-      await window.harness.filesWrite(file.rel, file.root, String(html));
+      const html = api.save();
+      await window.harness.filesWrite(file.rel, file.root, html);
       setSavedAt(Date.now());
+      setVisualDirty(false);
     } catch (e) {
       setError(String((e as Error)?.message || e));
     } finally {
       setSaving(false);
     }
+  };
+
+  /** 离开可视化：有未保存修改先确认，然后回到渲染并刷新 */
+  const leaveVisualTo = (next: "render" | "source") => {
+    if (visualDirty && !window.confirm("可视化编辑有未保存修改，切走会丢弃。继续？")) return;
+    setVisualDirty(false);
+    setFileMode(next);
+    if (isHtml) refresh();
   };
 
   const save = async () => {
@@ -375,11 +364,11 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
         <div className="preview-surface-actions">
           {editable && data?.text != null && (
             <div className="file-preview-seg" role="group" aria-label="预览模式">
-              <button className={fileMode === "render" ? "on" : ""} onClick={() => { if (fileMode === "visual") leaveVisual(); setFileMode("render"); }}>{isHtml ? "预览" : "富文本"}</button>
+              <button className={fileMode === "render" ? "on" : ""} onClick={() => { if (fileMode === "visual") leaveVisualTo("render"); else setFileMode("render"); }}>{isHtml ? "预览" : "富文本"}</button>
               {isHtml && (
-                <button className={fileMode === "visual" ? "on" : ""} onClick={enterVisual} title="在页面上直接改文字 / 拖图片（designMode）">可视化</button>
+                <button className={fileMode === "visual" ? "on" : ""} onClick={() => setFileMode("visual")} title="GrapesJS 画布：改文字 / 拖组件 / 调样式">可视化</button>
               )}
-              <button className={fileMode === "source" ? "on" : ""} onClick={() => { if (fileMode === "visual") leaveVisual(); setFileMode("source"); }}>{isHtml ? "源码" : "源码"}</button>
+              <button className={fileMode === "source" ? "on" : ""} onClick={() => { if (fileMode === "visual") leaveVisualTo("source"); else setFileMode("source"); }}>源码</button>
             </div>
           )}
           {isMarkdown && headings.length > 0 && (
@@ -417,7 +406,9 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
         </div>
       </div>
       {fileMode === "visual" && (
-        <div className="preview-hint visual">可视化编辑中：直接改文字 / 选图片，⌘S 保存；切到「预览」会丢弃未保存修改</div>
+        <div className="preview-hint visual">
+          GrapesJS 画布：点文字直接改、从右侧面板拖组件、选中后调样式；⌘S 或「保存修改」写回文件{visualDirty ? "（有未保存修改）" : ""}
+        </div>
       )}
       {picking && <div className="preview-hint">点击页面中的元素；Esc 或「取消拾取」退出</div>}
       {picked && !picking && (
@@ -447,6 +438,16 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
           </nav>
         )}
         <div className="preview-surface-content">
+        {isFile && isHtml && fileMode === "visual" && draft != null && (
+          <Suspense fallback={<div className="pane-empty">加载可视化编辑器…</div>}>
+            <HtmlVisualEditor
+              html={draft}
+              fileKey={`${file?.root || ""}/${file?.rel || ""}`}
+              onApi={(api) => { visualApiRef.current = api; }}
+              onDirty={(d) => setVisualDirty(d)}
+            />
+          </Suspense>
+        )}
         {isFile && fileMode === "source" && editable && (
           <textarea
             className="file-source-editor"
