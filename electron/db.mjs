@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS delegations (id TEXT PRIMARY KEY, mission_id TEXT, su
 /** 应用设置默认值。缺失的键一律从这里补齐。 */
 export const DEFAULT_SETTINGS = {
   defaultView: "workspace",        // workspace | projects | stats | hosts
-  theme: "system",                // light | dark | system
+  theme: "system",                // system | light | paper | dark | midnight | forest | graphite
   chatFontSize: 13,               // 11–16
   enterToSend: true,
   confirmStop: false,

@@ -85,7 +85,7 @@ npm run dist                # macOS dmg → release/
 - 终端易用性（参考 ORCA terminal）：多标签快捷键、**窗格拆分**（二进制布局 / 拖拽比例 / 方向键切焦点）、**预览标签拖入拆分的另一半**（或终端右键「在右侧打开预览」）、查找高亮、右键菜单、链接打开、字号缩放、标签重命名 / 运行中提示点、退出重启、挂载前输出回放（见 [docs/ARCH-terminal-ux.md](docs/ARCH-terminal-ux.md)）
 - 前端预览 + 元素拾取（CDP）：预览作为终端标签页（与 pty 标签并列，⌘W / 中键关闭），终端打印的 dev server 地址自动识别；拾取元素 → 结构化 `<ui-context>` 注入 Agent；源码位置优先 `data-ym-src` / React `_debugSource`；截图落 `userData/ui-context`，不污染 worktree
 - 审批弹窗（ACP `session/request_permission`）：按 ACP 选项渲染（允许一次 / 总是允许 / 拒绝），支持多审批队列提示、焦点陷阱/aria；可在设置里改为自动批准 / 自动拒绝
-- 设置页（通用 / 外观 / 执行 / 终端 / 预览与元素 / 数据 / 快捷键 / 关于）：SQLite 持久化、即时生效；含分区说明/行内 hint、深浅色主题、默认 Agent、全局并发、dsh 路径/模型、终端字号与回滚、预览地址、备份导出与重置
+- 设置页（通用 / 外观 / 执行 / 终端 / 预览与元素 / 数据 / 快捷键 / 关于）：SQLite 持久化、即时生效；含分区说明/行内 hint、7 套主题（跟随系统 / 浅色 / 纸感 / 深色 / 午夜蓝 / 森林 / 石墨）、默认 Agent、全局并发、dsh 路径/模型、终端字号与回滚、预览地址、备份导出与重置
 - 每日模板、产物预览
 - macOS dmg 打包（未签名）
 

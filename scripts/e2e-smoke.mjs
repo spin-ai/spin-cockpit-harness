@@ -162,6 +162,55 @@ r = await run(`
   return { chat: !!chat, todo: !!document.querySelector(".task-row") };`);
 check("失败行下钻回 Chat", r.chat === true, JSON.stringify(r));
 
+// ── 10. 设置：搜索跳转 / 行内恢复默认 / 本页恢复默认 ─────────
+r = await run(`
+  const btn = [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.includes("设置"));
+  if (!btn) return { error: "no settings rail" };
+  __t.click(btn);
+  await __t.wait(500);
+  const input = document.querySelector(".settings-search");
+  __t.setValue(input, "并发");
+  await __t.wait(250);
+  const hits = [...document.querySelectorAll(".settings-hit")];
+  const hit = hits.find((b) => b.textContent.includes("并发上限"));
+  if (!hit) return { error: "no hit" };
+  __t.click(hit);
+  await __t.wait(500);
+  const row = document.querySelector('[data-set-key="maxConcurrentRuns"]');
+  return { hits: hits.length, section: document.querySelector(".settings-head h2")?.textContent, flashed: !!row?.classList.contains("set-hit") };`);
+check("设置搜索跳转 + 行高亮", r.hits >= 1 && r.section === "执行" && r.flashed, JSON.stringify(r));
+
+r = await run(`
+  const nav = [...document.querySelectorAll(".settings-nav-item")].find((b) => b.textContent.trim() === "通用");
+  if (nav) { __t.click(nav); await __t.wait(300); }
+  const row = document.querySelector('[data-set-key="enterToSend"]');
+  if (!row) return { error: "no row" };
+  __t.click(row.querySelector(".switch"));
+  await __t.wait(500);
+  const off = await window.harness.getState();
+  const resetBtn = row.querySelector(".set-row-reset");
+  if (!resetBtn) return { error: "no reset button", value: off.settings.enterToSend };
+  __t.click(resetBtn);
+  await __t.wait(500);
+  const on = await window.harness.getState();
+  return { off: off.settings.enterToSend, on: on.settings.enterToSend, saved: !!document.querySelector(".settings-saved") };`);
+check("设置行内「恢复默认」", r.off === false && r.on === true && r.saved, JSON.stringify(r));
+
+r = await run(`
+  const nav = [...document.querySelectorAll(".settings-nav-item")].find((b) => b.textContent.trim() === "外观");
+  if (nav) { __t.click(nav); await __t.wait(300); }
+  const dark = [...document.querySelectorAll(".theme-card")].find((b) => b.textContent.includes("深色"));
+  if (!dark) return { error: "no theme card" };
+  __t.click(dark);
+  await __t.wait(400);
+  const btn = [...document.querySelectorAll(".settings-body .btn")].find((b) => b.textContent.includes("本页恢复默认"));
+  if (!btn) return { error: "no section reset" };
+  __t.click(btn);
+  await __t.wait(600);
+  const s = await window.harness.getState();
+  return { theme: s.settings.theme, font: s.settings.chatFontSize };`);
+check("设置「本页恢复默认」", r.theme === "system" && r.font === 13, JSON.stringify(r));
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 ws.close();
 process.exit(results.every(Boolean) ? 0 : 1);
