@@ -15,6 +15,30 @@ const GROUPS: { id: string; label: string; statuses: TodoStatus[]; confirmed?: b
   { id: "confirmed", label: "已确认", statuses: ["done"], confirmed: true },
 ];
 
+function TaskPlan({ items, expanded }: { items: Todo["subtasks"]; expanded: boolean }) {
+  const done = items.filter((s) => s.status === "done").length;
+  const current = items.find((s) => s.status === "in_progress");
+  const shown = expanded ? items : current ? [current] : [];
+  return (
+    <div className="task-plan">
+      <div className="task-plan-head tiny">
+        <span className="muted">Agent 计划</span>
+        <span className="mono faint">{done}/{items.length}</span>
+      </div>
+      {shown.length > 0 && (
+        <ul className="task-plan-list">
+          {shown.map((s) => (
+            <li key={s.id} className={`task-plan-step st-${s.status}`}>
+              <span className="task-plan-glyph">{s.status === "done" ? "✓" : s.status === "in_progress" ? "◐" : s.status === "cancelled" ? "✕" : "○"}</span>
+              <span className="ellipsis" title={s.title}>{s.title}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts, onAddProject, onManageProjects, onSwitchProject, onCollapse, confirmStop = false }: {
   state: State; selectedId: string | null; now: number; act: Act; onSelect: (id: string) => void;
   projectCounts: Record<string, number>;
@@ -283,6 +307,7 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
                         </div>
                       )}
                       {t.kind !== "mission" && t.desc && <div className="task-row-desc ellipsis" title={t.desc}>{t.desc}</div>}
+                      {t.subtasks?.length > 0 && <TaskPlan items={t.subtasks} expanded={t.id === selectedId} />}
                     </>
                   )}
                   <div className="row between gap6 tiny muted">
