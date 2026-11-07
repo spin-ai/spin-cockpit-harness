@@ -204,7 +204,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   };
 
   const sendSourceToChat = (source: Source) => {
-    const text = `请基于以下 source 整理一个 Wiki draft。\n\nSource: ${source.title}\n${source.content || ""}\n\n要求：给出页面结构、关键结论，并标明引用。`;
+    const text = `请基于以下 source 整理一个 Wiki draft。\n\nSource id: ${source.id}\nSource: ${source.title}\n${source.content || ""}\n\n要求：使用 wiki_search / wiki_read_source / wiki_upsert_draft / wiki_add_citation 工具；给出页面结构、关键结论，并绑定引用。不要直接标记 reviewed。`;
     window.dispatchEvent(new CustomEvent("harness:view", { detail: "workspace" }));
     window.setTimeout(() => window.dispatchEvent(new CustomEvent("harness:chat-draft", { detail: { text } })), 100);
   };
