@@ -3,11 +3,14 @@
 [![build](https://github.com/spin-ai/spin-cockpit-harness/actions/workflows/build.yml/badge.svg)](https://github.com/spin-ai/spin-cockpit-harness/actions/workflows/build.yml)
 [![release](https://img.shields.io/github/v/release/spin-ai/spin-cockpit-harness?include_prereleases&label=release)](https://github.com/spin-ai/spin-cockpit-harness/releases)
 [![wiki](https://img.shields.io/badge/wiki-GitHub%20Wiki-blue)](https://github.com/spin-ai/spin-cockpit-harness/wiki)
+[![docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://spin-ai.github.io/spin-cockpit-harness/)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![status](https://img.shields.io/badge/status-alpha-orange)
 
 Cockpit Harness · 多 Agent 编排工作台：**Chat 分派任务 → project 下开 Terminal → agent 执行 → 看板看状态 → 确认后进 TODO LIST**。
 Electron 桌面应用，本地 SQLite，执行走 `dsh --profile acp`；仓库名 `spin-cockpit-harness`。
+
+在线文档（GitHub Pages）：<https://spin-ai.github.io/spin-cockpit-harness/>
 
 > **当前版本：`v0.2.0-alpha.2`（Liftoff，公开 Alpha）**
 > Alpha 阶段数据库结构、IPC 与 UI 仍可能变化；升级前请备份本地数据。
@@ -31,15 +34,19 @@ Electron 桌面应用，本地 SQLite，执行走 `dsh --profile acp`；仓库�
 ```sh
 npm install
 npm run dev                 # Vite + Electron
+npm run docs:dev            # 文档站（GitHub Pages 同款，http://localhost:5198）
 # 或
 npm run build && npm start
 npm run dist                # macOS dmg → release/
+npm run docs:build          # → dist-pages/（GitHub Pages）
 ```
 
 前置：本机已安装 `dsh` 并配置好模型；启动时自动探测 `dsh / pi / claude / codex / opencode`。
 
 命名：仓库名 `spin-cockpit-harness`，产品名 **Cockpit Harness**（窗口标题 / 安装包 / ACP 客户端标识统一）；
 需要多实例或跑冒烟测试时用 `COCKPIT_USER_DATA=/tmp/xxx` 指定独立的 userData 目录。
+`npm run docs:build` 的产物由 `.github/workflows/pages.yml` 部署到 GitHub Pages（仓库 Settings → Pages → Source 选 GitHub Actions）。
+
 发行版默认把 dsh 的单文件运行时打进 App（`Contents/Resources/dsh`），不再依赖目标机器安装 dsh；开发模式仍可直接用系统 dsh。需要轻量包时用 `npm run dist:system`。
 
 ## 界面（五列）
