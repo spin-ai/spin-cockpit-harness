@@ -2,9 +2,9 @@
 
 > 不是聊天记录，也不是 Obsidian vault 浏览器。Wiki 是 Source → Page → Citation → Review 的可追溯知识库，Agent 能检索，人负责审核。
 
-![LLM Wiki 页面](./wiki/notes-wiki.png)
+![LLM Wiki 封面](./wiki/cover-llm-wiki.png)
 
-*图：笔记插件里的 Wiki 页面：状态、Citations、Backlinks 和 Memory 都在同一屏。*
+*图：笔记插件把资料整理成可审核的知识库；Agent 可检索、可写 draft。*
 
 ## 为什么不是 vault-first
 
@@ -99,6 +99,10 @@ wiki.dream
 它只产出维护项，不自动修改 reviewed 页面。后续的 LLM Dreaming 会读 session transcript、对照 source 检查 claim、生成 revision + diff，再进入 Review 队列——仍然不自动 reviewed。
 
 ## UI
+
+![Wiki 页面](./wiki/notes-wiki.png)
+
+*图：笔记插件里的 Wiki 页面：状态、Citations、Backlinks 和 Memory 都在同一屏。*
 
 - 左侧：页面 / 资料 / 图谱 / 本地目录。
 - 中间：CodeMirror 编辑器 + 预览。
