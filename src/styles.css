@@ -794,6 +794,19 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 
 /* TODO 行内文字修改：双击标题进入（不额外加提示文案），Enter 保存 / Esc 取消 */
 .task-row-desc{font-size:11px;color:var(--muted);line-height:1.4;margin-top:-1px}
+/* agent 自报的 TODO（todo_write / ACP plan）：选中行展开全程，收起时只显示当前步 */
+.task-plan{display:flex;flex-direction:column;gap:2px;margin-top:1px;padding:4px 6px;border:1px dashed var(--border);border-radius:6px;background:var(--surface-hover)}
+.task-plan-head{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.task-plan-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:1px}
+.task-plan-step{display:flex;align-items:center;gap:5px;font-size:10.5px;line-height:1.45;color:var(--muted);min-width:0}
+.task-plan-step .ellipsis{flex:1;min-width:0}
+.task-plan-glyph{flex:none;width:10px;text-align:center;font-size:9.5px;color:var(--faint)}
+.task-plan-step.st-in_progress{color:var(--fg)}
+.task-plan-step.st-in_progress .task-plan-glyph{color:var(--brand)}
+.task-plan-step.st-done{color:var(--faint);text-decoration:line-through}
+.task-plan-step.st-done .task-plan-glyph{color:var(--green)}
+.task-plan-step.st-cancelled{color:var(--faint)}
+.task-plan-step.st-cancelled .ellipsis{text-decoration:line-through}
 .task-edit{display:flex;flex-direction:column;gap:5px;margin:2px 0}
 .task-edit-title{font:inherit;font-size:12.5px;font-weight:500;padding:4px 6px;border:1px solid var(--brand-line,#bfdbfe);border-radius:6px;background:var(--surface);color:var(--fg);outline:none}
 .task-edit-desc{font:inherit;font-size:11.5px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--fg);resize:vertical;min-height:38px;outline:none}
@@ -1441,3 +1454,7 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 @keyframes md-flash-out{0%{background:rgba(59,130,246,.16)}100%{background:transparent}}
 .md-flash{animation:md-flash-out 1.2s ease-out;border-radius:6px}
 .icon-btn.on{color:var(--brand);background:var(--brand-soft);border-color:var(--brand-line)}
+
+/* HTML 可视化编辑（designMode） */
+.preview-hint.visual{background:var(--brand-soft,#eff6ff);border-color:var(--brand-line,#bfdbfe);color:#1d4ed8}
+.preview-surface[data-visual="1"] webview{outline:2px dashed var(--brand-line,#bfdbfe);outline-offset:-2px}
