@@ -55,6 +55,10 @@ proposed → queued → running → waiting_input → completed → accepted
 - `todos.status` 继续服务看板；`todos.mission_state` 表达 Mission 自己的生命周期。
 - `waiting_children` 不混用 `waiting_input`：前者在等子任务，不计入 worker 并发；后者是 ACP 审批。
 
+![Mission 状态机](./wiki/mission-state.png)
+
+*图：Mission / Supervisor Run / Delegation 的状态；失败、取消、重启都不是「假装完成」。*
+
 ## 六条不变量
 
 1. 一个 Mission 只能有一个当前计划（最新 `approved` 或 `draft`）。
@@ -105,6 +109,10 @@ Plan JSON 的核心是 `steps[]`：每步有 `key` / `title` / `brief` / `accept
 2. 每个 supervisor run 一个随机 token。
 3. 请求里的 `missionId` 必须与 token 记录一致。
 4. 请求体上限 2MB；Mission 结束 / 失败 / 取消时立即吊销 token。
+
+![MCP bridge](./wiki/mcp-bridge.png)
+
+*图：dsh supervisor → stdio MCP bridge → 主进程 HTTP → Mission 领域动作。*
 
 ## 双调度
 

@@ -30,6 +30,10 @@
 - 权限：`session/request_permission` 进入审批队列；可自动批准 / 拒绝。
 - 完成：`prompt` resolve 即 run 结束；失败写错误分类与 inbox。
 
+![MCP bridge](./wiki/mcp-bridge.png)
+
+*图：stdio MCP bridge ↔ 主进程 HTTP /call；Mission 也复用这条链路。*
+
 ## 模型与审批
 
 - 模型 / effort 在设置 → 执行里配置；新 run 生效。
