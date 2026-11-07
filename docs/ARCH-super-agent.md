@@ -43,6 +43,44 @@ Agent  = CLI 运行配置（cli / host / cwd / approval / skills）
 - **不做完全自治**：Alpha 阶段计划必须人工批准。
 - **不先做团队/招聘/多租户**：先把“一个主管 + 多个 worker”跑通。
 
+### 1.3 与 dsh 原生实现的差异（重要）
+
+先纠正一个前提：**dsh 0.2.1-rc.2 本身已经有多 agent 能力**，不是空白。它至少有：
+
+- **原生 subagent**：`subagent` / `subagent_fork`、`send_message`、`interrupt_agent`、`list_agents`、`wait_agent`；子 session 树、depth cap、continuable child、completion notice 都已实现。
+- **Agent Teams**：同一 subagent tree 上的共享任务 DAG、CAS revision、owner、`blockedBy`、advisory `writeScopes`，任务工具 `team_task_*`。
+- **Plan mode**：交互式 `exit_plan_mode` + 用户批准；但这套不在 ACP 表面。
+- **ACP 自动化层**：stdio/HTTP MCP、session list/resume/close、模型与 effort、权限；但刻意只暴露标准 ACP 表面。
+
+对照本提案：
+
+| 维度 | dsh 原生 | 本提案（Mission 模式） | 影响 |
+|---|---|---|---|
+| 子任务实体 | dsh child Session（`origin=subagent`） | Harness child Todo + Run + delegation | 原生子任务不进 Harness 看板/统计 |
+| 委派 | 模型直接调 `subagent` / `subagent_fork` | Supervisor 调 MCP `task.delegate` | 不能同时保留两套调度事实源 |
+| 结果回传 | child settle → completion notice → 父 agent 起新 turn；ACP prompt 会等整棵 descendant 树 | child run settle → Main 事件 → 再 prompt supervisor | 原生更省事；Mission 更可控 |
+| 可观测性 | ACP 只发 root 的 message/thought/tool 事件；child transcript 不上 wire；`origin=subagent` 不进 ACP list/resume | child thread/run/审批/统计都在 Harness | 原生无法做 Harness 级别的子任务审计 |
+| 文件隔离 | 默认共享 cwd；可传 `cwd`；Team 明确“一份 checkout” | 每个 worker run 用独立 worktree/branch | 原生不适合并行改同一仓库 |
+| 进度/看板 | Team 任务板；默认关闭，一份 checkout，无 worktree | Mission/Delegation + 现有 Todo 看板 | Team 不能直接替代 Mission |
+| 计划审批 | 交互式 plan mode；ACP 不暴露 plans/modes | Harness 自己的 Plan Card + 审批状态 | 不能依赖 dsh `plan` 事件 |
+| 模型 | child 默认继承父级；ACP 默认未开 modelSelection；可配置 preset | 每个 worker Agent 可用不同 host/model | 原生跨模型能力受 profile 限制 |
+| 并发 | `maxActiveSubagents` 默认 8；depth 默认 1 | 全局/主机/Agent/同 cwd 调度 | 原生没有 Harness 的队列与主机语义 |
+| 外部 CLI | 可选 ACP / Codex / Claude Code backend | 当前 Chat 只有 dsh 适配器 | 原生外接 CLI 比 Harness 更成熟 |
+| 持久化 | child session 可 durable/continuable；但 ACP 不列/不 resume 子 session | Mission/Delegation 落 SQLite；运行中断可恢复 | 各有边界，不能互相假装 |
+| 审批 | in-process child 共享父策略；外部 ACP child 按 provider 策略自动应答 | 每个 child run 独立 ApprovalModal | 原生的“子任务审批”不可直接复用 |
+
+**结论：**
+
+1. **不要重写 dsh 已经有的 subagent runtime / send_message / list_agents / interrupt_agent。** 如果走原生模式，直接复用；如果走 Mission 模式，明确不依赖它们。
+2. **原生 subagent 不足以承载本项目的 Mission**：它的子 session 不出 ACP、没有 Harness Todo/看板、没有 worktree、没有 Mission 级收件箱/统计，也没有人工计划门。
+3. 因此 v1 必须二选一，不能混着做：
+   - **Mission 模式（推荐）**：Supervisor 只通过 Harness MCP `task.delegate` 创建 child Todo/Run；在 supervisor 的 dsh profile 里**禁用原生 delegation 工具**（或至少不提示使用），保证只有一个调度事实源。
+   - **Native 模式（轻量）**：Supervisor 直接用 dsh 原生 `subagent`，Harness 只把 tool call 渲染成“原生子 agent”卡片；不做 child Todo/Delegation/worktree。适合研究、评审、并行探索，不适合作为项目任务系统。
+4. 可以**借 Team 的语义**（revision/CAS、owner、blockedBy、writeScopes），但不要复制 Team 实现：Team 是单 checkout、单进程、默认关闭，而且 ACP 不暴露任务投影。
+5. **ACP 的关键限制要写进实现假设**：没有 plans/modes；child session 不进 list/resume；root prompt 的 usage 不等于全树 usage；`session/prompt` 在 descendants 未结束时保持 in-flight。当前 `handleUpdate` 里的 `plan` 分支不能当作 dsh plan 卡片来源。
+
+> 本提案后续默认按 **Mission 模式** 描述；Native 模式作为独立的轻量备选，不进入 Mission/Delegation 数据模型。
+
 ---
 
 ## 2. 术语与目标
@@ -235,12 +273,13 @@ session/new { cwd, mcpServers: [...] }
 | `task.retry` | 重试失败子任务 | 复用现有 retry，建新 run |
 | `mission.finish` | 提交总结 + artifacts | 只能进入 `in_review`，不能直接 `done` |
 
-**Transport 先做 0.5 天 spike：**
+**Transport 先做契约测试（不是可行性猜测）：**
 
-- 优先验证 dsh ACP 是否支持 `mcpServers` 的 stdio / HTTP 配置。
+- dsh 0.2.1-rc.2 的 ACP 已声明支持 stdio / HTTP MCP；仍需用当前内置版本跑一次最小 tool 调用，确认参数形态和 bundled 版本一致。
 - 如果只支持 stdio：MCP server 作为子进程启动，通过本地 IPC/Unix socket 把工具调用代理回 Electron Main。
 - 如果支持 HTTP：Main 内嵌 `127.0.0.1` MCP server，每个 Mission 一个 bearer token。
 - 两种方式对上层工具语义不变；**不要把 transport 细节写进业务代码**。
+- **这些工具是 Harness 专属动作，不是 dsh 原生 subagent 的替代品。** 如果 supervisor 仍挂着 dsh 原生 `subagent`，模型可能绕过 `task.delegate`，导致 Mission 里没有 child Todo；Mission 模式必须在 profile/preset 层禁用原生 delegation 工具。
 
 ### 5.3 Mission 生命周期
 
@@ -440,9 +479,9 @@ mission.waiting_children / mission.finished / mission.cancelled / mission.interr
 
 ### Phase 0：Spike（0.5～1 天）
 
-- 验证 dsh ACP `mcpServers` 的 transport（stdio / HTTP）。
-- 验证同一 session 多轮 `session/prompt`。
-- 用最小 echo MCP tool 跑通一次工具调用。
+- 用最小 echo MCP tool 跑通一次 dsh ACP stdio/HTTP MCP 调用（协议已支持，验证 bundled 版本参数）。
+- 验证同一 session 多轮 `session/prompt`，以及 ACP prompt 等待 descendants 的行为。
+- 确认 supervisor profile 如何禁用原生 `subagent` / `subagent_fork` 工具。
 - 结论写回本文；不通过则 P1 降级为 Main 驱动。
 
 ### P0：规划型 Super Agent（约 4～6 人日）
@@ -513,7 +552,7 @@ mission.waiting_children / mission.finished / mission.cancelled / mission.interr
 
 | 风险 | 缓解 |
 |---|---|
-| dsh MCP transport 不确定 | Phase 0 spike；P0 不依赖 MCP |
+| dsh MCP 参数形态/版本差异 | Phase 0 用内置版本跑最小 contract test；P0 不依赖 MCP |
 | 主管循环派活/烧 token | 子任务数、轮次、时长、token 硬闸；计划审批 |
 | 审批风暴 | Mission 级汇总；子任务单独审批；不提供“一键全批” |
 | 调度死锁（主管占槽） | supervisor 独立限额；`waiting_children` 不计入 worker 并发 |
@@ -539,6 +578,8 @@ mission.waiting_children / mission.finished / mission.cancelled / mission.interr
 | 失败子任务 | 主管可 retry / reassign，不自动无限重试 |
 | 远程 | P1 本地 supervisor；远程 worker 支持 |
 | 入口 | 复用 Chat，不新增独立 Super 页面 |
+| 与 dsh 原生 subagent | Mission 模式禁用原生 delegation，只留 Harness `task.delegate`；Native 模式单独开关 |
+| 与 dsh Team | 借任务 DAG/CAS/writeScopes 语义，不复用 Team 实现 |
 
 ---
 
