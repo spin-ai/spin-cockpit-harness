@@ -300,6 +300,13 @@ export async function activate(context) {
     return saveFile(relPath, `# ${safe}\n\n`);
   });
   ctx.api.handle("notes.daily", () => ensureDaily());
+  ctx.api.handle("notes.graph", async () => {
+    const idx = await buildIndex();
+    const nodes = [...idx.files.values()].map((f) => ({ path: f.path, title: f.title, links: (f.outgoing || []).length }));
+    const edges = [];
+    for (const f of idx.files.values()) for (const o of f.outgoing || []) if (o.path) edges.push({ source: f.path, target: o.path });
+    return { nodes, edges };
+  });
   ctx.api.handle("notes.search", async ({ query = "" } = {}) => {
     const idx = await buildIndex();
     const q = String(query || "").trim().toLowerCase();

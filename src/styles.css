@@ -1528,3 +1528,31 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .notes-disabled{display:flex;align-items:center;justify-content:center}.notes-disabled-card{max-width:440px;padding:18px;border:1px solid var(--border);border-radius:10px;background:var(--surface);text-align:center}.notes-disabled-card b{font-size:14px}.notes-disabled-card p{margin:6px 0 0;font-size:12px;color:var(--fg-2);line-height:1.6}
 @media (max-width:1180px){.notes-layout{grid-template-columns:190px minmax(0,1fr) 210px}.notes-page{padding:12px}.notes-head h1{font-size:20px}}
 @media (max-width:900px){.notes-layout{grid-template-columns:1fr}.notes-meta{max-height:180px}.notes-sidebar{max-height:200px}}
+
+/* Notes：多 tab / 双窗格 / 图谱 */
+.notes-pane-layout{flex:1;min-height:0;display:flex}
+.notes-pane-layout.split>.notes-editor-pane{width:50%}
+.notes-editor-pane{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1;border-right:1px solid var(--border);background:var(--surface)}
+.notes-editor-pane:last-child{border-right:0}
+.notes-editor-pane.focused{box-shadow:inset 0 0 0 1px var(--brand-line)}
+.notes-tabbar{display:flex;align-items:stretch;gap:1px;border-bottom:1px solid var(--border);background:var(--page-canvas);overflow-x:auto;flex:none;min-height:30px}
+.notes-tabbar::-webkit-scrollbar{display:none}
+.notes-tab{display:flex;align-items:center;gap:5px;max-width:190px;min-width:0;border:0;border-right:1px solid var(--border);background:transparent;color:var(--faint);font-size:10.5px;padding:5px 7px;cursor:pointer;font-family:inherit;text-align:left}
+.notes-tab:hover{background:var(--surface);color:var(--fg-2)}
+.notes-tab.on{background:var(--surface);color:var(--fg);box-shadow:inset 0 -2px 0 var(--brand)}
+.notes-tab .ellipsis{max-width:130px}
+.notes-tab i{font-style:normal;color:var(--faint);font-size:12px;line-height:1;padding:0 1px;border-radius:3px;flex:none}
+.notes-tab i:hover{background:var(--border);color:var(--fg)}
+.notes-tab-dirty{width:5px;height:5px;border-radius:50%;background:var(--amber);flex:none}
+.notes-tab-add{border:0;background:transparent;color:var(--faint);font-size:14px;padding:0 9px;cursor:pointer}
+.notes-tab-add:hover{color:var(--fg);background:var(--surface)}
+.notes-editor-pane>.notes-note-head{flex:none}
+.notes-empty-pane{flex:1;min-height:0}
+.notes-graph{position:relative;flex:1;min-height:0;background:var(--surface);overflow:hidden;display:flex;align-items:center;justify-content:center}
+.notes-graph svg{width:100%;height:100%;max-height:100%;display:block}
+.notes-graph line{stroke:var(--border);stroke-width:.22}
+.notes-graph-node circle{fill:var(--brand);opacity:.75;cursor:pointer;transition:opacity .15s,r .15s}
+.notes-graph-node text{fill:var(--fg-2);font-size:1.55px;pointer-events:none}
+.notes-graph-node:hover circle{opacity:1;r:4}
+.notes-graph-count{position:absolute;right:12px;bottom:10px;font:9.5px var(--mono);color:var(--faint);background:var(--page-canvas);border:1px solid var(--border);border-radius:5px;padding:2px 6px}
+@media (max-width:900px){.notes-pane-layout.split{flex-direction:column}.notes-pane-layout.split>.notes-editor-pane{width:100%;height:50%;border-right:0;border-bottom:1px solid var(--border)}}
