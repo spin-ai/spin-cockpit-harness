@@ -24,7 +24,8 @@
     "smoke:dsh": "node scripts/smoke-dsh.mjs",
     "postinstall": "electron-builder install-app-deps",
     "typecheck": "tsc --noEmit",
-    "verify:mission": "node scripts/verify-mission.mjs"
+    "verify:mission": "node scripts/verify-mission.mjs",
+    "verify:plugins": "node scripts/verify-plugins.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -88,13 +89,18 @@
       {
         "from": "electron/dsh-supervisor.patch.yml",
         "to": "dsh-supervisor.patch.yml"
+      },
+      {
+        "from": "plugins",
+        "to": "plugins"
       }
     ],
     "asar": true,
     "asarUnpack": [
       "node_modules/sql.js/dist/*.wasm",
       "node_modules/node-pty/**",
-      "electron/mcp-bridge.mjs"
+      "electron/mcp-bridge.mjs",
+      "electron/plugins/runtime.mjs"
     ],
     "mac": {
       "target": [

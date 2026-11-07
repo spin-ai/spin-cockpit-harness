@@ -44,4 +44,19 @@ contextBridge.exposeInMainWorld("harness", {
     ipcRenderer.on("terminal:exit", handler);
     return () => ipcRenderer.removeListener("terminal:exit", handler);
   },
+  onPluginChatDraft: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("harness:plugin-chat-draft", handler);
+    return () => ipcRenderer.removeListener("harness:plugin-chat-draft", handler);
+  },
+  onPluginNotify: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("harness:plugin-notify", handler);
+    return () => ipcRenderer.removeListener("harness:plugin-notify", handler);
+  },
+  onPluginOpenView: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("harness:plugin-open-view", handler);
+    return () => ipcRenderer.removeListener("harness:plugin-open-view", handler);
+  },
 });
