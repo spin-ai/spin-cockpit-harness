@@ -1,8 +1,8 @@
 # Notes 插件：Obsidian-like Markdown 笔记（提案）
 
 > **状态：P0 + 基础 P1 已实现。**
-> 已实现：打开 vault、文件树、预览/编辑、多 tab、左右编辑分屏、搜索、backlinks/outgoing、Graph、Daily Note、从笔记创建 Todo、发送到 Chat；插件宿主见 [`ARCH-plugins.md`](ARCH-plugins.md)。
-> 未实现：Agent `notes_*` tools、Obsidian 社区插件兼容、Graph 力导向布局/缩放。
+> 已实现：打开 vault、文件树 / 右键操作、CodeMirror 源码编辑、预览、多 tab、左右编辑分屏（可拖拽比例）、布局恢复、搜索、backlinks/outgoing、Graph、Daily Note、从笔记创建 Todo、发送到 Chat；插件宿主见 [`ARCH-plugins.md`](ARCH-plugins.md)。
+> 未实现：Live Preview、Agent `notes_*` tools、Obsidian 社区插件兼容、Graph 缩放/局部图谱。
 >
 > 目标不是复刻 Obsidian，而是做一个 **能打开 Obsidian vault、能和 Todo / Chat / Mission 联动的 Markdown 笔记**。
 
