@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { State } from "../types";
+import { GitWiki } from "./GitWiki";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 type Commit = { hash: string; subject: string; author: string; when: string };
@@ -25,6 +26,7 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
   const [commits, setCommits] = useState<Commit[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
   const [output, setOutput] = useState("");
+  const [tab, setTab] = useState<"source" | "wiki">("source");
   const messageRef = useRef<HTMLTextAreaElement | null>(null);
 
   const refresh = useCallback(async () => {
@@ -126,19 +128,38 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
   // ⌘Enter 提交
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (tab !== "source") return;
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); commit(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  const tabs = (
+    <div className="git-view-tabs">
+      <button className={tab === "source" ? "on" : ""} onClick={() => setTab("source")}>源码管理</button>
+      <button className={tab === "wiki" ? "on" : ""} onClick={() => setTab("wiki")}>项目 Wiki</button>
+      <span className="git-view-tabs-hint">内置文档 · 随仓库版本发布</span>
+    </div>
+  );
+
+  if (tab === "wiki") {
+    return (
+      <div className="page git-page">
+        {tabs}
+        <GitWiki branch={status?.branch} head={commits[0]?.hash} />
+      </div>
+    );
+  }
+
   if (!status) {
-    return <div className="page"><div className="muted small" style={{ padding: 20 }}>{error || "读取 git 状态…"}</div></div>;
+    return <div className="page git-page">{tabs}<div className="muted small" style={{ padding: 20 }}>{error || "读取 git 状态…"}</div></div>;
   }
 
   if (!status.isRepo) {
     return (
-      <div className="page">
+      <div className="page git-page">
+        {tabs}
         <div className="page-head"><div><h2>Git</h2><span className="muted">{root}</span></div></div>
         <section className="panel">
           <div className="panel-head">这不是一个 Git 仓库</div>
@@ -172,6 +193,7 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
 
   return (
     <div className="page git-page">
+      {tabs}
       <div className="page-head">
         <div><h2>Git</h2><span className="muted">{status.branch || "(detached)"}{status.upstream ? ` → ${status.upstream}` : " · 无上游"}{status.ahead ? ` · ↑${status.ahead}` : ""}{status.behind ? ` · ↓${status.behind}` : ""}</span></div>
         <div className="row gap6">

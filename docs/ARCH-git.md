@@ -99,3 +99,23 @@ PASS 迷你面板可暂存 / 提交（git log 可见）
 PASS 「全屏」跳到 Git 页
 PASS 资源管理器：ignore 的文件淡色斜体 / ignore 目录也淡色
 ```
+
+## 2.7 项目 Wiki（Git 视图第二个 tab）
+
+Git 页顶部新增 tab：
+
+```text
+[源码管理] [项目 Wiki]
+```
+
+项目 Wiki 是**随仓库版本发布的内置文档**，不是用户项目的 wiki：
+
+- 内容源：`resources/wiki/*.md` + 根目录 `CHANGELOG.md`，由 Vite `?raw` 在构建时打进 renderer；
+- 页面：项目介绍 / 工作流 / 架构 / Agent 与执行适配器 / 终端与预览 / 主题系统 / 插件与 LLM Wiki / 构建与发布 / 版本记录；
+- 左侧：分组导航 + 全文搜索（`⌘F` 聚焦，`Esc` 清空）；
+- 中间：Markdown 渲染（marked + DOMPurify）、页间链接 `#/wiki/<id>`、上一篇/下一篇；
+- 右侧：本页目录（H2–H4），点击平滑滚动；
+- 页头显示当前 Git 分支与 HEAD（在 Git 仓库中时）；
+- 无 Git 仓库也可查看；源码管理 tab 仍保留 `git init` 引导。
+
+新增页面：在 `resources/wiki/` 放 Markdown，然后在 `src/wiki/pages.ts` 登记 id / 标题 / 分组 / 摘要即可。页内链接统一写成 `[标题](#/wiki/<id>)`。

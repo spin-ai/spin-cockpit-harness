@@ -1824,3 +1824,52 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .tree-row.git-ignored{opacity:.5}
 .tree-row.git-ignored>span.ellipsis{font-style:italic;color:var(--faint)}
 .tree-row.git-ignored .tree-folder{opacity:.7}
+
+/* Git · 项目 Wiki（内置文档，随仓库版本发布） */
+.git-view-tabs{display:flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:9px;background:var(--surface);padding:3px;flex:none;align-self:flex-start}
+.git-view-tabs button{height:26px;border:0;border-radius:6px;background:transparent;color:var(--muted);font-size:11.5px;padding:0 12px;cursor:pointer}
+.git-view-tabs button:hover{color:var(--fg);background:var(--surface-hover)}
+.git-view-tabs button.on{background:var(--brand-soft);color:var(--brand);font-weight:600}
+.git-view-tabs-hint{margin-left:8px;padding-right:8px;font-size:10px;color:var(--faint)}
+.git-wiki{flex:1;min-height:0;display:grid;grid-template-columns:220px minmax(0,1fr) 190px;gap:10px}
+.git-wiki-side,.git-wiki-main,.git-wiki-toc{border:1px solid var(--border);border-radius:9px;background:var(--surface);min-height:0}
+.git-wiki-side{display:flex;flex-direction:column;gap:7px;padding:8px;overflow:hidden}
+.git-wiki-side-head{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 2px}
+.git-wiki-search{height:28px;border:1px solid var(--border);border-radius:7px;background:var(--page-canvas);padding:0 8px;font-size:11.5px;color:var(--fg);outline:none;flex:none}
+.git-wiki-search:focus{border-color:var(--brand-line);box-shadow:var(--ring)}
+.git-wiki-list{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:2px}
+.git-wiki-group{display:flex;flex-direction:column;gap:1px}
+.git-wiki-group-head{padding:2px 4px;font-size:9.5px;letter-spacing:.08em;font-weight:600;color:var(--faint)}
+.git-wiki-link{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;border:0;border-radius:6px;background:transparent;color:var(--fg-2);font-size:11.5px;padding:5px 6px;text-align:left;cursor:pointer}
+.git-wiki-link span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.git-wiki-link em{font-style:normal;font:9px var(--mono);color:var(--faint);flex:none}
+.git-wiki-link:hover{background:var(--surface-hover);color:var(--fg)}
+.git-wiki-link.on{background:var(--brand-soft);color:var(--brand);font-weight:600}
+.git-wiki-side-foot{display:flex;align-items:center;justify-content:space-between;gap:6px;border-top:1px solid var(--border);padding:6px 2px 0;font-size:9.5px;color:var(--faint);flex:none}
+.git-wiki-empty{padding:10px 4px;font-size:11px;color:var(--faint)}
+.git-wiki-main{overflow:hidden;display:flex;flex-direction:column}
+.git-wiki-content{height:100%;overflow:auto;padding:20px 24px 28px;box-sizing:border-box}
+.git-wiki-page-head{display:flex;flex-direction:column;gap:4px;padding-bottom:14px;margin-bottom:14px;border-bottom:1px solid var(--border)}
+.git-wiki-kicker{font-size:9.5px;letter-spacing:.14em;font-weight:700;color:var(--brand)}
+.git-wiki-page-head h1{margin:0;font-size:24px;line-height:1.25;letter-spacing:-.03em;color:var(--fg)}
+.git-wiki-page-head p{margin:0;font-size:12.5px;line-height:1.65;color:var(--muted);max-width:720px}
+.git-wiki-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:2px;font-size:9.5px;color:var(--faint)}
+.git-wiki-meta .mono{color:var(--fg-2)}
+.git-wiki-markdown{max-width:none;margin:0;background:transparent;border:0;border-radius:0;padding:0;font-size:13px;line-height:1.8}
+.git-wiki-markdown h2{scroll-margin-top:12px}
+.git-wiki-toc{display:flex;flex-direction:column;gap:1px;padding:9px;overflow:auto}
+.git-wiki-toc-head{padding:0 3px 6px;font-size:9.5px;letter-spacing:.08em;font-weight:600;color:var(--faint)}
+.git-wiki-toc-link{text-align:left;border:0;border-radius:5px;background:transparent;color:var(--muted);font-size:10.5px;line-height:1.4;padding:3px 5px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.git-wiki-toc-link:hover{background:var(--surface-hover);color:var(--fg)}
+.git-wiki-toc-link.level-3{padding-left:13px;color:var(--faint)}
+.git-wiki-toc-link.level-4{padding-left:21px;color:var(--faint)}
+.git-wiki-toc-foot{margin-top:auto;padding-top:8px;border-top:1px solid var(--border)}
+.git-wiki-toc-foot .link{font-size:10px}
+.git-wiki-pager{display:flex;justify-content:space-between;gap:10px;margin-top:22px;padding-top:14px;border-top:1px solid var(--border)}
+.git-wiki-pager-btn{display:flex;flex-direction:column;gap:2px;border:1px solid var(--border);border-radius:7px;background:var(--page-canvas);padding:7px 10px;text-align:left;cursor:pointer;min-width:0;max-width:48%}
+.git-wiki-pager-btn:hover{border-color:var(--brand-line);background:var(--brand-soft)}
+.git-wiki-pager-btn span{font-size:9.5px;color:var(--faint)}
+.git-wiki-pager-btn b{font-size:11.5px;font-weight:600;color:var(--fg-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.git-wiki-pager-btn.next{text-align:right;margin-left:auto}
+@media (max-width:1100px){.git-wiki{grid-template-columns:200px minmax(0,1fr)}.git-wiki-toc{display:none}}
+@media (max-width:760px){.git-wiki{grid-template-columns:1fr}.git-wiki-side{max-height:210px}.git-wiki-content{padding:14px 16px 22px}}
