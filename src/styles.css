@@ -1291,3 +1291,42 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .mission-dock{flex:none;max-height:44vh;overflow:auto;padding:0 8px 2px;background:var(--surface);border-bottom:1px solid var(--border)}
 .mission-dock .mission-panel{margin:0 0 8px;box-shadow:none}
 @media (max-height:760px){.mission-dock{max-height:38vh}}
+.chat-guide-link{margin-top:8px;font-size:11px;color:var(--fg-2)}
+
+/* 使用说明页 */
+.guide-page{max-width:1040px;margin:0 auto;padding:26px 30px 40px;display:flex;flex-direction:column;gap:16px}
+.guide-head{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;flex-wrap:wrap}
+.guide-kicker{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--brand);font-weight:700}
+.guide-head h1{margin:6px 0 8px;font-size:26px;letter-spacing:-.03em;color:var(--fg)}
+.guide-head p{margin:0;max-width:620px;color:var(--fg-2);font-size:13px;line-height:1.7}
+.guide-actions{display:flex;gap:8px;flex-wrap:wrap}
+.guide-status{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.guide-status>div{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface)}
+.guide-status b{font-size:17px;color:var(--fg)}
+.guide-status span{font-size:10px;color:var(--faint)}
+.guide-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.guide-card{padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--surface);box-shadow:var(--shadow-1)}
+.guide-card h2{margin:0 0 8px;font-size:13px;color:var(--fg)}
+.guide-card p{margin:0;color:var(--fg-2);font-size:12px;line-height:1.7}
+.guide-wide{grid-column:1/-1}
+.guide-table{display:grid;grid-template-columns:130px minmax(0,1fr);gap:8px 14px;font-size:12px;color:var(--fg-2);line-height:1.6}
+.guide-table b{color:var(--fg)}
+.guide-card details{border-top:1px solid var(--border);padding:9px 0}
+.guide-card details:first-of-type{border-top:0;padding-top:0}
+.guide-card summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--fg)}
+.guide-card details p{margin:7px 0 0;color:var(--fg-2)}
+.guide-note{border-color:var(--brand-line);background:color-mix(in srgb,var(--brand-soft) 45%,var(--surface))}
+.guide-note b{font-size:12px;color:var(--fg)}
+.guide-note p{margin-top:5px}
+@media (max-width:900px){
+  .guide-page{padding:18px}
+  .guide-grid{grid-template-columns:1fr 1fr}
+  .guide-status{grid-template-columns:1fr 1fr}
+  .guide-table{grid-template-columns:1fr;gap:4px 0}
+}
+@media (max-width:600px){.guide-grid{grid-template-columns:1fr}.guide-head h1{font-size:22px}}
+.guide-table{display:flex;flex-direction:column;gap:0}
+.guide-row{display:grid;grid-template-columns:130px minmax(0,1fr);gap:14px;padding:7px 0;border-top:1px solid var(--border);font-size:12px;line-height:1.6}
+.guide-row:first-child{border-top:0;padding-top:0}
+.guide-row b{color:var(--fg)}
+.guide-row span{color:var(--fg-2);min-width:0}

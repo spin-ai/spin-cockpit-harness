@@ -544,6 +544,9 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
                   <div className="chat-empty-mark">✦</div>
                   <b>{todo ? "还没有消息" : runnableAgents.length > 0 ? "说一句话开始" : dshAvailable ? "还没有可用的 Agent" : "未检测到 dsh"}</b>
                   <p>{todo ? "在下面补充信息、纠偏或追问。" : "直接描述要完成的事；@别名 指定 Agent，或从预览里拾取元素后发送。"}</p>
+                  {!todo && (
+                    <button className="link chat-guide-link" onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: "guide" }))}>Super Agent 怎么用？</button>
+                  )}
                 </div>
               )}
             </div>

@@ -12,8 +12,9 @@ import { Splitter, useStoredSize } from "./components/Splitter";
 import { CollapsedPane } from "./components/CollapsedPane";
 import { ChatIcon, FilesIcon, ListIcon, TerminalIcon } from "./components/Icons";
 import { Settings } from "./components/Settings";
+import { Guide } from "./components/Guide";
 
-type View = "workspace" | "projects" | "inbox" | "stats" | "hosts" | "settings";
+type View = "workspace" | "projects" | "inbox" | "stats" | "hosts" | "settings" | "guide";
 type PaneId = "todo" | "chat" | "terminal" | "files";
 const COLLAPSED_PANE_W = 34;
 
@@ -186,7 +187,7 @@ export default function App() {
   useEffect(() => {
     const onView = (e: Event) => {
       const next = (e as CustomEvent<string>).detail;
-      if (["workspace", "projects", "stats", "hosts", "settings"].includes(next)) setView(next as View);
+      if (["workspace", "projects", "stats", "hosts", "settings", "guide"].includes(next)) setView(next as View);
     };
     window.addEventListener("harness:view", onView);
     return () => window.removeEventListener("harness:view", onView);
@@ -214,6 +215,17 @@ export default function App() {
     const t = await act("newThread", {}) as { id?: string } | null;
     if (t?.id) { setThreadId(t.id); setView("workspace"); }
   }, [act]);
+
+  const startMission = useCallback(async () => {
+    let supervisor = state?.agents.find((a) => a.role === "supervisor" && a.chatRunnable !== false) ?? null;
+    if (!supervisor) supervisor = await act("createAgent", { cli: "dsh", role: "supervisor" }) as typeof supervisor;
+    const hasWorker = state?.agents.some((a) => (a.role || "worker") !== "supervisor" && a.chatRunnable !== false);
+    if (!hasWorker) await act("createAgent", { cli: "dsh", role: "worker" });
+    const thread = await act("newThread", {}) as { id?: string } | null;
+    if (thread?.id && supervisor?.id) await act("setThreadAgent", { threadId: thread.id, agentId: supervisor.id });
+    if (thread?.id) setThreadId(thread.id);
+    setView("workspace");
+  }, [state, act]);
 
   const dispatchInWorkspace = useCallback((makeEvent: () => Event) => {
     setView("workspace");
@@ -260,6 +272,7 @@ export default function App() {
       { id: "edit-todo", label: "编辑任务", hint: "⌘E", group: "任务", run: () => dispatchInWorkspace(() => new Event("harness:edit-todo")) },
       { id: "open-project", label: "打开 / 添加项目…", hint: "⌘P", group: "项目", run: () => void addProject() },
       { id: "open-settings", label: "打开设置", hint: "⌘,", group: "导航", run: () => setView("settings") },
+      { id: "open-guide", label: "使用说明 / Super Agent 怎么用", group: "导航", run: () => setView("guide") },
       { id: "reset-layout", label: "重置面板尺寸", group: "布局", run: () => window.dispatchEvent(new Event("harness:reset-layout")) },
     ];
     for (const p of state.projects) {
@@ -413,6 +426,7 @@ export default function App() {
         {view === "stats" && scoped && <div className="wide"><Stats state={state} onOpen={(id) => void openTodoFromPalette(id)} /></div>}
         {view === "hosts" && <div className="wide"><Hosts state={state} act={act} notify={notify} now={now} /></div>}
         {view === "settings" && <div className="wide settings-wide"><Settings state={state} act={act} notify={notify} /></div>}
+        {view === "guide" && <div className="wide"><Guide state={state} act={act} onStartMission={() => void startMission()} onOpenSettings={() => setView("settings")} /></div>}
       </div>
 
       <CommandPalette open={paletteOpen} state={state} onClose={() => setPaletteOpen(false)} commands={commands} />
