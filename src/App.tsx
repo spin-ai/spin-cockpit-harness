@@ -5,6 +5,7 @@ import { TaskPane } from "./components/TaskPane";
 import { TaskChat } from "./components/TaskChat";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { FilePanel } from "./components/FilePanel";
+import { GitView } from "./components/GitView";
 import { Hosts, Inbox, Projects, Stats } from "./components/Views";
 import { ApprovalModal } from "./components/ApprovalModal";
 import { CommandPalette, type Command } from "./components/CommandPalette";
@@ -16,7 +17,7 @@ import { Guide } from "./components/Guide";
 import { Notes } from "./components/Notes";
 import { THEMES, isDarkTheme, resolveTheme } from "./themes";
 
-type View = "workspace" | "projects" | "inbox" | "stats" | "hosts" | "settings" | "guide" | "notes";
+type View = "workspace" | "projects" | "inbox" | "stats" | "hosts" | "git" | "settings" | "guide" | "notes";
 type PaneId = "todo" | "chat" | "terminal" | "files";
 const COLLAPSED_PANE_W = 34;
 
@@ -297,6 +298,7 @@ export default function App() {
       { id: "view-inbox", label: "收件箱", group: "导航", run: () => setView("inbox") },
       { id: "view-stats", label: "统计", group: "导航", run: () => setView("stats") },
       { id: "view-hosts", label: "主机", group: "导航", run: () => setView("hosts") },
+      { id: "view-git", label: "Git / 源码管理", group: "导航", run: () => setView("git") },
       { id: "new-thread", label: "新建会话", hint: "⌘N", group: "任务", run: () => void newThread() },
       { id: "new-task", label: "新建任务", hint: "⌘⇧N", group: "任务", run: () => dispatchInWorkspace(() => new Event("harness:new-task")) },
       { id: "new-terminal", label: "新建终端标签", hint: "⌘T", group: "终端", run: () => dispatchInWorkspace(() => new Event("harness:new-terminal")) },
@@ -478,6 +480,7 @@ export default function App() {
         {view === "inbox" && <div className="wide"><Inbox state={state} now={now} act={act} onOpen={(id) => void openTodoFromPalette(id)} /></div>}
         {view === "stats" && scoped && <div className="wide"><Stats state={state} onOpen={(id) => void openTodoFromPalette(id)} /></div>}
         {view === "hosts" && <div className="wide"><Hosts state={state} act={act} notify={notify} now={now} /></div>}
+        {view === "git" && <div className="wide"><GitView state={state} notify={notify} /></div>}
         {view === "settings" && <div className="wide settings-wide"><Settings state={state} act={act} notify={notify} /></div>}
         {view === "guide" && <div className="wide"><Guide state={state} act={act} onStartMission={() => void startMission()} onOpenSettings={() => setView("settings")} /></div>}
         {view === "notes" && <div className="wide"><Notes state={state} act={act} onOpenTodo={selectTodo} openRequest={notesOpenReq} /></div>}

@@ -1556,3 +1556,72 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .notes-graph-node:hover circle{opacity:1;r:4}
 .notes-graph-count{position:absolute;right:12px;bottom:10px;font:9.5px var(--mono);color:var(--faint);background:var(--page-canvas);border:1px solid var(--border);border-radius:5px;padding:2px 6px}
 @media (max-width:900px){.notes-pane-layout.split{flex-direction:column}.notes-pane-layout.split>.notes-editor-pane{width:100%;height:50%;border-right:0;border-bottom:1px solid var(--border)}}
+
+/* Notes CodeMirror */
+.notes-codemirror{flex:1;min-height:0;overflow:auto;background:var(--surface);font:12.5px/1.75 var(--mono)}
+.notes-codemirror .cm-editor{height:100%;background:transparent;color:var(--fg)}
+.notes-codemirror .cm-scroller{font-family:var(--mono);line-height:1.75;padding:10px 0 24px}
+.notes-codemirror .cm-content{padding:0 14px;caret-color:var(--brand)}
+.notes-codemirror .cm-gutters{background:var(--surface);color:var(--faint);border-right:1px solid var(--border);padding-left:4px}
+.notes-codemirror .cm-activeLine{background:color-mix(in srgb,var(--brand-soft) 32%,transparent)}
+.notes-codemirror .cm-activeLineGutter{background:var(--brand-soft);color:var(--brand)}
+.notes-codemirror .cm-selectionBackground,.notes-codemirror .cm-content ::selection{background:color-mix(in srgb,var(--brand) 22%,transparent)!important}
+.notes-codemirror .cm-cursor{border-left-color:var(--brand)}
+.notes-codemirror .cm-tooltip{background:var(--surface);border:1px solid var(--border);border-radius:7px;box-shadow:var(--shadow-2);color:var(--fg);font-size:11px}
+.notes-codemirror .cm-tooltip-autocomplete>ul>li[aria-selected]{background:var(--brand-soft);color:var(--brand)}
+.notes-codemirror .cm-panels{background:var(--page-canvas);border-color:var(--border);color:var(--fg-2)}
+.notes-codemirror .cm-searchMatch{background:color-mix(in srgb,var(--amber) 30%,transparent)}
+.notes-codemirror .cm-searchMatch.cm-searchMatch-selected{background:color-mix(in srgb,var(--brand) 35%,transparent)}
+.notes-codemirror .tok-heading{color:var(--brand);font-weight:700}
+.notes-codemirror .tok-link{color:var(--brand)}
+.notes-codemirror .tok-string{color:var(--green)}
+.notes-codemirror .tok-keyword{color:var(--purple)}
+.notes-codemirror .tok-comment{color:var(--faint);font-style:italic}
+
+/* Notes 文件树操作 */
+.notes-sidebar-head{display:flex;align-items:center;justify-content:space-between;font:9.5px var(--mono);color:var(--faint);letter-spacing:.08em;padding:1px 2px}
+.notes-sidebar-head button{border:0;background:transparent;color:var(--faint);font:9.5px var(--mono);cursor:pointer;padding:1px 3px;border-radius:4px}
+.notes-sidebar-head button:hover{background:var(--page-canvas);color:var(--fg)}
+.notes-ctx{position:fixed;z-index:500;min-width:168px;padding:4px;border:1px solid var(--border);border-radius:8px;background:var(--surface);box-shadow:var(--shadow-2)}
+.notes-ctx button{display:block;width:100%;border:0;border-radius:5px;background:transparent;color:var(--fg-2);font-size:11px;text-align:left;padding:5px 8px;cursor:pointer}
+.notes-ctx button:hover{background:var(--page-canvas);color:var(--fg)}
+.notes-ctx button.danger{color:var(--red)}
+.notes-ctx button.danger:hover{background:var(--red-soft)}
+
+/* Git / Source Control（参考 ORCA：文件列表 + diff + 提交框） */
+.git-page{gap:10px}
+.git-grid{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);gap:10px;min-height:0;flex:1}
+.git-side{display:flex;flex-direction:column;gap:10px;min-height:0;overflow:auto}
+.git-file{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center;gap:6px;padding:4px 4px;border-radius:6px;cursor:pointer}
+.git-file:hover{background:var(--surface-hover)}
+.git-file.on{background:var(--brand-soft,#eff6ff)}
+.git-badge{width:18px;height:18px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;background:var(--surface-hover);color:var(--muted)}
+.git-badge.green{background:var(--green-soft);color:#15803d}
+.git-badge.red{background:var(--red-soft,#fef2f2);color:var(--red)}
+.git-badge.amber{background:var(--amber-soft);color:#92400e}
+.git-badge.brand{background:var(--brand-soft,#eff6ff);color:#1d4ed8}
+.git-file-actions{display:none;gap:6px}
+.git-file:hover .git-file-actions,.git-file.on .git-file-actions{display:flex}
+.git-empty{font-size:11.5px;color:var(--faint);padding:6px 4px}
+.git-commit-msg{width:100%;border:1px solid var(--input);border-radius:8px;background:var(--surface);color:var(--fg);font:12px/1.6 var(--font-sans);padding:8px 10px;resize:vertical;outline:none}
+.git-commit-msg:focus{border-color:var(--brand-line);box-shadow:var(--ring)}
+.git-commit-row{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:8px;align-items:center;padding:4px 2px;font-size:11.5px;color:var(--fg-2);border-bottom:1px solid var(--border)}
+.git-commit-row:last-child{border-bottom:0}
+.git-branch-select{min-width:150px;height:26px}
+.git-output{margin:0;padding:8px 10px;max-height:150px;overflow:auto;font:11px/1.5 var(--mono);background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--fg-2);white-space:pre-wrap}
+.git-diff-panel{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.git-diff{flex:1;min-height:0;overflow:auto;margin:0;font:11.5px/1.6 var(--mono);background:var(--surface);border-radius:6px}
+.git-diff-line{display:block;white-space:pre-wrap;padding:0 8px}
+.git-diff-line.add{background:rgba(34,197,94,.10);color:#166534}
+.git-diff-line.del{background:rgba(239,68,68,.10);color:#991b1b}
+.git-diff-line.hunk{color:#1d4ed8;background:var(--surface-hover)}
+.git-diff-line.meta{color:var(--faint)}
+.git-diff-stat b{font-family:var(--mono);font-size:11px}
+
+/* Notes split grid / drag gutter */
+.notes-pane-layout.split{display:grid;grid-template-columns:50% 5px minmax(0,1fr)}
+.notes-pane-layout.split>.notes-editor-pane{width:auto;min-width:0}
+.notes-split-gutter{width:5px;cursor:col-resize;background:var(--border);position:relative;flex:none;touch-action:none}
+.notes-split-gutter:hover{background:var(--brand)}
+.notes-split-gutter::after{content:"";position:absolute;left:2px;top:0;bottom:0;width:1px;background:color-mix(in srgb,var(--fg) 12%,transparent)}
+@media (max-width:900px){.notes-pane-layout.split{display:flex;flex-direction:column}.notes-pane-layout.split>.notes-editor-pane{width:100%;height:50%;flex:none}.notes-split-gutter{width:100%;height:5px;cursor:row-resize}}

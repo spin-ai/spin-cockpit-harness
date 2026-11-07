@@ -48,7 +48,7 @@ npm run dist                # macOS dmg → release/
 工作区 / 项目 / 收件箱 / 统计 / 主机 / 设置
 ```
 
-- **导航**：工作区 / 项目 / 收件箱 / 统计 / 主机 / 设置（`⌘,`，左分区导航 + 右行式表单，参考 ORCA / Multica；收件箱带未读徽标）
+- **导航**：工作区 / 项目 / 收件箱 / 统计 / 主机 / Git / 设置（`⌘,`，左分区导航 + 右行式表单，参考 ORCA / Multica；收件箱带未读徽标）
 - **TODO LIST**：一条任务列表，按状态分组；支持搜索（标题/编号/描述/标签）、筛选（全部/进行中/待确认/已确认）、分组折叠、悬停或键盘聚焦显示快捷操作
 - **项目**：在 TODO LIST 下方的常驻项目区，本地目录即项目；支持添加 / 切换 / 管理 / 在 Finder 中显示，任务、终端、文件树跟随当前项目
 - **Chat**：单一输入路径。会话（thread）永远存在：说一句话即派活，运行中发消息即纠偏（带投递回执），已确认任务的消息仅记录；**未派活的对话是全局的**（切项目不消失），composer 里用 `◎ 全局 / 项目 · xxx` 选择这次对话的作用域；**模型可按会话选择**（选项来自 dsh ACP `session/new` 的 configOptions，下一次运行生效）；草稿会话发送 = 派活并创建任务
@@ -63,6 +63,7 @@ npm run dist                # macOS dmg → release/
 - **可拖拽布局**：TODO / Chat / Terminal / 文件四列之间的分隔条可左右拖动，TODO 列表与项目区之间的分隔条可上下拖动；尺寸自动记住，`⌘K → 重置面板宽度 / 高度` 可恢复默认
 - **可收起面板**：TODO / Chat / Terminal / 右侧栏都能收起成窄条，点击窄条展开；项目区也可单独折叠；状态自动记住
 - 状态分组就是看板：纵向排列在 TODO 列里
+- Git（Source Control）：分支 / 上游 / ahead-behind、文件暂存与丢弃、Diff 查看（+N -M）、提交框（⌘Enter）、推送/拉取、分支切换与新建、最近提交；非仓库可一键 `git init`（见 [docs/ARCH-git.md](docs/ARCH-git.md)）
 - 主机页：本机 + SSH 主机卡片，一次往返探测 CLI / 版本 / git / 远端目录（`caps`），页面可见时 60s 心跳（连续 2 次失败才标离线），每主机并发上限（失焦提交），SSH 主机可编辑地址/用户/端口/远端 cwd，Agent 运行位置切换有确认；主机离线时 Chat 顶部提示并可一键改用本机（见 [docs/ARCH-hosts-stats.md](docs/ARCH-hosts-stats.md)）
 - 统计页：**全部项目 / 单项目范围切换** + 成功率 / 中位耗时 / 排队 p50 / Token（未上报就显示未上报，不写 0）+ 每日趋势（图例 + 空态）+ 4 类失败分类 + 按 Agent/项目/主机分组 + 失败下钻 + CSV 导出；不估算费用
 - 主机只显示机器与可用 CLI；Agent 在项目 Terminal 里启动，带项目内唯一 `@别名`
@@ -201,6 +202,7 @@ npm run pack:system
 - [docs/ARCH-chat-thread.md](docs/ARCH-chat-thread.md)（CHAT 单会话模型：thread / send 状态机 / 迁移）
 - [docs/ARCH-ui-context.md](docs/ARCH-ui-context.md)（预览元素拾取 → Agent 上下文：CDP / 安全边界 / 协议）
 - [docs/ARCH-settings.md](docs/ARCH-settings.md)（设置：分区、逐项生效点、持久化与新增步骤）
+- [docs/ARCH-git.md](docs/ARCH-git.md)（Git / Source Control：IPC 表、交互要点、明确不做的部分）
 - [docs/ARCH-hosts-stats.md](docs/ARCH-hosts-stats.md)（主机探测/心跳/运行位置 + 统计口径：未上报不写 0）
 - [docs/ARCH-terminal-ux.md](docs/ARCH-terminal-ux.md)（终端易用性：标签 / 拆分 / 查找 / 右键菜单 / 输入回放）
 - [docs/ARCH-chat-ui.md](docs/ARCH-chat-ui.md)（Chat UI：扁平消息 / 工具折叠 / 卡片 composer，参考 Multica + ORCA）

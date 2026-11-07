@@ -246,6 +246,19 @@ async function ensureDaily() {
   return { ...(await saveFile(relPath, `# ${date}\n\n`)), created: true };
 }
 
+function extMd(name) {
+  return /\.md$/i.test(name) ? name : `${name}.md`;
+}
+
+async function exists(file) {
+  try { await fs.access(file); return true; } catch { return false; }
+}
+
+async function indexNow(force = true) {
+  cache = null;
+  return buildIndex(force);
+}
+
 async function command(name) {
   if (name === "notes.open") return ctx.ui.openView("notes");
   if (name === "notes.today") {
@@ -299,7 +312,53 @@ export async function activate(context) {
     if (idx.files.has(relPath)) throw new Error("同名笔记已存在");
     return saveFile(relPath, `# ${safe}\n\n`);
   });
+  ctx.api.handle("notes.mkdir", async ({ path: relPath = "" } = {}) => {
+    const idx = await buildIndex();
+    if (!idx.vault) throw new Error("还没有选择 vault");
+    const folder = String(relPath || "").replace(/^[/\\]+|[/\\]+$/g, "");
+    if (!folder) throw new Error("文件夹名不能为空");
+    const full = within(idx.vault, folder);
+    await fs.mkdir(full, { recursive: true });
+    await indexNow();
+    return { path: posix(path.relative(idx.vault, full)) };
+  });
+  ctx.api.handle("notes.rename", async ({ from, to } = {}) => {
+    const idx = await buildIndex();
+    if (!idx.vault) throw new Error("还没有选择 vault");
+    const source = String(from || "").replace(/^[/\\]+|[/\\]+$/g, "");
+    let target = String(to || "").replace(/^[/\\]+|[/\\]+$/g, "");
+    if (!source || !target) throw new Error("源路径和目标路径不能为空");
+    const sourceFull = within(idx.vault, source);
+    if (!source.endsWith("/") && !target.includes(".")) target = extMd(target);
+    const targetFull = within(idx.vault, target);
+    if (await exists(targetFull)) throw new Error("目标文件已存在");
+    await fs.mkdir(path.dirname(targetFull), { recursive: true });
+    await fs.rename(sourceFull, targetFull);
+    await indexNow();
+    return { from: source, to: posix(path.relative(idx.vault, targetFull)) };
+  });
+  ctx.api.handle("notes.trash", async ({ path: relPath } = {}) => {
+    const idx = await buildIndex();
+    if (!idx.vault) throw new Error("还没有选择 vault");
+    const relPathSafe = String(relPath || "").replace(/^[/\\]+|[/\\]+$/g, "");
+    const full = within(idx.vault, relPathSafe);
+    const trash = within(idx.vault, ".trash");
+    await fs.mkdir(trash, { recursive: true });
+    const target = path.join(trash, `${Date.now()}-${path.basename(full)}`);
+    await fs.rename(full, target);
+    await indexNow();
+    return { path: relPathSafe, trashedTo: posix(path.relative(idx.vault, target)) };
+  });
+  ctx.api.handle("notes.reveal", async ({ path: relPath } = {}) => {
+    const idx = await buildIndex();
+    if (!idx.vault) throw new Error("还没有选择 vault");
+    const full = within(idx.vault, String(relPath || ""));
+    await ctx.fs.reveal(full);
+    return true;
+  });
   ctx.api.handle("notes.daily", () => ensureDaily());
+  ctx.api.handle("notes.layout.get", async () => ctx.storage.get("layout"));
+  ctx.api.handle("notes.layout.set", async ({ layout } = {}) => { await ctx.storage.set("layout", layout || null); return true; });
   ctx.api.handle("notes.graph", async () => {
     const idx = await buildIndex();
     const nodes = [...idx.files.values()].map((f) => ({ path: f.path, title: f.title, links: (f.outgoing || []).length }));
