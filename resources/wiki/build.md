@@ -23,6 +23,10 @@ npm run dist:system  # 不内置 dsh，依赖目标机器安装
 
 ## 内置 dsh
 
+![打包结构](./wiki/packaging.svg)
+
+*图：renderer / main / dsh runtime / plugins 在发行包里的位置。*
+
 默认构建从 PyPI 的 `deepseek-harness-runtime-bin` 平台 wheel 取 dsh 单文件运行时（pkg SEA，自带 Node 与依赖），复制到 `resources/dsh`，再打进 `Contents/Resources/dsh`。
 
 ```sh
@@ -37,6 +41,29 @@ npm run smoke:dsh    # --version + ACP initialize + session/new
 ```
 
 模型配置与凭据不打包；SSH 远端 run 使用远端自己的 dsh。
+
+### 本地源码版 dsh
+
+如果 PATH 里的 `dsh` 指向源码 checkout（例如 `~/.local/bin/dsh` → `deepseek-harness/apps/cli`），`~/.dsh/profiles` 会通过符号链接加载该 checkout 的包。只 install、不 build 时会出现：
+
+```text
+dsh exited 1
+failed to import loader entry ... Cannot find module '.../lib/index.js'
+```
+
+修复：
+
+```sh
+cd /path/to/deepseek-harness
+pnpm install
+pnpm run build:artifacts
+```
+
+然后验证：
+
+```sh
+dsh --profile acp </dev/null
+```
 
 ## 跨平台
 

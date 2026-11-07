@@ -15,6 +15,10 @@ Cockpit Harness（仓库名 `spin-cockpit-harness`）是一个 Electron 桌面�
 
 ## 五个区域
 
+![五列工作台](./wiki/layout.png)
+
+*图：TODO / Chat / Terminal / 文件预览在同一屏内联动。*
+
 | 区域 | 职责 |
 |---|---|
 | 导航 | 工作区 / 项目 / 收件箱 / 统计 / 主机 / Git / 笔记 / 设置 |
@@ -50,6 +54,8 @@ Chat 说一句话
 - [工作流](#/wiki/workflow)
 - [架构](#/wiki/architecture)
 - [Agent 与执行适配器](#/wiki/agents)
+- [Super Agent / Mission](#/wiki/super-agent)
+- [设计取舍与踩坑](#/wiki/design-notes)
 - [终端与预览](#/wiki/terminal)
 - [主题系统](#/wiki/themes)
 - [插件与 LLM Wiki](#/wiki/plugins)

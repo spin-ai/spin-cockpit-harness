@@ -2,11 +2,12 @@
 
 ## Agent 是执行目标
 
-一个 Agent = 名称 + CLI + 主机 + cwd + 别名 + 并发上限。
+一个 Agent = 名称 + CLI + 主机 + cwd + 别名 + 并发上限；Mission 模式额外有 `role`（worker / supervisor）。
 
 - 在终端里启动 CLI 会自动登记 Agent；
 - 也可以在 Chat 里点「＋ dsh」纳管一个无需终端的 dsh Agent；
 - `@别名` 在项目内唯一，用来从 Chat 路由。
+- supervisor 只读、只派给 worker；worker 才写代码。详见 [Super Agent / Mission](#/wiki/super-agent)。
 
 ## 适配器矩阵
 
@@ -18,6 +19,10 @@
 > 不静默回退：选了 `pi` 却实际跑 dsh 是错误行为，现在会直接提示。
 
 ## dsh ACP
+
+![ACP 时序](./wiki/acp-sequence.svg)
+
+*图：一句话从 send 到 queueRun、ACP prompt、流式落库、审批与收尾。*
 
 - 每个 run 一个独立 ACP client（stdio；远端走 SSH）。
 - 握手：`initialize` → `session/new` → `session/set_config_option`（model / effort）→ `prompt`。
