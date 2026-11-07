@@ -18,6 +18,11 @@ plugins/<id>/
 
 ## Notes：原生 LLM Wiki
 
+![Wiki 页面](./wiki/notes-wiki.png)
+
+*图：笔记插件里的 Wiki 页面；右侧是 Status / Citations / Backlinks / Linked Todos。*
+
+
 Notes 不是 Obsidian vault 浏览器，而是 **Source → Page → Citation → Review** 的知识库：
 
 | 对象 | 含义 |
