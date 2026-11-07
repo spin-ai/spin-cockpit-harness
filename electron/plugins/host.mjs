@@ -97,6 +97,8 @@ export class PluginHost {
 
   async discover() {
     const found = [];
+    const seen = new Set();
+    // builtin 先于 userRoot：同一个 id 的旧用户副本不能覆盖内置插件
     for (const [root, builtin] of [[this.builtinRoot, true], [this.userRoot, false]]) {
       let entries = [];
       try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { continue; }
@@ -105,7 +107,15 @@ export class PluginHost {
         const dir = path.join(root, entry.name);
         const raw = readJson(path.join(dir, PLUGIN_MANIFEST));
         if (!raw) continue;
-        try { found.push({ manifest: validateManifest(raw, dir), dir, builtin }); } catch (err) {
+        try {
+          const manifest = validateManifest(raw, dir);
+          if (seen.has(manifest.id)) {
+            console.warn(`[plugins] skip duplicate ${manifest.id} at ${dir} (prefer builtin)`);
+            continue;
+          }
+          seen.add(manifest.id);
+          found.push({ manifest, dir, builtin });
+        } catch (err) {
           console.warn(`[plugins] invalid ${dir}: ${String(err?.message || err)}`);
         }
       }
