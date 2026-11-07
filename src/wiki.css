@@ -124,6 +124,7 @@
 
 .wiki-gallery{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:20px 0 30px}
 .wiki-gallery.hero{grid-template-columns:repeat(2,minmax(0,1fr))}
+.wiki-gallery.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 .wiki-gallery figure{margin:0;border:1px solid var(--wiki-rule);border-radius:12px;overflow:hidden;background:var(--wiki-paper);transition:transform .16s ease,border-color .16s,box-shadow .16s}
 .wiki-gallery figure:hover{transform:translateY(-2px);border-color:color-mix(in oklab,var(--wiki-accent) 35%,var(--wiki-rule));box-shadow:0 14px 34px rgba(28,32,44,.10)}
 .wiki-gallery img,.git-wiki-markdown .wiki-gallery img{display:block;width:100%;height:auto;margin:0;border:0;border-radius:0;background:#f7f7f5;box-shadow:none;cursor:zoom-in}
@@ -132,6 +133,7 @@
 .wiki-gallery figcaption b{font-size:11.5px;font-weight:600;color:var(--wiki-ink)}
 .wiki-gallery figcaption span{font-size:10.5px;line-height:1.5;color:var(--wiki-faint)}
 .git-wiki-markdown img{cursor:zoom-in}
+@media (max-width:900px){.wiki-gallery.three{grid-template-columns:1fr}}
 @media (max-width:760px){.wiki-gallery,.wiki-gallery.hero{grid-template-columns:1fr}}
 
 .git-wiki-markdown pre{position:relative}

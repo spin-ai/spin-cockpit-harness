@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900">
+  <rect width="1600" height="900" fill="#f7f5f0"/>
+  <text x="80" y="92" font-family="Inter, PingFang SC, sans-serif" font-size="16" letter-spacing="3" fill="#4f63c8">LLM WIKI</text>
+  <text x="80" y="140" font-family="Georgia, Songti SC, serif" font-size="44" font-weight="600" fill="#1e1c18">Source → Page → Citation → Review</text>
+  <text x="80" y="178" font-family="Inter, PingFang SC, sans-serif" font-size="18" fill="#6f6a61">知识不是一段聊天记录，而是可追溯、可审核、可被 Agent 检索的对象。</text>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9a9388"/>
+    </marker>
+  </defs>
+
+  <g font-family="Inter, PingFang SC, sans-serif">
+    <rect x="80" y="240" width="330" height="440" rx="18" fill="#fffdf9" stroke="#e5e0d6"/>
+    <text x="110" y="284" font-size="13" letter-spacing="2" fill="#8a8378">SOURCE</text>
+    <text x="110" y="314" font-size="20" font-weight="600" fill="#1e1c18">原始资料</text>
+    <g fill="#fff" stroke="#e5e0d6">
+      <rect x="110" y="348" width="270" height="76" rx="12"/>
+      <rect x="110" y="438" width="270" height="76" rx="12"/>
+      <rect x="110" y="528" width="270" height="76" rx="12"/>
+    </g>
+    <g fill="#1e1c18" font-size="17" font-weight="600">
+      <text x="132" y="380">文本 / 笔记</text>
+      <text x="132" y="470">Markdown 目录</text>
+      <text x="132" y="560">URL / 网页</text>
+    </g>
+    <g fill="#8a8378" font-size="13">
+      <text x="132" y="402">手动输入或粘贴</text>
+      <text x="132" y="492">打开本地目录，导入为 Source</text>
+      <text x="132" y="582">抓取正文，保留来源</text>
+    </g>
+    <text x="110" y="646" font-size="13" fill="#8a8378">Source 是事实源，Page 是派生知识</text>
+  </g>
+
+  <line x1="420" y1="460" x2="510" y2="460" stroke="#9a9388" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <g font-family="Inter, PingFang SC, sans-serif">
+    <rect x="520" y="220" width="540" height="500" rx="18" fill="#ffffff" stroke="#e5e0d6"/>
+    <text x="552" y="264" font-size="13" letter-spacing="2" fill="#4f63c8">PAGE · DRAFT</text>
+    <text x="552" y="304" font-family="Georgia, Songti SC, serif" font-size="30" font-weight="600" fill="#1e1c18">登录页改版说明</text>
+    <text x="552" y="336" font-size="15" fill="#6f6a61">Curator 生成的草稿；每条结论都要能回到 Source。</text>
+    <g font-size="15" fill="#3b3831">
+      <text x="552" y="390">· 新登录页拆成实现、测试、文档三个子任务</text>
+      <text x="552" y="426">· 实现完成后再补测试，避免返工</text>
+      <text x="552" y="462">· 旧登录接口保持只读兼容</text>
+    </g>
+    <g>
+      <rect x="552" y="502" width="74" height="28" rx="14" fill="#eef0fb" stroke="#dbe4ff"/>
+      <text x="570" y="521" font-size="12" fill="#4f63c8">S1 · 需求</text>
+      <rect x="636" y="502" width="94" height="28" rx="14" fill="#eef0fb" stroke="#dbe4ff"/>
+      <text x="654" y="521" font-size="12" fill="#4f63c8">S2 · 会议记录</text>
+    </g>
+    <rect x="552" y="564" width="476" height="1" fill="#e5e0d6"/>
+    <text x="552" y="604" font-size="13" fill="#8a8378">Citation</text>
+    <g font-size="14" fill="#6f6a61">
+      <text x="552" y="634">Page → Source 的引用；后续可升级到段落级 quote / locator</text>
+      <text x="552" y="662">写入追加 revision + log；reviewed 不会被静默覆盖</text>
+    </g>
+  </g>
+
+  <line x1="1070" y1="460" x2="1160" y2="460" stroke="#9a9388" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <g font-family="Inter, PingFang SC, sans-serif">
+    <rect x="1170" y="220" width="350" height="240" rx="18" fill="#fffdf9" stroke="#e5e0d6"/>
+    <text x="1200" y="262" font-size="13" letter-spacing="2" fill="#8a8378">REVIEW</text>
+    <g font-size="15">
+      <rect x="1200" y="286" width="96" height="34" rx="17" fill="#fdf8ee" stroke="#f2e3c4"/>
+      <text x="1222" y="309" fill="#a97a2f">draft</text>
+      <rect x="1318" y="286" width="112" height="34" rx="17" fill="#edf8f2" stroke="#d5eedf"/>
+      <text x="1338" y="309" fill="#3f9a68">reviewed</text>
+      <rect x="1200" y="334" width="96" height="34" rx="17" fill="#fdf2f2" stroke="#f4d7d7"/>
+      <text x="1224" y="357" fill="#cf5f5d">stale</text>
+    </g>
+    <text x="1200" y="410" font-size="14" fill="#6f6a61">人负责接受 / 退回；</text>
+    <text x="1200" y="434" font-size="14" fill="#6f6a61">source 变化后进入 stale</text>
+
+    <rect x="1170" y="500" width="350" height="220" rx="18" fill="#101012"/>
+    <text x="1200" y="542" font-size="13" letter-spacing="2" fill="#8aa0ff">AGENT · MCP</text>
+    <g font-family="ui-monospace, Menlo, monospace" font-size="14" fill="#d4d4d8">
+      <text x="1200" y="576">wiki_search</text>
+      <text x="1200" y="604">wiki_read_source</text>
+      <text x="1200" y="632">wiki_upsert_draft</text>
+      <text x="1200" y="660">wiki_add_citation</text>
+    </g>
+    <text x="1200" y="692" font-size="12" fill="#8a8378">只能写 draft；reviewed 不可覆盖</text>
+  </g>
+
+  <g font-family="Inter, PingFang SC, sans-serif">
+    <rect x="80" y="730" width="1440" height="90" rx="16" fill="#fffdf9" stroke="#e5e0d6"/>
+    <text x="110" y="770" font-size="13" letter-spacing="2" fill="#4f63c8">LOOP</text>
+    <text x="110" y="798" font-size="16" fill="#3b3831">导入 Source → Curator 生成 draft → 人审核 → reviewed → source 变化 → stale → 重新整理</text>
+    <text x="1350" y="798" font-size="12" fill="#8a8378">native, local-first</text>
+  </g>
+</svg>
