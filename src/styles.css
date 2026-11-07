@@ -1458,3 +1458,11 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 /* HTML 可视化编辑（designMode） */
 .preview-hint.visual{background:var(--brand-soft,#eff6ff);border-color:var(--brand-line,#bfdbfe);color:#1d4ed8}
 .preview-surface[data-visual="1"] webview{outline:2px dashed var(--brand-line,#bfdbfe);outline-offset:-2px}
+
+/* HTML 可视化编辑（GrapesJS） */
+.html-visual-editor{flex:1;min-height:0;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#fff}
+.html-visual-host{flex:1;min-height:0;position:relative}
+.html-visual-host .gjs-editor{height:100%}
+.html-visual-host .gjs-one-bg{background:#f8fafc}
+.html-visual-host .gjs-two-color{color:#334155}
+.html-visual-host .gjs-four-color,.html-visual-host .gjs-four-color-h:hover{color:#2563eb}
