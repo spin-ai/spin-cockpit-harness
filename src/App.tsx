@@ -490,7 +490,7 @@ export default function App() {
         {view === "hosts" && <div className="wide"><Hosts state={state} act={act} notify={notify} now={now} /></div>}
         {view === "git" && <div className="wide"><GitView state={state} notify={notify} /></div>}
         {view === "settings" && <div className="wide settings-wide"><Settings state={state} act={act} notify={notify} /></div>}
-        {view === "guide" && <div className="wide"><Guide state={state} act={act} onStartMission={() => void startMission()} onOpenSettings={() => setView("settings")} /></div>}
+        {view === "guide" && <div className="wide guide-wiki-wide"><Guide /></div>}
         {view === "notes" && <div className="wide"><Notes state={state} act={act} onOpenTodo={selectTodo} openRequest={notesOpenReq} /></div>}
       </div>
 

@@ -2377,3 +2377,9 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .notes-log{font-size:9.5px}
 .notes-tabbar{height:36px}
 .notes-note-head{padding:10px 14px}
+
+/* 「说明」= 项目 Wiki */
+.wide.guide-wiki-wide{padding:0;overflow:hidden}
+.guide-wiki{height:100%;min-height:0;display:flex;padding:16px 22px;box-sizing:border-box}
+.guide-wiki>.git-wiki{flex:1;min-height:0}
+@media (max-width:1100px){.guide-wiki{padding:12px}}
