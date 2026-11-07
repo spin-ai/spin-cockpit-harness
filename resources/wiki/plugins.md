@@ -32,6 +32,10 @@ Agent 只能写 draft；reviewed 页面不会被静默覆盖。写入会追加 r
 
 Wiki 通过 MCP bridge 向 dsh 暴露工具：
 
+![MCP bridge](./wiki/mcp-bridge.svg)
+
+*图：dsh / MCP 工具 ↔ 主进程 HTTP bridge ↔ 插件。*
+
 ```text
 wiki_search
 wiki_list_sources
@@ -42,6 +46,10 @@ wiki_add_citation
 ```
 
 典型流程：导入 source → 发送到 Chat → Curator 用工具整理 draft → 人审核。
+
+## Mission MCP
+
+Mission 的 supervisor 也通过同样的 bridge 模式拿到受控工具（`mission_plan` / `task_delegate` / `task_review` / `mission_finish` 等），但不暴露 shell、文件读写或 spawn。每个 supervisor run 一个 token，且校验 `missionId`。详见 [Super Agent / Mission](#/wiki/super-agent)。
 
 ## 编辑器
 

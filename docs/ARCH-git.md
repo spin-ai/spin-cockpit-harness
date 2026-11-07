@@ -116,6 +116,7 @@ Git 页顶部新增 tab：
 - 中间：Markdown 渲染（marked + DOMPurify）、页间链接 `#/wiki/<id>`、上一篇/下一篇；
 - 右侧：本页目录（H2–H4），点击平滑滚动；
 - 页头显示当前 Git 分支与 HEAD（在 Git 仓库中时）；
+- 图片放在 `public/wiki/`，Markdown 用 `./wiki/<file>` 引用；构建时由 Vite 复制到 `dist/wiki/`，打包后从 `app.asar/dist/wiki/` 读取
 - 无 Git 仓库也可查看；源码管理 tab 仍保留 `git init` 引导。
 
 新增页面：在 `resources/wiki/` 放 Markdown，然后在 `src/wiki/pages.ts` 登记 id / 标题 / 分组 / 摘要即可。页内链接统一写成 `[标题](#/wiki/<id>)`。

@@ -2,23 +2,13 @@
 
 ## 进程模型
 
-```text
-┌──────────────────────────────────────────────┐
-│ Electron main                                │
-│  SQLite · ACP client · pty · worktree · IPC  │
-│  plugin host · MCP bridge · preview/CDP      │
-└───────────────┬──────────────────────────────┘
-                │ IPC / state broadcast
-┌───────────────▼──────────────────────────────┐
-│ Renderer (React)                             │
-│  TODO · Chat · Terminal · Files · Settings   │
-└──────────────────────────────────────────────┘
-        │ spawn                    │ spawn
-┌───────▼────────┐        ┌────────▼─────────┐
-│ dsh --profile  │        │ node-pty shell   │
-│ acp (per run)  │        │ (terminal tabs)  │
-└────────────────┘        └──────────────────┘
-```
+![全景架构](./wiki/architecture.svg)
+
+*图：Renderer / Main / Executor / Storage 四层；每个 run 一个 dsh 子进程。*
+
+- **Main** 持有 SQLite、ACP client、pty、worktree、插件宿主、MCP bridge、预览/CDP。
+- **Renderer** 只通过 IPC 读状态、发 action，不直接持有子进程或访问文件系统。
+- **Executor** 是 dsh ACP / node-pty / git worktree / webview CDP 的边界。
 
 - **main** 持有唯一可变状态：任务、run、消息、会话、项目、设置、审批。
 - **renderer** 不直接读写数据库，所有写操作走 `harness.action`。
@@ -77,3 +67,8 @@ send(threadId, text)
 - ACP 权限请求进入审批队列；可配置自动批准 / 拒绝。
 - 预览元素上下文只注入结构化 DOM 信息与截图路径，不执行页面脚本。
 - 模型凭据不打包，使用 `DSH_HOME` 或用户默认配置。
+
+## 继续阅读
+
+- [设计取舍与踩坑](#/wiki/design-notes)：为什么不是 TUI / IDE、为什么用 ACP、16 条已踩的坑。
+- [Super Agent / Mission](#/wiki/super-agent)：Mission、Plan、Delegation 与 MCP 编排。

@@ -2,10 +2,11 @@
 
 ## Chat 是唯一分派入口
 
-- 普通消息只记录；带 `@别名` 或拾取页面元素才会派活。
+- 未派活的会话：普通消息默认派给当前 Agent，并创建任务 + run。
 - `@project` 指定项目，`@agent` 指定执行体；只写 `@project` 时使用该会话的默认 Agent。
 - 运行中发消息 = 纠偏（steer）：先落 `pending`，再显示 `已注入` 或 `投递失败 · 重发`。
 - 任务已确认后，消息只记录，不再起 run。
+- 输入框为空时，`↑` / `↓` 可回溯当前会话的历史输入。
 
 ## 任务生命周期
 
@@ -38,9 +39,14 @@ todo → queued → running → in_review → done
 
 ## Mission / Super Agent
 
-- Mission 模式用于把一个目标拆成多个子任务，由 supervisor 统一推进。
-- 子任务仍然是普通 TODO/run，可以单独暂停、确认或取消。
-- Mission 的计划、审批、子任务关系会写入本地数据库，可在 Wiki 的插件页看到相关工具。
+![Mission 流程](./wiki/mission-flow.svg)
+
+*图：Mission → Plan 审批 → 子任务 → 审核 → 汇总。*
+
+- Mission 是把一个目标拆成多个子任务，由 supervisor 统一推进；supervisor 只读，只有 worker 改代码。
+- 计划必须先由人批准，未批准不能创建子任务；子任务仍然是普通 TODO/run，可以单独暂停、确认或取消。
+- 子任务结束通过 Delegation 事件回灌主管；主管提交总结后只能进入「待确认」，由人最终确认。
+- 领域模型、状态机、六条不变量与 MCP 工具见 [Super Agent / Mission](#/wiki/super-agent)。
 
 ## 验收与回写
 
