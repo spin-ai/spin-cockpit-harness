@@ -16,9 +16,7 @@ type PaneState = {
   id: string; cwd: string; title: string;
   /** terminal = pty；preview/file = 同标签内的预览窗格 */
   kind?: "terminal" | "preview" | "file";
-  terminalId?: string; agentId?: string;
-  /** 启动 Agent 的命令：带命令的窗格重启时会重复建 Agent 记录，故不提供重启。 */
-  command?: string; projectId?: string;
+  terminalId?: string;
   /** preview/file 窗格的数据 */
   url?: string;
   rel?: string;
@@ -221,17 +219,14 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
   // 切标签 / 切窗格时关闭查找，避免搜索栏留在别的终端上
   useEffect(() => { setSearchPaneId(null); }, [active, activeFocusedId]);
 
-  const makePane = useCallback((init: { cwd: string; title?: string; terminalId?: string; agentId?: string; command?: string; projectId?: string }): PaneState => ({
+  const makePane = useCallback((init: { cwd: string; title?: string; terminalId?: string }): PaneState => ({
     id: `p${seq.current++}`,
     cwd: init.cwd,
     title: init.title || basename(init.cwd),
     terminalId: init.terminalId,
-    agentId: init.agentId,
-    command: init.command,
-    projectId: init.projectId,
   }), []);
 
-  const addTab = useCallback((init: { cwd: string; title?: string; taskId?: string; terminalId?: string; agentId?: string; command?: string; projectId?: string }) => {
+  const addTab = useCallback((init: { cwd: string; title?: string; taskId?: string; terminalId?: string }) => {
     const pane = makePane(init);
     const tab: Tab = {
       id: `t${seq.current++}`,
@@ -617,20 +612,6 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
           >
             <SearchIcon size={14} />
           </button>
-          <select
-            className="agent-launch"
-            value=""
-            onChange={async (e) => {
-              const command = e.target.value;
-              if (!command) return;
-              const res = await window.harness.createTerminal(state.projectPath, { command, projectId: state.activeProjectId ?? undefined });
-              const agent = res.agent as { alias?: string; id?: string } | undefined;
-              addTab({ cwd: state.projectPath, title: `@${agent?.alias || command}`, terminalId: res.id, agentId: agent?.id, command, projectId: state.activeProjectId ?? undefined });
-            }}
-          >
-            <option value="">＋ Agent</option>
-            {(state.cliCapabilities || []).map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
           <button className="btn tiny-btn" onClick={newTerminal}>＋ 终端</button>
           {onCollapse && (
             <button className="pane-collapse dark" title="收起终端" aria-label="收起终端" onClick={onCollapse}>
@@ -759,7 +740,19 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
             </div>
           );
         })}
-        {tabs.length === 0 && <div className="pane-empty">没有终端</div>}
+        {tabs.length === 0 && (
+          <div className="term-empty">
+            <div>没有打开的终端</div>
+            <div className="term-empty-hint">
+              需要跑 CLI 就直接在终端里输入命令{(() => {
+                const clis = (state.cliCapabilities || []).slice(0, 3);
+                if (!clis.length) return null;
+                return <>（如 {clis.map((c, i) => <span key={c}>{i ? " / " : ""}<code>{c}</code></span>)}）</>;
+              })()}。<br />
+              想让它接任务、看进度，用左栏的 Super Agent 派活。
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -1183,16 +1176,16 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
       }
       // ⌘V 交给 Electron 默认菜单 / xterm 原生粘贴事件，避免与菜单加速键重复粘贴
       if (ctrlShift && key === "v") { stop(); void paste(); return; }
-      if (cmd && key === "r" && exited && !pane.command) { stop(); restart(); return; }
+      if (cmd && key === "r" && exited) { stop(); restart(); return; }
       if (e.key === "Escape" && searchOpen) { stop(); onCloseSearch(); }
     };
     wrap.addEventListener("keydown", onKeyDown, true);
     return () => wrap.removeEventListener("keydown", onKeyDown, true);
-  }, [searchOpen, onOpenSearch, onCloseSearch, onNewTab, onClosePane, onSplit, onFocusDir, onCycleTab, onGotoTab, onZoom, clearScreen, selectAll, copySelection, paste, exited, pane.command, restart]);
+  }, [searchOpen, onOpenSearch, onCloseSearch, onNewTab, onClosePane, onSplit, onFocusDir, onCycleTab, onGotoTab, onZoom, clearScreen, selectAll, copySelection, paste, exited, restart]);
 
   const menuItems: MenuItem[] = exited
     ? [
-        ...(pane.command ? [] : [{ label: "重新启动", hint: "⌘R", run: restart } as MenuItem]),
+        { label: "重新启动", hint: "⌘R", run: restart } as MenuItem,
         { label: "复制", hint: "⌘C", run: () => void copySelection() },
         { label: "关闭窗格", hint: "⌘W", danger: true, run: onClosePane },
       ]
@@ -1241,7 +1234,7 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
         <div className="term-exited">
           <span>进程已退出{exitCode !== null && exitCode !== 0 ? ` · code ${exitCode}` : ""}</span>
           <div className="row gap8">
-            {!pane.command && <button className="btn tiny-btn" onClick={restart}>重新启动</button>}
+            <button className="btn tiny-btn" onClick={restart}>重新启动</button>
             <button className="link" onClick={onClosePane}>关闭窗格</button>
           </div>
         </div>

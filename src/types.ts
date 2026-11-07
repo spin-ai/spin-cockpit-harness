@@ -70,6 +70,8 @@ export interface Run {
   queueWaitMs?: number | null; durationMs?: number | null; queueReason?: string | null;
   kind?: "worker" | "supervisor";
   delegationId?: string | null;
+  /** 从终端启动的 run：绑定 pty id，停止 / 退出时用它结算 */
+  terminalId?: string | null;
 }
 export interface Approval { id: string; requestId: string; runId: string; todoId: string; title: string; description: string; options: { id: string; name: string; kind: string }[]; missionId?: string | null; childTitle?: string | null; }
 /** 预览区拾取的 UI 元素，随消息注入 Agent（见 docs/ARCH-ui-context.md） */

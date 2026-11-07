@@ -676,7 +676,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
               <div className="composer-actions">
                 {showModelPicker && (
                   <>
-                    <span className="composer-label" title="模型">模型</span>
+                    <span className="composer-label model-label" title="模型">模型</span>
                     <select
                       className="composer-select model-select"
                       value={thread.model || ""}

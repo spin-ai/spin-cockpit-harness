@@ -375,6 +375,9 @@ button{cursor:pointer}
 .term-instance{position:relative;height:100%;padding:8px 10px;box-sizing:border-box}
 .term-host{height:100%}
 .term-body > .preview-panel{height:100%}
+.term-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:24px;color:var(--term-muted,#71717a);font-size:12px;text-align:center}
+.term-empty-hint{font-size:11px;line-height:1.7;color:var(--term-faint,#52525b);max-width:420px}
+.term-empty code{font-family:var(--mono);font-size:10.5px;padding:0 4px;border-radius:4px;border:1px solid #3f3f46;background:#27272a;color:#d4d4d8}
 .term-host .xterm{height:100%}
 
 /* 终端易用性：字号 / 查找 / 右键菜单 / 退出态（参考 reference terminal） */
@@ -634,8 +637,6 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .session-foot .link svg{transition:transform .12s}
 .spinning{animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-.agent-launch{height:24px;border:1px solid #3f3f46;background:#27272a;color:#e4e4e7;border-radius:5px;font-size:11px;padding:0 4px}
-.agent-launch{height:24px;border:1px solid #3f3f46;background:#27272a;color:#e4e4e7;border-radius:5px;font-size:11px;padding:0 4px}
 
 /* collapsible workspace panes */
 .collapsed-pane{display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px 0;background:var(--surface);border-right:1px solid var(--border);cursor:pointer;color:var(--muted);min-width:0;overflow:hidden}
@@ -882,17 +883,18 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .composer-shell .composer-warn{margin:0}
 .composer-shell textarea{flex:1;min-width:0;min-height:40px;max-height:180px;border:0;background:transparent;padding:3px 4px 1px;font:var(--chat-font-size,13px)/1.55 var(--font-sans);resize:none;overflow:auto;color:var(--fg);outline:none}
 .composer-shell textarea::placeholder{color:var(--faint)}
-.composer-foot{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:5px}
-.composer-chips{display:flex;align-items:center;gap:2px;min-width:0;flex:1;flex-wrap:nowrap;overflow:hidden}
-.composer-select{max-width:148px;min-width:0;height:22px;border:0;border-radius:6px;background:transparent;color:var(--muted);font-size:10.5px;padding:0 4px;outline:none;cursor:pointer}
+.composer-foot{display:flex;align-items:center;gap:6px 8px;min-width:0;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:6px}
+.composer-chips{display:flex;align-items:center;gap:2px;min-width:0;flex:1 1 auto;flex-wrap:nowrap;overflow:hidden}
+.composer-select{max-width:148px;min-width:0;height:22px;border:0;border-radius:6px;background:transparent;color:var(--muted);font-size:10.5px;padding:0 4px;outline:none;cursor:pointer;text-overflow:ellipsis}
 .composer-select:hover{background:var(--surface-hover);color:var(--fg-2)}
 .composer-select:disabled{opacity:.55;cursor:default}
-.composer-chips .chat-toggle{height:22px;border:0;background:transparent;color:var(--faint);padding:0 6px;border-radius:6px;font-size:10.5px}
-.composer-chips .chat-toggle:hover{background:var(--surface-hover);color:var(--fg-2)}
-.composer-chips .chat-toggle.on{color:var(--fg-2);background:var(--surface-hover)}
-.composer-actions{display:flex;align-items:center;gap:6px;flex:none;margin-left:auto}
-.composer-hint{font-size:9.5px;color:var(--faint);white-space:nowrap}
-.composer-submit{height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--brand);background:var(--brand);color:#fff;font-size:11px;font-weight:500;display:inline-flex;align-items:center;gap:5px;cursor:pointer;transition:filter .12s,opacity .12s}
+.composer-shell .chat-toggle{height:22px;flex:none;border:0;background:transparent;color:var(--faint);padding:0 7px;border-radius:6px;font-size:10.5px;white-space:nowrap}
+.composer-shell .chat-toggle:hover{background:var(--surface-hover);color:var(--fg-2)}
+.composer-shell .chat-toggle.on{color:var(--brand);background:var(--brand-soft);box-shadow:inset 0 0 0 1px var(--brand-line)}
+.composer-actions{display:flex;align-items:center;gap:6px;min-width:0;flex:0 0 auto;margin-left:auto;flex-wrap:nowrap}
+.composer-actions .model-select{flex:0 1 150px;min-width:64px;max-width:150px}
+.composer-hint{font-size:9.5px;color:var(--faint);white-space:nowrap;flex:none}
+.composer-submit{height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--brand);background:var(--brand);color:#fff;font-size:11px;font-weight:500;line-height:1;display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:none;white-space:nowrap;cursor:pointer;transition:filter .12s,opacity .12s}
 .composer-submit:hover:not(:disabled){filter:brightness(1.06)}
 .composer-submit:disabled{opacity:.4;cursor:default}
 .composer-submit.mode-steer{border-color:var(--amber);background:var(--amber);color:#fff}
@@ -923,13 +925,27 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .composer-label{font-family:var(--mono);font-size:10px;color:var(--faint);flex:none}
 .composer-link{height:22px;border:0;background:transparent;color:var(--brand);font-size:10.5px;padding:0 4px;border-radius:6px;white-space:nowrap}
 .composer-link:hover{background:var(--surface-hover)}
-@container (max-width: 360px){
+/* 窄面板：footer 固定收成两行（上：Agent / 作用域，下：模型 + 工具 + 发送），避免按钮被挤到换行 */
+@container (max-width: 520px){
   .composer-hint{display:none}
-  .composer-select{max-width:84px}
-  .composer-actions{flex:0 0 100%;justify-content:flex-end}
-  .composer-foot{gap:5px}
+  .composer-chips{flex:1 1 100%}
+  .composer-actions{flex:1 1 100%;justify-content:flex-end}
+  .composer-actions .model-select{flex:1 1 auto;min-width:72px;max-width:220px}
+}
+@container (max-width: 380px){
+  .composer-foot{gap:6px;padding-top:5px}
+  .composer-chips{gap:0}
+  .composer-chips .composer-select{max-width:124px}
+  .composer-actions{gap:4px}
+  .composer-actions .model-select{padding:0 2px 0 4px}
+  .composer-submit{height:27px;padding:0 9px;gap:4px}
   .chat-scroll{padding:10px 10px 12px}
   .msg.user .msg-main{max-width:92%}
+}
+@container (max-width: 310px){
+  .composer-actions .model-label{display:none}
+  .composer-actions .model-select{min-width:56px}
+  .composer-submit{padding:0 7px}
 }
 
 /* 资源管理器：右键菜单 / 行内新建重命名 */
@@ -1006,7 +1022,6 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 
 /* Chat 模型选择 */
 .model-select{max-width:138px}
-@container (max-width: 380px){ .model-select{max-width:112px} }
 
 /* ═══════════════════════════════════════════════════════════════
    Softness pass（参考 reference：单色安静、hairline、低饱和状态色、柔和圆角/阴影）
@@ -1188,7 +1203,6 @@ button{transition:background-color .14s ease,border-color .14s ease,color .14s e
   .terminal-bar>.row:first-child>.link{display:none}
   .terminal-bar .term-pane-count{display:none}
   .terminal-bar .term-icon-btn{display:none}
-  .agent-launch{max-width:78px}
   .terminal-bar{padding:0 8px;gap:4px}
 }
 @container (max-width: 380px){
