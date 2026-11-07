@@ -2071,3 +2071,142 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .notes-hub-card{border-color:transparent;box-shadow:var(--shadow-1)}
 .notes-hub-card:hover{border-color:transparent;box-shadow:var(--shadow-2);transform:translateY(-1px)}
 .notes-meta-idle-row{border-color:transparent;background:var(--surface);box-shadow:var(--shadow-1);opacity:1}
+
+/* ═══════════════════════════════════════════════════════════════
+   Unified page system（2026-11）
+   所有顶层页面：画布 + 一个主面；模块不再各自套边框卡片
+   ═══════════════════════════════════════════════════════════════ */
+.main{background:var(--surface)}
+.wide{padding:18px 24px 40px;background:var(--page-canvas)}
+.wide:has(> .settings-page),
+.wide:has(> .notes-page),
+.wide:has(> .guide-page){padding:0;overflow:hidden}
+.wide>.page{width:100%;max-width:1320px;margin:0 auto;gap:18px}
+.page-head{align-items:center;padding:0 0 2px}
+.page-head h2{font-size:22px;font-weight:600;letter-spacing:-.03em}
+.page-head .muted{font-size:11.5px;color:var(--faint)}
+.page-head .btn{border-color:transparent;background:transparent;color:var(--muted);box-shadow:none}
+.page-head .btn:hover{background:var(--surface);border-color:transparent;color:var(--fg);box-shadow:var(--shadow-1)}
+.page-head .btn.primary{background:var(--fg);border-color:var(--fg);color:var(--surface);box-shadow:var(--shadow-1)}
+.page-head .btn.primary:hover{background:color-mix(in srgb,var(--fg) 92%,var(--surface));border-color:var(--fg);color:var(--surface)}
+
+/* KPI：一条整体指标带，而不是四张卡片 */
+.kpis{gap:0;background:var(--surface);border:0;border-radius:12px;box-shadow:var(--shadow-1);overflow:hidden}
+.kpi{border:0;border-radius:0;background:transparent;padding:16px 20px;gap:5px;min-height:88px;box-shadow:none}
+.kpi+.kpi{border-left:1px solid var(--border)}
+.kpi span{font-size:10px;letter-spacing:.08em;color:var(--faint);text-transform:uppercase}
+.kpi b{font-size:23px;font-weight:600;letter-spacing:-.03em;line-height:1.15}
+.kpi small{font-size:10.5px;color:var(--faint);line-height:1.5}
+
+/* Panel：无边框的主面，不再“卡片套卡片” */
+.wide .panel{border:0;border-radius:12px;background:var(--surface);box-shadow:var(--shadow-1);padding:16px 18px}
+.wide .panel-head{margin-bottom:12px;padding-bottom:0;border:0;font-size:11px;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.wide .panel .panel-head+.row{margin-top:2px}
+.wide .panel hr{border-color:var(--border)}
+
+/* 项目 */
+.project-list{padding:6px 10px}
+.project-row{border:0;border-radius:10px;margin-bottom:2px;padding:12px 10px}
+.project-row:hover{background:var(--surface-hover)}
+.project-row.on{background:color-mix(in srgb,var(--brand-soft) 64%,var(--surface));border:0;box-shadow:inset 2px 0 0 var(--brand)}
+.project-row.on:hover{background:color-mix(in srgb,var(--brand-soft) 72%,var(--surface))}
+
+/* 收件箱 */
+.inbox-row{border-bottom:1px solid color-mix(in srgb,var(--border) 64%,transparent);padding:11px 8px}
+.inbox-row:last-child{border-bottom:0}
+.inbox-row:hover{background:var(--surface-hover)}
+
+/* 主机 */
+.host-cards{gap:14px}
+.host-card{box-shadow:var(--shadow-1)}
+.host-card.offline{border:0;background:linear-gradient(0deg,color-mix(in srgb,var(--red-soft) 42%,transparent),transparent),var(--surface)}
+.host-agents,.host-actions{border-top-color:color-mix(in srgb,var(--border) 65%,transparent)}
+.host-form .panel-head{font-size:12px;letter-spacing:0;text-transform:none;color:var(--fg-2)}
+
+/* 统计 */
+.grid2{gap:14px}
+.trend-legend{font-size:10px;color:var(--faint)}
+.err-chip{border-color:color-mix(in srgb,var(--border) 72%,transparent);background:var(--surface-hover)}
+.fail-row-btn{border-bottom-color:color-mix(in srgb,var(--border) 60%,transparent);border-radius:0}
+.fail-row-btn:hover{background:var(--surface-hover)}
+.agent-stat{padding:7px 0}
+
+/* 设置：透明导航 + 单一内容面 */
+.settings-page{height:100%;box-sizing:border-box;grid-template-columns:218px minmax(0,1fr);gap:0;padding:18px 24px 30px;max-width:1440px;margin:0 auto;width:100%}
+.settings-nav{border:0;background:transparent;padding:4px 16px 4px 0;gap:2px}
+.settings-nav-head{padding:2px 9px 12px}
+.settings-nav-head b{font-size:17px;letter-spacing:-.02em}
+.settings-nav-head .tiny{font-size:10.5px;color:var(--faint)}
+.settings-nav-item{padding:7px 9px;border-radius:7px;color:var(--muted)}
+.settings-nav-item:hover{background:var(--surface);color:var(--fg-2)}
+.settings-nav-item.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow-1)}
+.settings-body{max-width:none;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-1);padding:24px 30px 44px}
+.settings-head{margin-bottom:22px}
+.settings-head h2{font-size:22px;letter-spacing:-.03em;margin-bottom:6px}
+.settings-head-row{gap:12px}
+.settings-head-row .muted{font-size:11.5px;color:var(--faint)}
+.settings-head .btn{border-color:transparent;background:transparent;color:var(--muted);box-shadow:none}
+.settings-head .btn:hover{background:var(--surface-hover);border-color:transparent;color:var(--fg);box-shadow:none}
+.set-card{border:0;border-radius:0;background:transparent;margin-bottom:26px;overflow:visible}
+.set-card-head{border:0;background:transparent;padding:0 0 7px;color:var(--fg-2);font-size:12px;letter-spacing:.06em}
+.set-card-head b{font-size:12px;font-weight:600}
+.set-card-body{padding:0}
+.set-row{border-bottom:1px solid color-mix(in srgb,var(--border) 62%,transparent);padding:12px 0}
+.set-row:last-child{border-bottom:0}
+.set-row-title{font-size:12.5px;font-weight:500}
+.set-row-hint{font-size:10.5px;color:var(--faint)}
+.settings-note{padding:12px 0;color:var(--fg-2)}
+.settings-agent-row{border-bottom-color:color-mix(in srgb,var(--border) 62%,transparent)}
+.settings-plugin-row{border-bottom-color:color-mix(in srgb,var(--border) 62%,transparent)}
+
+/* Git：一个工作台面；左侧文件/提交，右侧 diff */
+.git-page{gap:14px}
+.git-grid{gap:0;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-1);overflow:hidden;min-height:420px}
+.git-side{padding:14px 16px;gap:16px;border-right:1px solid var(--border)}
+.git-side .panel,.git-diff-panel{border:0;border-radius:0;background:transparent;box-shadow:none;padding:0}
+.git-diff-panel{padding:14px 16px;overflow:hidden}
+.git-side .panel-head,.git-diff-panel .panel-head{margin-bottom:8px;text-transform:none;letter-spacing:.02em;color:var(--muted)}
+.git-commit-msg{background:var(--page-canvas)}
+.git-diff{background:transparent;border-radius:0}
+.git-diff-line{padding:0 8px;border-radius:2px}
+.git-commit-row{border-bottom-color:color-mix(in srgb,var(--border) 60%,transparent)}
+.git-file.on{background:var(--brand-soft);box-shadow:inset 2px 0 0 var(--brand)}
+.git-output{background:var(--page-canvas);border-color:var(--border)}
+
+/* 使用说明：同一套层级 */
+.guide-page{max-width:1180px;padding:24px 28px 44px;gap:18px}
+.guide-head h1{font-size:28px}
+.guide-actions .btn{border-color:transparent;background:transparent;color:var(--muted);box-shadow:none}
+.guide-actions .btn:hover{background:var(--surface);border-color:transparent;color:var(--fg);box-shadow:var(--shadow-1)}
+.guide-actions .btn.primary{background:var(--fg);border-color:var(--fg);color:var(--surface)}
+.guide-status{gap:0;background:var(--surface);border-radius:12px;box-shadow:var(--shadow-1);overflow:hidden}
+.guide-status>div{border:0;border-radius:0;background:transparent;padding:14px 16px}
+.guide-status>div+div{border-left:1px solid var(--border)}
+.guide-card{border:0;background:var(--surface);box-shadow:var(--shadow-1)}
+.guide-note{border:0;background:color-mix(in srgb,var(--brand-soft) 55%,var(--surface))}
+.guide-row{border-top-color:color-mix(in srgb,var(--border) 62%,transparent)}
+
+@media (max-width:1100px){
+  .settings-page{grid-template-columns:190px minmax(0,1fr);padding:14px 16px 24px}
+  .settings-body{padding:20px 22px 36px}
+  .kpis{grid-template-columns:1fr 1fr}
+  .kpi:nth-child(3){border-left:0}
+  .kpi:nth-child(n+3){border-top:1px solid var(--border)}
+}
+@media (max-width:900px){
+  .wide{padding:14px 16px 32px}
+  .wide>.page{max-width:none}
+  .git-grid{grid-template-columns:1fr}
+  .git-side{border-right:0;border-bottom:1px solid var(--border)}
+  .settings-page{grid-template-columns:1fr;padding:12px}
+  .settings-nav{flex-direction:row;overflow-x:auto;padding:0 0 8px}
+  .settings-nav-head{display:none}
+  .settings-nav-item{white-space:nowrap}
+  .settings-body{padding:18px 16px 32px}
+}
+
+/* 统计：图表 + 失败分类合并为一个主面 */
+.grid2{gap:0;background:var(--surface);border-radius:12px;box-shadow:var(--shadow-1);overflow:hidden}
+.grid2>.panel{border-radius:0;box-shadow:none;background:transparent;padding:18px 20px}
+.grid2>.panel+.panel{border-left:1px solid var(--border)}
+@media (max-width:900px){.grid2{grid-template-columns:1fr}.grid2>.panel+.panel{border-left:0;border-top:1px solid var(--border)}}
