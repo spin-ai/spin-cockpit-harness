@@ -2,6 +2,7 @@
 
 [![build](https://github.com/spin-ai/spin-cockpit-harness/actions/workflows/build.yml/badge.svg)](https://github.com/spin-ai/spin-cockpit-harness/actions/workflows/build.yml)
 [![release](https://img.shields.io/github/v/release/spin-ai/spin-cockpit-harness?include_prereleases&label=release)](https://github.com/spin-ai/spin-cockpit-harness/releases)
+[![wiki](https://img.shields.io/badge/wiki-GitHub%20Wiki-blue)](https://github.com/spin-ai/spin-cockpit-harness/wiki)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![status](https://img.shields.io/badge/status-alpha-orange)
 
