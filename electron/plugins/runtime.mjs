@@ -87,6 +87,7 @@ const ctx = {
     pickDirectory: (options) => request("fs.pickDirectory", { options: options || {} }),
     readProjectFile: (rel) => request("fs.readProjectFile", { rel: String(rel) }),
     writeProjectFile: (rel, text) => request("fs.writeProjectFile", { rel: String(rel), text: String(text) }),
+    reveal: (file) => request("fs.reveal", { file: String(file) }),
   },
   net: {
     fetchJson: async (url, init) => {

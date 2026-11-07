@@ -2934,6 +2934,162 @@ ipcMain.handle("files:trash", async (_e, { rel, root } = {}) => {
   return true;
 });
 
+// ── Git（Source Control）───────────────────────────────────────────────
+// 全部在项目根目录里跑 git CLI；只暴露只读查询 + 暂存/提交/推送/拉取/切分支/初始化。
+const gitEnv = () => ({ ...dshPathEnv(), GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" });
+async function gitRun(root, args, { timeout = 30000 } = {}) {
+  const cwd = rootOf(root);
+  try {
+    const { stdout, stderr } = await execFileAsync("git", args, { cwd, env: gitEnv(), timeout, maxBuffer: 16 * 1024 * 1024 });
+    return { ok: true, stdout: String(stdout || ""), stderr: String(stderr || "") };
+  } catch (err) {
+    const out = `${err?.stdout || ""}${err?.stderr || ""}`.trim() || String(err?.message || err);
+    return { ok: false, stdout: String(err?.stdout || ""), stderr: String(err?.stderr || ""), error: out.slice(0, 2000) };
+  }
+}
+function gitFail(res) {
+  if (!res.ok) throw new Error(res.error || "git 执行失败");
+  return res;
+}
+
+function parsePorcelainZ(raw) {
+  const files = [];
+  const parts = String(raw || "").split("\0").filter(Boolean);
+  for (let i = 0; i < parts.length; i += 1) {
+    const entry = parts[i];
+    if (entry.length < 3) continue;
+    const x = entry[0];
+    const y = entry[1];
+    let file = entry.slice(3);
+    if (x === "R" || x === "C") { i += 1; } // 下一段是原路径
+    files.push({
+      path: file,
+      index: x === " " ? "" : x,
+      worktree: y === " " ? "" : y,
+      staged: x !== " " && x !== "?",
+      untracked: x === "?",
+      conflict: x === "U" || y === "U" || (x === "A" && y === "A") || (x === "D" && y === "D"),
+    });
+  }
+  return files;
+}
+
+ipcMain.handle("git:status", async (_e, { root } = {}) => {
+  const inside = await gitRun(root, ["rev-parse", "--is-inside-work-tree"]);
+  if (!inside.ok || inside.stdout.trim() !== "true") return { isRepo: false };
+  const [status, counts, branch] = await Promise.all([
+    gitRun(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
+    gitRun(root, ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"]),
+    gitRun(root, ["status", "--porcelain=v2", "--branch"]),
+  ]);
+  const meta = parseBranchV2(branch.stdout);
+  let ahead = 0; let behind = 0;
+  if (counts.ok) {
+    const [b, a] = counts.stdout.trim().split(/\s+/).map(Number);
+    behind = Number.isFinite(b) ? b : 0;
+    ahead = Number.isFinite(a) ? a : 0;
+  }
+  return { isRepo: true, root: rootOf(root), ...meta, ahead, behind, files: parsePorcelainZ(status.stdout) };
+});
+
+function parseBranchV2(out) {
+  let branch = ""; let upstream = ""; let oid = ""; let detached = false;
+  for (const line of String(out || "").split("\n")) {
+    if (line.startsWith("# branch.oid ")) oid = line.slice(13).trim();
+    if (line.startsWith("# branch.head ")) { branch = line.slice(14).trim(); detached = branch === "(detached)"; }
+    if (line.startsWith("# branch.upstream ")) upstream = line.slice(18).trim();
+  }
+  return { branch, upstream, oid, detached };
+}
+
+ipcMain.handle("git:diff", async (_e, { root, path: rel, staged = false } = {}) => {
+  if (!rel) return { diff: "" };
+  const args = ["diff", "--no-color", "--no-ext-diff"];
+  if (staged) args.push("--cached");
+  args.push("--", rel);
+  const res = await gitRun(root, args);
+  if (res.ok && res.stdout.trim()) return { diff: res.stdout };
+  // 未跟踪文件：和 /dev/null 比
+  const head = await gitRun(root, ["ls-files", "--error-unmatch", rel]);
+  if (!head.ok) {
+    const untracked = await gitRun(root, ["diff", "--no-index", "--no-color", "--", "/dev/null", rel]);
+    return { diff: untracked.stdout || "" };
+  }
+  return { diff: res.stdout || "" };
+});
+
+ipcMain.handle("git:stage", async (_e, { root, paths = [] } = {}) => {
+  if (!paths.length) return { ok: true };
+  return gitFail(await gitRun(root, ["add", "--", ...paths])) && { ok: true };
+});
+ipcMain.handle("git:unstage", async (_e, { root, paths = [] } = {}) => {
+  if (!paths.length) return { ok: true };
+  const res = await gitRun(root, ["restore", "--staged", "--", ...paths]);
+  if (res.ok) return { ok: true };
+  // 没有 commit 的仓库：restore --staged 不可用
+  return gitFail(await gitRun(root, ["rm", "--cached", "-r", "--", ...paths])) && { ok: true };
+});
+ipcMain.handle("git:discard", async (_e, { root, paths = [] } = {}) => {
+  if (!paths.length) return { ok: true };
+  const tracked = [];
+  const untracked = [];
+  for (const p of paths) {
+    const res = await gitRun(root, ["ls-files", "--error-unmatch", p]);
+    (res.ok ? tracked : untracked).push(p);
+  }
+  if (tracked.length) gitFail(await gitRun(root, ["restore", "--worktree", "--", ...tracked]));
+  if (untracked.length) gitFail(await gitRun(root, ["clean", "-f", "--", ...untracked]));
+  return { ok: true };
+});
+ipcMain.handle("git:commit", async (_e, { root, message = "", amend = false } = {}) => {
+  const msg = String(message || "").trim();
+  if (!msg && !amend) throw new Error("提交信息不能为空");
+  const args = ["commit"];
+  if (amend) args.push("--amend");
+  if (msg) args.push("-m", msg); else args.push("--no-edit");
+  const res = await gitRun(root, args, { timeout: 120000 });
+  return { ok: res.ok, output: (res.stdout + res.stderr).trim().slice(0, 4000), error: res.ok ? null : res.error };
+});
+ipcMain.handle("git:push", async (_e, { root } = {}) => {
+  const st = await gitRun(root, ["status", "--porcelain=v2", "--branch"]);
+  const meta = parseBranchV2(st.stdout);
+  const args = meta.upstream ? ["push"] : ["push", "-u", "origin", "HEAD"];
+  const res = await gitRun(root, args, { timeout: 180000 });
+  return { ok: res.ok, output: (res.stdout + res.stderr).trim().slice(0, 4000), error: res.ok ? null : res.error };
+});
+ipcMain.handle("git:pull", async (_e, { root } = {}) => {
+  const res = await gitRun(root, ["pull", "--ff-only"], { timeout: 180000 });
+  return { ok: res.ok, output: (res.stdout + res.stderr).trim().slice(0, 4000), error: res.ok ? null : res.error };
+});
+ipcMain.handle("git:branches", async (_e, { root } = {}) => {
+  const [local, meta] = await Promise.all([
+    gitRun(root, ["branch", "--format=%(refname:short)"]),
+    gitRun(root, ["status", "--porcelain=v2", "--branch"]),
+  ]);
+  const info = parseBranchV2(meta.stdout);
+  return { branches: local.stdout.split("\n").map((x) => x.trim()).filter(Boolean), ...info };
+});
+ipcMain.handle("git:checkout", async (_e, { root, branch, create = false } = {}) => {
+  if (!branch) throw new Error("branch required");
+  const args = create ? ["checkout", "-b", branch] : ["checkout", branch];
+  const res = await gitRun(root, args);
+  return { ok: res.ok, output: (res.stdout + res.stderr).trim().slice(0, 2000), error: res.ok ? null : res.error };
+});
+ipcMain.handle("git:log", async (_e, { root, limit = 20 } = {}) => {
+  const res = await gitRun(root, ["log", `-${Math.min(100, Number(limit) || 20)}`, "--pretty=%h\x1f%s\x1f%an\x1f%ar"]);
+  if (!res.ok) return { commits: [] };
+  return {
+    commits: res.stdout.split("\n").filter(Boolean).map((line) => {
+      const [hash, subject, author, when] = line.split("\x1f");
+      return { hash, subject, author, when };
+    }),
+  };
+});
+ipcMain.handle("git:init", async (_e, { root } = {}) => {
+  const res = await gitRun(root, ["init"]);
+  return { ok: res.ok, error: res.ok ? null : res.error };
+});
+
 ipcMain.handle("files:write", (_e, { rel, root, text } = {}) => {
   if (typeof text !== "string") throw new Error("text required");
   if (!rel) throw new Error("rel required");
