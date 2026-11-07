@@ -21,7 +21,7 @@ type GraphData = { nodes: { id: string; title: string; kind: "page" | "source" |
 type Doc = Page & { dirty: boolean; local?: boolean; localPath?: string; mtime?: number };
 type Pane = { tabs: string[]; active: string | null };
 type Tab = "pages" | "sources" | "review" | "vault";
-type SourceDraft = { title: string; content: string; url: string; mode: "text" | "url" };
+type SourceDraft = { title: string; content: string; url: string; mode: "text" | "url" | "file" };
 type MemoryData = { markdown: string; pageCount: number; chars: number };
 
 function emptyPane(): Pane { return { tabs: [], active: null }; }
@@ -240,19 +240,22 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
    * 如果还没有资料但已经打开本地目录，先自动把本地 Markdown 导入为资料再生成。
    */
   const generateWiki = async (sourceIds: string[] = []) => {
-    if (!sources.length && !sourceIds.length) {
-      if (!vault.files.length) {
-        setError("还没有可用的资料：先在「本地」打开一个 Markdown 目录，或用「导入资料」粘贴文本 / URL");
-        setTab("pages");
-        return;
-      }
-      const imported = await importAllVault();
-      if (!imported) { setError("本地目录里没有可导入的 Markdown"); return; }
-    }
     setBusy(true);
     try {
-      const res = await invoke("wiki.generate", { sourceIds });
-      const created = Number(res?.created || 0);
+      let res = await invoke("wiki.generate", { sourceIds });
+      let created = Number(res?.created || 0);
+      // 插件侧真的没有任何资料时：如果已打开本地目录，先导入再生成
+      if (!created && Number(res?.totalSources || 0) === 0 && !sourceIds.length) {
+        if (!vault.files.length) {
+          setError("还没有可用的资料：先「导入文档」、打开本地 Markdown 目录，或粘贴文本 / URL");
+          setTab("pages");
+          return;
+        }
+        const imported = await importAllVault();
+        if (!imported) { setError("本地目录里没有可导入的 Markdown"); return; }
+        res = await invoke("wiki.generate", {});
+        created = Number(res?.created || 0);
+      }
       setNotice(created ? `已生成 ${created} 个草稿页面，去「页面」里编辑或审核` : "没有新的资料需要生成（已有对应页面）");
       await refresh();
       if (created) { setTab("pages"); setGraph(false); setMemoryOpen(false); }
@@ -288,6 +291,30 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
       setTab("sources");
       return ok;
     } catch (err) { fail(err); return 0; } finally { setBusy(false); }
+  };
+
+  /** 导入本地文档（md / txt / json / csv …）：调系统文件选择器，逐个变成资料 */
+  const importDocuments = async () => {
+    setBusy(true);
+    try {
+      const picked = await window.harness.docsPick();
+      if (!picked.length) return;
+      let ok = 0;
+      let deduped = 0;
+      const errors: string[] = [];
+      for (const doc of picked) {
+        if (doc.error || doc.text == null) { errors.push(`${doc.name}：${doc.error || "读取失败"}`); continue; }
+        const res = await invoke("wiki.importSource", { title: doc.name.replace(/\.[a-z0-9]+$/i, ""), content: doc.text, kind: "file", uri: doc.path });
+        if (res?.deduped) deduped += 1; else ok += 1;
+      }
+      setNotice(ok || deduped
+        ? `已导入 ${ok} 份文档${deduped ? `（${deduped} 份已存在）` : ""}`
+        : "没有可导入的文档");
+      if (errors.length) setError(errors.slice(0, 3).join("；"));
+      await refresh();
+      setTab("sources");
+      setSourceDraft(null);
+    } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
   /** 删除资料（连带其引用）；页面保留 */
@@ -618,7 +645,8 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
             disabled={busy}
             title={sources.length ? `按 ${sources.length} 份资料生成草稿页面` : vault.files.length ? `会先把本地 ${vault.files.length} 个 Markdown 导入为资料再生成` : "先打开本地目录或导入资料"}
           >{busy ? "生成中…" : sources.length ? `生成 Wiki (${sources.length})` : "生成 Wiki"}</button>
-          <button className="btn" onClick={() => { setSourceDraft({ title: "", content: "", url: "", mode: "text" }); }} disabled={busy}>导入文本 / URL</button>
+          <button className="btn" onClick={() => void importDocuments()} disabled={busy} title="从磁盘选择 Markdown / 文本 / JSON / CSV 等文档">导入文档</button>
+          <button className="btn" onClick={() => { setSourceDraft({ title: "", content: "", url: "", mode: "text" }); }} disabled={busy}>粘贴文本 / URL</button>
           <button className="btn" onClick={() => void pickLocalFolder()} disabled={busy} title={vault.path ? "更换本地目录" : "打开本地 Markdown 目录"}><FolderOpenIcon size={13} /> {vault.path ? "本地目录" : "打开目录"}</button>
           <div className="notes-actions-sep" />
           <button className={`btn tiny-btn ${memoryOpen ? "primary" : ""}`} onClick={() => { setGraph(false); void openMemory(); }}>记忆</button>
@@ -818,10 +846,26 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
         <div className="notes-source-modal">
           <div className="notes-source-card">
             <div className="notes-source-head"><b>导入资料</b><button className="icon-btn" onClick={() => setSourceDraft(null)}>×</button></div>
-            <div className="notes-source-mode"><button className={sourceDraft.mode === "text" ? "on" : ""} onClick={() => setSourceDraft({ ...sourceDraft, mode: "text" })}>文本 / Markdown</button><button className={sourceDraft.mode === "url" ? "on" : ""} onClick={() => setSourceDraft({ ...sourceDraft, mode: "url" })}>URL</button></div>
-            <input className="notes-source-title" placeholder="标题" value={sourceDraft.title} onChange={(e) => setSourceDraft({ ...sourceDraft, title: e.target.value })} />
-            {sourceDraft.mode === "url" ? <input className="notes-source-title" placeholder="https://..." value={sourceDraft.url} onChange={(e) => setSourceDraft({ ...sourceDraft, url: e.target.value })} /> : <textarea className="notes-source-content" placeholder="粘贴资料内容…" value={sourceDraft.content} onChange={(e) => setSourceDraft({ ...sourceDraft, content: e.target.value })} />}
-            <div className="notes-source-actions"><button className="btn" onClick={() => setSourceDraft(null)}>取消</button><button className="btn primary" disabled={busy || (sourceDraft.mode === "url" ? !sourceDraft.url.trim() : !sourceDraft.content.trim())} onClick={() => void importSource()}>导入</button></div>
+            <div className="notes-source-mode three">
+              <button className={sourceDraft.mode === "text" ? "on" : ""} onClick={() => setSourceDraft({ ...sourceDraft, mode: "text" })}>文本 / Markdown</button>
+              <button className={sourceDraft.mode === "url" ? "on" : ""} onClick={() => setSourceDraft({ ...sourceDraft, mode: "url" })}>URL</button>
+              <button className={sourceDraft.mode === "file" ? "on" : ""} onClick={() => setSourceDraft({ ...sourceDraft, mode: "file" })}>本地文件</button>
+            </div>
+            {sourceDraft.mode === "file" ? (
+              <>
+                <div className="notes-source-file">
+                  <b>从磁盘选择文档</b>
+                  <span>支持 .md / .markdown / .txt / .json / .csv / .yml / .html / .log 等文本类文件，可多选；同一路径重复导入会自动跳过。</span>
+                </div>
+                <div className="notes-source-actions"><button className="btn" onClick={() => setSourceDraft(null)}>取消</button><button className="btn primary" disabled={busy} onClick={() => void importDocuments()}>选择文件…</button></div>
+              </>
+            ) : (
+              <>
+                <input className="notes-source-title" placeholder="标题" value={sourceDraft.title} onChange={(e) => setSourceDraft({ ...sourceDraft, title: e.target.value })} />
+                {sourceDraft.mode === "url" ? <input className="notes-source-title" placeholder="https://..." value={sourceDraft.url} onChange={(e) => setSourceDraft({ ...sourceDraft, url: e.target.value })} /> : <textarea className="notes-source-content" placeholder="粘贴资料内容…" value={sourceDraft.content} onChange={(e) => setSourceDraft({ ...sourceDraft, content: e.target.value })} />}
+                <div className="notes-source-actions"><button className="btn" onClick={() => setSourceDraft(null)}>取消</button><button className="btn primary" disabled={busy || (sourceDraft.mode === "url" ? !sourceDraft.url.trim() : !sourceDraft.content.trim())} onClick={() => void importSource()}>导入</button></div>
+              </>
+            )}
           </div>
         </div>
       )}

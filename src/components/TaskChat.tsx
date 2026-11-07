@@ -366,7 +366,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
 
   const project = state.projects.find((p) => p.id === scopeProjectId) ?? null;
 
-  // 把连续的 tool / thought 收成一组，避免一屏都是工具气泡（参考 reference 的 steps 折叠）
+  // 把连续的 tool / thought 收成一组，避免一屏都是工具气泡
   type ChatItem =
     | { kind: "run"; key: string; runId: string }
     | { kind: "msg"; key: string; msg: Message }
@@ -896,7 +896,7 @@ function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry }: {
   );
 }
 
-/** 连续的工具 / 思考步骤收成一行，点开看细节（参考 reference 的 steps 折叠） */
+/** 连续的工具 / 思考步骤收成一行，点开看细节 */
 function ToolGroup({ messages, now, copiedId, onCopy, onRetry }: {
   messages: Message[]; now: number; copiedId: string | null;
   onCopy: (m: Message) => void; onRetry: (m: Message) => void;

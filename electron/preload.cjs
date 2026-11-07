@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld("harness", {
   filesTrash: (rel, root) => ipcRenderer.invoke("files:trash", { rel, root }),
   filesReveal: (rel, root) => ipcRenderer.invoke("files:reveal", { rel, root }),
   filesWrite: (rel, root, text) => ipcRenderer.invoke("files:write", { rel, root, text }),
+  docsPick: () => ipcRenderer.invoke("docs:pick"),
+  docsRead: (paths) => ipcRenderer.invoke("docs:read", { paths }),
   // Git（Source Control）：全部在项目根目录跑 git CLI
   gitStatus: (root) => ipcRenderer.invoke("git:status", { root }),
   gitDiff: (root, path, staged) => ipcRenderer.invoke("git:diff", { root, path, staged }),

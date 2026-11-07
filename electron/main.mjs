@@ -3166,6 +3166,54 @@ ipcMain.handle("git:init", async (_e, { root } = {}) => {
   return { ok: res.ok, error: res.ok ? null : res.error };
 });
 
+// ── 本地文档导入（笔记/资料用）────────────────────────────────────────
+const DOC_EXTS = ["md", "markdown", "mdx", "txt", "text", "json", "csv", "tsv", "yml", "yaml", "html", "htm", "log", "ini", "conf", "rst", "org"];
+const DOC_MAX_BYTES = 5 * 1024 * 1024;
+
+function looksBinary(buf) {
+  const sample = buf.subarray(0, Math.min(buf.length, 4096));
+  let control = 0;
+  for (const byte of sample) {
+    if (byte === 0) return true;
+    // 允许 \n \r \t，其余控制字符算可疑
+    if (byte < 9 || (byte > 13 && byte < 32)) control += 1;
+  }
+  return sample.length > 0 && control / sample.length > 0.05;
+}
+
+/** 读本地文档为文本；二进制 / 超大 / 不支持的扩展名逐个返回 error，不整体失败 */
+function readDocuments(paths = []) {
+  return (Array.isArray(paths) ? paths : []).slice(0, 50).map((raw) => {
+    const abs = path.resolve(String(raw || ""));
+    const name = path.basename(abs);
+    try {
+      const stat = fs.statSync(abs);
+      if (!stat.isFile()) return { path: abs, name, error: "不是文件" };
+      if (stat.size > DOC_MAX_BYTES) return { path: abs, name, error: `超过 5MB（${(stat.size / 1024 / 1024).toFixed(1)}MB）` };
+      const buf = fs.readFileSync(abs);
+      if (looksBinary(buf)) return { path: abs, name, error: "看起来是二进制文件（暂只支持文本类文档）" };
+      return { path: abs, name, text: buf.toString("utf8"), size: stat.size };
+    } catch (err) {
+      return { path: abs, name, error: String(err?.message || err) };
+    }
+  });
+}
+
+ipcMain.handle("docs:read", (_e, { paths = [] } = {}) => readDocuments(paths));
+
+ipcMain.handle("docs:pick", async () => {
+  const res = await dialog.showOpenDialog(win, {
+    title: "导入本地文档到 Wiki 资料",
+    properties: ["openFile", "multiSelections"],
+    filters: [
+      { name: "文本 / Markdown", extensions: DOC_EXTS },
+      { name: "全部文件", extensions: ["*"] },
+    ],
+  });
+  if (res.canceled || !res.filePaths.length) return [];
+  return readDocuments(res.filePaths);
+});
+
 ipcMain.handle("files:write", (_e, { rel, root, text } = {}) => {
   if (typeof text !== "string") throw new Error("text required");
   if (!rel) throw new Error("rel required");

@@ -57,7 +57,7 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 工作区 / 项目 / 收件箱 / 统计 / 主机 / 设置
 ```
 
-- **导航**：工作区 / 项目 / 收件箱 / 统计 / 主机 / Git / 设置（`⌘,`，左分区导航 + 右行式表单，参考 reference / reference；收件箱带未读徽标）
+- **导航**：工作区 / 项目 / 收件箱 / 统计 / 主机 / Git / 设置（`⌘,`，左分区导航 + 右行式表单；收件箱带未读徽标）
 - **TODO LIST**：一条任务列表，按状态分组；支持搜索（标题/编号/描述/标签）、筛选（全部/进行中/待确认/已确认）、分组折叠、悬停或键盘聚焦显示快捷操作
 - **项目**：在 TODO LIST 下方的常驻项目区，本地目录即项目；支持添加 / 切换 / 管理 / 在 Finder 中显示，任务、终端、文件树跟随当前项目
 - **Chat**：单一输入路径。会话（thread）永远存在：说一句话即派活，运行中发消息即纠偏（带投递回执），已确认任务的消息仅记录；**未派活的对话是全局的**（切项目不消失），composer 里用 `◎ 全局 / 项目 · xxx` 选择这次对话的作用域；**模型可按会话选择**（选项来自 dsh ACP `session/new` 的 configOptions，下一次运行生效）；草稿会话发送 = 派活并创建任务
@@ -65,15 +65,15 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 - **Terminal**：任务绑定项目的真实 pty（node-pty + xterm），可多标签、可直接输入；**资源管理器里的文件也在终端区按标签预览**；多标签切换（⌃Tab / ⌘⇧[ ] / ⌘⇧1…9）、**终端窗格任意拆分**（⌘D 右拆 / ⇧⌘D 下拆，递归嵌套 + 拖拽分隔条 + ⌘⌥方向键切焦点）、标签重命名与中键关闭、⌘F 查找、右键菜单（复制 / 粘贴 / 清屏 / 重启）、⌘+/- 字号缩放、链接点击打开、进程退出后可重启；挂载前的输出会回放，不会丢 banner；**预览只有一个标签**：打开 HTML/文本文件就切成文件模式（渲染 / 源码），点地址栏「URL」或终端识别到的 `打开预览 :PORT` 就切成地址模式（dev server / 远程页面），两种模式共用同一 webview、地址栏与**拾取页面元素**；工具栏不再单列「＋ 预览」按钮（避免第二个入口）
 - **UI 上下文**：预览页里点中元素 → Chat 输入框出现元素 chip（selector / 源文件 / 截图）→ 随消息注入当前会话（运行中即 steer）
 - **插件**：Settings → 插件可安装 `.cockpit-plugin` / 目录、启停；**Notes 是内置 first-party 插件**，无需额外安装，原生 Source / Page / Citation / Review、Memory 顶层索引 / 注入、CodeMirror 编辑、多 tab、可拖拽左右分屏、搜索、Graph、任务 / Chat 联动；也支持打开本地 Markdown 目录，直接编辑写回或导入为 Source（见 [docs/ARCH-plugins.md](docs/ARCH-plugins.md)、[docs/PLUGIN-notes.md](docs/PLUGIN-notes.md)）
-- **右侧栏**：reference 风格三块
+- **右侧栏**：三块
   - **资源管理器**：树形展开 / 折叠、文件类型标识、名称筛选（默认隐藏点文件）、全部折叠；**右键菜单**（新建文件/文件夹、在终端打开、Finder 显示、复制路径/相对路径、重命名 F2、复制副本、删除 ⌫）、工具栏新建、行内重命名、自动刷新（窗口重新聚焦时）
   - **会话历史**：按今天 / 昨天 / 更早分组；每行显示标题、状态、Agent、项目、消息数、最近一条消息；点行回到对应 Chat 会话，可展开最近消息
   - **会话历史**之外不再挤一个预览 tab：点击文件 / 右键「预览」会在**终端区唯一的预览标签**里打开（Markdown 富文本/源码切换 + 目录；HTML 预览/可视化/源码三段，可视化是 **GrapesJS 画布**（拖组件、改文字、调样式，保存回写完整 HTML，懒加载）；源码编辑同样 ⌘S 保存）（再次点别的文件是替换，不会堆一排预览标签）（文本 / 图片 / Markdown / HTML；Markdown 和 HTML 支持「渲染 / 源码」切换；HTML 渲染里可直接**拾取元素**并把 selector / 源码位置注入 Chat；Markdown 相对文档链接可直接跳转；HTML 标签切换 / 源码渲染 / 刷新都不会重载 webContents；可 Finder 显示、复制路径、刷新、关闭）
 - **可拖拽布局**：TODO / Chat / Terminal / 文件四列之间的分隔条可左右拖动，TODO 列表与项目区之间的分隔条可上下拖动；尺寸自动记住，`⌘K → 重置面板宽度 / 高度` 可恢复默认
 - **可收起面板**：TODO / Chat / Terminal / 右侧栏都能收起成窄条，点击窄条展开；项目区也可单独折叠；状态自动记住
 - 状态分组就是看板：纵向排列在 TODO 列里
-- 资源管理器带 Git 装饰（参考 reference）：修改 / 新增 / 已暂存 / 删除各自着色并带状态字母，被 `.gitignore` 忽略的文件与目录淡色斜体，目录内有改动时显示状态点
-- Wiki / 笔记：资料可删除（连带清引用）、页面可删除、审核列表可直接接受/退回、搜索 Esc 清空；打开本地 Markdown 目录 → 「全部导入为资料」→ 「生成 Wiki」（每份资料生成一个草稿页面 + citation，确定性生成、不依赖模型）→ 编辑 / 审核；图谱包含页面 / 资料 / 本地文件三类节点
+- 资源管理器带 Git 装饰：修改 / 新增 / 已暂存 / 删除各自着色并带状态字母，被 `.gitignore` 忽略的文件与目录淡色斜体，目录内有改动时显示状态点
+- Wiki / 笔记：支持从磁盘导入文档（md/txt/json/csv/yml/html… 可多选，自动跳过二进制与重复项）；资料可删除（连带清引用）、页面可删除、审核列表可直接接受/退回、搜索 Esc 清空；打开本地 Markdown 目录 → 「全部导入为资料」→ 「生成 Wiki」（每份资料生成一个草稿页面 + citation，确定性生成、不依赖模型）→ 编辑 / 审核；图谱包含页面 / 资料 / 本地文件三类节点
 - 右侧栏新增 **Git** 标签（资源管理器 / 会话历史旁边）：分支、暂存/取消暂存、全部暂存、提交框（⌘Enter）、拉取/推送、一键「全屏」看 diff
 - Git（Source Control）：分支 / 上游 / ahead-behind、文件暂存与丢弃、Diff 查看（+N -M）、提交框（⌘Enter）、推送/拉取、分支切换与新建、最近提交；非仓库可一键 `git init`（见 [docs/ARCH-git.md](docs/ARCH-git.md)）
 - Git → 项目 Wiki：内置项目介绍 / 工作流 / 界面与流程 / 架构 / Agent / Super Agent / LLM Wiki / 设计取舍 / 终端 / 主题 / 插件 / 构建 / 版本记录；支持搜索（⌘F）、目录、页间链接、图片灯箱、代码复制和可播放的流程 Demo，带 Git 分支 / HEAD 标识；内容来自 `resources/wiki/*.md` + `CHANGELOG.md`，随仓库版本发布；`npm run wiki:publish` 可同步到 GitHub Wiki（独立 `.wiki.git` 仓库）
@@ -97,7 +97,7 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 - 队列 / 每 agent 并发；停止 / 重试
 - 状态分组 + 确认 → 就地进入「已确认」
 - 终端（真实 pty）、项目文件树；文件预览与网页预览统一在终端标签区
-- 终端易用性（参考 reference terminal）：多标签快捷键、**窗格拆分**（二进制布局 / 拖拽比例 / 方向键切焦点）、**预览标签拖入拆分的另一半**（或终端右键「在右侧打开预览」）、查找高亮、右键菜单、链接打开、字号缩放、标签重命名 / 运行中提示点、退出重启、挂载前输出回放（见 [docs/ARCH-terminal-ux.md](docs/ARCH-terminal-ux.md)）
+- 终端易用性：多标签快捷键、**窗格拆分**（二进制布局 / 拖拽比例 / 方向键切焦点）、**预览标签拖入拆分的另一半**（或终端右键「在右侧打开预览」）、查找高亮、右键菜单、链接打开、字号缩放、标签重命名 / 运行中提示点、退出重启、挂载前输出回放（见 [docs/ARCH-terminal-ux.md](docs/ARCH-terminal-ux.md)）
 - 前端预览 + 元素拾取（CDP）：预览作为终端标签页（与 pty 标签并列，⌘W / 中键关闭），终端打印的 dev server 地址自动识别；拾取元素 → 结构化 `<ui-context>` 注入 Agent；源码位置优先 `data-ym-src` / React `_debugSource`；截图落 `userData/ui-context`，不污染 worktree
 - 审批弹窗（ACP `session/request_permission`）：按 ACP 选项渲染（允许一次 / 总是允许 / 拒绝），支持多审批队列提示、焦点陷阱/aria；可在设置里改为自动批准 / 自动拒绝
 - 设置页（通用 / 外观 / 执行 / 终端 / 预览与元素 / 数据 / 快捷键 / 关于）：SQLite 持久化、即时生效；含分区说明/行内 hint、13 套主题（跟随系统 / 浅色 / 纸感 / Light+ / 深色 / Dark+ / Monokai / One Dark / Solarized / Dracula / 午夜蓝 / 森林 / 石墨；终端配色随主题切换）、默认 Agent、全局并发、dsh 路径/模型、终端字号与回滚、预览地址、备份导出与重置
@@ -198,7 +198,7 @@ npm run pack:system
 - **贡献指南**：[CONTRIBUTING.md](CONTRIBUTING.md)
 - **行为准则**：[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - **安全报告**：[SECURITY.md](SECURITY.md)（请走私密漏洞报告，不要开公开 Issue）
-- **第三方许可**：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)（含内置 dsh 的 MIT 许可、reference/reference 对比截图归属）
+- **第三方许可**：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)（含内置 dsh 的 MIT 许可）
 - **变更记录**：[CHANGELOG.md](CHANGELOG.md) · [Release Notes](RELEASE_NOTES.md)
 - 本项目是本地优先工具，不包含遥测；Agent CLI 自身的数据发送取决于对应服务的配置。
 
@@ -217,7 +217,7 @@ npm run pack:system
 - [docs/ARCH-git.md](docs/ARCH-git.md)（Git / Source Control：IPC 表、交互要点、明确不做的部分）
 - [docs/ARCH-hosts-stats.md](docs/ARCH-hosts-stats.md)（主机探测/心跳/运行位置 + 统计口径：未上报不写 0）
 - [docs/ARCH-terminal-ux.md](docs/ARCH-terminal-ux.md)（终端易用性：标签 / 拆分 / 查找 / 右键菜单 / 输入回放）
-- [docs/ARCH-chat-ui.md](docs/ARCH-chat-ui.md)（Chat UI：扁平消息 / 工具折叠 / 卡片 composer，参考 reference + reference）
+- [docs/ARCH-chat-ui.md](docs/ARCH-chat-ui.md)（Chat UI：扁平消息 / 工具折叠 / 卡片 composer）
 - [docs/ARCH-usability-pass.md](docs/ARCH-usability-pass.md)（易用性改进：已完成项与仍待做的重型能力）
 - [docs/ARCH-file-explorer.md](docs/ARCH-file-explorer.md)（资源管理器：右键菜单 / 文件操作 / 安全边界）
 - [docs/GAP-chat.md](docs/GAP-chat.md)（CHAT 实现现状与需求差距）

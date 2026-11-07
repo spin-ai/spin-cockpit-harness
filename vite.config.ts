@@ -9,7 +9,7 @@ export default defineConfig({
     strictPort: true,
     watch: { ignored: ["**/docs/**", "**/release/**", "**/dist/**"] },
   },
-  // Only the app's index.html is an entry; docs/ contains vendored reference/reference sources.
+  // Only the app's index.html is an entry; docs/ contains local reference material.
   optimizeDeps: { entries: ["index.html"] },
   build: { outDir: "dist" },
 });

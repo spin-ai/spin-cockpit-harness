@@ -380,7 +380,7 @@ button{cursor:pointer}
 .term-empty code{font-family:var(--mono);font-size:10.5px;padding:0 4px;border-radius:4px;border:1px solid #3f3f46;background:#27272a;color:#d4d4d8}
 .term-host .xterm{height:100%}
 
-/* 终端易用性：字号 / 查找 / 右键菜单 / 退出态（参考 reference terminal） */
+/* 终端易用性：字号 / 查找 / 右键菜单 / 退出态 */
 .term-icon-btn{height:22px;border:1px solid #3f3f46;border-radius:5px;background:transparent;color:#a1a1aa;font-size:12px;line-height:1;padding:0 6px;cursor:pointer;display:grid;place-items:center}
 .term-icon-btn:hover:not(:disabled){background:#27272a;color:#e4e4e7}
 .term-icon-btn:disabled{opacity:.35;cursor:default}
@@ -520,7 +520,7 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .mention-pop button{display:flex;justify-content:space-between;gap:8px;border:0;background:transparent;text-align:left;padding:5px 8px;border-radius:5px;font-size:11.5px;color:var(--fg-2)}
 .mention-pop button:hover{background:var(--surface-hover)}
 
-/* reference-style right panel: explorer + session history + preview */
+/* right panel: explorer + session history + preview */
 .right-panel{display:flex;flex-direction:column;min-height:0;background:var(--surface)}
 .right-tabs{display:flex;align-items:center;gap:2px;height:40px;flex:none;padding:0 6px;border-bottom:1px solid var(--border);background:var(--surface)}
 .right-tabs button{border:0;background:transparent;color:var(--muted);font-size:11.5px;padding:5px 7px;border-radius:5px;display:flex;align-items:center;gap:4px;white-space:nowrap}
@@ -612,7 +612,7 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .right-tabs::-webkit-scrollbar{display:none}
 .right-tabs button{flex:none}
 
-/* icon-based right panel chrome (reference activity-bar style) */
+/* icon-based right panel chrome (activity-bar style) */
 .right-tabs{padding:0 4px;gap:0}
 .right-tabs button.icon-tab{position:relative;width:38px;height:40px;display:flex;align-items:center;justify-content:center;padding:0;border-radius:0;background:transparent;box-shadow:none;color:var(--muted)}
 .right-tabs button.icon-tab:hover{background:var(--surface-hover);color:var(--fg-2)}
@@ -825,7 +825,7 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .task-create input:focus{border-color:var(--brand);box-shadow:0 0 0 2px rgba(59,130,246,.12)}
 .pane-empty .link{font-size:11px}
 
-/* ── Chat redesign：扁平 transcript + 卡片式 composer（参考 reference / reference native chat）── */
+/* ── Chat redesign：扁平 transcript + 卡片式 composer ── */
 .thread-bar{padding:10px 12px 8px;gap:4px}
 .thread-title-row{display:flex;align-items:center;gap:6px;min-width:0}
 .thread-dot{width:6px;height:6px;border-radius:50%;background:var(--faint);flex:none}
@@ -1026,7 +1026,7 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .model-select{max-width:138px}
 
 /* ═══════════════════════════════════════════════════════════════
-   Softness pass（参考 reference：单色安静、hairline、低饱和状态色、柔和圆角/阴影）
+   Softness pass（单色安静、hairline、低饱和状态色、柔和圆角/阴影）
    ═══════════════════════════════════════════════════════════════ */
 button{transition:background-color .14s ease,border-color .14s ease,color .14s ease,box-shadow .14s ease}
 ::-webkit-scrollbar{width:9px;height:9px}
@@ -1348,7 +1348,7 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .term-drop-hint.col-before{left:0;top:0;width:100%;height:50%}
 .term-drop-hint.col-after{left:0;bottom:0;width:100%;height:50%}
 
-/* 设置：搜索 / 命中跳转 / 恢复默认（参考 reference 设置的可用性） */
+/* 设置：搜索 / 命中跳转 / 恢复默认 */
 .settings-search{height:26px;border:1px solid var(--input);border-radius:6px;background:var(--surface);padding:0 8px;font-size:11.5px;color:var(--fg);outline:none;width:100%}
 .settings-search:focus{border-color:var(--brand);box-shadow:0 0 0 2px rgba(59,130,246,.12)}
 .settings-hits{display:flex;flex-direction:column;gap:1px;overflow:auto}
@@ -1443,7 +1443,7 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .missing-key-actions{display:flex;gap:6px;justify-content:flex-end}
 .settings-env{width:100%;min-width:280px;max-width:420px;height:auto;min-height:66px;padding:6px 8px;font-family:var(--mono);font-size:11px;line-height:1.6;resize:vertical}
 
-/* 预览：源码/编辑、目录（参考 reference markdown：富文本/源码 + TOC + ⌘S 保存） */
+/* 预览：源码/编辑、目录（富文本/源码 + TOC + ⌘S 保存） */
 .preview-saved{font-size:10.5px;color:#15803d}
 .file-source-editor{flex:1;min-height:0;width:100%;resize:none;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--fg);font-family:var(--mono);font-size:12px;line-height:1.7;padding:14px 16px;outline:none;white-space:pre-wrap;tab-size:2}
 .file-source-editor:focus{border-color:var(--brand-line);box-shadow:var(--ring)}
@@ -1609,7 +1609,7 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .notes-ctx button.danger{color:var(--red)}
 .notes-ctx button.danger:hover{background:var(--red-soft)}
 
-/* Git / Source Control（参考 reference：文件列表 + diff + 提交框） */
+/* Git / Source Control（文件列表 + diff + 提交框） */
 .git-page{gap:10px}
 .git-grid{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);gap:10px;min-height:0;flex:1}
 .git-side{display:flex;flex-direction:column;gap:10px;min-height:0;overflow:auto}
@@ -1874,7 +1874,7 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 @media (max-width:1180px){.notes-layout{grid-template-columns:190px minmax(0,1fr) 210px}.notes-sidebar{padding-right:10px}.notes-meta{padding-left:12px}.notes-actions .btn{padding:0 7px}}
 @media (max-width:900px){.notes-layout{grid-template-columns:1fr;gap:10px}.notes-sidebar,.notes-meta{padding:0;max-height:none}.notes-main{min-height:420px}.notes-wiki-tabs{margin-top:0}}
 
-/* 资源管理器 git 装饰（参考 reference：改动着色、ignore 淡色斜体） */
+/* 资源管理器 git 装饰（改动着色、ignore 淡色斜体） */
 .tree-row .tree-git{margin-left:auto;font-family:var(--mono);font-size:9.5px;line-height:1;padding:1px 3px;border-radius:3px;flex:none}
 .tree-git.git-mod{color:#b45309;background:var(--amber-soft,#fffbeb)}
 .tree-git.git-new{color:#15803d;background:var(--green-soft)}
@@ -2212,6 +2212,10 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 @media (max-width:900px){.grid2{grid-template-columns:1fr}.grid2>.panel+.panel{border-left:0;border-top:1px solid var(--border)}}
 .notes-link.imported{opacity:.75;border-style:dashed}
 .notes-link.imported b{color:var(--faint)}
+.notes-source-mode.three button{flex:1}
+.notes-source-file{display:flex;flex-direction:column;gap:5px;padding:12px;border:1px dashed var(--border);border-radius:9px;background:var(--page-canvas)}
+.notes-source-file b{font-size:12.5px}
+.notes-source-file span{font-size:11px;line-height:1.6;color:var(--muted)}
 
 /* ═══════════════════════════════════════════════════════════════
    Design system pass 2：标题 / 间距 / 字号 / 操作 / 空态 / 对比度
