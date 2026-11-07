@@ -87,3 +87,22 @@ hover 时隐藏右侧计数（`em`）给动作让位。
 
 验证：`scripts/e2e-notes.mjs`（4/4）—— 自动导入+生成、删除资料（sources 3→2、edges 6→4）、
 删除页面（pages 3→2、行数同步）、审核快捷接受。
+
+## 9. 「导入资料」与「本地目录」的关系（去重）
+
+两者都会产生 **source**，但入口语义不同：
+
+| 入口 | 用途 | 结果 |
+|---|---|---|
+| 导入文本 / URL（原「导入资料」） | 粘贴一段文本、Markdown 或一个 http(s) 链接 | `wiki.importSource` |
+| 打开本地目录 | 浏览/编辑仓库里的 `.md`，需要时才导入 | `wiki.vault.open`（只记录目录）；「全部导入为资料」/ 文件右侧「导入为 Source」才产生 source |
+
+为了避免重复堆资料：
+
+- 插件统一 `findSource()` 去重：**同 uri（路径）或同内容 hash** 视为同一份，`wiki.importSource` / `wiki.vault.importSource` 命中时只更新标题与内容并返回 `{ deduped: true }`
+- UI 用 `sources.uri` 计算「还没导入的本地文件」：
+  · 本地 tab 底部按钮显示「全部导入为资料（待导入数）」，导完变「已全部导入为资料」并置灰
+  · 右侧「导入为 Source」在已导入时变成「已在资料中」的说明块
+- 「生成 Wiki」本身按标题去重（已有同名页面就跳过），重复点击不会产生重复页面
+
+验证：`scripts/e2e-notes.mjs` + 本地脚本（4/4）——待导入数、导完置灰、重复 importSource 返回 deduped 且 sources 数量不变、重复生成 pages 不变。

@@ -260,22 +260,30 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   };
 
   /** 把本地目录里的 Markdown 全部导入为资料（最多 30 个，避免一次性太大）；返回成功数量 */
+  /** 本地目录里还没变成资料的文件（按 uri 判断，避免重复导入） */
+  const pendingVaultFiles = useMemo(() => {
+    const imported = new Set(sources.map((s) => s.uri).filter(Boolean));
+    return vault.files.filter((f) => !imported.has(f.path));
+  }, [vault.files, sources]);
+
   const importAllVault = async (): Promise<number> => {
-    const files = vault.files.slice(0, 30);
-    if (!files.length) { setError("还没有打开本地目录"); return 0; }
+    const files = pendingVaultFiles.slice(0, 30);
+    if (!vault.files.length) { setError("还没有打开本地目录"); return 0; }
+    if (!files.length) { setNotice("本地目录里的 Markdown 都已经导入为资料了"); return sources.length; }
     setBusy(true);
     let ok = 0;
+    let skipped = 0;
     try {
       for (const f of files) {
         try {
           const content = await invoke("wiki.vault.file", { path: f.path });
           const text = String((content as { content?: string })?.content || "");
           if (!text.trim()) continue;
-          await invoke("wiki.importSource", { title: f.title, content: text, kind: "vault", uri: f.path });
-          ok += 1;
+          const res = await invoke("wiki.importSource", { title: f.title, content: text, kind: "vault", uri: f.path });
+          if (res?.deduped) skipped += 1; else ok += 1;
         } catch { /* 单个文件失败不阻塞 */ }
       }
-      setNotice(ok ? `已导入 ${ok} 份本地 Markdown 为资料` : "没有可导入的内容");
+      setNotice(ok ? `已导入 ${ok} 份本地 Markdown 为资料${skipped ? `（${skipped} 份已存在）` : ""}` : "没有新的可导入内容");
       await refresh();
       setTab("sources");
       return ok;
@@ -610,7 +618,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
             disabled={busy}
             title={sources.length ? `按 ${sources.length} 份资料生成草稿页面` : vault.files.length ? `会先把本地 ${vault.files.length} 个 Markdown 导入为资料再生成` : "先打开本地目录或导入资料"}
           >{busy ? "生成中…" : sources.length ? `生成 Wiki (${sources.length})` : "生成 Wiki"}</button>
-          <button className="btn" onClick={() => { setSourceDraft({ title: "", content: "", url: "", mode: "text" }); }} disabled={busy}>导入资料</button>
+          <button className="btn" onClick={() => { setSourceDraft({ title: "", content: "", url: "", mode: "text" }); }} disabled={busy}>导入文本 / URL</button>
           <button className="btn" onClick={() => void pickLocalFolder()} disabled={busy} title={vault.path ? "更换本地目录" : "打开本地 Markdown 目录"}><FolderOpenIcon size={13} /> {vault.path ? "本地目录" : "打开目录"}</button>
           <div className="notes-actions-sep" />
           <button className={`btn tiny-btn ${memoryOpen ? "primary" : ""}`} onClick={() => { setGraph(false); void openMemory(); }}>记忆</button>
@@ -696,7 +704,9 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 {filteredVaultFiles.length === 0 && !vault.error && <div className="notes-empty-list">{query ? "没有匹配的本地文件。" : "目录里还没有 Markdown 文件。"}</div>}
                 {vault.files.length > 0 && (
                   <div className="notes-sidebar-foot">
-                    <button className="link tiny" onClick={() => void importAllVault()} disabled={busy}>全部导入为资料（{Math.min(30, vault.files.length)}）</button>
+                    <button className="link tiny" onClick={() => void importAllVault()} disabled={busy || pendingVaultFiles.length === 0}>
+                    {pendingVaultFiles.length === 0 ? "已全部导入为资料" : `全部导入为资料（${Math.min(30, pendingVaultFiles.length)}）`}
+                  </button>
                     <button className="link tiny" onClick={() => void generateWiki()} disabled={busy}>用资料生成页面 →</button>
                   </div>
                 )}
@@ -714,7 +724,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 <div className="notes-empty-actions">
                   <button className="link tiny" onClick={() => void createPage()} disabled={busy}>＋ 新建</button>
                   <button className="link tiny" onClick={() => void generateWiki()} disabled={busy}>按资料生成</button>
-                  <button className="link tiny" onClick={() => setSourceDraft({ title: "", content: "", url: "", mode: "text" })} disabled={busy}>导入资料</button>
+                  <button className="link tiny" onClick={() => setSourceDraft({ title: "", content: "", url: "", mode: "text" })} disabled={busy}>导入文本 / URL</button>
                 </div>
               </div>
             )}
@@ -723,7 +733,11 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
           </div>
           {tab === "sources" && (
             <div className="notes-sidebar-foot">
-              {vault.files.length > 0 && <button className="link tiny" onClick={() => void importAllVault()} disabled={busy}>导入本地 {Math.min(30, vault.files.length)} 个 .md</button>}
+              {vault.files.length > 0 && (
+                <button className="link tiny" onClick={() => void importAllVault()} disabled={busy || pendingVaultFiles.length === 0}>
+                  {pendingVaultFiles.length === 0 ? "本地文件已全部导入" : `导入本地 ${Math.min(30, pendingVaultFiles.length)} 个 .md`}
+                </button>
+              )}
               <button className="link tiny" onClick={() => void generateWiki()} disabled={busy}>用资料生成页面 →</button>
             </div>
           )}
@@ -759,7 +773,11 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
               <div className="notes-meta-block"><div className="notes-meta-title">本地文件</div><div className="notes-review-badge local">Markdown</div><p className="notes-meta-empty">{activeDoc.localPath}</p>{activeDoc.mtime && <p className="notes-meta-empty">修改于 {new Date(activeDoc.mtime).toLocaleString()}</p>}</div>
               <div className="notes-meta-block">
                 <div className="notes-meta-title">操作</div>
-                <button className="notes-link" onClick={() => void importLocalSource(activeDoc)} disabled={busy}><b>导入为 Source</b><span>让 Curator 基于此文件整理 Wiki</span></button>
+                {sources.some((s) => s.uri === activeDoc.localPath) ? (
+                  <div className="notes-link imported"><b>已在资料中</b><span>重复导入会自动跳过（按路径去重）</span></div>
+                ) : (
+                  <button className="notes-link" onClick={() => void importLocalSource(activeDoc)} disabled={busy}><b>导入为 Source</b><span>把这份 Markdown 变成 Wiki 资料</span></button>
+                )}
                 <button className="notes-link" onClick={() => void revealLocalFile(activeDoc)}><b>在 Finder 显示</b><span>打开文件所在位置</span></button>
                 <button className="notes-link" onClick={() => void refreshVault()}><b>刷新目录</b><span>重新扫描本地 Markdown</span></button>
               </div>

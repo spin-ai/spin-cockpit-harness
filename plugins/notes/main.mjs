@@ -25,6 +25,13 @@ let data = {
 
 function now() { return Date.now(); }
 function id(prefix) { seq += 1; return `${prefix}${Date.now().toString(36)}${seq}`; }
+/** 资料去重：同路径（uri）或同内容 hash 视为同一份资料 */
+function findSource({ uri = "", content = "" } = {}) {
+  const cleanUri = String(uri || "").trim();
+  const h = hash(content || "");
+  return data.sources.find((src) => (cleanUri && src.uri === cleanUri) || (src.hash && src.hash === h)) || null;
+}
+
 function hash(text) { return crypto.createHash("sha256").update(String(text || "")).digest("hex"); }
 function slugify(text) {
   return String(text || "page").toLowerCase().trim().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "page";
@@ -316,6 +323,15 @@ export async function activate(context) {
   ctx.api.handle("wiki.importSource", async ({ title, content, kind = "text", uri = "" } = {}) => {
     const text = String(content || "").trim();
     if (!text) throw new Error("source 内容为空");
+    const existed = findSource({ uri, content: text });
+    if (existed) {
+      // 重复导入：更新标题/内容但不再新增一条，UI 据此提示「已存在」
+      if (title && String(title).trim()) existed.title = String(title).trim().slice(0, 200);
+      existed.content = text;
+      existed.hash = hash(text);
+      await persist();
+      return { ...existed, deduped: true };
+    }
     const source = {
       id: id("src"), title: String(title || uri || "Untitled source").slice(0, 200),
       kind: String(kind || "text"), uri: String(uri || ""), content: text,
@@ -388,6 +404,8 @@ export async function activate(context) {
   });
   ctx.api.handle("wiki.vault.importSource", async ({ path: relPath } = {}) => {
     const file = await readVaultFile(relPath);
+    const existed = findSource({ uri: file.path, content: file.content });
+    if (existed) return { ...existed, deduped: true };
     const source = {
       id: id("src"), title: file.title, kind: "local", uri: file.path,
       content: file.content, hash: hash(file.content), createdAt: now(),

@@ -7,7 +7,7 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![status](https://img.shields.io/badge/status-alpha-orange)
 
-Cockpit Harness · 多 Agent 编排工作台：**Chat 分派任务 → project 下开 Terminal → agent 执行 → 看板看状态 → 确认后进 TODO LIST**。
+Cockpit Harness · **多智能体终端 / Super Agent / LLM Wiki**：Chat 分派任务 → project 下开 Terminal → agent 执行 → 看板看状态 → 确认后进 TODO LIST；Mission 编排与可审核知识库共用同一套本地数据。
 Electron 桌面应用，本地 SQLite，执行走 `dsh --profile acp`；仓库名 `spin-cockpit-harness`。
 
 在线文档（GitHub Pages）：<https://spin-ai.github.io/spin-cockpit-harness/>
@@ -37,7 +37,8 @@ npm run dev                 # Vite + Electron
 npm run docs:dev            # 文档站（GitHub Pages 同款，http://localhost:5198）
 # 或
 npm run build && npm start
-npm run dist                # macOS dmg → release/
+npm run dist                # macOS dmg → release/，并自动同步到 /Applications（SKIP_LOCAL_INSTALL=1 可跳过）
+npm run install:mac         # 只把最新构建装到本机（--open 装完顺手启动）
 npm run docs:build          # → dist-pages/（GitHub Pages）
 ```
 
@@ -75,7 +76,7 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 - Wiki / 笔记：资料可删除（连带清引用）、页面可删除、审核列表可直接接受/退回、搜索 Esc 清空；打开本地 Markdown 目录 → 「全部导入为资料」→ 「生成 Wiki」（每份资料生成一个草稿页面 + citation，确定性生成、不依赖模型）→ 编辑 / 审核；图谱包含页面 / 资料 / 本地文件三类节点
 - 右侧栏新增 **Git** 标签（资源管理器 / 会话历史旁边）：分支、暂存/取消暂存、全部暂存、提交框（⌘Enter）、拉取/推送、一键「全屏」看 diff
 - Git（Source Control）：分支 / 上游 / ahead-behind、文件暂存与丢弃、Diff 查看（+N -M）、提交框（⌘Enter）、推送/拉取、分支切换与新建、最近提交；非仓库可一键 `git init`（见 [docs/ARCH-git.md](docs/ARCH-git.md)）
-- Git → 项目 Wiki：内置项目介绍 / 工作流 / 界面与流程 / 架构 / Agent / Super Agent / 设计取舍 / 终端 / 主题 / 插件 / 构建 / 版本记录；支持搜索（⌘F）、目录、页间链接、图片灯箱、代码复制和可播放的流程 Demo，带 Git 分支 / HEAD 标识；内容来自 `resources/wiki/*.md` + `CHANGELOG.md`，随仓库版本发布；`npm run wiki:publish` 可同步到 GitHub Wiki（独立 `.wiki.git` 仓库）
+- Git → 项目 Wiki：内置项目介绍 / 工作流 / 界面与流程 / 架构 / Agent / Super Agent / LLM Wiki / 设计取舍 / 终端 / 主题 / 插件 / 构建 / 版本记录；支持搜索（⌘F）、目录、页间链接、图片灯箱、代码复制和可播放的流程 Demo，带 Git 分支 / HEAD 标识；内容来自 `resources/wiki/*.md` + `CHANGELOG.md`，随仓库版本发布；`npm run wiki:publish` 可同步到 GitHub Wiki（独立 `.wiki.git` 仓库）
 - 主机页：本机 + SSH 主机卡片，一次往返探测 CLI / 版本 / git / 远端目录（`caps`），页面可见时 60s 心跳（连续 2 次失败才标离线），每主机并发上限（失焦提交），SSH 主机可编辑地址/用户/端口/远端 cwd，Agent 运行位置切换有确认；主机离线时 Chat 顶部提示并可一键改用本机（见 [docs/ARCH-hosts-stats.md](docs/ARCH-hosts-stats.md)）
 - 统计页：**全部项目 / 单项目范围切换** + 成功率 / 中位耗时 / 排队 p50 / Token（未上报就显示未上报，不写 0）+ 每日趋势（图例 + 空态）+ 4 类失败分类 + 按 Agent/项目/主机分组 + 失败下钻 + CSV 导出；不估算费用
 - 主机只显示机器与可用 CLI；Agent 在项目 Terminal 里启动，带项目内唯一 `@别名`
