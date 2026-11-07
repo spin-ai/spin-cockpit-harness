@@ -230,6 +230,8 @@ function graphView() {
   const nodes = [
     ...data.pages.map((p) => ({ id: p.id, title: p.title, kind: "page", links: 0 })),
     ...data.sources.map((s) => ({ id: s.id, title: s.title, kind: "source", links: 0 })),
+    // 本地目录里的 Markdown 也进图：即使还没导入为 source，打开目录后图谱也不该是空的
+    ...(vaultCache?.files || []).map((f) => ({ id: `file:${f.path}`, title: f.title, kind: "file", links: 0 })),
   ];
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const edges = [];
@@ -427,6 +429,49 @@ export async function activate(context) {
       else seen.set(key, page.id);
     }
     return { issues, memory: memoryMarkdown() };
+  });
+  /**
+   * 生成 Wiki 草稿骨架：每份还没有页面的 source 生成一个 draft，并建立 citation。
+   * 不依赖模型；生成后可在页面里编辑/审核，或发送到 Chat 让 Agent 精修。
+   */
+  ctx.api.handle("wiki.generate", async ({ sourceIds = [], limit = 20 } = {}) => {
+    const wanted = Array.isArray(sourceIds) && sourceIds.length
+      ? data.sources.filter((s) => sourceIds.includes(s.id))
+      : data.sources;
+    const created = [];
+    for (const source of wanted.slice(0, Math.max(1, Number(limit) || 20))) {
+      const title = String(source.title || "Untitled source").replace(/\.[a-z0-9]+$/i, "").trim() || "Untitled source";
+      const exists = data.pages.find((p) => p.title.toLowerCase() === title.toLowerCase() || p.slug === slugify(title));
+      if (exists) continue;
+      const body = String(source.content || "").replace(/\r/g, "").trim();
+      const firstPara = body.split(/\n{2,}/).find((x) => x.trim()) || "";
+      const summary = firstPara.replace(/^#+\s*/, "").replace(/\s+/g, " ").slice(0, 240);
+      const excerpt = body.slice(0, 1200);
+      const page = ensurePage({
+        title,
+        summary,
+        content: [
+          `# ${title}`,
+          "",
+          summary ? `> ${summary}` : "",
+          "",
+          "## 要点",
+          "",
+          "- 待整理",
+          "",
+          "## 原文摘录",
+          "",
+          excerpt || "（source 没有正文）",
+          "",
+          `来源：[[${title}]]`,
+        ].filter(Boolean).join("\n"),
+        sourceIds: [source.id],
+      });
+      if (summary) data.citations.push({ id: id("cite"), pageId: page.id, sourceId: source.id, quote: summary.slice(0, 200), locator: "概要", createdAt: now() });
+      created.push(pageSummary(page));
+    }
+    if (created.length) { addLog("wiki.generate", `${created.length} pages`); await persist(); }
+    return { created: created.length, pages: created, totalSources: data.sources.length };
   });
   ctx.api.handle("wiki.graph", async () => graphView());
   ctx.api.handle("wiki.layout.set", async ({ layout } = {}) => { data.layout = layout || null; await persist(); return true; });
