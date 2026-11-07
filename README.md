@@ -193,6 +193,7 @@ npm run pack:system
 - [docs/ARCH-multi-agent-workspace.md](docs/ARCH-multi-agent-workspace.md)（4+1 视图）
 - [docs/ARCH-super-agent.md](docs/ARCH-super-agent.md)（Super Agent：Mission / Delegation / MCP / 迁移与验证）
 - [docs/USAGE-super-agent.md](docs/USAGE-super-agent.md)（Super Agent 使用说明：准备 Agent / 审批计划 / 子任务 / 恢复）
+- [docs/ARCH-plugins.md](docs/ARCH-plugins.md)（插件宿主：manifest / 权限 / utilityProcess / API / 执行器 / UI）
 - [docs/PLUGIN-notes.md](docs/PLUGIN-notes.md)（Notes 插件提案：Obsidian vault / 索引 / UI / 任务联动）
 - [docs/ARCH-chat-thread.md](docs/ARCH-chat-thread.md)（CHAT 单会话模型：thread / send 状态机 / 迁移）
 - [docs/ARCH-ui-context.md](docs/ARCH-ui-context.md)（预览元素拾取 → Agent 上下文：CDP / 安全边界 / 协议）
