@@ -36,6 +36,7 @@ docs/assets/article/
 # 文章与参考素材（本地保留，不入库）
 docs/ARTICLE-zhihu-multi-agent-terminal.md
 docs/ARTICLE-zhihu-super-agent.md
+docs/ARTICLE-zhihu-llm-wiki.md
 docs/assets/article/
 
 # 生成的文档产物（由 scripts/build-docs-html.py 生成）

@@ -299,9 +299,13 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     try {
       const res = await invoke("wiki.curate", {});
       const updated = Number(res?.updated || 0);
-      setNotice(updated || res?.createdIndex
-        ? `已整理 ${updated} 个页面${res?.createdIndex ? "，并生成「Wiki 索引」" : "，索引已更新"}`
-        : "大纲已经是最新的（没有需要改的页面）");
+      const renamed = Number(res?.renamed || 0);
+      const names = (res?.renames || []).slice(0, 3).map((r: { from: string; to: string }) => `「${r.from}」→「${r.to}」`).join(" ");
+      setNotice(
+        updated || res?.createdIndex || renamed
+          ? `已整理 ${updated} 个页面${renamed ? `，重命名 ${renamed} 个${names ? `：${names}${renamed > 3 ? " …" : ""}` : ""}` : ""}${res?.createdIndex ? "，并生成「Wiki 索引」" : "，索引已更新"}`
+          : "大纲和标题已经是最新的（没有需要改的页面）",
+      );
       await refresh();
       const current = pane.active;
       if (current && docs[current] && !docs[current].local) {
