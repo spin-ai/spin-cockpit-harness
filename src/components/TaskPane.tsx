@@ -144,6 +144,7 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
       </div>
       <div className="task-tools">
         <input className="task-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索标题 / 编号" />
+        <div className="task-edit-hint">双击标题或按 <kbd>⌘E</kbd> 编辑任务文字</div>
         <div className="task-filters">
           {([["all", "全部"], ["active", "进行中"], ["review", "待确认"], ["confirmed", "已确认"]] as [Filter, string][]).map(([id, label]) => (
             <button key={id} className={filter === id ? "on" : ""} onClick={() => setFilter(id)}>{label}</button>
