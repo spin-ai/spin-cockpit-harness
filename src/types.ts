@@ -65,6 +65,8 @@ export interface Run {
   hostId?: string | null; createdAt?: number | null;
   tokensIn?: number | null; tokensOut?: number | null; usageSource?: "acp" | "unknown";
   errorClass?: ErrorClass | null; exitCode?: number | null;
+  /** 缺密钥等可操作错误的结构化信息（envVars / provider） */
+  errorMeta?: { envVars: string[]; provider: string | null } | null;
   queueWaitMs?: number | null; durationMs?: number | null; queueReason?: string | null;
   kind?: "worker" | "supervisor";
   delegationId?: string | null;
@@ -101,6 +103,8 @@ export interface Settings {
   approvalPolicy: "ask" | "allow" | "deny";
   dshBinary: string;
   dshHome: string;
+  /** KEY=VALUE 每行一条，注入本地 dsh 的环境变量 */
+  dshEnv: string;
   model: string;
   effort: string;
   terminalFontSize: number;

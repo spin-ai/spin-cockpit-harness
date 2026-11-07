@@ -24,13 +24,14 @@ const DEFAULTS: Partial<Record<keyof SettingsModel, unknown>> = {
   superAgentEnabled: true, maxSupervisorRuns: 1, maxMissionChildren: 4, missionBudgetMinutes: 30,
   shellPath: "", terminalFontSize: 12, terminalScrollback: 5000, autoDetectDevServerUrl: true,
   previewHomeUrl: "http://localhost:5173/", elementScreenshots: true, contextDetail: "standard",
+  dshEnv: "",
 };
 
 /** 恢复本页默认 */
 const SECTION_KEYS: Partial<Record<Section, (keyof SettingsModel)[]>> = {
   general: ["defaultView", "defaultAgentId", "enterToSend", "confirmStop"],
   appearance: ["theme", "chatFontSize"],
-  execution: ["maxConcurrentRuns", "approvalPolicy", "dshBinary", "dshHome", "model", "effort",
+  execution: ["maxConcurrentRuns", "approvalPolicy", "dshBinary", "dshHome", "dshEnv", "model", "effort",
     "superAgentEnabled", "maxSupervisorRuns", "maxMissionChildren", "missionBudgetMinutes"],
   terminal: ["shellPath", "terminalFontSize", "terminalScrollback", "autoDetectDevServerUrl"],
   preview: ["previewHomeUrl", "elementScreenshots", "contextDetail"],
@@ -49,6 +50,7 @@ const SEARCH_INDEX: { section: Section; title: string; hint?: string; k?: string
   { section: "execution", title: "审批策略", k: "approvalPolicy", hint: "ACP 权限请求：询问 / 自动批准 / 自动拒绝" },
   { section: "execution", title: "dsh 可执行文件", k: "dshBinary", hint: "留空用 PATH 或内置 dsh" },
   { section: "execution", title: "DSH_HOME", k: "dshHome", hint: "dsh 配置目录" },
+  { section: "execution", title: "模型密钥 / 环境变量", k: "dshEnv", hint: "DEEPSEEK_API_KEY 等 KEY=VALUE" },
   { section: "execution", title: "默认模型", k: "model", hint: "ACP model option value" },
   { section: "execution", title: "Reasoning effort", k: "effort", hint: "ACP reasoning_effort" },
   { section: "execution", title: "启用 Mission 模式", k: "superAgentEnabled", hint: "Super Agent / 主管" },
@@ -106,6 +108,29 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
     if (!q) return [];
     return SEARCH_INDEX.filter((item) => `${item.title} ${item.hint || ""} ${item.k || ""}`.toLowerCase().includes(q));
   }, [query]);
+
+  // 从错误卡片 / 命令面板跳进来：定位分区并聚焦某个设置项
+  useEffect(() => {
+    const onJump = (e: Event) => {
+      const detail = (e as CustomEvent<{ section?: Section; focus?: string }>).detail || {};
+      if (detail.section) setSection(detail.section);
+      // 分区切换要等 React 提交，再重试几次直到输入框就位（聚焦不能只赌一次）
+      let tries = 0;
+      const focusTarget = () => {
+        tries += 1;
+        const el = detail.focus ? bodyRef.current?.querySelector<HTMLElement>(`[data-set-key="${CSS.escape(detail.focus)}"]`) : null;
+        if (!el) { if (tries < 20) window.setTimeout(focusTarget, 60); return; }
+        el.scrollIntoView({ block: "center" });
+        const input = el.matches("textarea,input") ? el : el.querySelector<HTMLElement>("textarea,input");
+        if (!input) { if (tries < 20) window.setTimeout(focusTarget, 60); return; }
+        input.focus({ preventScroll: true });
+        window.setTimeout(() => { if (document.activeElement !== input) input.focus({ preventScroll: true }); }, 120);
+      };
+      window.setTimeout(focusTarget, 60);
+    };
+    window.addEventListener("harness:settings-jump", onJump);
+    return () => window.removeEventListener("harness:settings-jump", onJump);
+  }, []);
 
   // ⌘F 聚焦搜索；Esc 清空
   useEffect(() => {
@@ -318,6 +343,28 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
               <Row k="effort" title="Reasoning effort">
                 <TextSetting value={settings.effort} placeholder="默认" onCommit={(v) => void set({ effort: v })} />
               </Row>
+            </Card>
+
+            <Card title="模型密钥 / 环境变量">
+              <Row
+                k="dshEnv"
+                title="额外环境变量"
+                hint="每行一条 KEY=VALUE，只注入本机启动的 dsh（远端主机请在目标机自己配）。用来填 DEEPSEEK_API_KEY 这类密钥。"
+              >
+                <textarea
+                  className="settings-control settings-env"
+                  data-set-key="dshEnv"
+                  spellCheck={false}
+                  rows={3}
+                  value={settings.dshEnv ?? ""}
+                  placeholder={"DEEPSEEK_API_KEY=sk-…\n# 也支持 export FOO=bar 写法"}
+                  onChange={(e) => void set({ dshEnv: e.target.value })}
+                />
+              </Row>
+              <div className="settings-note">
+                改完无需重启：下一次 run 会带着这些变量启动 dsh。若报错里点名了别的变量（如 <code>OPENAI_API_KEY</code>），按同样格式加一行即可。
+                已经跑过失败 run 的，改完后在 Chat 里点「重试」。
+              </div>
             </Card>
 
             <Card title="Super Agent / Mission">

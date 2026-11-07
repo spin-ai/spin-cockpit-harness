@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Delegation, ElementContext, Message, MissionPlanRecord, State, Thread, Todo } from "../types";
-import { RUN_STATUS, STATUS, activeRun, agentOf, duration, lastRun, timeAgo } from "../ui";
+import { RUN_STATUS, STATUS, activeRun, agentOf, duration, lastRun, missingKeyInfo, timeAgo } from "../ui";
 import { ChevronRightIcon, PanelCollapseIcon, SendIcon } from "./Icons";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
@@ -852,6 +852,26 @@ function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry }: {
             <button className="msg-copy" onClick={onCopy}>{copied ? "已复制" : "复制"}</button>
           </div>
         )}
+        {m.kind === "error" && missingKeyInfo(m.content) && (() => {
+          const info = missingKeyInfo(m.content)!;
+          const env = info.envVars[0];
+          return (
+            <div className="missing-key-card">
+              <div className="missing-key-head">未配置模型密钥{info.provider ? ` · ${info.provider}` : ""}</div>
+              <div className="missing-key-body">
+                执行器读不到 <code>{env}</code>。两种配法任选其一：
+                <ol>
+                  <li>在「设置 → 执行 → 模型密钥」里写 <code>{env}=sk-…</code>（只注入本机启动的 dsh，最省事）</li>
+                  <li>或在你启动 App 的终端里 <code>export {env}=sk-…</code>，然后重启 App</li>
+                </ol>
+              </div>
+              <div className="missing-key-actions">
+                <button className="btn tiny-btn primary" onClick={() => window.dispatchEvent(new CustomEvent("harness:open-settings", { detail: { section: "execution", focus: "dshEnv" } }))}>去设置里填</button>
+                <button className="btn tiny-btn" onClick={() => void window.harness.clipboardWrite(`export ${env}=`)}>复制 export 前缀</button>
+              </div>
+            </div>
+          );
+        })()}
         {m.context && (
           <div className="msg-ctx" title={`${m.context.selector}${m.context.source?.file ? ` · ${m.context.source.file}` : ""}`}>
             <span className="ctx-tag">元素</span>

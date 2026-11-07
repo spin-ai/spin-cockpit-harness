@@ -58,6 +58,17 @@ export default function App() {
     setCollapsed((current) => ({ ...current, [id]: !current[id] }));
   }, []);
 
+  // 错误卡片 / 统计失败行：跳到设置页并定位到某个分区（可带 focus 字段）
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const detail = (e as CustomEvent<{ section?: string; focus?: string }>).detail;
+      setView("settings");
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent("harness:settings-jump", { detail })), 80);
+    };
+    window.addEventListener("harness:open-settings", onOpen);
+    return () => window.removeEventListener("harness:open-settings", onOpen);
+  }, []);
+
   // 「问清楚」/ 统计失败下钻都要落到 Chat：面板被收起时先展开，否则草稿写进不存在的输入框
   useEffect(() => {
     const onFocusChat = () => setCollapsed((current) => (current.chat ? { ...current, chat: false } : current));
@@ -274,6 +285,7 @@ export default function App() {
       { id: "edit-todo", label: "编辑任务", hint: "⌘E", group: "任务", run: () => dispatchInWorkspace(() => new Event("harness:edit-todo")) },
       { id: "open-project", label: "打开 / 添加项目…", hint: "⌘P", group: "项目", run: () => void addProject() },
       { id: "open-settings", label: "打开设置", hint: "⌘,", group: "导航", run: () => setView("settings") },
+      { id: "open-model-key", label: "配置模型密钥（DEEPSEEK_API_KEY 等）", group: "导航", hint: "设置 → 执行", run: () => window.dispatchEvent(new CustomEvent("harness:open-settings", { detail: { section: "execution", focus: "dshEnv" } })) },
       { id: "open-guide", label: "使用说明 / Super Agent 怎么用", group: "导航", run: () => setView("guide") },
       { id: "reset-layout", label: "重置面板尺寸", group: "布局", run: () => window.dispatchEvent(new Event("harness:reset-layout")) },
     ];
