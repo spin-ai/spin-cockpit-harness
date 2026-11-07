@@ -207,11 +207,19 @@ function noteView(file, idx) {
   };
 }
 
-async function saveFile(relPath, content) {
+async function saveFile(relPath, content, expectedMtime = null) {
   const idx = await buildIndex();
   if (!idx.vault) throw new Error("还没有选择 vault");
   const full = within(idx.vault, relPath);
   await fs.mkdir(path.dirname(full), { recursive: true });
+  if (expectedMtime != null) {
+    try {
+      const st = await fs.stat(full);
+      if (Math.abs(st.mtimeMs - Number(expectedMtime)) > 1.5) throw new Error("文件已被外部修改；请重新打开后再保存");
+    } catch (err) {
+      if (String(err?.message || err).includes("外部修改")) throw err;
+    }
+  }
   await fs.writeFile(full, String(content ?? ""), "utf8");
   cache = null;
   await buildIndex(true);
@@ -283,7 +291,7 @@ export async function activate(context) {
     const idx = await buildIndex();
     return noteView(idx.files.get(posix(String(relPath || ""))), idx);
   });
-  ctx.api.handle("notes.save", async ({ path: relPath, content }) => saveFile(String(relPath || ""), content));
+  ctx.api.handle("notes.save", async ({ path: relPath, content, mtime }) => saveFile(String(relPath || ""), content, mtime));
   ctx.api.handle("notes.create", async ({ folder = "", name = "Untitled" } = {}) => {
     const safe = String(name || "Untitled").replace(/[\\/:*?"<>|]/g, "-").replace(/\.md$/i, "");
     const relPath = posix(`${String(folder).replace(/^\/+|\/+$/g, "") ? `${String(folder).replace(/^\/+|\/+$/g, "")}/` : ""}${safe}.md`);
