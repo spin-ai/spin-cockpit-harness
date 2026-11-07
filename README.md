@@ -73,7 +73,7 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 - **可收起面板**：TODO / Chat / Terminal / 右侧栏都能收起成窄条，点击窄条展开；项目区也可单独折叠；状态自动记住
 - 状态分组就是看板：纵向排列在 TODO 列里
 - 资源管理器带 Git 装饰：修改 / 新增 / 已暂存 / 删除各自着色并带状态字母，被 `.gitignore` 忽略的文件与目录淡色斜体，目录内有改动时显示状态点
-- Wiki / 笔记：一键「整理」自动统一页面大纲（要点 / 原文摘录 / 相关）+ 页面互链 + 重建「Wiki 索引」，幂等；支持从磁盘导入文档（md/txt/json/csv/yml/html… 可多选，自动跳过二进制与重复项）；资料可删除（连带清引用）、页面可删除、审核列表可直接接受/退回、搜索 Esc 清空；打开本地 Markdown 目录 → 「全部导入为资料」→ 「生成 Wiki」（每份资料生成一个草稿页面 + citation，确定性生成、不依赖模型）→ 编辑 / 审核；图谱包含页面 / 资料 / 本地文件三类节点
+- Wiki / 笔记：一键「整理 Wiki」自动统一页面大纲（要点 / 原文摘录 / 相关）+ 页面互链 + 重建「Wiki 索引」，幂等；支持从磁盘导入文档（md/txt/json/csv/yml/html… 可多选，自动跳过二进制与重复项）；资料可删除（连带清引用）、页面可删除、审核列表可直接接受/退回、搜索 Esc 清空；打开本地 Markdown 目录 → 「全部导入为资料」→ 「生成 Wiki」（每份资料生成一个草稿页面 + citation，确定性生成、不依赖模型）→ 编辑 / 审核；图谱包含页面 / 资料 / 本地文件三类节点
 - 右侧栏新增 **Git** 标签（资源管理器 / 会话历史旁边）：分支、暂存/取消暂存、全部暂存、提交框（⌘Enter）、拉取/推送、一键「全屏」看 diff
 - Git（Source Control）：分支 / 上游 / ahead-behind、文件暂存与丢弃、Diff 查看（+N -M）、提交框（⌘Enter）、推送/拉取、分支切换与新建、最近提交；非仓库可一键 `git init`（见 [docs/ARCH-git.md](docs/ARCH-git.md)）
 - Git → 项目 Wiki：内置项目介绍 / 工作流 / 界面与流程 / 架构 / Agent / Super Agent / LLM Wiki / 设计取舍 / 终端 / 主题 / 插件 / 构建 / 版本记录；支持搜索（⌘F）、目录、页间链接、图片灯箱、代码复制和可播放的流程 Demo，带 Git 分支 / HEAD 标识；内容来自 `resources/wiki/*.md` + `CHANGELOG.md`，随仓库版本发布；`npm run wiki:publish` 可同步到 GitHub Wiki（独立 `.wiki.git` 仓库）

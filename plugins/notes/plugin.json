@@ -48,6 +48,11 @@
         "id": "wiki.openFolder",
         "title": "打开本地 Markdown 目录",
         "description": "打开并浏览本地 Markdown 目录，可直接编辑写回；也可导入为 Wiki Source"
+      },
+      {
+        "id": "wiki.curate",
+        "title": "整理 Wiki（统一大纲 / 补双向链接 / 重建索引）",
+        "description": "把每个页面规范成「要点 / 原文摘录 / 相关」，同源页面互链，并重建 Wiki 索引"
       }
     ],
     "events": [
