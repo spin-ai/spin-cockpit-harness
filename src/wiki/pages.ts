@@ -1,6 +1,7 @@
 import home from "../../resources/wiki/home.md?raw";
 import workflow from "../../resources/wiki/workflow.md?raw";
 import gallery from "../../resources/wiki/gallery.md?raw";
+import llmWiki from "../../resources/wiki/llm-wiki.md?raw";
 import architecture from "../../resources/wiki/architecture.md?raw";
 import agents from "../../resources/wiki/agents.md?raw";
 import superAgent from "../../resources/wiki/super-agent.md?raw";
@@ -25,6 +26,7 @@ export const WIKI_PAGES: WikiPage[] = [
   { id: "home", title: "项目介绍", group: "开始", summary: "Cockpit Harness 是什么、解决什么问题，以及一条任务如何走完。", body: home },
   { id: "workflow", title: "工作流", group: "开始", summary: "Chat 分派、run 生命周期、纠偏、worktree 与确认。", body: workflow },
   { id: "gallery", title: "界面与流程", group: "开始", summary: "工作台、ACP、调度、Mission 与打包的可视化流程图。", body: gallery },
+  { id: "llm-wiki", title: "LLM Wiki", group: "开始", summary: "Source → Page → Citation → Review；Agent 可检索、人可审核的知识库。", body: llmWiki },
   { id: "architecture", title: "架构", group: "系统", summary: "Electron 主进程、React 渲染层、SQLite、ACP 与 pty 的边界。", body: architecture },
   { id: "agents", title: "Agent 与执行适配器", group: "系统", summary: "哪些 CLI 能从 Chat 派活，dsh ACP 如何驱动一次 run。", body: agents },
   { id: "super-agent", title: "Super Agent / Mission", group: "系统", summary: "Mission、Plan、Delegation、Supervisor 与 MCP 编排。", body: superAgent },

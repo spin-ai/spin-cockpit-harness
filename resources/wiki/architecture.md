@@ -1,6 +1,8 @@
 # 架构
 
-## 进程模型
+> 一个桌面应用同时管任务、会话、终端、Agent 子进程和预览，最容易写成“什么都在 main.js 里”。这里的边界是：谁持有状态，谁执行，谁只读。
+
+## 先看一张全景
 
 ![全景架构](./wiki/architecture.png)
 
@@ -9,6 +11,16 @@
 - **Main** 持有 SQLite、ACP client、pty、worktree、插件宿主、MCP bridge、预览/CDP。
 - **Renderer** 只通过 IPC 读状态、发 action，不直接持有子进程或访问文件系统。
 - **Executor** 是 dsh ACP / node-pty / git worktree / webview CDP 的边界。
+
+## 为什么不是“一个大的 main.js”
+
+如果 renderer 直接读数据库、直接起子进程，会立刻遇到三个问题：
+
+1. 状态有两个写入方，刷新 / 广播时谁赢？
+2. 窗口关掉后子进程谁收尸？
+3. 插件和 Agent 拿到了 filesystem / shell，边界在哪里？
+
+所以现在只有一个可变状态源：
 
 - **main** 持有唯一可变状态：任务、run、消息、会话、项目、设置、审批。
 - **renderer** 不直接读写数据库，所有写操作走 `harness.action`。
@@ -21,18 +33,18 @@ SQLite 是唯一事实来源，主要表：
 
 | 表 | 内容 |
 |---|---|
-| `todos` | 任务、状态、项目、cwd、确认标记 |
+| `todos` | 任务、状态、项目、cwd、确认标记；Mission 复用 `kind` / `mission_state` |
 | `runs` | 每次执行、状态、耗时、worktree、错误分类 |
 | `threads` | Chat 会话；消息宿主 |
 | `messages` | user / agent / tool / system，含投递回执与元素上下文 |
-| `runs` / `artifacts` | 产物与文件引用 |
+| `delegations` / `mission_plans` | Mission 的委派合同与计划 revision |
 | `projects` / `hosts` / `agents` | 项目、主机、执行体 |
 | `settings` | 用户设置（主题、模型、dsh 路径、并发等） |
 | `inbox` / `events` | 通知与审计事件 |
 
 ![数据模型](./wiki/data-model.png)
 
-*图：Thread / Todo / Run / Message / Artifact 的关系；消息宿主是 thread。*
+*图：Thread / Todo / Run / Message / Artifact 的关系；消息宿主是 thread，不是 todo。*
 
 ## 一次 run 的执行链路
 
@@ -52,7 +64,7 @@ send(threadId, text)
 
 ![调度器](./wiki/scheduler.png)
 
-*图：tick() 如何按全局 / 主机 / Agent / 同 cwd 约束放行 run。*
+*图：tick() 如何按全局 / 主机 / Agent / 同 cwd 约束放行 run；排队原因落在 run 上。*
 
 ## 关键模块
 

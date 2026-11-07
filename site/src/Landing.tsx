@@ -3,6 +3,33 @@ import { useEffect } from "react";
 const REPO = "https://github.com/spin-ai/spin-cockpit-harness";
 const RELEASES = `${REPO}/releases`;
 
+const PILLARS = [
+  {
+    kicker: "01 · MULTI-AGENT TERMINAL",
+    title: "多智能体终端",
+    body: "Chat、真实 PTY、TODO、worktree 和执行状态在同一套状态机里。不是多开终端，是让每个 Agent 都有可观察的运行现场。",
+    image: "./wiki/layout.png",
+    alt: "五列工作台",
+    href: "#/wiki/home",
+  },
+  {
+    kicker: "02 · SUPER AGENT",
+    title: "Super Agent",
+    body: "Mission / Plan / Delegation / Supervisor：主管拆解、计划审批、委派子任务、事件回灌、提交总结。人保留最终确认。",
+    image: "./wiki/cover-super-agent.png",
+    alt: "Super Agent / Mission",
+    href: "#/wiki/super-agent",
+  },
+  {
+    kicker: "03 · LLM WIKI",
+    title: "LLM Wiki",
+    body: "Source → Page → Citation → Review。Agent 用 Memory 索引和 MCP 工具检索、写 draft；reviewed 页面由人审核。",
+    image: "./wiki/llm-wiki.svg",
+    alt: "LLM Wiki",
+    href: "#/wiki/llm-wiki",
+  },
+];
+
 const FEATURES = [
   {
     title: "Chat 是唯一入口",
@@ -12,7 +39,7 @@ const FEATURES = [
   },
   {
     title: "真实终端",
-    body: "node-pty + xterm，多标签、窗格拆分、链接、查找、预览都在同一个工作台。",
+    body: "node-pty + xterm，多标签、窗格拆分、worktree 隔离、链接、查找、预览都在同一个工作台。",
     image: "./wiki/layout.png",
     alt: "五列工作台",
   },
@@ -29,10 +56,10 @@ const FEATURES = [
     alt: "元素拾取链路",
   },
   {
-    title: "worktree 隔离",
-    body: "git 仓库自动为每个 run 创建 worktree + 分支，多个任务并行不互相覆盖。",
-    image: "./wiki/architecture.png",
-    alt: "架构与 worktree",
+    title: "LLM Wiki",
+    body: "Source → Page → Citation → Review；Agent 可检索、可写 draft，人负责审核。",
+    image: "./wiki/llm-wiki.svg",
+    alt: "LLM Wiki 流程",
   },
   {
     title: "Super Agent / Mission",
@@ -73,7 +100,7 @@ export function Landing({ dark, onToggleTheme }: { dark: boolean; onToggleTheme:
   useEffect(() => {
     const scroll = () => {
       const id = window.location.hash.replace(/^#/, "");
-      if (id === "features" || id === "how" || id === "mission") {
+      if (id === "pillars" || id === "how" || id === "mission") {
         document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     };
@@ -90,7 +117,7 @@ export function Landing({ dark, onToggleTheme }: { dark: boolean; onToggleTheme:
           <b>Cockpit Harness</b>
         </a>
         <nav>
-          <a href="#features">特性</a>
+          <a href="#pillars">三大能力</a>
           <a href="#how">工作流</a>
           <a href="#mission">Mission</a>
           <a href="#/wiki/home">文档</a>
@@ -107,7 +134,7 @@ export function Landing({ dark, onToggleTheme }: { dark: boolean; onToggleTheme:
       <main>
         <section className="landing-hero">
           <div className="landing-hero-copy">
-            <div className="landing-eyebrow">LOCAL-FIRST MULTI-AGENT COCKPIT</div>
+            <div className="landing-eyebrow">MULTI-AGENT TERMINAL · SUPER AGENT · LLM WIKI</div>
             <h1>
               把一句话变成任务，
               <br />
@@ -116,8 +143,8 @@ export function Landing({ dark, onToggleTheme }: { dark: boolean; onToggleTheme:
               在<em>真实项目</em>里干活
             </h1>
             <p>
-              Chat 派活、真实 PTY、worktree 隔离、ACP 执行、看板验收。
-              不是多开终端，是让多个执行单元进入同一套状态机。
+              多智能体终端、Super Agent、LLM Wiki 共用一套本地数据：
+              Chat 派活、真实 PTY、worktree 隔离、Mission 编排、可审核知识库。
             </p>
             <div className="landing-hero-actions">
               <a className="landing-button primary" href={RELEASES} target="_blank" rel="noreferrer">下载 Alpha</a>
@@ -138,6 +165,27 @@ export function Landing({ dark, onToggleTheme }: { dark: boolean; onToggleTheme:
           <div><b>真实 PTY</b><span>不是日志窗口</span></div>
           <div><b>worktree</b><span>每个 run 独立目录</span></div>
           <div><b>本地优先</b><span>SQLite + 本地文件</span></div>
+        </section>
+
+        <section id="pillars" className="landing-section landing-pillars-section">
+          <div className="landing-section-head">
+            <span className="landing-eyebrow">THREE PILLARS</span>
+            <h2>多智能体终端 · Super Agent · LLM Wiki</h2>
+            <p>执行、组织、沉淀。三条主线共用任务、run、消息和本地数据，不是三个拼在一起的产品。</p>
+          </div>
+          <div className="landing-pillars">
+            {PILLARS.map((pillar) => (
+              <a className="landing-pillar" href={pillar.href} key={pillar.title}>
+                <img src={pillar.image} alt={pillar.alt} loading="lazy" />
+                <div className="landing-pillar-body">
+                  <span className="landing-pillar-kicker">{pillar.kicker}</span>
+                  <h3>{pillar.title}</h3>
+                  <p>{pillar.body}</p>
+                  <em>阅读更多 →</em>
+                </div>
+              </a>
+            ))}
+          </div>
         </section>
 
         <section id="features" className="landing-section">
@@ -231,6 +279,7 @@ export function Landing({ dark, onToggleTheme }: { dark: boolean; onToggleTheme:
         <div className="landing-footer-links">
           <a href="#/wiki/home">文档</a>
           <a href="#/wiki/gallery">界面与流程</a>
+          <a href="#/wiki/llm-wiki">LLM Wiki</a>
           <a href="#/wiki/design-notes">设计取舍</a>
           <a href={REPO} target="_blank" rel="noreferrer">GitHub</a>
           <a href={`${REPO}/blob/main/LICENSE`} target="_blank" rel="noreferrer">MIT</a>

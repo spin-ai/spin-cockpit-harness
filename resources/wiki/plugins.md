@@ -14,6 +14,8 @@ plugins/<id>/
 - 权限在 `plugin.json` 声明：`state:read` / `tasks:write` / `ui:view` / `agent:tools`。
 - 内置插件随 App 分发；第三方插件可以从设置页安装。
 
+> LLM Wiki 的产品视角见 [LLM Wiki](#/wiki/llm-wiki)。
+
 ## Notes：原生 LLM Wiki
 
 Notes 不是 Obsidian vault 浏览器，而是 **Source → Page → Citation → Review** 的知识库：

@@ -2,9 +2,28 @@
 
 > 本地优先的多 Agent 编排工作台：把一句话变成任务，让 Agent 在真实项目里执行，人只负责确认。
 
-Cockpit Harness（仓库名 `spin-cockpit-harness`）是一个 Electron 桌面应用。它不试图替代 IDE，也不把 Agent 循环塞进产品本体，而是把 **分派、执行、验收** 收拢到一个五列工作台里。
+![多智能体工作台](./wiki/cover-multi-agent.png)
+
+*图：Chat 派活、真实终端、任务看板和执行现场在同一个窗口里。*
+
+## 从六个终端说起
+
+桌面上同时开着六个终端：一个跑 Agent，一个跑 dev server，一个在看日志，一个在 `git diff`，另外两个是“等会儿可能要用”的备用标签。Chat 窗口在另一个屏幕，任务清单在一个 Markdown 文件里。
+
+半小时后，人开始记不清：
+
+- 哪个 Agent 还在跑？
+- 哪个已经改完了？
+- 刚才那句“把按钮改成蓝色”，到底发给了哪个会话？
+- 改完的文件在哪个 worktree？
+
+最崩溃的不是切窗口，而是**状态全靠人脑维护**。
+
+Cockpit Harness 的起点就是这句话：能不能把「对话、任务、终端、Agent 运行状态」放进同一套系统里，让多个 Agent 并行干活，而人始终知道发生了什么。
 
 ## 它是什么
+
+它不试图替代 IDE，也不把 Agent 循环塞进产品本体。它更像一个多 Agent 编排工作台：
 
 - **Chat 是唯一入口**：说一句话派活，运行中继续说话就是纠偏。
 - **TODO 是唯一看板**：排队 / 运行 / 等待输入 / 待确认 / 已确认都在一条列表里。
@@ -13,11 +32,30 @@ Cockpit Harness（仓库名 `spin-cockpit-harness`）是一个 Electron 桌面�
 - **执行引擎外置**：Agent CLI 通过适配器接入；目前 Chat 派活走 dsh 的 ACP profile。
 - **数据本地**：SQLite + 本地文件；模型配置和凭据不随 App 分发。
 
-## 五个区域
+## 三大能力
+
+<div class="wiki-gallery three">
+<figure><img src="./wiki/send-state.png" alt="多智能体终端" loading="lazy" /><figcaption><b>多智能体终端</b><span>Chat、真实 PTY、TODO、worktree 在同一套状态机里。</span></figcaption></figure>
+<figure><img src="./wiki/mission-state.png" alt="Super Agent" loading="lazy" /><figcaption><b>Super Agent</b><span>Mission / Plan / Delegation / Supervisor，把多个子任务组织起来。</span></figcaption></figure>
+<figure><img src="./wiki/llm-wiki.svg" alt="LLM Wiki" loading="lazy" /><figcaption><b>LLM Wiki</b><span>Source → Page → Citation → Review，Agent 可检索、人可审核。</span></figcaption></figure>
+</div>
+
+[多智能体终端](#/wiki/home) · [Super Agent](#/wiki/super-agent) · [LLM Wiki](#/wiki/llm-wiki)
+
+## 你的一天大概会这样
+
+1. 早上打开工作区，TODO LIST 里是昨天留下的待确认任务。
+2. 在 Chat 里说一句“把首页标题改成品牌蓝，字号再大一点”。
+3. 任务自动创建、排队，在项目目录的 worktree 里拉起 Agent。
+4. 运行中你发现标题太大，直接在 Chat 补一句“再小两档”；消息作为纠偏送达当前 run。
+5. 完成后任务进入「待确认」，你在 TODO 行内点确认，或者让它回到待执行。
+6. 下午切到另一个项目，任务、会话、终端、文件树一起切换。
 
 ![五列工作台](./wiki/layout.png)
 
-*图：TODO / Chat / Terminal / 文件预览在同一屏内联动。*
+*图：TODO / Chat / Terminal / 文件预览在同一屏内联动。它不要求你记住每个终端在干什么。*
+
+## 五个区域
 
 | 区域 | 职责 |
 |---|---|
@@ -31,7 +69,7 @@ Cockpit Harness（仓库名 `spin-cockpit-harness`）是一个 Electron 桌面�
 
 ```text
 Chat 说一句话
-  → 解析 @agent / @project（或使用当前选择）
+  → 普通消息默认派给当前 Agent（@别名 / 元素上下文可指定目标）
   → 创建 TODO + queued run
   → worktree 隔离（git 仓库）
   → dsh --profile acp 执行
@@ -40,6 +78,10 @@ Chat 说一句话
   → 完成后进入「待确认」
   → 人确认 → 「已确认」
 ```
+
+![send 状态机](./wiki/send-state.png)
+
+*图：send() 是唯一入口，但去向有六种：派活、纠偏、排队补充、新 run、仅记录、报错。*
 
 ## 设计原则
 
@@ -51,12 +93,12 @@ Chat 说一句话
 
 ## 继续阅读
 
-- [工作流](#/wiki/workflow)
-- [界面与流程](#/wiki/gallery)
-- [架构](#/wiki/architecture)
-- [Agent 与执行适配器](#/wiki/agents)
-- [Super Agent / Mission](#/wiki/super-agent)
-- [设计取舍与踩坑](#/wiki/design-notes)
+- [工作流](#/wiki/workflow)：一条任务如何从派活走到确认。
+- [界面与流程](#/wiki/gallery)：一页看完工作台、ACP、调度、Mission 和打包。
+- [架构](#/wiki/architecture)：Main / Renderer / Executor / Storage 的边界。
+- [Super Agent / Mission](#/wiki/super-agent)：多个 Agent 由谁组织。
+- [LLM Wiki](#/wiki/llm-wiki)：Source → Page → Citation → Review。
+- [设计取舍与踩坑](#/wiki/design-notes)：为什么长成现在这样。
 - [终端与预览](#/wiki/terminal)
 - [主题系统](#/wiki/themes)
 - [插件与 LLM Wiki](#/wiki/plugins)
