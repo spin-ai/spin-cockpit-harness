@@ -35,6 +35,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
   const isRunnable = (a: (typeof state.agents)[number] | null | undefined) =>
     Boolean(a && (a.chatRunnable ?? state.executors?.find((e) => e.id === String(a.cli || "").trim().toLowerCase())?.implemented));
   const runnableAgents = state.agents.filter((a) => isRunnable(a));
+  const workerRunnable = runnableAgents.filter((a) => a.role !== "supervisor");
   const agentRunnable = isRunnable(agent);
   const dshAvailable = state.executors?.find((e) => e.id === "dsh")?.available ?? (state.cliCapabilities ?? []).includes("dsh");
   const agentHost = agent ? state.hosts.find((h) => h.id === agent.hostId) ?? null : null;
@@ -402,9 +403,9 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
 
   const useDshAgent = async () => {
     if (!thread) return;
-    const existing = runnableAgents[0];
+    const existing = workerRunnable[0];
     if (existing) { await act("setThreadAgent", { threadId: thread.id, agentId: existing.id }); return; }
-    const created = await act("createAgent", { cli: "dsh", projectId }) as { id?: string } | null;
+    const created = await act("createAgent", { cli: "dsh", role: "worker", projectId }) as { id?: string } | null;
     if (created?.id) await act("setThreadAgent", { threadId: thread.id, agentId: created.id });
   };
   const useSupervisor = async () => {
@@ -653,8 +654,8 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
                 ) : (
                   <span className="composer-none">未检测到 Agent</span>
                 )}
-                {state.agents.length > 0 && runnableAgents.length === 0 && dshAvailable && (
-                  <button className="composer-link" onClick={() => void useDshAgent()} title="创建 dsh Agent 并用于当前会话">＋ dsh</button>
+                {state.agents.length > 0 && workerRunnable.length === 0 && dshAvailable && (
+                  <button className="composer-link" onClick={() => void useDshAgent()} title="创建 worker Agent 并用于当前会话">＋ dsh</button>
                 )}
                 {!todo && dshAvailable && !state.agents.some((a) => a.role === "supervisor") && (
                   <button className="composer-link" onClick={() => void useSupervisor()} title="创建一个 Mission 主管">＋ 主管</button>
