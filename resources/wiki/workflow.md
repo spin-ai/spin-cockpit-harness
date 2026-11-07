@@ -39,7 +39,7 @@ todo → queued → running → in_review → done
 
 ## Mission / Super Agent
 
-![Mission 流程](./wiki/mission-flow.svg)
+![Mission 流程](./wiki/mission-flow.png)
 
 *图：Mission → Plan 审批 → 子任务 → 审核 → 汇总。*
 

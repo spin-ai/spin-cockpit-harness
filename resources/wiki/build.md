@@ -23,7 +23,7 @@ npm run dist:system  # 不内置 dsh，依赖目标机器安装
 
 ## 内置 dsh
 
-![打包结构](./wiki/packaging.svg)
+![打包结构](./wiki/packaging.png)
 
 *图：renderer / main / dsh runtime / plugins 在发行包里的位置。*
 

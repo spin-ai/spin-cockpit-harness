@@ -120,3 +120,24 @@ Git 页顶部新增 tab：
 - 无 Git 仓库也可查看；源码管理 tab 仍保留 `git init` 引导。
 
 新增页面：在 `resources/wiki/` 放 Markdown，然后在 `src/wiki/pages.ts` 登记 id / 标题 / 分组 / 摘要即可。页内链接统一写成 `[标题](#/wiki/<id>)`。
+
+### 发布到 GitHub Wiki
+
+App 内 Wiki 不会自动出现在 GitHub Wiki（后者是独立的 `.wiki.git` 仓库）。需要时执行：
+
+```sh
+npm run wiki:publish
+```
+
+前置：GitHub 仓库已启用 Wiki，并且已经手动创建过一次首页（这样 `.wiki.git` 才存在）。
+
+脚本会：
+
+1. clone/pull `<repo>.wiki.git`；
+2. 用 `resources/wiki/*.md` + `CHANGELOG.md` 覆盖 `Home / Workflow / Architecture / Agents / Terminal / Themes / Plugins / Build / Changelog`；
+3. 把 `#/wiki/<id>` 改写成 GitHub Wiki 页面链接；
+4. 把 `./wiki/*.png` 改写成主仓库 raw 图片地址；
+5. 生成 `_Sidebar.md` / `_Footer.md`；
+6. commit + push。
+
+保留 Wiki 仓库里其他手写页面；只覆盖上面这些文件名。可用 `WIKI_REMOTE` / `WIKI_RAW_BASE` 覆盖默认地址。

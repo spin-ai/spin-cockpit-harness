@@ -16,16 +16,17 @@
 
 ## 预览
 
-- 文件预览：文本 / 图片 / HTML，跟随当前 run 的 worktree。
+- 统一预览表面：网页地址 / 本地文件共用同一套生命周期。
+- 文件预览：文本 / 图片 / Markdown / HTML；跟随当前 run 的 worktree。
+- Markdown：富文本 / 源码切换、目录、相对文档链接跳转。
+- HTML：预览 / 可视化 / 源码三段；可视化是 **GrapesJS 画布**（拖组件、改文字、调样式），`⌘S` 或「保存修改」回写完整 HTML，GrapesJS 按需懒加载。
 - dev server 预览：终端打印的 localhost 地址会自动识别。
-- 预览作为终端标签存在，不打断 pty 会话。
-- 预览工具栏：后退 / 前进 / 刷新 / 停止、URL 历史、设备宽度（平板 834 / 手机 390）、缩放、页内查找、DevTools、系统浏览器打开。
-- `Shift + 刷新` 是硬刷新，绕过缓存；适合迭代本地前端资源。
-- 「Grape」按钮打开 `spin-grape-html` 可视化编辑器（默认找同级目录，可用 `SPIN_GRAPE_HTML` 指定）。
+- 预览作为终端标签存在，可拖进拆分窗格；切标签 / 源码渲染切换 / 刷新都不会重载 webContents。
+- 网页模式支持地址栏打开、刷新、元素拾取；文件模式支持 Finder 显示、复制相对路径、刷新、关闭。
 
 ## 元素拾取 → UI 上下文
 
-![元素拾取链路](./wiki/ui-context.svg)
+![元素拾取链路](./wiki/ui-context.png)
 
 *图：预览页 CDP 拾取 → 结构化 UI context → Chat / steer。*
 
