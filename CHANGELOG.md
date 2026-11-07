@@ -11,6 +11,7 @@
 - Mission 调度：worktree 并行、依赖 `blockedBy`、Supervisor/子任务并发上限、Mission 时长预算、取消级联、重启恢复
 - `dsh-supervisor.patch.yml`：关闭 dsh 原生 subagent / Team / workflow，保证 Mission 单一调度源
 - `npm run verify:mission`：SQLite + MCP bridge + dsh supervisor profile 的 keyless 验证
+- 应用内「说明」页 + `docs/USAGE-super-agent.md`：Super Agent 从准备 Agent 到确认 Mission 的完整使用路径、常见问题与限制
 
 ## [0.2.0-alpha.1] - 2026-11-06
 
