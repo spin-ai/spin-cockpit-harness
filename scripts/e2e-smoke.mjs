@@ -54,8 +54,8 @@ let r = await run(`
 check("本机 caps 探测", r.caps.length > 0, `${r.caps.map((c) => `${c.cli}@${c.version}`).join(", ")} · ${r.latency}ms`);
 
 r = await run(`
-  return { hint: document.querySelector(".task-edit-hint")?.textContent || "", add: !!document.querySelector(".pane-add"), editor: !!document.querySelector(".task-row") };`);
-check("TODO 可编辑可感知入口", r.hint.includes("⌘E") && r.add, r.hint.trim());
+  return { add: !!document.querySelector(".pane-add"), hint: !!document.querySelector(".task-edit-hint") };`);
+check("TODO 新建入口（不再有常驻提示文案）", r.add && !r.hint, JSON.stringify(r));
 
 r = await run(`
   __t.click(document.querySelector(".pane-add"));
