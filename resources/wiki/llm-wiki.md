@@ -2,9 +2,9 @@
 
 > 不是聊天记录，也不是 Obsidian vault 浏览器。Wiki 是 Source → Page → Citation → Review 的可追溯知识库，Agent 能检索，人负责审核。
 
-![LLM Wiki：Source → Page → Citation → Review](./wiki/llm-wiki.svg)
+![LLM Wiki 页面](./wiki/notes-wiki.png)
 
-*图：导入资料 → Curator 生成 draft → 人审核 → reviewed；source 变化后进入 stale。*
+*图：笔记插件里的 Wiki 页面：状态、Citations、Backlinks 和 Memory 都在同一屏。*
 
 ## 为什么不是 vault-first
 
@@ -17,6 +17,10 @@
 - 外部 vault 是用户资产，App 不应该把核心知识模型绑在它上面。
 
 所以 Notes 改成原生模型：**Source + Page + Citation + Review，不依赖外部 vault。** 本地 Markdown 目录仍然可以打开、编辑、导入为 Source，但它只是一个适配器。
+
+![LLM Wiki 结构](./wiki/llm-wiki.svg)
+
+*图：Source → Page → Citation → Review 的结构；Page 是派生知识，Source 是事实源。*
 
 ## 五个对象
 
@@ -76,6 +80,10 @@ wiki_add_citation
 
 这样既不把全部 Wiki 塞进 prompt，又能在需要时下钻。
 
+![Memory 索引](./wiki/notes-memory.png)
+
+*图：Memory 是顶层小索引；Agent 需要细节时再调用 wiki_search / wiki_read_page。*
+
 ## 维护：Dream pass
 
 当前有一个确定性的 dream pass：
@@ -97,6 +105,10 @@ wiki.dream
 - 右侧：Status / Citations / Backlinks / Linked Todos。
 - 顶部：Memory 索引、Review 队列、Dream、生成 Wiki。
 - 页面之间用 `[[页面]]` 链接；图谱包含页面 / 资料 / 本地文件三类节点。
+
+![Wiki 图谱](./wiki/notes-graph.png)
+
+*图：页面、资料和引用关系可以直接在图谱里看。*
 
 ## 与另两条主线的关系
 

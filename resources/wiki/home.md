@@ -1,6 +1,6 @@
 # Cockpit Harness
 
-> 本地优先的多 Agent 编排工作台：把一句话变成任务，让 Agent 在真实项目里执行，人只负责确认。
+> 多智能体终端 / Super Agent / LLM Wiki：把一句话变成任务，让 Agent 在真实项目里执行；Mission 负责组织，Wiki 负责沉淀，人只负责确认。
 
 ![多智能体工作台](./wiki/cover-multi-agent.png)
 
@@ -30,6 +30,7 @@ Cockpit Harness 的起点就是这句话：能不能把「对话、任务、终�
 - **Terminal 是真实执行现场**：node-pty 拉起真实 shell，可多标签、可拆分、可直接输入。
 - **项目就是本地目录**：一个目录一个项目；git 仓库会自动使用 worktree 隔离。
 - **执行引擎外置**：Agent CLI 通过适配器接入；目前 Chat 派活走 dsh 的 ACP profile。
+- **LLM Wiki**：笔记插件把资料变成可追溯的 Source → Page → Citation → Review，Agent 可检索、人负责审核。
 - **数据本地**：SQLite + 本地文件；模型配置和凭据不随 App 分发。
 
 ## 三大能力
@@ -37,7 +38,7 @@ Cockpit Harness 的起点就是这句话：能不能把「对话、任务、终�
 <div class="wiki-gallery three">
 <figure><img src="./wiki/send-state.png" alt="多智能体终端" loading="lazy" /><figcaption><b>多智能体终端</b><span>Chat、真实 PTY、TODO、worktree 在同一套状态机里。</span></figcaption></figure>
 <figure><img src="./wiki/mission-state.png" alt="Super Agent" loading="lazy" /><figcaption><b>Super Agent</b><span>Mission / Plan / Delegation / Supervisor，把多个子任务组织起来。</span></figcaption></figure>
-<figure><img src="./wiki/llm-wiki.svg" alt="LLM Wiki" loading="lazy" /><figcaption><b>LLM Wiki</b><span>Source → Page → Citation → Review，Agent 可检索、人可审核。</span></figcaption></figure>
+<figure><img src="./wiki/notes-wiki.png" alt="LLM Wiki 页面" loading="lazy" /><figcaption><b>LLM Wiki</b><span>笔记插件：Source → Page → Citation → Review，Agent 可检索、人可审核。</span></figcaption></figure>
 </div>
 
 [多智能体终端](#/wiki/home) · [Super Agent](#/wiki/super-agent) · [LLM Wiki](#/wiki/llm-wiki)

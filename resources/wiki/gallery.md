@@ -38,6 +38,14 @@
 <figure><img src="./wiki/mcp-bridge.png" alt="MCP bridge" loading="lazy" /><figcaption><b>MCP bridge</b><span>stdio ↔ HTTP ↔ 主进程领域动作</span></figcaption></figure>
 </div>
 
+## LLM Wiki
+
+<div class="wiki-gallery three">
+<figure><img src="./wiki/notes-wiki.png" alt="Wiki 页面" loading="lazy" /><figcaption><b>Wiki 页面</b><span>阅读 / 编辑 / Citations / Backlinks / Linked Todos</span></figcaption></figure>
+<figure><img src="./wiki/notes-graph.png" alt="Wiki 图谱" loading="lazy" /><figcaption><b>Wiki 图谱</b><span>页面、资料与引用关系</span></figcaption></figure>
+<figure><img src="./wiki/notes-memory.png" alt="Memory 索引" loading="lazy" /><figcaption><b>Memory</b><span>小型顶层索引，详情按需下钻</span></figcaption></figure>
+</div>
+
 ## 打包
 
 <div class="wiki-gallery">
