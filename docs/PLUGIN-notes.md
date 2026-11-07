@@ -1,6 +1,6 @@
 # Notes 插件：Obsidian-like Markdown 笔记（提案）
 
-> **状态：DRAFT / 方案，未实现。** 本文设计 Cockpit Harness 的第一个 first-party full-stack 插件；插件宿主本身尚未落地（manifest / utilityProcess / 权限 / UI view / Agent tools 见后续 `ARCH-plugins.md`）。
+> **状态：DRAFT / 方案，未实现。** 本文设计 Cockpit Harness 的第一个 first-party full-stack 插件；插件宿主本身尚未落地（manifest / utilityProcess / 权限 / UI view / Agent tools 见 [`ARCH-plugins.md`](ARCH-plugins.md)）。
 >
 > 目标不是复刻 Obsidian，而是做一个 **能打开 Obsidian vault、能和 Todo / Chat / Mission 联动的 Markdown 笔记**。
 
