@@ -667,8 +667,8 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
             className="btn"
             onClick={() => void curateWiki()}
             disabled={busy || pages.length === 0}
-            title="自动统一页面大纲（要点 / 原文摘录 / 相关）、补双链，并重建「Wiki 索引」页"
-          >整理</button>
+            title="统一页面大纲（要点 / 原文摘录 / 相关）、补页面互链，并重建「Wiki 索引」页"
+          >整理 Wiki</button>
           <button className="btn" onClick={() => void importDocuments()} disabled={busy} title="从磁盘选择 Markdown / 文本 / JSON / CSV 等文档">导入文档</button>
           <button className="btn" onClick={() => { setSourceDraft({ title: "", content: "", url: "", mode: "text" }); }} disabled={busy}>粘贴文本 / URL</button>
           <button className="btn" onClick={() => void pickLocalFolder()} disabled={busy} title={vault.path ? "更换本地目录" : "打开本地 Markdown 目录"}><FolderOpenIcon size={13} /> {vault.path ? "本地目录" : "打开目录"}</button>

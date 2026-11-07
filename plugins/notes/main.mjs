@@ -263,6 +263,8 @@ function graphView() {
 async function command(name) {
   if (name === "wiki.open" || name === "wiki.graph") return ctx.ui.openView("notes");
   if (name === "wiki.new") return ctx.ui.openView("notes");
+  // 「整理 Wiki」命令在 activate 内注册（直接调用 curateWiki），这里只兜底打开视图
+  if (name === "wiki.curate") return ctx.ui.openView("notes");
   if (name === "wiki.openFolder") {
     const vault = await pickVault();
     if (vault) await ctx.ui.openView("notes");
@@ -451,7 +453,7 @@ export async function activate(context) {
    * - 引用同一份 source、或标题互相提及的页面，互相加 [[双链]]
    * - 维护一个 `Wiki 索引` 页面（按状态分组列出所有页面）
    */
-  ctx.api.handle("wiki.curate", async ({ dryRun = false } = {}) => {
+  const curateWiki = async ({ dryRun = false } = {}) => {
     const INDEX_TITLE = "Wiki 索引";
     const indexPage = data.pages.find((p) => p.title === INDEX_TITLE);
     const realPages = data.pages.filter((p) => p.title !== INDEX_TITLE);
@@ -562,7 +564,8 @@ export async function activate(context) {
     addLog("wiki.curate", `updated ${updated.length} pages${createdIndex ? " + index" : ""}`);
     await persist();
     return { updated: updated.length, createdIndex, pages: realPages.length, sources: data.sources.length };
-  });
+  };
+  ctx.api.handle("wiki.curate", (args) => curateWiki(args));
 
   ctx.api.handle("wiki.memory", async ({ maxChars = 12000 } = {}) => memoryMarkdown(Number(maxChars) || 12000));
   ctx.api.handle("wiki.dream", async () => {
@@ -639,6 +642,11 @@ export async function activate(context) {
   ctx.commands.register("wiki.new", () => command("wiki.new"));
   ctx.commands.register("wiki.graph", () => command("wiki.graph"));
   ctx.commands.register("wiki.openFolder", () => command("wiki.openFolder"));
+  ctx.commands.register("wiki.curate", async () => {
+    await ctx.ui.openView("notes");
+    const res = await curateWiki({});
+    return res;
+  });
   ctx.events.on("mission.finished", async (payload) => {
     addLog("mission.finished", payload?.title || payload?.missionId || "");
     await persist();
