@@ -329,7 +329,8 @@ export async function activate(context) {
     let target = String(to || "").replace(/^[/\\]+|[/\\]+$/g, "");
     if (!source || !target) throw new Error("源路径和目标路径不能为空");
     const sourceFull = within(idx.vault, source);
-    if (!source.endsWith("/") && !target.includes(".")) target = extMd(target);
+    const sourceInfo = await fs.stat(sourceFull);
+    if (!sourceInfo.isDirectory() && !target.includes(".")) target = extMd(target);
     const targetFull = within(idx.vault, target);
     if (await exists(targetFull)) throw new Error("目标文件已存在");
     await fs.mkdir(path.dirname(targetFull), { recursive: true });
