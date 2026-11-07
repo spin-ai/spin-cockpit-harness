@@ -293,6 +293,24 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     } catch (err) { fail(err); return 0; } finally { setBusy(false); }
   };
 
+  /** 自动整理：统一大纲 + 补「相关」链接 + 重建索引页（插件内确定性执行，不需要模型） */
+  const curateWiki = async () => {
+    setBusy(true);
+    try {
+      const res = await invoke("wiki.curate", {});
+      const updated = Number(res?.updated || 0);
+      setNotice(updated || res?.createdIndex
+        ? `已整理 ${updated} 个页面${res?.createdIndex ? "，并生成「Wiki 索引」" : "，索引已更新"}`
+        : "大纲已经是最新的（没有需要改的页面）");
+      await refresh();
+      const current = pane.active;
+      if (current && docs[current] && !docs[current].local) {
+        const fresh = await invoke("wiki.getPage", { id: current });
+        if (fresh) setDocs((cur) => ({ ...cur, [current]: { ...fresh, dirty: false } }));
+      }
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
   /** 导入本地文档（md / txt / json / csv …）：调系统文件选择器，逐个变成资料 */
   const importDocuments = async () => {
     setBusy(true);
@@ -645,6 +663,12 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
             disabled={busy}
             title={sources.length ? `按 ${sources.length} 份资料生成草稿页面` : vault.files.length ? `会先把本地 ${vault.files.length} 个 Markdown 导入为资料再生成` : "先打开本地目录或导入资料"}
           >{busy ? "生成中…" : sources.length ? `生成 Wiki (${sources.length})` : "生成 Wiki"}</button>
+          <button
+            className="btn"
+            onClick={() => void curateWiki()}
+            disabled={busy || pages.length === 0}
+            title="自动统一页面大纲（要点 / 原文摘录 / 相关）、补双链，并重建「Wiki 索引」页"
+          >整理</button>
           <button className="btn" onClick={() => void importDocuments()} disabled={busy} title="从磁盘选择 Markdown / 文本 / JSON / CSV 等文档">导入文档</button>
           <button className="btn" onClick={() => { setSourceDraft({ title: "", content: "", url: "", mode: "text" }); }} disabled={busy}>粘贴文本 / URL</button>
           <button className="btn" onClick={() => void pickLocalFolder()} disabled={busy} title={vault.path ? "更换本地目录" : "打开本地 Markdown 目录"}><FolderOpenIcon size={13} /> {vault.path ? "本地目录" : "打开目录"}</button>
@@ -752,6 +776,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 <div className="notes-empty-actions">
                   <button className="link tiny" onClick={() => void createPage()} disabled={busy}>＋ 新建</button>
                   <button className="link tiny" onClick={() => void generateWiki()} disabled={busy}>按资料生成</button>
+                  <button className="link tiny" onClick={() => void curateWiki()} disabled={busy || pages.length === 0}>自动整理大纲</button>
                   <button className="link tiny" onClick={() => setSourceDraft({ title: "", content: "", url: "", mode: "text" })} disabled={busy}>导入文本 / URL</button>
                 </div>
               </div>
