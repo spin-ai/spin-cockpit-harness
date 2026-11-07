@@ -135,6 +135,46 @@ r = await run(`
 check("新建并切换分支", r.created === true && r.branch === "feature/x", JSON.stringify(r));
 check("git 里确实切过去了", git("rev-parse", "--abbrev-ref", "HEAD").trim() === "feature/x", git("rev-parse", "--abbrev-ref", "HEAD").trim());
 
+// ── 右侧栏 Git 迷你面板（会话旁边）──────────────────────────
+r = await run(`
+  const rail = [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.includes("工作区"));
+  if (rail) __t.click(rail);
+  await __t.wait(500);
+  const tab = [...document.querySelectorAll(".right-tabs .icon-tab")].find((b) => b.getAttribute("aria-label") === "Git");
+  if (!tab) return { error: "no git tab", tabs: [...document.querySelectorAll(".right-tabs .icon-tab")].map((b) => b.getAttribute("aria-label")) };
+  __t.click(tab);
+  const panel = await __t.until(() => document.querySelector(".git-mini"), 6000);
+  return { panel: !!panel, branch: document.querySelector(".git-mini-head .mono")?.textContent || "", files: [...document.querySelectorAll(".git-mini-file .mono")].map((e) => e.textContent.trim()) };`);
+check("右侧栏 Git 标签存在（会话旁边）+ 显示状态", r.panel === true && r.files?.length >= 1, JSON.stringify(r));
+
+r = await run(`
+  const row = [...document.querySelectorAll(".git-mini-file")].find((el) => el.textContent.includes("a.txt"));
+  const btn = row && row.querySelector("button");
+  if (!btn) return { error: "no stage btn" };
+  __t.click(btn);
+  await __t.wait(900);
+  return { staged: [...document.querySelectorAll(".git-mini-scroll .git-mini-file")].map((e) => e.textContent.trim()) };`);
+check("迷你面板可暂存", r.staged?.some((x) => x.includes("a.txt")), JSON.stringify(r).slice(0, 120));
+
+r = await run(`
+  const ta = document.querySelector(".git-mini-msg");
+  if (!ta) return { error: "no commit box" };
+  __t.setValue(ta, "mini: 从侧栏提交");
+  await __t.wait(200);
+  const btn = [...document.querySelectorAll(".git-mini .btn")].find((b) => b.textContent.includes("提交"));
+  __t.click(btn);
+  await __t.wait(2200);
+  return { ok: true };`);
+check("迷你面板提交写进仓库", /mini: 从侧栏提交/.test(git("log", "--oneline", "-1")), git("log", "--oneline", "-1").trim());
+
+r = await run(`
+  const full = [...document.querySelectorAll(".git-mini-head .link")].find((b) => b.textContent.includes("全屏"));
+  if (!full) return { error: "no full link" };
+  __t.click(full);
+  await __t.wait(900);
+  return { gitPage: !!document.querySelector(".git-page") };`);
+check("「全屏」跳到 Git 页", r.gitPage === true, JSON.stringify(r));
+
 conn.socket.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");
 process.exit(fails ? 1 : 0);

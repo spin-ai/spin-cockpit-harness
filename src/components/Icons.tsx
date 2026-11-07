@@ -22,6 +22,12 @@ function Svg({ size = 16, className, style, children }: IconProps & { children: 
   );
 }
 
+export const GitIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="6" cy="6" r="2.4" /><circle cx="6" cy="18" r="2.4" /><circle cx="18" cy="9" r="2.4" />
+    <path d="M6 8.4v7.2M8.3 6h4.3a3 3 0 0 1 3 3v.2" />
+  </Svg>
+);
 export const FilesIcon = (p: IconProps) => (
   <Svg {...p}><path d="M15.5 2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V6.5L15.5 2Z" /><path d="M15 2v5h5" /></Svg>
 );

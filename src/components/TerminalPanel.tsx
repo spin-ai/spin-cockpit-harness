@@ -891,6 +891,38 @@ function PreviewPane({ pane, active, previewRoot, previewHomeUrl, onOpenUrl, onP
   );
 }
 
+const DARK_ANSI = {
+  black: "#3f4451", red: "#e06c75", green: "#98c379", yellow: "#e5c07b",
+  blue: "#61afef", magenta: "#c678dd", cyan: "#56b6c2", white: "#dcdfe4",
+  brightBlack: "#5c6370", brightRed: "#ff7b86", brightGreen: "#b5e890", brightYellow: "#ffd68a",
+  brightBlue: "#7cc4ff", brightMagenta: "#d99cf5", brightCyan: "#66d9e3", brightWhite: "#ffffff",
+};
+
+const LIGHT_ANSI = {
+  black: "#24292f", red: "#cf222e", green: "#116329", yellow: "#6e4c00",
+  blue: "#0969da", magenta: "#8250df", cyan: "#1b7c83", white: "#6e7781",
+  brightBlack: "#57606a", brightRed: "#a40e26", brightGreen: "#1a7f37", brightYellow: "#7a5c00",
+  brightBlue: "#218bff", brightMagenta: "#a475f9", brightCyan: "#3192aa", brightWhite: "#8c959f",
+};
+
+/** 从当前 CSS 主题读取终端配色；主题切换时由 MutationObserver 重新应用。 */
+function readTermTheme() {
+  const root = document.documentElement;
+  const dark = root.dataset.mode === "dark";
+  const styles = getComputedStyle(root);
+  const pick = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
+  const bg = pick("--term-bg", dark ? "#1a1b20" : "#fbfbfc");
+  const fg = pick("--term-fg", dark ? "#d9dae0" : "#2b2e34");
+  return {
+    background: bg,
+    foreground: fg,
+    cursor: fg,
+    cursorAccent: bg,
+    selectionBackground: pick("--term-selection", dark ? "#3a3d46" : "#cfe0ff"),
+    ...(dark ? DARK_ANSI : LIGHT_ANSI),
+  };
+}
+
 type TermTabProps = {
   pane: PaneState;
   multi: boolean;
@@ -946,7 +978,7 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
       allowProposedApi: true,
       rightClickSelectsWord: true,
       scrollOnUserInput: true,
-      theme: { background: "#1a1b20", foreground: "#d9dae0", cursor: "#d9dae0", selectionBackground: "#3a3d46" },
+      theme: readTermTheme(),
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -1070,6 +1102,20 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pane.id, incarnation]);
+
+  // 主题切换（含跟随系统）时同步 xterm 的 canvas 配色
+  useEffect(() => {
+    const apply = () => {
+      const term = termRef.current;
+      if (!term) return;
+      term.options.theme = readTermTheme();
+      try { term.refresh(0, term.rows - 1); } catch { /* ignore */ }
+    };
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-mode"] });
+    return () => observer.disconnect();
+  }, []);
 
   // 标签可见 / 窗格获得焦点时重新 fit，并把焦点交回终端
   useEffect(() => {

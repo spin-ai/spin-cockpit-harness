@@ -39,6 +39,17 @@ Git                                    main → origin/main · ↑2 ↓0
 | `git:log` | `log -20 --pretty=%h\x1f%s\x1f%an\x1f%ar` | 最近提交 |
 | `git:init` | `init` | 非仓库时的引导 |
 
+## 2.5 右侧栏迷你面板
+
+右侧栏（资源管理器 / 会话历史 旁边）新增 **Git** 标签（`src/components/GitPanel.tsx`）：
+
+- 分支 + ↑↓ + 刷新 + 「全屏」（`harness:open-git` 事件 → 切到 Git 视图）
+- 可折叠的「暂存的改动 / 变更」，每行 `＋` 暂存 / `－` 取消暂存，「全部暂存」
+- 提交框（`⌘Enter` 提交）+ 拉取 / 推送 / 提交按钮
+- 不做 diff：点「全屏」看完整 diff 与最近提交
+
+窗口重新获得焦点时自动刷新状态（用别的工具改完文件回来就能看到）。
+
 ## 3. 交互要点
 
 - 点文件看 diff（暂存区优先；未跟踪文件与 `/dev/null` 比），头部显示 `+N -M`
@@ -68,4 +79,7 @@ PASS UI 暂存文件
 PASS UI 提交成功（写进仓库，git log 可见）
 PASS 提交后工作区只剩未暂存的 a.txt
 PASS 新建并切换分支（git rev-parse 确认 feature/x）
+PASS 右侧栏 Git 标签存在（会话旁边）+ 显示状态
+PASS 迷你面板可暂存 / 提交（git log 可见）
+PASS 「全屏」跳到 Git 页
 ```
