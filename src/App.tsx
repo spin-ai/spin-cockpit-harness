@@ -267,7 +267,7 @@ export default function App() {
       { id: "new-terminal", label: "新建终端标签", hint: "⌘T", group: "终端", run: () => dispatchInWorkspace(() => new Event("harness:new-terminal")) },
       { id: "split-right", label: "向右拆分终端", hint: "⌘D", group: "终端", run: () => dispatchInWorkspace(() => new CustomEvent("harness:split-terminal", { detail: "row" })) },
       { id: "split-down", label: "向下拆分终端", hint: "⇧⌘D", group: "终端", run: () => dispatchInWorkspace(() => new CustomEvent("harness:split-terminal", { detail: "col" })) },
-      { id: "open-preview", label: "打开预览标签", group: "终端", run: () => dispatchInWorkspace(() => new Event("harness:open-preview")) },
+      { id: "open-preview", label: "打开预览（文件 / dev server / URL）", group: "终端", run: () => dispatchInWorkspace(() => new Event("harness:open-preview")) },
       { id: "close-terminal", label: "关闭窗格", hint: "⌘W", group: "终端", run: () => dispatchInWorkspace(() => new Event("harness:close-terminal")) },
       { id: "edit-todo", label: "编辑任务", hint: "⌘E", group: "任务", run: () => dispatchInWorkspace(() => new Event("harness:edit-todo")) },
       { id: "open-project", label: "打开 / 添加项目…", hint: "⌘P", group: "项目", run: () => void addProject() },

@@ -12,6 +12,7 @@
 - `dsh-supervisor.patch.yml`：关闭 dsh 原生 subagent / Team / workflow，保证 Mission 单一调度源
 - `npm run verify:mission`：SQLite + MCP bridge + dsh supervisor profile 的 keyless 验证
 - 应用内「说明」页 + `docs/USAGE-super-agent.md`：Super Agent 从准备 Agent 到确认 Mission 的完整使用路径、常见问题与限制
+- 终端：预览标签可拖入 split 窗格（左/右/上/下），终端右键「在右侧打开预览」；预览成为可拆分的 pane
 
 ## [0.2.0-alpha.1] - 2026-11-06
 
