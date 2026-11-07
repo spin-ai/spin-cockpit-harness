@@ -392,7 +392,9 @@ export default function App() {
     <div className="app">
       <div className="main" style={{ gridTemplateColumns: gridCols }}>
         <Rail view={view} inboxUnread={unread} onChange={(v) => setView(v)} />
-        {view === "workspace" && scoped && (
+        {/* 工作区始终挂载、只切显隐：切到收件箱/统计再回来时，终端 pty、标签、滚动位置都不能丢 */}
+        {scoped && (
+          <div className="workspace-view" style={{ display: view === "workspace" ? "contents" : "none" }}>
           <>
             {collapsed.todo ? (
               <CollapsedPane label="TODO" title="TODO 列表" icon={<ListIcon size={16} />} onExpand={() => togglePane("todo")} />
@@ -440,6 +442,7 @@ export default function App() {
               />
             )}
           </>
+          </div>
         )}
         {view === "projects" && <div className="wide"><Projects state={state} now={now} act={act} notify={notify} onAdd={() => void addProject()} onSwitch={(id) => void switchProject(id)} /></div>}
         {view === "inbox" && <div className="wide"><Inbox state={state} now={now} act={act} onOpen={(id) => void openTodoFromPalette(id)} /></div>}

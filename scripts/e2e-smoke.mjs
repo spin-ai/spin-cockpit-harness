@@ -174,6 +174,19 @@ r = await run(`
   return { buttons, section: document.querySelector(".settings-head h2")?.textContent, ta: !!ta, focused: !!focused };`);
 check("缺密钥错误卡片 + 跳设置并聚焦", r.buttons?.length >= 2 && r.section === "执行" && r.focused === true, JSON.stringify(r));
 
+// ── 1.5 视图切换不丢终端（工作区常驻挂载，只切显隐） ──────────
+r = await run(`
+  __t.click(__t.rail("工作区"));
+  await __t.wait(1000);
+  const before = [...document.querySelectorAll(".term-tab:not(.add)")].map((t) => t.textContent.replace("×", "").trim());
+  __t.click(__t.rail("收件箱"));
+  await __t.wait(500);
+  __t.click(__t.rail("工作区"));
+  await __t.wait(1000);
+  const after = [...document.querySelectorAll(".term-tab:not(.add)")].map((t) => t.textContent.replace("×", "").trim());
+  return { before, after, xterm: !!document.querySelector(".term-instance .xterm") };`);
+check("切收件箱再回工作区，终端不丢", r.before.length >= 1 && JSON.stringify(r.before) === JSON.stringify(r.after) && r.xterm, JSON.stringify(r));
+
 // ── 10. 设置：搜索跳转 / 行内恢复默认 / 本页恢复默认 ─────────
 r = await run(`
   const btn = [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.includes("设置"));

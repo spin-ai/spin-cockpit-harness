@@ -403,6 +403,13 @@ function recoverMissions() {
     if (run.kind === "supervisor" && ["running", "waiting_input", "waiting_plan", "waiting_children"].includes(run.status)) {
       run.status = "interrupted"; run.endedAt = run.endedAt || now(); changed = true;
     }
+    // pty 随应用退出而消失，重启后不能把终端 run 一直挂在 running。
+    if ((run.terminalId || run.trigger === "terminal") && ["running", "waiting_input"].includes(run.status)) {
+      run.status = "interrupted"; run.endedAt = run.endedAt || now();
+      const todo = store.state.todos.find((t) => t.id === run.todoId);
+      if (todo) { todo.status = "todo"; todo.updatedAt = now(); }
+      changed = true;
+    }
   }
   for (const delegation of store.state.delegations) {
     if (["queued", "running", "waiting_input", "rework"].includes(delegation.status)) {
@@ -576,7 +583,7 @@ async function startRun(run, todo, agent) {
     effort: thread.effort || store.state.settings?.effort || undefined,
     patches: process.env.COCKPIT_TEST_DSH_PATCH ? [process.env.COCKPIT_TEST_DSH_PATCH] : [],
   });
-  const handle = { client, threadId: thread.id, streamId: null, thoughtId: null, tools: new Map(), done: false, stderr: "" };
+  const handle = { client, threadId: thread.id, streamId: null, thoughtId: null, tools: new Map(), toolMeta: new Map(), done: false, stderr: "" };
   active.set(run.id, handle);
 
   client.on("stderr", (text) => {
@@ -691,6 +698,17 @@ async function startRun(run, todo, agent) {
   }
 }
 
+/** 从 ACP rawInput 里取一段人类可读的参数摘要（命令 / 路径 / 模式），用于工具行副标题。 */
+function toolArgHint(raw) {
+  if (!raw || typeof raw !== "object") return "";
+  const pick = raw.command ?? raw.cmd ?? raw.file_path ?? raw.filePath ?? raw.path
+    ?? raw.pattern ?? raw.query ?? raw.url ?? raw.description ?? raw.prompt;
+  if (pick === undefined || pick === null) return "";
+  const text = String(Array.isArray(pick) ? pick.join(" ") : pick).replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+}
+
 function handleUpdate(run, todo, handle, u) {
   const threadId = handle.threadId || threadForTodo(todo).id;
   handle.threadId = threadId;
@@ -712,12 +730,19 @@ function handleUpdate(run, todo, handle, u) {
     }
   } else if (u.sessionUpdate === "tool_call" || u.sessionUpdate === "tool_call_update") {
     const key = u.toolCallId || store.nextId("tool");
-    const title = u.title || u.kind || "tool";
-    const content = `${title}${u.status ? ` · ${u.status}` : ""}`;
     const existing = handle.tools.get(key);
+    // ACP 的 tool_call_update 只带 status/content，不带 title/kind；
+    // 必须沿用首次 tool_call 的标题，否则每次结束都会退化成 "tool · completed"。
+    const prev = (existing ? handle.toolMeta.get(key) : null) || {};
+    const title = u.title || prev.title || u.kind || "tool";
+    const status = u.status || prev.status || "";
+    // 参数只在首次 tool_call 的 rawInput 里出现；update 时沿用，避免被清空。
+    const hint = (u.rawInput ? toolArgHint(u.rawInput) : "") || prev.hint || "";
+    const content = `${title}${status ? ` · ${status}` : ""}${hint ? `\n${hint}` : ""}`;
+    handle.toolMeta.set(key, { title, status, hint });
     if (existing) store.updateMessage(existing, { content });
     else handle.tools.set(key, store.addMessage(threadId, run.id, "tool", "tool", content).id);
-    store.addEvent("run.tool", `run.tool ${title} ${u.status || ""}`);
+    store.addEvent("run.tool", `run.tool ${title} ${status}`);
     const raw = u.rawInput || {};
     const rawFile = raw.path || raw.file_path || raw.filePath;
     if (rawFile) {
@@ -1690,6 +1715,7 @@ async function startSupervisorRun(run, mission, agent) {
   });
   const handle = {
     client, threadId: thread.id, streamId: null, thoughtId: null, tools: new Map(),
+    toolMeta: new Map(),
     done: false, stderr: "", kind: "supervisor", missionId: mission.id,
     prompting: false, queue: [],
   };
@@ -2529,6 +2555,13 @@ const actions = {
   stop: ({ runId }) => {
     const run = store.state.runs.find((r) => r.id === runId);
     if (!run) return;
+    // 终端启动的 run 没有 ACP handle，用 pty 来停（否则侧边栏的「停止」按钮无效）。
+    if (run.terminalId) {
+      const info = terminalUrls.get(run.terminalId);
+      if (info) { info.closedByUser = true; settleTerminalRun(info, "cancelled"); }
+      const term = terminals.get(run.terminalId);
+      if (term) { try { term.kill(); } catch { /* ignore */ } terminals.delete(run.terminalId); }
+    }
     for (const [id, a] of approvals) if (a.runId === runId) approvals.delete(id);
     const handle = active.get(runId);
     if (handle) { handle.done = true; handle.client.cancel(); handle.client.close(); active.delete(runId); }
@@ -2825,7 +2858,36 @@ ipcMain.handle("files:reveal", (_e, { rel, root } = {}) => {
   return true;
 });
 
-ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, cols, rows } = {}) => {
+/**
+ * 终端里启动的 Agent 也会登记成一条 run：TODO 列表 / 项目面板靠 runs 推导「运行中 / 用时」，
+ * 不登记的话终端里明明在干活，侧边栏却毫无动静。
+ */
+function settleTerminalRun(info, status) {
+  if (!info?.runId) return;
+  const run = store.state.runs.find((r) => r.id === info.runId);
+  if (!run || !["queued", "running", "waiting_input"].includes(run.status)) return;
+  const todo = store.state.todos.find((t) => t.id === run.todoId);
+  run.status = status;
+  run.endedAt = now();
+  if (run.startedAt) run.durationMs = Math.max(0, run.endedAt - run.startedAt);
+  run.exitCode = typeof info.exitCode === "number" ? info.exitCode : null;
+  if (todo) {
+    todo.updatedAt = now();
+    if (status === "completed") todo.status = "in_review";
+    else if (status === "failed") { todo.status = "todo"; todo.lastRunFailed = true; }
+    else todo.status = "todo";
+    if (status === "failed") run.error = `终端 agent 退出码 ${info.exitCode ?? "signal"}`;
+    const label = status === "completed"
+      ? `终端 agent 结束 · exit ${info.exitCode}`
+      : status === "failed" ? `终端 agent 失败 · exit ${info.exitCode ?? "signal"}` : "终端 agent 已停止";
+    store.addMessage(threadForTodo(todo).id, run.id, "system", "system", label);
+  }
+  store.addEvent(status === "completed" ? "run.finished" : status === "failed" ? "run.failed" : "run.cancelled",
+    `run.${status} terminal${todo ? ` todo=${todo.key}` : ""}`);
+  broadcast();
+}
+
+ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, cols, rows } = {}) => {
   const id = `term-${Date.now().toString(36)}`;
   const settings = store.state.settings || {};
   const shell = settings.shellPath || (process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/zsh");
@@ -2851,6 +2913,7 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, cols, ro
     term = pty.spawn(fallbackShell, spawnArgs, { ...spawnOptions, cwd: safeCwd });
   }
   let agent = null;
+  let run = null;
   if (command) {
     const pid = projectId || store.state.activeProjectId;
     const project = store.state.projects.find((p) => p.id === pid) || activeProject();
@@ -2861,11 +2924,30 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, cols, ro
     };
     store.state.agents.push(agent);
     store.addEvent("agent.started", `agent.started ${agent.name} @${agent.alias}`);
+    // 绑定到选中的任务：TODO 列表才能显示「运行中」和计时，项目面板的并发/运行数也才有来源。
+    const todo = todoId ? store.state.todos.find((t) => t.id === todoId) : null;
+    if (todo) {
+      run = {
+        id: store.nextId("r"), todoId: todo.id, agentId: agent.id, status: "running",
+        trigger: "terminal", kind: "worker", delegationId: null,
+        startedAt: Date.now(), endedAt: null, cost: 0, tokens: null, error: null, parentRunId: null,
+        cwd: cwdResolved, branch: null, hostId: agent.hostId || null, createdAt: Date.now(),
+        tokensIn: null, tokensOut: null, usageSource: "unknown", errorClass: null, exitCode: null,
+        queueWaitMs: 0, durationMs: null, queueReason: null, terminalId: id,
+      };
+      store.state.runs.push(run);
+      todo.status = "in_progress";
+      todo.agentId = todo.agentId || agent.id;
+      todo.lastRunFailed = false;
+      todo.updatedAt = Date.now();
+      store.addEvent("run.started", `run.started terminal todo=${todo.key} agent=${agent.name}`);
+    }
+    broadcast();
   }
   const send = (data) => { if (win && !win.isDestroyed()) win.webContents.send("terminal:data", { id, data }); };
   // attached=false 时先把输出攒起来：终端可能在渲染进程挂载前就已经打印了 banner
   // （例如从下拉框启动 Agent），挂载后通过 terminal:attach 一次性回放，避免首屏空白。
-  const info = { url: null, tail: "", attached: false, buffer: "", exited: false, exitCode: null };
+  const info = { url: null, tail: "", attached: false, buffer: "", exited: false, exitCode: null, runId: run?.id || null, closedByUser: false };
   terminalUrls.set(id, info);
   term.onData((data) => {
     if (info.attached) send(data);
@@ -2883,11 +2965,15 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, cols, ro
     terminals.delete(id);
     info.exited = true;
     info.exitCode = typeof exitCode === "number" ? exitCode : null;
+    info.exitSignal = signal ?? null;
     // 保留 buffer：退出可能发生在渲染进程 attach 之前，仍需回放最后一段输出
     if (win && !win.isDestroyed()) win.webContents.send("terminal:exit", { id, exitCode: info.exitCode, signal: signal ?? null });
+    // Ctrl-C / kill 视作主动停止，不算失败；只有非 0 且无信号才标 failed。
+    const status = info.closedByUser || info.exitSignal ? "cancelled" : info.exitCode === 0 ? "completed" : "failed";
+    settleTerminalRun(info, status);
   });
   terminals.set(id, term);
-  return { id, cwd: cwdResolved, agent };
+  return { id, cwd: cwdResolved, agent, run };
 });
 
 // 渲染进程挂载后调用：返回挂载前的输出，并切换为实时推送（之后的输出只走 terminal:data）
@@ -2909,6 +2995,12 @@ ipcMain.handle("terminal:resize", (_e, { id, cols, rows }) => {
 });
 
 ipcMain.handle("terminal:close", (_e, { id }) => {
+  const info = terminalUrls.get(id);
+  if (info) {
+    // 用户主动关标签 = 取消这次终端运行；先结算，避免 onExit 再判成 failed。
+    info.closedByUser = true;
+    settleTerminalRun(info, "cancelled");
+  }
   const term = terminals.get(id);
   if (term) { try { term.kill(); } catch { /* ignore */ } terminals.delete(id); }
   terminalUrls.delete(id);
@@ -3108,4 +3200,12 @@ app.on("before-quit", () => {
   try { grapeProc?.kill(); } catch { /* ignore */ }
   try { mcpServer?.close(); } catch { /* ignore */ }
   for (const handle of active.values()) { try { handle.client.close(); } catch { /* ignore */ } }
+  // 终端 pty 会随应用消失：先按「用户关闭」结算，否则重启后 TODO 会卡在运行中
+  for (const [id, info] of terminalUrls) {
+    info.closedByUser = true;
+    settleTerminalRun(info, "cancelled");
+    const term = terminals.get(id);
+    if (term) { try { term.kill(); } catch { /* ignore */ } }
+  }
+  try { store.flush(); } catch { /* ignore */ }
 });
