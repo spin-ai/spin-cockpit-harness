@@ -48,3 +48,24 @@ Untitled  draft         Draft · 0 citations        STATUS  Draft
 首屏空状态 → 新建页面 → 打开本地目录（含分组）→ 编辑器工具栏与右侧详情。
 
 > 备注：本轮未改编辑器内核（CodeMirror 6）与插件 API；快捷键仍是 `⌘S` 保存。
+
+## 6. 生成 Wiki 的完整动线（补上「不知道怎么生成」）
+
+```
+打开本地目录 ─┐
+导入资料 ─────┼→ 「全部导入为资料」→ 「生成 Wiki」→ 页面（draft）→ 编辑 / 审核
+粘贴 URL ────┘        (vault.importSource)     (wiki.generate)      (review accept)
+```
+
+- **「全部导入为资料」**：把本地目录里的 `.md`（最多 30 个）逐个 `wiki.vault.file` → `wiki.importSource`，失败单个不阻塞；入口在「本地」和「资料」两个 tab 的底部
+- **「生成 Wiki」**：插件内确定性生成（`wiki.generate`）——每份还没有对应页面的 source 生成一个 draft 页面，
+  带摘要（首段）、原文摘录、`来源：[[标题]]`，并建立 citation；返回 `{created, pages}`
+  - 不依赖模型与 API key；生成后可以在页面里编辑、审核，或用资料页的「发送到 Chat」让 Agent 精修后回写
+- 头部的「生成 Wiki」在没有资料时 disabled，tooltip 提示「先导入资料」
+
+## 7. 图谱为什么之前是空的
+
+`wiki.graph` 之前只包含 `pages + sources`：打开本地目录只写 `vaultPath`，既不产生 source 也不产生 page，于是图谱 0 节点。
+
+现在 `graphView()` 把 **vault 文件也作为 `kind: "file"` 的节点**（`file:<相对路径>`），打开目录后立刻可见；
+边依然是「页面→资料」的 citation 与页面之间的 `[[双链]]`。file 节点不可点击打开页面（只是存在性展示）。

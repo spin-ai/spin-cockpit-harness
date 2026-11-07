@@ -17,7 +17,7 @@ type Page = Omit<PageSummary, "citations" | "backlinks"> & { content: string; ci
 type Source = { id: string; title: string; kind: string; uri?: string; createdAt: number; citations: number; content?: string };
 type VaultFile = { path: string; title: string; folder: string; mtime: number; size: number };
 type VaultInfo = { path: string; files: VaultFile[]; indexedAt?: number; error?: string };
-type GraphData = { nodes: { id: string; title: string; kind: "page" | "source"; links: number }[]; edges: { source: string; target: string; kind: string }[] };
+type GraphData = { nodes: { id: string; title: string; kind: "page" | "source" | "file"; links: number }[]; edges: { source: string; target: string; kind: string }[] };
 type Doc = Page & { dirty: boolean; local?: boolean; localPath?: string; mtime?: number };
 type Pane = { tabs: string[]; active: string | null };
 type Tab = "pages" | "sources" | "review" | "vault";
@@ -235,6 +235,41 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   };
 
   // Electron 不支持 window.prompt：直接建「无标题页面」，打开后标题就是可编辑输入框
+  /** 按资料生成 Wiki 草稿骨架（插件内确定性生成，不需要模型） */
+  const generateWiki = async (sourceIds: string[] = []) => {
+    if (!sources.length) { setError("还没有资料：先在「资料」里导入，或在「本地」把 Markdown 导入为资料"); return; }
+    setBusy(true);
+    try {
+      const res = await invoke("wiki.generate", { sourceIds });
+      const created = Number(res?.created || 0);
+      setNotice(created ? `已生成 ${created} 个草稿页面，去「页面」里编辑或审核` : "没有新的资料需要生成（已有对应页面）");
+      await refresh();
+      if (created) { setTab("pages"); setGraph(false); setMemoryOpen(false); }
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  /** 把本地目录里的 Markdown 全部导入为资料（最多 30 个，避免一次性太大） */
+  const importAllVault = async () => {
+    const files = vault.files.slice(0, 30);
+    if (!files.length) { setError("还没有打开本地目录"); return; }
+    setBusy(true);
+    let ok = 0;
+    try {
+      for (const f of files) {
+        try {
+          const content = await invoke("wiki.vault.file", { path: f.path });
+          const text = String((content as { content?: string })?.content || "");
+          if (!text.trim()) continue;
+          await invoke("wiki.importSource", { title: f.title, content: text, kind: "vault", uri: f.path });
+          ok += 1;
+        } catch { /* 单个文件失败不阻塞 */ }
+      }
+      setNotice(ok ? `已导入 ${ok} 份本地 Markdown 为资料` : "没有可导入的内容");
+      await refresh();
+      setTab("sources");
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
   const createPage = async () => {
     setBusy(true);
     try {
@@ -447,7 +482,13 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 <em>编辑仓库里的 .md 并写回</em>
               </button>
             </div>
-            <div className="notes-hub-tip">快捷键：⌘S 保存 · ⌘Enter 提交（编辑器内）</div>
+            <div className="notes-hub-flow">
+              <span>① 打开本地目录 / 导入资料</span><i>→</i>
+              <span>② 全部导入为资料</span><i>→</i>
+              <span>③ 生成 Wiki（草稿）</span><i>→</i>
+              <span>④ 编辑 / 审核</span>
+            </div>
+            <div className="notes-hub-tip">「生成 Wiki」是确定性骨架（把资料变成草稿页面 + 引用）；想要写作质量更高，用资料页的「发送到 Chat」让 Agent 整理后回写。</div>
           </div>
         ) : (
           <>
@@ -525,6 +566,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
         </div>
         <div className="notes-actions">
           <button className="btn primary" onClick={() => void createPage()} disabled={busy}>＋ 新建页面</button>
+          <button className="btn" onClick={() => void generateWiki()} disabled={busy || !sources.length} title={sources.length ? "按资料生成草稿页面" : "先导入资料"}>{busy ? "生成中…" : "生成 Wiki"}</button>
           <button className="btn" onClick={() => { setSourceDraft({ title: "", content: "", url: "", mode: "text" }); }} disabled={busy}>导入资料</button>
           <button className="btn" onClick={() => void pickLocalFolder()} disabled={busy} title={vault.path ? "更换本地目录" : "打开本地 Markdown 目录"}><FolderOpenIcon size={13} /> {vault.path ? "本地目录" : "打开目录"}</button>
           <div className="notes-actions-sep" />
@@ -568,6 +610,12 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                   </div>
                 ))}
                 {filteredVaultFiles.length === 0 && !vault.error && <div className="notes-empty-list">{query ? "没有匹配的本地文件。" : "目录里还没有 Markdown 文件。"}</div>}
+                {vault.files.length > 0 && (
+                  <div className="notes-sidebar-foot">
+                    <button className="link tiny" onClick={() => void importAllVault()} disabled={busy}>全部导入为资料（{Math.min(30, vault.files.length)}）</button>
+                    <button className="link tiny" onClick={() => void generateWiki()} disabled={busy || !sources.length}>用资料生成页面 →</button>
+                  </div>
+                )}
               </>
             )}
             {tab === "vault" && !vault.path && (
@@ -576,10 +624,25 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 <button className="btn primary" onClick={() => void pickLocalFolder()} disabled={busy}>打开目录</button>
               </div>
             )}
-            {tab === "pages" && filteredPages.length === 0 && <div className="notes-empty-list">还没有页面。创建一个，或导入 source。</div>}
+            {tab === "pages" && filteredPages.length === 0 && (
+              <div className="notes-empty-list">
+                还没有页面。
+                <div className="notes-empty-actions">
+                  <button className="link tiny" onClick={() => void createPage()} disabled={busy}>＋ 新建</button>
+                  <button className="link tiny" onClick={() => void generateWiki()} disabled={busy || !sources.length}>按资料生成</button>
+                  <button className="link tiny" onClick={() => setSourceDraft({ title: "", content: "", url: "", mode: "text" })} disabled={busy}>导入资料</button>
+                </div>
+              </div>
+            )}
             {tab === "sources" && filteredSources.length === 0 && <div className="notes-empty-list">还没有资料。导入文本或 URL。</div>}
             {tab === "review" && reviews.length === 0 && <div className="notes-empty-list">没有待审核 draft。</div>}
           </div>
+          {tab === "sources" && (
+            <div className="notes-sidebar-foot">
+              {vault.files.length > 0 && <button className="link tiny" onClick={() => void importAllVault()} disabled={busy}>导入本地 {Math.min(30, vault.files.length)} 个 .md</button>}
+              <button className="link tiny" onClick={() => void generateWiki()} disabled={busy || !sources.length}>用资料生成页面 →</button>
+            </div>
+          )}
           {tab === "sources" && log.length > 0 && <div className="notes-log">{log.slice(0, 5).map((l) => <div key={l.id}>{l.text}</div>)}</div>}
         </aside>
 
@@ -695,6 +758,6 @@ function GraphView({ data, loading, onOpen }: { data: GraphData | null; loading:
     return new Map(cap.map((n, i) => [n.id, points[i]]));
   }, [nodes, edges]);
   if (loading) return <div className="notes-empty"><div className="notes-empty-mark">✦</div><b>构建 Wiki 图谱…</b></div>;
-  if (!nodes.length) return <div className="notes-empty"><div className="notes-empty-mark">✦</div><b>还没有图谱</b><p>导入 source 或创建页面，并建立引用/链接。</p></div>;
-  return <div className="notes-graph"><svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">{edges.map((e, i) => { const a = positions.get(e.source); const b = positions.get(e.target); return a && b ? <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} /> : null; })}{nodes.map((n) => { const p = positions.get(n.id); if (!p) return null; return <g key={n.id} onClick={() => onOpen(n.id)} className={`notes-graph-node ${n.kind}`}><circle cx={p.x} cy={p.y} r={Math.min(3.2, 1.5 + Math.sqrt(n.links) * .55)} /><text x={p.x} y={p.y - 4.5} textAnchor="middle">{n.title.slice(0, 18)}</text></g>; })}</svg><div className="notes-graph-count">{nodes.length} nodes · {edges.length} links</div></div>;
+  if (!nodes.length) return <div className="notes-empty notes-graph-empty"><div className="notes-empty-mark">✦</div><b>还没有图谱</b><p>图谱由「页面」「资料」和「本地 Markdown」组成；页面引用资料、页面之间用 <code>[[双链]]</code> 时才会连线。</p></div>;
+  return <div className="notes-graph"><svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">{edges.map((e, i) => { const a = positions.get(e.source); const b = positions.get(e.target); return a && b ? <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} /> : null; })}{nodes.map((n) => { const p = positions.get(n.id); if (!p) return null; return <g key={n.id} onClick={() => { if (n.kind !== "file") onOpen(n.id); }} className={`notes-graph-node ${n.kind}`} style={n.kind === "file" ? { cursor: "default" } : undefined}><circle cx={p.x} cy={p.y} r={Math.min(3.2, 1.5 + Math.sqrt(n.links) * .55)} /><text x={p.x} y={p.y - 4.5} textAnchor="middle">{n.title.slice(0, 18)}</text></g>; })}</svg><div className="notes-graph-count">{nodes.length} nodes · {edges.length} links</div></div>;
 }
