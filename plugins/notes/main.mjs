@@ -107,14 +107,47 @@ function searchAll(q, limit = 40) {
   if (!query) return [];
   const out = [];
   for (const page of data.pages) {
-    const at = `${page.title}\n${page.summary}\n${page.content}`.toLowerCase().indexOf(query);
-    if (at >= 0) out.push({ kind: "page", id: page.id, title: page.title, snippet: page.content.slice(Math.max(0, at - 60), at + 180).replace(/\s+/g, " ") });
+    const body = `${page.title}\n${page.summary}\n${page.content}`.toLowerCase();
+    const at = body.indexOf(query);
+    if (at >= 0) {
+      const titleHit = page.title.toLowerCase().includes(query) ? 3 : 0;
+      const rank = titleHit + (page.status === "reviewed" ? 2 : 0) + Math.min(3, citationsOf(page.id).length);
+      out.push({ kind: "page", id: page.id, title: page.title, snippet: page.content.slice(Math.max(0, at - 60), at + 180).replace(/\s+/g, " "), rank });
+    }
   }
   for (const source of data.sources) {
     const at = sourceText(source).toLowerCase().indexOf(query);
     if (at >= 0) out.push({ kind: "source", id: source.id, title: source.title, snippet: source.content.slice(Math.max(0, at - 60), at + 180).replace(/\s+/g, " ") });
   }
-  return out.slice(0, limit);
+  return out.sort((a, b) => (b.rank || 0) - (a.rank || 0)).slice(0, limit);
+}
+
+function memoryMarkdown(maxChars = 12000) {
+  const ranked = [...data.pages].sort((a, b) => {
+    const score = (p) => (p.status === "reviewed" ? 20 : p.status === "stale" ? -5 : 8) + (p.citations ? 3 : 0) + (p.updatedAt || 0) / 1e13;
+    return score(b) - score(a);
+  });
+  const lines = [
+    "# Memory",
+    "",
+    "> 这是 Wiki 的小型顶层索引；详情用 wiki_search / wiki_read_page 读取。",
+    "",
+    `- pages: ${data.pages.length}`,
+    `- sources: ${data.sources.length}`,
+    `- drafts: ${data.pages.filter((p) => p.status === "draft").length}`,
+    `- stale: ${data.pages.filter((p) => p.status === "stale").length}`,
+    "",
+  ];
+  for (const page of ranked) {
+    const summary = (page.summary || page.content.replace(/^#.*$/gm, "").replace(/\s+/g, " ").trim()).slice(0, 220);
+    lines.push(`## ${page.title}`);
+    lines.push(`status: ${page.status} · citations: ${citationsOf(page.id).length}`);
+    if (summary) lines.push(summary);
+    lines.push("");
+    if (lines.join("\n").length > maxChars) break;
+  }
+  const text = lines.join("\n");
+  return { markdown: text.slice(0, maxChars), pageCount: ranked.length, chars: text.length };
 }
 
 function graphView() {
@@ -253,6 +286,22 @@ export async function activate(context) {
   });
   ctx.api.handle("wiki.reviewQueue", async () => data.pages.filter((p) => p.status === "draft").map(pageSummary));
   ctx.api.handle("wiki.search", async ({ query, limit = 40 } = {}) => searchAll(query, limit));
+  ctx.api.handle("wiki.memory", async ({ maxChars = 12000 } = {}) => memoryMarkdown(Number(maxChars) || 12000));
+  ctx.api.handle("wiki.dream", async () => {
+    // Deterministic first pass: surface maintenance work without mutating reviewed pages.
+    const issues = [];
+    for (const page of data.pages) {
+      if (!citationsOf(page.id).length) issues.push({ kind: "missing-citation", pageId: page.id, title: page.title });
+      if (page.status === "draft" && page.updatedAt < now() - 7 * 24 * 3600 * 1000) issues.push({ kind: "stale-draft", pageId: page.id, title: page.title });
+    }
+    const seen = new Map();
+    for (const page of data.pages) {
+      const key = page.title.toLowerCase();
+      if (seen.has(key)) issues.push({ kind: "duplicate-title", pageId: page.id, title: page.title });
+      else seen.set(key, page.id);
+    }
+    return { issues, memory: memoryMarkdown() };
+  });
   ctx.api.handle("wiki.graph", async () => graphView());
   ctx.api.handle("wiki.layout.set", async ({ layout } = {}) => { data.layout = layout || null; await persist(); return true; });
   ctx.api.handle("wiki.layout.get", async () => data.layout);

@@ -138,6 +138,46 @@ wiki_add_citation
 - 所有写入追加 log/revision；
 - 读 source 内容视为不可信数据。
 
+### 3.5 Memory hierarchy
+
+当前已有一个小型 top layer：
+
+```text
+wiki.memory → MEMORY 索引（最多 12k chars）
+  ├─ page 数 / source 数 / draft / stale
+  ├─ reviewed / 最近更新页面优先
+  └─ 标题 + summary + citation 数
+```
+
+- 每次普通 Chat run / Mission worker run 启动时注入这个小索引；
+- Agent 需要详情时再用 `wiki_search` / `wiki_read_page`；
+- UI 顶部「记忆」可查看同一份索引；
+- 不把全部 wiki 全文塞进 prompt，控制 token。
+
+这与 Anthropic 文章里的 “top layer 小、详情下沉、wiki + search” 对齐。
+
+### 3.6 Dreaming
+
+当前有 **deterministic dream pass**：
+
+```text
+wiki.dream
+  → missing-citation
+  → stale-draft
+  → duplicate-title
+  → 生成新的 Memory 索引
+```
+
+它只产出维护项，不自动修改 reviewed 页面。
+
+LLM Dreaming（后续）：
+
+- 读 session/run transcript；
+- 对照 source 检查 claim；
+- 合并重复页面 / 修复链接 / 剪枝；
+- 生成 revision + diff，进入 Review 队列；
+- 不自动 reviewed。
+
 ---
 
 ## 4. LLM Wiki 工作流
