@@ -12,12 +12,18 @@ import fs from "node:fs";
 
 const port = Number(process.argv[2] || 9223);
 const VAULT = "/tmp/notes-vault";
+const DOC_MD = "/tmp/doc-import.md";
+const DOC_CSV = "/tmp/table-import.csv";
+const DOC_BIN = "/tmp/doc-binary.bin";
 fs.rmSync(VAULT, { recursive: true, force: true });
 fs.mkdirSync(`${VAULT}/a`, { recursive: true });
 fs.mkdirSync(`${VAULT}/b`, { recursive: true });
 fs.writeFileSync(`${VAULT}/良率.md`, "# 芯片良率\n\n良率是标量，但缺陷有空间结构。\n\n## 要点\n\n- die 级差分\n");
 fs.writeFileSync(`${VAULT}/a/atpg.md`, "# ATPG 笔记\n\nstuck-at 覆盖率 98.9%。\n");
 fs.writeFileSync(`${VAULT}/b/agents.md`, "# 多智能体\n\nMission / Plan / Delegation。\n");
+fs.writeFileSync(DOC_MD, "# 本地文档测试\n\n这是从磁盘导入的文档。\n");
+fs.writeFileSync(DOC_CSV, "name,value\nA,1\nB,2\n");
+fs.writeFileSync(DOC_BIN, "PK\u0000\u0003\u0004binary");
 
 const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
 const page = list.find((t) => t.type === "page");
@@ -33,6 +39,7 @@ const ev = async (expr) => {
 };
 let fails = 0;
 const check = (n, ok, d = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"} ${n}${d ? " · " + d : ""}`); };
+const run = ev;
 
 let r = await ev(`
   // confirm 自动确认 + 等待助手
@@ -93,6 +100,30 @@ r = await ev(`
   const list = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" });
   return { reviews: list?.result?.reviews?.length, notice: document.querySelector(".notes-banner")?.textContent || "" };`);
 check("审核 tab：hover 直接接受（待审核 -1）", r.reviews === 1, JSON.stringify(r));
+// ── 本地文档导入（docs:read / docsPick）──────────────────────────
+r = await run(`
+  const docs = await window.harness.docsRead(["/tmp/doc-import.md", "/tmp/table-import.csv", "/tmp/doc-binary.bin"]);
+  return docs.map((d) => ({ name: d.name, ok: d.text != null, err: d.error || null }));`);
+check("docsRead：读文本 / 拒绝二进制", r[0]?.ok && r[1]?.ok && r[2]?.ok === false && /二进制/.test(r[2]?.err || ""), JSON.stringify(r));
+
+r = await run(`
+  const docs = await window.harness.docsRead(["/tmp/doc-import.md", "/tmp/table-import.csv"]);
+  for (const d of docs) await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.importSource", args: { title: d.name.replace(/\.[a-z0-9]+$/i, ""), content: d.text, kind: "file", uri: d.path } });
+  const list = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" });
+  return { sources: list?.result?.sources?.length, kinds: (list?.result?.sources || []).map((s) => s.kind) };`);
+check("本地文档变成资料（kind=file）", (r.kinds || []).filter((k) => k === "file").length === 2, JSON.stringify(r));
+
+r = await run(`
+  const paste = [...document.querySelectorAll(".notes-actions .btn")].find((b) => b.textContent.includes("粘贴文本"));
+  paste.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 500));
+  const modes = [...document.querySelectorAll(".notes-source-mode button")].map((b) => b.textContent.trim());
+  const fileMode = [...document.querySelectorAll(".notes-source-mode button")].find((b) => b.textContent.trim() === "本地文件");
+  fileMode.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 300));
+  return { modes, fileHint: !!document.querySelector(".notes-source-file"), pickBtn: [...document.querySelectorAll(".notes-source-actions .btn")].some((b) => b.textContent.includes("选择文件")) };`);
+check("导入弹窗三档（文本 / URL / 本地文件）", r.modes?.length === 3 && r.fileHint === true && r.pickBtn === true, JSON.stringify(r));
+
 ws.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");
 process.exit(fails ? 1 : 0);

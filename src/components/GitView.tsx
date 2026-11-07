@@ -10,7 +10,7 @@ type Commit = { hash: string; subject: string; author: string; when: string };
 const STATUS_LABEL: Record<string, string> = { M: "改", A: "增", D: "删", R: "移", C: "复", U: "冲", "?": "新" };
 
 /**
- * Source Control（参考 reference 的 Git 面板）
+ * Source Control（分支 / 暂存 / Diff / 提交）
  * - 顶部：分支 / 上游 / ahead-behind / 拉取·推送
  * - 左侧：暂存区 + 变更 + 未跟踪，底部提交框（⌘Enter 提交）
  * - 右侧：选中文件的 unified diff；下方最近提交

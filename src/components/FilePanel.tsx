@@ -63,7 +63,7 @@ function dayStart(ts: number) {
 }
 
 /**
- * 右侧栏：reference 风格的资源管理器 + 智能体会话历史 + 文件预览。
+ * 右侧栏：资源管理器 + 智能体会话历史 + 文件预览。
  * - 资源管理器：可展开的树、名称筛选、刷新、折叠全部
  * - 会话历史：按时间分组，点击回到对应 Chat 会话
  * - 预览：点击文件后出现，可关闭
@@ -81,7 +81,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
   baseRef.current = base;
 
   const [tab, setTab] = useState<Tab>("explorer");
-  // 资源管理器的 git 装饰（参考 reference：改/新/已暂存着色，ignore 的文件淡色斜体）
+  // 资源管理器的 git 装饰（改/新/已暂存着色，ignore 的文件淡色斜体）
   const [gitMap, setGitMap] = useState<Record<string, GitFile>>({});
   const [gitIgnored, setGitIgnored] = useState<string[]>([]);
 

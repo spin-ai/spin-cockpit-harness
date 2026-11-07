@@ -294,7 +294,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
     addTab({ cwd, title: basename(cwd) });
   }, [activePane?.cwd, state.projectPath, addTab]);
 
-  // 预览是终端的一个标签页（与 reference 一致）：已存在就导航 + 激活，否则新建
+  // 预览是终端的一个标签页：已存在就导航 + 激活，否则新建
   const openPreview = useCallback((url: string) => {
     if (!url) return;
     setPreviewReq({ url, n: Date.now() });
@@ -1222,7 +1222,7 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
       const ctrlShift = e.ctrlKey && e.shiftKey;   // Windows / Linux 的替代组合
       const accel = cmd || ctrlShift;
       const stop = () => { e.preventDefault(); e.stopPropagation(); };
-      // 拆分窗格（reference 风格）
+      // 拆分窗格
       if (cmd && e.shiftKey && key === "d") { stop(); onSplit("col"); return; }
       if ((cmd && !e.shiftKey && key === "d") || (ctrlShift && key === "d")) { stop(); onSplit("row"); return; }
       if ((cmd || e.ctrlKey) && e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown")) {

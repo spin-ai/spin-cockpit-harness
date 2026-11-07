@@ -33,6 +33,8 @@ declare global {
       filesTrash(rel: string, root?: string): Promise<boolean>;
       filesReveal(rel: string, root?: string): Promise<boolean>;
       filesWrite(rel: string, root: string | undefined, text: string): Promise<{ ok: boolean; size: number }>;
+      docsPick(): Promise<{ path: string; name: string; text?: string; size?: number; error?: string }[]>;
+      docsRead(paths: string[]): Promise<{ path: string; name: string; text?: string; size?: number; error?: string }[]>;
       gitStatus(root?: string): Promise<GitStatus>;
       gitDiff(root: string | undefined, path: string, staged?: boolean): Promise<{ diff: string }>;
       gitStage(root: string | undefined, paths: string[]): Promise<{ ok: boolean }>;
