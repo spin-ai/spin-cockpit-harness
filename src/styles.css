@@ -2210,3 +2210,5 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .grid2>.panel{border-radius:0;box-shadow:none;background:transparent;padding:18px 20px}
 .grid2>.panel+.panel{border-left:1px solid var(--border)}
 @media (max-width:900px){.grid2{grid-template-columns:1fr}.grid2>.panel+.panel{border-left:0;border-top:1px solid var(--border)}}
+.notes-link.imported{opacity:.75;border-style:dashed}
+.notes-link.imported b{color:var(--faint)}
