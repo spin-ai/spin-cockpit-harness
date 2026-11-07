@@ -64,6 +64,7 @@ npm run dist                # macOS dmg → release/
 - **可收起面板**：TODO / Chat / Terminal / 右侧栏都能收起成窄条，点击窄条展开；项目区也可单独折叠；状态自动记住
 - 状态分组就是看板：纵向排列在 TODO 列里
 - 资源管理器带 Git 装饰（参考 reference）：修改 / 新增 / 已暂存 / 删除各自着色并带状态字母，被 `.gitignore` 忽略的文件与目录淡色斜体，目录内有改动时显示状态点
+- Wiki / 笔记：打开本地 Markdown 目录 → 「全部导入为资料」→ 「生成 Wiki」（每份资料生成一个草稿页面 + citation，确定性生成、不依赖模型）→ 编辑 / 审核；图谱包含页面 / 资料 / 本地文件三类节点
 - 右侧栏新增 **Git** 标签（资源管理器 / 会话历史旁边）：分支、暂存/取消暂存、全部暂存、提交框（⌘Enter）、拉取/推送、一键「全屏」看 diff
 - Git（Source Control）：分支 / 上游 / ahead-behind、文件暂存与丢弃、Diff 查看（+N -M）、提交框（⌘Enter）、推送/拉取、分支切换与新建、最近提交；非仓库可一键 `git init`（见 [docs/ARCH-git.md](docs/ARCH-git.md)）
 - Git → 项目 Wiki：内置项目介绍 / 工作流 / 架构 / Agent / 终端 / 主题 / 插件 / 构建 / 版本记录，支持搜索（⌘F）、目录、页间链接与 Git 分支 / HEAD 标识；内容来自 `resources/wiki/*.md` + `CHANGELOG.md`，随仓库版本发布
