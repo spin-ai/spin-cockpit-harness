@@ -1954,9 +1954,19 @@ const actions = {
   pluginDisable: async ({ id } = {}) => pluginHost?.setEnabled(String(id || ""), false),
   pluginInstall: async () => {
     if (!pluginHost) throw new Error("插件宿主未启动");
-    const res = await dialog.showOpenDialog(win, { properties: ["openDirectory"], title: "选择插件目录（包含 plugin.json）" });
+    const res = await dialog.showOpenDialog(win, {
+      properties: ["openFile", "openDirectory"],
+      title: "选择插件目录或 .cockpit-plugin 文件",
+      filters: [{ name: "Cockpit Plugin", extensions: ["cockpit-plugin", "zip"] }],
+    });
     if (res.canceled || !res.filePaths[0]) return null;
-    return pluginHost.installFromFolder(res.filePaths[0]);
+    const target = res.filePaths[0];
+    return fs.statSync(target).isDirectory() ? pluginHost.installFromFolder(target) : pluginHost.installFromZip(target);
+  },
+  pluginInstallPath: async ({ path: target } = {}) => {
+    if (!pluginHost) throw new Error("插件宿主未启动");
+    if (!target) throw new Error("插件路径不能为空");
+    return fs.statSync(String(target)).isDirectory() ? pluginHost.installFromFolder(String(target)) : pluginHost.installFromZip(String(target));
   },
   pluginRemove: async ({ id } = {}) => pluginHost?.remove(String(id || "")),
   setSettings: (patch) => {

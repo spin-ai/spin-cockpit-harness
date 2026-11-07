@@ -14,7 +14,7 @@
 - 应用内「说明」页 + `docs/USAGE-super-agent.md`：Super Agent 从准备 Agent 到确认 Mission 的完整使用路径、常见问题与限制
 - 终端：预览标签可拖入 split 窗格（左/右/上/下），终端右键「在右侧打开预览」；预览成为可拆分的 pane
 - 插件宿主：utilityProcess 插件、manifest、命令、事件、storage、设置页、目录安装/启停
-- 内置 Notes 插件：Obsidian vault、文件树、Markdown 预览/编辑、搜索、backlinks、Daily Note、创建 Todo、发送到 Chat
+- Notes 独立插件包：Obsidian vault、文件树、多 tab、左右编辑分屏、Markdown 预览/编辑、搜索、backlinks、Graph、Daily Note、创建 Todo、发送到 Chat；`npm run plugin:notes` 生成，不进入 App 包
 
 ## [0.2.0-alpha.1] - 2026-11-06
 

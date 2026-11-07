@@ -1,8 +1,8 @@
 # Arch · Plugins / 插件宿主（提案）
 
 > **状态：P0 已实现，P1/P2 持续中。**
-> 已落地：manifest 发现、utilityProcess 加载、命令、事件、插件私有 storage、Settings → 插件、内置 Notes、folder 安装/启用/禁用/卸载。
-> 尚未落地：Executor 注册、Agent tools/MCP、sandbox UI view、zip 安装/签名/市场。
+> 已落地：manifest 发现、utilityProcess 加载、命令、事件、插件私有 storage、Settings → 插件、Notes 独立插件包、zip/folder 安装/启用/禁用/卸载。
+> 尚未落地：Executor 注册、Agent tools/MCP、sandbox UI view、签名/市场。
 > 第一个 first-party 插件是 [`PLUGIN-notes.md`](PLUGIN-notes.md)（Obsidian-like Notes）。
 
 ---
@@ -539,7 +539,7 @@ todo_links (
 
 ### 格式
 
-第一版实现 **文件夹安装**；zip / 签名 / 版本回滚是后续。
+支持 **目录安装** 和 **`.cockpit-plugin` zip**；签名 / 版本回滚 / 市场是后续。
 
 ```text
 my-plugin/
@@ -547,6 +547,15 @@ my-plugin/
   main.mjs
   assets/
 ```
+
+构建独立插件包：
+
+```sh
+npm run plugin:notes
+# release/plugins/ai.cockpit.notes-0.1.0.cockpit-plugin
+```
+
+插件包**不进入 App 安装包**；App 内从 Settings → 插件安装。
 
 ### 安装流程
 
@@ -725,9 +734,10 @@ export async function activate(ctx) {
 ```text
 electron/plugins/host.mjs       # 发现 / 生命周期 / RPC / 权限 / 命令
 electron/plugins/runtime.mjs    # utilityProcess 入口 + PluginContext
-plugins/notes/plugin.json       # 第一个内置插件
+plugins/notes/plugin.json       # Notes 独立插件 manifest
 plugins/notes/main.mjs          # vault 索引 / API / commands / mission event
-src/components/Notes.tsx        # first-party Obsidian-like view
+scripts/build-plugin.mjs        # 生成 release/plugins/*.cockpit-plugin
+src/components/Notes.tsx        # first-party Obsidian-like UI（随 App 提供，但仅在插件启用时出现）
 src/components/Settings.tsx     # 设置 → 插件
 ```
 
@@ -747,8 +757,9 @@ src/components/Settings.tsx     # 设置 → 插件
 
 - 插件 UI 只实现了 first-party Notes 的原生 React 页面；第三方 iframe view 尚未开放
 - Executor 注册 / Agent tools / MCP 尚未接入
-- 安装只支持目录；zip / 签名 / 市场未做
+- 安装支持目录与 zip；签名 / 市场未做
 - 权限是 API 层检查；utilityProcess 不是 OS 沙箱
+- Notes 的业务逻辑/索引已经是独立插件包；编辑器 UI 仍是 App 内置 first-party shell（为了焦点与性能），插件未安装/未启用时不会出现
 
 ## 21. 待拍板
 

@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import AdmZip from "adm-zip";
 import { utilityProcess } from "electron";
 
 const API_VERSION = 1;
@@ -412,6 +413,30 @@ export class PluginHost {
       const events = plugin.manifest?.contributes?.events || [];
       if (!events.includes(event)) continue;
       try { child.postMessage({ type: "event", event, payload }); } catch { /* ignore */ }
+    }
+  }
+
+  async installFromZip(file) {
+    const zip = new AdmZip(file);
+    const temp = path.join(this.userRoot, `.install-${crypto.randomUUID()}`);
+    fs.mkdirSync(temp, { recursive: true });
+    try {
+      for (const entry of zip.getEntries()) {
+        const name = String(entry.entryName || "").replace(/\\/g, "/");
+        if (name.startsWith("/") || name.split("/").includes("..")) throw new Error("插件包包含非法路径");
+      }
+      zip.extractAllTo(temp, true);
+      let root = temp;
+      const direct = path.join(temp, PLUGIN_MANIFEST);
+      if (!fs.existsSync(direct)) {
+        const dirs = fs.readdirSync(temp, { withFileTypes: true }).filter((e) => e.isDirectory());
+        const found = dirs.find((e) => fs.existsSync(path.join(temp, e.name, PLUGIN_MANIFEST)));
+        if (!found) throw new Error("插件包没有 plugin.json");
+        root = path.join(temp, found.name);
+      }
+      return await this.installFromFolder(root);
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true });
     }
   }
 

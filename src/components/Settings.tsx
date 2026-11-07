@@ -69,7 +69,7 @@ const SEARCH_INDEX: { section: Section; title: string; hint?: string; k?: string
   { section: "preview", title: "保存截图", k: "elementScreenshots", hint: "拾取元素时截图" },
   { section: "preview", title: "上下文详细度", k: "contextDetail", hint: "注入 Chat 的 UI 上下文详略" },
   { section: "plugins", title: "已安装插件", hint: "Notes / 本地插件" },
-  { section: "plugins", title: "安装插件目录", hint: "包含 plugin.json 的目录" },
+  { section: "plugins", title: "安装插件包", hint: ".cockpit-plugin / 包含 plugin.json 的目录" },
   { section: "data", title: "数据库文件", hint: "harness.db 路径" },
   { section: "data", title: "数据目录", hint: "userData" },
   { section: "data", title: "导出备份", hint: "导出 .db" },
@@ -507,7 +507,7 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
         {section === "plugins" && (
           <>
             <Card title="已安装插件">
-              {(!state.plugins || state.plugins.length === 0) && <Row title="还没有插件"><span className="muted small">内置 Notes 会在启动时自动注册。</span></Row>}
+              {(!state.plugins || state.plugins.length === 0) && <Row title="还没有插件"><span className="muted small">Notes 不随 App 内置；请安装插件包或插件目录。</span></Row>}
               {(state.plugins || []).map((plugin) => (
                 <div className="settings-plugin-row" key={plugin.id}>
                   <div className="settings-plugin-main">
@@ -529,10 +529,10 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
             </Card>
             <Card title="安装">
               <Row title="本地插件" hint="选择一个包含 plugin.json 的目录；安装后默认禁用，确认权限后手动启用。">
-                <button className="btn tiny-btn" onClick={() => void act("pluginInstall")}>安装插件目录…</button>
+                <button className="btn tiny-btn" onClick={() => void act("pluginInstall")}>安装插件文件 / 目录…</button>
               </Row>
-              <Row title="Notes 插件" hint="内置 Obsidian-like Notes；启用后在左侧「笔记」里选择 vault。">
-                <span className="muted small">first-party · fs:vault · tasks:write</span>
+              <Row title="Notes 插件" hint="独立 Obsidian-like 插件包；安装并启用后在左侧「笔记」里选择 vault。">
+                <span className="muted small">独立插件 · fs:vault · tasks:write</span>
               </Row>
             </Card>
             <Card title="插件 API">
