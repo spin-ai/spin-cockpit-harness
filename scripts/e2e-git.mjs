@@ -21,6 +21,10 @@ sh("config", "user.email", "e2e@example.com");
 sh("config", "user.name", "E2E");
 fs.writeFileSync(`${REPO}/a.txt`, "line1\nline2\n");
 fs.writeFileSync(`${REPO}/b.txt`, "old\n");
+fs.writeFileSync(`${REPO}/.gitignore`, "*.log\nbuild/\n");
+fs.mkdirSync(`${REPO}/build`, { recursive: true });
+fs.writeFileSync(`${REPO}/build/out.js`, "x\n");
+fs.writeFileSync(`${REPO}/debug.log`, "log\n");
 sh("add", "-A");
 sh("commit", "-q", "-m", "init: 初始提交");
 fs.writeFileSync(`${REPO}/a.txt`, "line1\nline2 changed\nline3\n");
@@ -174,6 +178,27 @@ r = await run(`
   await __t.wait(900);
   return { gitPage: !!document.querySelector(".git-page") };`);
 check("「全屏」跳到 Git 页", r.gitPage === true, JSON.stringify(r));
+
+// ── 资源管理器 git 装饰（改/新着色，ignore 淡色斜体）──────────
+r = await run(`
+  const rail = [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.includes("工作区"));
+  if (rail) __t.click(rail);
+  await __t.wait(600);
+  // 右侧栏可能还停在 Git 标签：切回资源管理器再查文件树
+  const explorerTab = [...document.querySelectorAll(".right-tabs .icon-tab")].find((b) => b.getAttribute("aria-label") === "资源管理器");
+  if (explorerTab) __t.click(explorerTab);
+  await __t.wait(900);
+  const rows = [...document.querySelectorAll(".tree-row")];
+  const pick = (n) => rows.find((el) => el.textContent.includes(n));
+  const info = (n) => {
+    const el = pick(n);
+    if (!el) return null;
+    const label = el.querySelector("span.ellipsis");
+    return { cls: el.className, mark: el.querySelector(".tree-git")?.textContent || "", italic: label ? getComputedStyle(label).fontStyle : "", opacity: getComputedStyle(el).opacity };
+  };
+  return { log: info("debug.log"), build: info("build"), rows: rows.map((el) => el.textContent.trim()) };`);
+check("资源管理器：ignore 的文件淡色斜体", (r.log?.cls || "").includes("git-ignored") && r.log?.italic === "italic", JSON.stringify({ ...r.log, rows: r.rows }));
+check("资源管理器：ignore 的目录也淡色", (r.build?.cls || "").includes("git-ignored"), JSON.stringify(r.build));
 
 conn.socket.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");

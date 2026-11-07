@@ -81,6 +81,31 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
   baseRef.current = base;
 
   const [tab, setTab] = useState<Tab>("explorer");
+  // 资源管理器的 git 装饰（参考 reference：改/新/已暂存着色，ignore 的文件淡色斜体）
+  const [gitMap, setGitMap] = useState<Record<string, GitFile>>({});
+  const [gitIgnored, setGitIgnored] = useState<string[]>([]);
+
+  const refreshGit = useCallback(async () => {
+    try {
+      const st = await window.harness.gitStatus(state.projectPath);
+      if (!st.isRepo) { setGitMap({}); setGitIgnored([]); return; }
+      const map: Record<string, GitFile> = {};
+      for (const f of st.files || []) map[f.path] = f;
+      setGitMap(map);
+      setGitIgnored(st.ignored || []);
+    } catch { /* git 不可用时静默 */ }
+  }, [state.projectPath]);
+
+  useEffect(() => { void refreshGit(); }, [refreshGit]);
+  useEffect(() => {
+    const onFocus = () => { void refreshGit(); };
+    window.addEventListener("focus", onFocus);
+    // 轻量轮询：外部编辑器改文件后，资源管理器的状态点能自己更新
+    const timer = window.setInterval(() => {
+      if (tab === "explorer" && document.visibilityState === "visible") void refreshGit();
+    }, 12000);
+    return () => { window.removeEventListener("focus", onFocus); window.clearInterval(timer); };
+  }, [refreshGit, tab]);
 
   // explorer
   const [children, setChildren] = useState<Record<string, Entry[]>>({});
@@ -295,6 +320,35 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
     setActiveDir(parentOf(entry.path));
   };
 
+  // git 的 ignored 目录带结尾 /（如 "build/"），这里统一去掉再比对
+  const ignoredPaths = useMemo(() => new Set(gitIgnored.map((p) => p.replace(/\/+$/, ""))), [gitIgnored]);
+  const isIgnored = (rel: string) => {
+    if (ignoredPaths.has(rel)) return true;
+    for (const ig of ignoredPaths) if (rel.startsWith(`${ig}/`)) return true;
+    return false;
+  };
+  const gitTone = (rel: string, dir: boolean): { cls: string; label: string } | null => {
+    if (isIgnored(rel)) return { cls: "git-ignored", label: "" };
+    const own = gitMap[rel];
+    if (own) {
+      const code = own.untracked ? "?" : own.staged ? own.index : own.worktree || own.index;
+      const label = code === "?" ? "U" : code;
+      const cls = own.staged ? "git-staged" : own.untracked ? "git-new" : code === "D" ? "git-deleted" : "git-mod";
+      return { cls, label };
+    }
+    if (dir) {
+      // 目录：只要下面有改动就点一个状态点
+      const prefix = `${rel}/`;
+      const hit = Object.keys(gitMap).find((f) => f.startsWith(prefix));
+      if (hit) {
+        const f = gitMap[hit];
+        const cls = f.staged ? "git-staged" : f.untracked ? "git-new" : "git-mod";
+        return { cls, label: "•" };
+      }
+    }
+    return null;
+  };
+
   const q = query.trim().toLowerCase();
   const matchesBelow = useCallback((rel: string): boolean => {
     if (!q) return false;
@@ -350,10 +404,11 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
         {list.map((entry) => {
           const open = expanded.has(entry.path) || (q && matchesBelow(entry.path));
           const selected = activePath === entry.path;
+          const tone = gitTone(entry.path, entry.dir);
           return (
             <div key={entry.path}>
               <div
-                className={`tree-row ${selected ? "on" : ""}`}
+                className={`tree-row ${selected ? "on" : ""} ${tone ? tone.cls : ""}`}
                 style={{ paddingLeft: 8 + depth * 14 }}
                 role="button"
                 tabIndex={0}
@@ -407,6 +462,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
                 ) : (
                   <span className="ellipsis">{entry.name}</span>
                 )}
+                {tone?.label && <span className={`tree-git ${tone.cls}`} title="git 状态">{tone.label}</span>}
               </div>
               {entry.dir && open && renderDir(entry.path, depth + 1)}
             </div>
