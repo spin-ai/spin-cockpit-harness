@@ -187,6 +187,7 @@ npm run pack:system
 - [docs/REQ-original.md](docs/REQ-original.md)（纠正版需求）
 - [docs/REQ-multi-agent-workspace.md](docs/REQ-multi-agent-workspace.md)（43 条规格）
 - [docs/ARCH-multi-agent-workspace.md](docs/ARCH-multi-agent-workspace.md)（4+1 视图）
+- [docs/ARCH-super-agent.md](docs/ARCH-super-agent.md)（Super Agent 提案：Mission / Delegation / MCP / 迁移草案，未实现）
 - [docs/ARCH-chat-thread.md](docs/ARCH-chat-thread.md)（CHAT 单会话模型：thread / send 状态机 / 迁移）
 - [docs/ARCH-ui-context.md](docs/ARCH-ui-context.md)（预览元素拾取 → Agent 上下文：CDP / 安全边界 / 协议）
 - [docs/ARCH-settings.md](docs/ARCH-settings.md)（设置：分区、逐项生效点、持久化与新增步骤）
