@@ -25,8 +25,7 @@
     "postinstall": "electron-builder install-app-deps",
     "typecheck": "tsc --noEmit",
     "verify:mission": "node scripts/verify-mission.mjs",
-    "verify:plugins": "node scripts/verify-plugins.mjs",
-    "plugin:notes": "node scripts/build-plugin.mjs notes"
+    "verify:plugins": "node scripts/verify-plugins.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.4",
@@ -97,6 +96,10 @@
       {
         "from": "electron/dsh-supervisor.patch.yml",
         "to": "dsh-supervisor.patch.yml"
+      },
+      {
+        "from": "plugins/notes",
+        "to": "plugins/notes"
       }
     ],
     "asar": true,

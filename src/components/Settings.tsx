@@ -507,7 +507,7 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
         {section === "plugins" && (
           <>
             <Card title="已安装插件">
-              {(!state.plugins || state.plugins.length === 0) && <Row title="还没有插件"><span className="muted small">Notes 不随 App 内置；请安装插件包或插件目录。</span></Row>}
+              {(!state.plugins || state.plugins.length === 0) && <Row title="还没有插件"><span className="muted small">Notes 会作为内置 first-party 插件自动出现。</span></Row>}
               {(state.plugins || []).map((plugin) => (
                 <div className="settings-plugin-row" key={plugin.id}>
                   <div className="settings-plugin-main">
@@ -531,8 +531,8 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
               <Row title="本地插件" hint="选择一个包含 plugin.json 的目录；安装后默认禁用，确认权限后手动启用。">
                 <button className="btn tiny-btn" onClick={() => void act("pluginInstall")}>安装插件文件 / 目录…</button>
               </Row>
-              <Row title="Notes 插件" hint="独立 Obsidian-like 插件包；安装并启用后在左侧「笔记」里选择 vault。">
-                <span className="muted small">独立插件 · fs:vault · tasks:write</span>
+              <Row title="Notes 插件" hint="内置 Obsidian-like 插件；启用后在左侧「笔记」里选择 vault。">
+                <span className="muted small">first-party · fs:vault · tasks:write</span>
               </Row>
             </Card>
             <Card title="插件 API">

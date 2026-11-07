@@ -1,7 +1,7 @@
 # Arch · Plugins / 插件宿主（提案）
 
 > **状态：P0 已实现，P1/P2 持续中。**
-> 已落地：manifest 发现、utilityProcess 加载、命令、事件、插件私有 storage、Settings → 插件、Notes 独立插件包、zip/folder 安装/启用/禁用/卸载。
+> 已落地：manifest 发现、utilityProcess 加载、命令、事件、插件私有 storage、Settings → 插件、内置 Notes（first-party）、zip/folder 安装/启用/禁用/卸载。
 > 尚未落地：Executor 注册、Agent tools/MCP、sandbox UI view、签名/市场。
 > 第一个 first-party 插件是 [`PLUGIN-notes.md`](PLUGIN-notes.md)（Obsidian-like Notes）。
 
@@ -550,12 +550,7 @@ my-plugin/
 
 构建独立插件包：
 
-```sh
-npm run plugin:notes
-# release/plugins/ai.cockpit.notes-0.1.0.cockpit-plugin
-```
-
-插件包**不进入 App 安装包**；App 内从 Settings → 插件安装。
+Notes 作为 **first-party 内置插件**随 App 提供，不需要额外安装；其他第三方插件可从 Settings → 插件安装 `.cockpit-plugin` / 目录。
 
 ### 安装流程
 
@@ -751,7 +746,7 @@ src/components/Settings.tsx     # 设置 → 插件
 - 插件 settings / storage
 - `todos.create/update`、`links.attach/list`
 - `fs.pickDirectory`、`ui.openView`、`chat.draft`、`notify`
-- Notes 插件：vault 索引、文件树、预览/编辑、搜索、backlinks、Daily Note、创建任务、发送到 Chat
+- Notes 内置 first-party 插件：vault 索引、文件树、CodeMirror 编辑、多 tab / 分屏 / Graph、Daily Note、创建任务、发送到 Chat
 
 当前限制：
 
@@ -759,7 +754,7 @@ src/components/Settings.tsx     # 设置 → 插件
 - Executor 注册 / Agent tools / MCP 尚未接入
 - 安装支持目录与 zip；签名 / 市场未做
 - 权限是 API 层检查；utilityProcess 不是 OS 沙箱
-- Notes 的业务逻辑/索引已经是独立插件包；编辑器 UI 仍是 App 内置 first-party shell（为了焦点与性能），插件未安装/未启用时不会出现
+- Notes 作为 first-party 内置插件随 App 提供；第三方插件仍使用 manifest/runtime
 
 ## 21. 待拍板
 
