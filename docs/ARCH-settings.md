@@ -37,6 +37,17 @@
 | 键盘 | `⌘F` 搜索、`Esc` 清空、分区列表 `↑/↓` 切换 |
 | 默认值来源 | `Settings.tsx` 的 `DEFAULTS` 必须与 `electron/db.mjs` 的 `DEFAULT_SETTINGS` 保持一致 |
 
+## 1.6 缺模型密钥的可操作错误
+
+`run` 失败时若报错命中 `no api key` / `OPENAI_API_KEY` 这类关键字（`missingKeyInfo`，前后端口径一致）：
+
+- Chat 的错误消息下方渲染**可操作卡片**：「未配置模型密钥 · <provider>」，列出要设置的环境变量名、两种配法，按钮
+  - 「去设置里填」→ `harness:open-settings { section: "execution", focus: "dshEnv" }` → App 切设置页 → Settings 定位到「模型密钥 / 环境变量」并聚焦输入框
+  - 「复制 export 前缀」
+- 统计页失败行同样是可点入口（「配置密钥」）
+- 设置 → 执行 → 「模型密钥 / 环境变量」：每行 `KEY=VALUE`，即时保存，下一次 run 生效（无需重启）
+- 结构化的 `run.errorMeta = { envVars, provider }` 也会落库，便于后续做「错误 → 配置」引导
+
 ## 2. 设置项与生效点
 
 | 分区 | 键 | 默认 | 生效位置 |
@@ -49,6 +60,7 @@
 | 外观 | `chatFontSize` | `13` | CSS 变量 `--chat-font-size`（消息体 + 输入框） |
 | 执行 | `maxConcurrentRuns` | `0`（不限） | `tick()` 全局并发闸门，排队原因「等待全局并发」 |
 | 执行 | `approvalPolicy` | `ask` | ACP `session/request_permission`：ask 弹窗 / allow / deny |
+| 执行 | `dshEnv` | 空 | `parseEnvText()` 解析 `KEY=VALUE` 行，启动本地 dsh 时注入（远端不生效）；用于 `DEEPSEEK_API_KEY` 等 |
 | 执行 | `dshBinary` / `dshHome` / `model` / `effort` | 空 = 环境默认 | 新建 `AcpClient` 与 `session/set_config_option`；Chat 的会话级模型覆盖此默认值 |
 | 终端 | `shellPath` | 空 = `$SHELL` | `terminal:create`（失败回落默认 shell 并写事件） |
 | 终端 | `terminalFontSize` / `terminalScrollback` | `12` / `5000` | xterm `options` 实时更新 + fit |

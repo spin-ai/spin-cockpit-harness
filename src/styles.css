@@ -1423,3 +1423,12 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .theme-card-text b{font-size:12px;font-weight:600;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .theme-card-text em{font-style:normal;font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:760px){.theme-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* 缺模型密钥：Chat 里的可操作卡片 */
+.missing-key-card{margin-top:6px;border:1px solid var(--amber-line,#fde68a);background:var(--amber-soft,#fffbeb);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.missing-key-head{font-size:12px;font-weight:600;color:#92400e}
+.missing-key-body{font-size:11.5px;line-height:1.7;color:#78350f}
+.missing-key-body ol{margin:4px 0 0 16px;padding:0}
+.missing-key-body code{font-family:var(--mono);font-size:10.5px;background:#fff7ed;border:1px solid #fed7aa;border-radius:4px;padding:0 3px}
+.missing-key-actions{display:flex;gap:6px;justify-content:flex-end}
+.settings-env{width:100%;min-width:280px;max-width:420px;height:auto;min-height:66px;padding:6px 8px;font-family:var(--mono);font-size:11px;line-height:1.6;resize:vertical}

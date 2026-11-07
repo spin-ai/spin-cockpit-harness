@@ -563,8 +563,10 @@ async function startRun(run, todo, agent) {
   store.addEvent("run.started", `run.started todo=${todo.key} agent=${agent.name} cwd=${cwd}`);
   broadcast();
 
+  const extraEnv = parseEnvText(store.state.settings?.dshEnv || "");
   const client = new AcpClient({
     cwd,
+    env: isRemote ? null : extraEnv, // 远端请在目标机自己配置（env 不会随 ssh 过去）
     ssh: isRemote ? { host: host.addr, port: host.port, user: host.user } : null,
     // 本地：设置覆盖 > 内置单文件运行时 > PATH 里的 dsh
     bin: isRemote ? remoteDshBin() : (store.state.settings?.dshBinary || bundledDshPath() || undefined),
@@ -664,6 +666,7 @@ async function startRun(run, todo, agent) {
       const detail = summarizeStderr(handle.stderr || err?.stderr || "");
       run.error = (detail ? `${base} · ${detail}` : base).slice(0, 800);
       run.errorClass = classifyError(run.error, err?.code ?? err?.exitCode);
+      run.errorMeta = missingKeyInfo(run.error);
       run.exitCode = Number.isFinite(err?.exitCode) ? err.exitCode : null;
       todo.status = "todo";
       todo.lastRunFailed = true;
@@ -869,6 +872,31 @@ function applyRunUsage(run, res) {
 }
 
 /** 错误归 4 类（认证 / 限流 / 超时 / 其他），便于统计页聚合与重试入口。 */
+/** 解析设置里的 KEY=VALUE 行（忽略注释与空行） */
+function parseEnvText(text) {
+  const out = {};
+  for (const line of String(text || "").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const m = trimmed.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!m) continue;
+    let value = m[2].trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+    out[m[1]] = value;
+  }
+  return out;
+}
+
+/** 从报错里认出「缺模型密钥」，给出要设置的环境变量名与 provider */
+function missingKeyInfo(message) {
+  const text = String(message || "");
+  const envVars = [...new Set(text.match(/\b[A-Z][A-Z0-9_]*(?:API_KEY|_KEY|_TOKEN)\b/g) || [])];
+  const looksMissing = /no api key|api key (?:is )?not|missing .{0,16}(?:api key|credential)|credentials? service|not configured|unauthorized/i.test(text);
+  if (!looksMissing && !envVars.length) return null;
+  const provider = (text.match(/provider route "([^"]+)"/) || [])[1] || null;
+  return { envVars: envVars.length ? envVars : ["DEEPSEEK_API_KEY"], provider };
+}
+
 function classifyError(message, code) {
   const m = String(message || "").toLowerCase();
   if (/\b(401|403)\b|unauthor|forbidden|credential|api.?key|not logged in|login|认证/.test(m)) return "auth";
@@ -902,6 +930,7 @@ const SETTINGS_SPEC = {
   defaultAgentId: { kind: "string", nullable: true, fallback: null, max: 80 },
   maxConcurrentRuns: { kind: "number", min: 0, max: 20, fallback: 0 },
   approvalPolicy: { kind: "enum", values: ["ask", "allow", "deny"], fallback: "ask" },
+  dshEnv: { kind: "string", max: 4000 },
   dshBinary: { kind: "string", fallback: "", max: 500 },
   dshHome: { kind: "string", fallback: "", max: 1000 },
   model: { kind: "string", fallback: "", max: 200 },
