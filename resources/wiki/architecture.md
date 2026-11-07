@@ -30,6 +30,10 @@ SQLite 是唯一事实来源，主要表：
 | `settings` | 用户设置（主题、模型、dsh 路径、并发等） |
 | `inbox` / `events` | 通知与审计事件 |
 
+![数据模型](./wiki/data-model.png)
+
+*图：Thread / Todo / Run / Message / Artifact 的关系；消息宿主是 thread。*
+
 ## 一次 run 的执行链路
 
 ```text
@@ -45,6 +49,10 @@ send(threadId, text)
       → session/update → handleUpdate → messages
   → run completed → todo in_review → inbox
 ```
+
+![调度器](./wiki/scheduler.png)
+
+*图：tick() 如何按全局 / 主机 / Agent / 同 cwd 约束放行 run。*
 
 ## 关键模块
 

@@ -8,6 +8,10 @@
 - 任务已确认后，消息只记录，不再起 run。
 - 输入框为空时，`↑` / `↓` 可回溯当前会话的历史输入。
 
+![send 状态机](./wiki/send-state.png)
+
+*图：send() 的六种去向：dispatch / steer / queued / run / note / error。*
+
 ## 任务生命周期
 
 ```text
@@ -37,6 +41,10 @@ todo → queued → running → in_review → done
 - 非 git 目录：直接在目录里执行；不会伪造 worktree。
 - 文件预览跟随 run 的真实 cwd，优先运行中的 worktree。
 
+![调度器](./wiki/scheduler.png)
+
+*图：排队不是装饰，原因与约束都落在 run 上。*
+
 ## Mission / Super Agent
 
 ![Mission 流程](./wiki/mission-flow.png)
@@ -47,6 +55,10 @@ todo → queued → running → in_review → done
 - 计划必须先由人批准，未批准不能创建子任务；子任务仍然是普通 TODO/run，可以单独暂停、确认或取消。
 - 子任务结束通过 Delegation 事件回灌主管；主管提交总结后只能进入「待确认」，由人最终确认。
 - 领域模型、状态机、六条不变量与 MCP 工具见 [Super Agent / Mission](#/wiki/super-agent)。
+
+![Mission 状态机](./wiki/mission-state.png)
+
+*图：Mission / Supervisor Run / Delegation 三套状态机。*
 
 ## 验收与回写
 
