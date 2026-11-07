@@ -124,6 +124,15 @@ r = await run(`
   return { modes, fileHint: !!document.querySelector(".notes-source-file"), pickBtn: [...document.querySelectorAll(".notes-source-actions .btn")].some((b) => b.textContent.includes("选择文件")) };`);
 check("导入弹窗三档（文本 / URL / 本地文件）", r.modes?.length === 3 && r.fileHint === true && r.pickBtn === true, JSON.stringify(r));
 
+// ── 自动整理（wiki.curate）────────────────────────────────────
+r = await run(`
+  const res = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.curate", args: {} });
+  const list = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" });
+  const idx = (list?.result?.pages || []).find((p) => p.title === "Wiki 索引");
+  const again = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.curate", args: {} });
+  return { created: !!idx, createdIndex: res?.result?.createdIndex, updatedAgain: again?.result?.updated };`);
+check("自动整理：生成索引页且幂等", r.created === true && r.updatedAgain === 0, JSON.stringify(r));
+
 ws.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");
 process.exit(fails ? 1 : 0);

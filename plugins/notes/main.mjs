@@ -445,6 +445,125 @@ export async function activate(context) {
   });
   ctx.api.handle("wiki.reviewQueue", async () => data.pages.filter((p) => p.status === "draft").map(pageSummary));
   ctx.api.handle("wiki.search", async ({ query, limit = 40 } = {}) => searchAll(query, limit));
+  /**
+   * 自动整理 Wiki：统一大纲 + 补「相关」链接 + 重建索引页（确定性，不需要模型）。
+   * - 每个页面保证 `# 标题`、`## 要点`、`## 原文摘录`、`## 相关` 四段
+   * - 引用同一份 source、或标题互相提及的页面，互相加 [[双链]]
+   * - 维护一个 `Wiki 索引` 页面（按状态分组列出所有页面）
+   */
+  ctx.api.handle("wiki.curate", async ({ dryRun = false } = {}) => {
+    const INDEX_TITLE = "Wiki 索引";
+    const indexPage = data.pages.find((p) => p.title === INDEX_TITLE);
+    const realPages = data.pages.filter((p) => p.title !== INDEX_TITLE);
+
+    // 1) 页面之间的关系：共享 source 或标题互现
+    const related = new Map(); // pageId -> Set(pageId)
+    const link = (a, b) => {
+      if (!a || !b || a === b) return;
+      if (!related.has(a)) related.set(a, new Set());
+      related.get(a).add(b);
+    };
+    const sourcesOf = new Map();
+    for (const c of data.citations) {
+      if (!sourcesOf.has(c.pageId)) sourcesOf.set(c.pageId, new Set());
+      sourcesOf.get(c.pageId).add(c.sourceId);
+    }
+    const ids = realPages.map((p) => p.id);
+    for (let i = 0; i < ids.length; i += 1) {
+      for (let j = i + 1; j < ids.length; j += 1) {
+        const a = sourcesOf.get(ids[i]) || new Set();
+        const b = sourcesOf.get(ids[j]) || new Set();
+        let shared = false;
+        for (const x of a) if (b.has(x)) { shared = true; break; }
+        if (shared) { link(ids[i], ids[j]); link(ids[j], ids[i]); }
+      }
+    }
+
+    const updated = [];
+    for (const page of realPages) {
+      const title = page.title;
+      const body = String(page.content || "");
+      const summary = String(page.summary || "").trim();
+      // 保留原有正文：剥离我们自己维护的段落，避免重复堆叠
+      const stripped = body
+        .replace(/^#\s+.*$/m, "")
+        .replace(/##\s*要点[\s\S]*?(?=\n##\s|$)/, "")
+        .replace(/##\s*原文摘录[\s\S]*?(?=\n##\s|$)/, "")
+        .replace(/##\s*相关[\s\S]*$/, "")
+        .trim();
+      // 摘要要点：从整页正文里的列表提取（跳过「相关」里的双链，去重、限 8 条）
+      const bullets = [...new Set((body.match(/^\s*[-*]\s+.+$/gm) || [])
+        .map((l) => l.replace(/^\s*[-*]\s+/, "").trim())
+        .filter((l) => l && !/^\[\[[^\]]+\]\]/.test(l) && l !== "待整理"))].slice(0, 8);
+      // 原文摘录：把摘录里自带的一级/二级标题降级成加粗，避免和本页的 ## 段落打架
+      const excerpt = stripped
+        .split(/\n{2,}/)
+        .slice(0, 4)
+        .join("\n\n")
+        .slice(0, 1200)
+        .replace(/^#{1,6}\s+(.+)$/gm, "**$1**");
+      const rel = [...(related.get(page.id) || [])]
+        .map((id) => realPages.find((p) => p.id === id))
+        .filter(Boolean)
+        .slice(0, 6);
+
+      const next = [
+        `# ${title}`,
+        "",
+        summary ? `> ${summary}` : "",
+        "",
+        "## 要点",
+        "",
+        ...(bullets.length ? bullets.map((b) => `- ${b}`) : ["- 待补充"]),
+        "",
+        "## 原文摘录",
+        "",
+        excerpt || "（暂无摘录）",
+        "",
+        "## 相关",
+        "",
+        ...(rel.length ? rel.map((r) => `- [[${r.title}]]`) : [`- [[${INDEX_TITLE}]]`]),
+        "",
+      ].filter((x) => x !== undefined).join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+
+      if (next !== body) {
+        page.content = next;
+        page.updatedAt = now();
+        updated.push(page.id);
+      }
+    }
+
+    // 2) 索引页
+    const groups = [
+      ["已审核", realPages.filter((p) => p.status === "reviewed")],
+      ["草稿", realPages.filter((p) => p.status === "draft")],
+      ["已过期", realPages.filter((p) => p.status === "stale")],
+    ];
+    const indexBody = [
+      `# ${INDEX_TITLE}`,
+      "",
+      `> 自动生成：${realPages.length} 个页面 · ${data.sources.length} 份资料。改页面内容不会被覆盖（只重写本索引）。`,
+      "",
+      ...groups.flatMap(([label, list]) => (list.length
+        ? [`## ${label}（${list.length}）`, "", ...list.map((p) => `- [[${p.title}]]${p.summary ? ` — ${p.summary}` : ""}`), ""]
+        : [])),
+      "## 资料",
+      "",
+      ...(data.sources.length ? data.sources.slice(0, 50).map((s) => `- ${s.title}${s.kind ? `（${s.kind}）` : ""}`) : ["- 还没有资料"]),
+      "",
+    ].join("\n");
+
+    let createdIndex = false;
+    if (dryRun) {
+      return { dryRun: true, wouldUpdate: updated.length, pages: realPages.length, sources: data.sources.length, hasIndex: Boolean(indexPage) };
+    }
+    if (!indexPage) { ensurePage({ title: INDEX_TITLE, summary: "Wiki 索引（自动维护）", content: indexBody }); createdIndex = true; }
+    else if (indexPage.content !== indexBody) { indexPage.content = indexBody; indexPage.updatedAt = now(); }
+    addLog("wiki.curate", `updated ${updated.length} pages${createdIndex ? " + index" : ""}`);
+    await persist();
+    return { updated: updated.length, createdIndex, pages: realPages.length, sources: data.sources.length };
+  });
+
   ctx.api.handle("wiki.memory", async ({ maxChars = 12000 } = {}) => memoryMarkdown(Number(maxChars) || 12000));
   ctx.api.handle("wiki.dream", async () => {
     // Deterministic first pass: surface maintenance work without mutating reviewed pages.
