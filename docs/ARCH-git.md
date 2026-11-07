@@ -1,6 +1,6 @@
 # Git / Source Control
 
-> 参考 reference 的 Source Control（`docs/reference-main/docs/site/content/docs/review/commit-push.mdx`）：分支上下文行、文件暂存、提交框、Diff 查看、一键 Push/Pull。
+> 参考常见 Source Control 的分支上下文行、文件暂存、提交框、Diff 查看、一键 Push/Pull。
 > 本项目只做「本地仓库的日常操作」，不做 PR/评审托管、不做 AI 生成提交信息（后续可接）。
 
 ---
@@ -50,7 +50,7 @@ Git                                    main → origin/main · ↑2 ↓0
 
 窗口重新获得焦点时自动刷新状态（用别的工具改完文件回来就能看到）。
 
-## 2.6 资源管理器的 git 装饰（参考 reference）
+## 2.6 资源管理器的 git 装饰
 
 `src/components/FilePanel.tsx` 会拉一次 `git:status`（含 `ignored`），给文件树着色：
 
@@ -78,10 +78,10 @@ Git                                    main → origin/main · ↑2 ↓0
 | 不做 | 原因 |
 |---|---|
 | PR / 评审托管（GitHub/Linear/Jira） | 需要 OAuth 与网络策略，先本地化 |
-| Force push | 风险高，reference 也做成显式动作；需要时手动在终端做 |
+| Force push | 风险高，参考实现也做成显式动作；需要时手动在终端做 |
 | 冲突三方合并 UI | 冲突文件会标「冲」，解决仍在编辑器/终端 |
 | AI 生成提交信息 | 依赖模型密钥与模板，后续接 Action recipe |
-| Diff 行内批注 / 归因 | reference 的差异化能力，工作量另算 |
+| Diff 行内批注 / 归因 | 参考实现的差异化能力，工作量另算 |
 
 ## 5. 验证
 

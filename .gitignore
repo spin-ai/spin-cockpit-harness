@@ -6,11 +6,6 @@ build/
 out/
 release/
 
-# 外部参考源码（体积大，不入库；按需本地 clone）
-docs/reference-main/
-docs/reference-main/
-docs/*-main/
-
 # 运行数据
 *.sqlite
 *.sqlite3
@@ -42,7 +37,6 @@ docs/assets/article/
 docs/ARTICLE-zhihu-multi-agent-terminal.md
 docs/ARTICLE-zhihu-super-agent.md
 docs/assets/article/
-docs/assets/cmp/
 
 # 生成的文档产物（由 scripts/build-docs-html.py 生成）
 docs/REQ-multi-agent-workspace.html

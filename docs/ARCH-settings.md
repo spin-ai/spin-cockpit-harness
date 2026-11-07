@@ -1,6 +1,6 @@
 # 设置（Settings）
 
-> 参考：reference `src/renderer/src/components/settings/*`（General / Appearance / Agents / Terminal / Notifications / Shortcuts / Advanced 的分组与行式表单）、reference `packages/views/settings/*`（左侧分区导航 + 右侧卡片、搜索式入口、设置即保存）。
+> 参考：同类产品设置页的分组与行式表单、左侧分区导航 + 右侧卡片、搜索式入口、设置即保存。
 > 本文描述 harness 里已落地的设置项、持久化与生效链路。新增设置照着第 6 节加即可。
 
 ---
@@ -26,7 +26,7 @@
 - 保存后顶部显示「已自动保存」（2 秒）。
 - 所有值经过主进程白名单 + 类型/范围校验，非法值回落到默认值。
 
-## 1.5 易用性（参考 reference 设置）
+## 1.5 易用性
 
 | 能力 | 行为 |
 |---|---|
@@ -122,7 +122,7 @@ CREATE TABLE settings (k TEXT PRIMARY KEY, v TEXT);   -- 单行：('app', JSON)
 
 ## 8. 明确未做（参考产品里有，但不在本期）
 
-| reference / reference 能力 | 现状 |
+| 同类产品能力 | 现状 |
 |---|---|
 | 账号与登录 / 用量与计费 | 未做（本地单用户） |
 | 通知偏好、声音、免打扰 | 未做（收件箱固定规则） |

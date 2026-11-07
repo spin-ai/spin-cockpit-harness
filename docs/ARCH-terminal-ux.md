@@ -1,6 +1,6 @@
 # 终端易用性（Terminal UX）
 
-> 参考：reference `src/renderer/src/components/terminal-pane/*`、`TerminalSearch.tsx`、`TerminalContextMenu.tsx`、`useTerminalFontZoom.ts`、`terminal-search-options.ts`。
+> 参考：常见终端实现的搜索、右键菜单、字号缩放与 pane 布局。
 > 本文记录 harness 在 `src/components/TerminalPanel.tsx` 里落地的终端易用性能力、IPC 变更与明确未做的部分。
 
 ---
@@ -14,7 +14,7 @@ harness 的 Terminal 是「Agent 干活 + 人直接敲命令」的同一个 pane
 3. 复制粘贴、清屏、重启只能靠 shell 里的命令。
 4. Agent 启动 banner 在终端挂载前就打印完，首屏是空的。
 
-本次按 reference 的终端交互补齐这些点，同时保持实现规模可控（不引入分屏 / 守护进程 / 会话恢复）。
+本次按常见终端的交互补齐这些点，同时保持实现规模可控（不引入分屏 / 守护进程 / 会话恢复）。
 
 ## 2. 能力清单
 
@@ -126,15 +126,15 @@ Electron 默认菜单自带的加速键会和终端抢：`⌘W` 关窗口、`⌘
 
 ## 6. 明确未做
 
-| reference 能力 | 现状 / 原因 |
+| 参考能力 | 现状 / 原因 |
 |---|---|
 | 拖拽 pane 跨标签移动 / 等宽等高 / 布局持久化 | 未做：已支持递归拆分、预览拖入 pane、比例拖拽；剩余是跨标签移动与持久化 |
-| 关闭时确认「命令仍在运行」 | 未做：需要前台进程探测（reference 用 pid / 前台进程采样） |
+| 关闭时确认「命令仍在运行」 | 未做：需要前台进程探测（参考实现用 pid / 前台进程采样） |
 | 会话恢复 / 休眠唤醒 / 守护进程 | 未做：pty 生命周期跟随窗口，重启应用即结束；拆分布局也不持久化 |
 | 命令完成通知（OSC 133 / hook） | 未做：目前只利用 bell 做标签提示 |
 | 文件路径链接点击 → 编辑器 | 未做：只处理 URL；文件跳转仍在右侧资源管理器 |
 | 快速命令（quick commands） | 未做：可从命令面板派生的后续项 |
-| 拖拽文件到终端（插入路径） | 未做：reference 会转义路径写进 pty |
+| 拖拽文件到终端（插入路径） | 未做：参考实现会转义路径写进 pty |
 
 ## 7. 验证
 
