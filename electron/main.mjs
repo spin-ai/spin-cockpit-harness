@@ -895,7 +895,7 @@ function now() { return Date.now(); }
 
 const SETTINGS_SPEC = {
   defaultView: { kind: "enum", values: ["workspace", "projects", "stats", "hosts"], fallback: "workspace" },
-  theme: { kind: "enum", values: ["light", "dark", "system"], fallback: "system" },
+  theme: { kind: "enum", values: ["system", "light", "paper", "dark", "midnight", "forest", "graphite"], fallback: "system" },
   chatFontSize: { kind: "number", min: 11, max: 16, fallback: 13 },
   enterToSend: { kind: "boolean", fallback: true },
   confirmStop: { kind: "boolean", fallback: false },

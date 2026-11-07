@@ -13,6 +13,7 @@ import { CollapsedPane } from "./components/CollapsedPane";
 import { ChatIcon, FilesIcon, ListIcon, TerminalIcon } from "./components/Icons";
 import { Settings } from "./components/Settings";
 import { Guide } from "./components/Guide";
+import { THEMES, isDarkTheme, resolveTheme } from "./themes";
 
 type View = "workspace" | "projects" | "inbox" | "stats" | "hosts" | "settings" | "guide";
 type PaneId = "todo" | "chat" | "terminal" | "files";
@@ -87,13 +88,14 @@ export default function App() {
     return () => { off(); clearInterval(t); };
   }, []);
 
-  // 主题：light / dark / system（跟随系统时监听媒体查询）
+  // 主题：data-theme 决定调色板，data-mode 决定深浅色下的结构覆盖
   useEffect(() => {
     const mode = state?.settings?.theme ?? "system";
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
-      const dark = mode === "dark" || (mode === "system" && media.matches);
-      document.documentElement.dataset.theme = dark ? "dark" : "light";
+      const resolved = resolveTheme(mode, media.matches);
+      document.documentElement.dataset.theme = resolved;
+      document.documentElement.dataset.mode = isDarkTheme(resolved) ? "dark" : "light";
     };
     apply();
     media.addEventListener("change", apply);
@@ -294,9 +296,15 @@ export default function App() {
         group: "会话", run: () => void openThreadFromPalette(t.id),
       });
     }
+    for (const t of THEMES) {
+      list.push({
+        id: `theme-${t.id}`, label: `主题：${t.label}`, hint: t.desc,
+        group: "外观", run: () => void act("setSettings", { theme: t.id }),
+      });
+    }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state?.projects, state?.todos, state?.threads, state?.activeProjectId, newThread, dispatchInWorkspace, openTodoFromPalette, openThreadFromPalette, addProject, switchProject]);
+  }, [state?.projects, state?.todos, state?.threads, state?.activeProjectId, newThread, dispatchInWorkspace, openTodoFromPalette, openThreadFromPalette, addProject, switchProject, act]);
 
   useEffect(() => {
     // 自定义菜单去掉了 Select All 角色（否则 ⌘A 会被应用菜单吞掉，终端无法选择缓冲区）。

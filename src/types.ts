@@ -89,7 +89,7 @@ export interface Artifact { id: string; todoId: string; runId: string; kind: str
 export interface Event { id: string; ts: number; type: string; text: string; }
 export interface InboxItem { id: string; todoId: string; kind: string; title: string; at: number; read: boolean; pinned?: boolean; }
 export interface ContextState { dataset?: string; selection?: string[]; figure?: string; canvasElement?: string; activeFile?: string; updatedAt?: number; stale?: boolean; source?: string; }
-export type ThemeMode = "light" | "dark" | "system";
+export type ThemeMode = "system" | "light" | "paper" | "dark" | "midnight" | "forest" | "graphite";
 export interface Settings {
   defaultView: "workspace" | "projects" | "stats" | "hosts";
   theme: ThemeMode;
