@@ -155,7 +155,7 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
   return (
     <aside className="todo-pane">
       <div className="pane-head">
-        <span>TODO LIST</span>
+        <span>TODO</span>
         <div className="row gap6">
           <span className="muted">{state.todos.length}</span>
           <button className="pane-add" title="收集想法 / 新建任务（一行一条，⌘⇧N）" onClick={() => { setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); }}>＋</button>

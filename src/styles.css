@@ -2212,3 +2212,164 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 @media (max-width:900px){.grid2{grid-template-columns:1fr}.grid2>.panel+.panel{border-left:0;border-top:1px solid var(--border)}}
 .notes-link.imported{opacity:.75;border-style:dashed}
 .notes-link.imported b{color:var(--faint)}
+
+/* ═══════════════════════════════════════════════════════════════
+   Design system pass 2：标题 / 间距 / 字号 / 操作 / 空态 / 对比度
+   ═══════════════════════════════════════════════════════════════ */
+:root{
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:24px; --space-6:32px;
+  --radius-card:12px; --radius-control:8px; --radius-float:16px;
+  --text-xs:11px; --text-sm:12px; --text-md:13px; --text-title:22px;
+}
+
+/* Page header：所有一级页面共用 */
+.page-header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 20px;align-items:end;padding:0 0 2px}
+.page-header-copy{min-width:0;display:flex;flex-direction:column;gap:2px}
+.page-header-kicker{font-size:10px;line-height:1.4;letter-spacing:.16em;text-transform:uppercase;color:var(--brand);font-weight:700}
+.page-header h1{margin:0;font-size:var(--text-title);line-height:1.15;font-weight:600;letter-spacing:-.03em;color:var(--fg)}
+.page-header-sub{margin:0;font-size:11.5px;line-height:1.5;color:var(--faint);max-width:760px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.page-header-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;min-width:0}
+.page-header-actions .btn{border-color:transparent;background:transparent;color:var(--muted);box-shadow:none;height:28px}
+.page-header-actions .btn:hover{background:var(--surface);border-color:transparent;color:var(--fg);box-shadow:var(--shadow-1)}
+.page-header-actions .btn.primary{background:var(--fg);border-color:var(--fg);color:var(--surface);box-shadow:var(--shadow-1)}
+.page-header-actions .btn.primary:hover{background:color-mix(in srgb,var(--fg) 92%,var(--surface));border-color:var(--fg);color:var(--surface)}
+.page-header-tabs{grid-column:1/-1;display:flex;margin-top:8px;min-width:0}
+
+/* 控件尺寸统一 */
+.btn{height:30px;border-radius:var(--radius-control)}
+.btn.tiny-btn{height:26px}
+.btn:focus-visible,button:focus-visible{outline-offset:2px}
+
+/* 操作菜单：行内低频操作收进 ⋯ */
+.row-menu{position:relative;flex:none}
+.row-menu>summary{list-style:none;width:28px;padding:0;justify-content:center;font-size:15px;line-height:1;color:var(--muted);background:transparent;border-color:transparent}
+.row-menu>summary::-webkit-details-marker{display:none}
+.row-menu[open]>summary,.row-menu>summary:hover{background:var(--surface-hover);color:var(--fg)}
+.row-menu-pop{position:absolute;right:0;top:calc(100% + 5px);z-index:80;min-width:188px;padding:5px;border:1px solid var(--border);border-radius:10px;background:var(--surface);box-shadow:var(--shadow-float);display:flex;flex-direction:column;gap:1px}
+.row-menu-pop button{border:0;background:transparent;color:var(--fg-2);text-align:left;font-size:12px;padding:7px 9px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.row-menu-pop button:hover{background:var(--surface-hover);color:var(--fg)}
+.row-menu-pop button.danger{color:var(--red)}
+.row-menu-pop button.danger:hover{background:var(--red-soft)}
+.row-menu-label{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 9px;color:var(--faint);font-size:11.5px}
+.row-menu-label select{height:26px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--fg-2);font-size:11.5px;padding:0 4px}
+
+/* 空态 */
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:34px 20px;text-align:center;min-height:150px}
+.empty-state.compact{min-height:112px;padding:22px 14px}
+.empty-state-mark{width:38px;height:38px;display:grid;place-items:center;border-radius:11px;background:var(--brand-soft);border:1px solid var(--brand-line);color:var(--brand);font:600 16px var(--mono)}
+.empty-state b{font-size:13px;font-weight:600;color:var(--fg-2)}
+.empty-state p{margin:0;max-width:420px;font-size:11.5px;line-height:1.65;color:var(--faint)}
+.empty-state-action{margin-top:2px}
+.git-diff-panel>.empty-state{flex:1}
+.git-page-empty>.empty-state{background:var(--surface);border-radius:12px;box-shadow:var(--shadow-1)}
+
+/* Chat 空态：给空白一个起点 */
+.chat-empty{max-width:330px;margin:auto}
+.chat-empty-hints{display:flex;gap:5px;flex-wrap:wrap;justify-content:center;margin-top:4px}
+.chat-empty-hints>button:not(.link){border:1px solid transparent;background:var(--surface-hover);color:var(--fg-2);border-radius:999px;font-size:11px;padding:4px 9px;cursor:pointer}
+.chat-empty-hints>button:not(.link):hover{background:var(--brand-soft);color:var(--brand)}
+
+/* 工作区 pane header 统一 */
+.pane-head,.right-tabs{height:44px;background:var(--surface);border-bottom-color:var(--border)}
+.pane-head{padding:0 14px;font-size:11.5px;font-weight:600;letter-spacing:.02em;text-transform:none;color:var(--fg-2)}
+.pane-head .muted{font-size:11px;color:var(--faint)}
+.right-tabs{padding:0 6px}
+.right-tabs button{height:36px}
+.term-brand{font-size:11.5px;letter-spacing:.02em;text-transform:none}
+
+/* 设置：更窄的内容阅读宽度 */
+.settings-page{max-width:1280px}
+.settings-body{max-width:1040px}
+.settings-body>*{max-width:880px}
+.settings-body>.page-header{margin-bottom:22px}
+.settings-body .page-header h1{font-size:22px}
+.settings-body .page-header-actions .btn{height:26px}
+.settings-body .set-card{margin-bottom:28px}
+.settings-body .set-card-head{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+.settings-body .set-card-head b{font-size:11px}
+.settings-body .set-row-title{font-size:12.5px}
+.settings-body .set-row-hint{font-size:11px;line-height:1.55}
+
+/* 列表：固定列节奏 + 两行信息 */
+.fail-row{display:grid;grid-template-columns:auto minmax(0,1.6fr) minmax(120px,.8fr) 54px minmax(150px,1.3fr) auto;gap:12px;align-items:center;min-height:42px;padding:8px 6px;font-size:11.5px}
+.fail-row .ellipsis{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fail-row>.red{font-size:11px}
+.project-row .project-actions{display:flex;align-items:center;gap:4px;flex:none}
+.project-row .project-actions .btn{height:26px}
+.project-row>.project-main>.tiny{font-size:11px}
+.git-commit-row{grid-template-columns:76px minmax(0,1fr) auto;padding:7px 2px;font-size:11.5px}
+.git-commit-row .tiny{font-size:10.5px}
+.host-agent-row{font-size:11.5px}
+.host-meta{font-size:11px}
+
+/* 统计：范围选择合并成一个控件 */
+.seg.stats-range{padding:2px;border-radius:8px;background:var(--surface-hover);border-color:transparent}
+.seg-btn{height:24px;border:0;border-radius:6px;background:transparent;color:var(--muted);font-size:11px;padding:0 9px;cursor:pointer}
+.seg-btn:hover{color:var(--fg)}
+.seg-btn.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow-1)}
+.stats-actions .settings-control{height:28px}
+.stats-scope{min-width:132px}
+
+/* 对比度：暗色主面更清晰，小字不再糊 */
+:root[data-mode="dark"]{
+  --page-canvas:#121318;--surface:#1d1e24;--surface-hover:#272930;--surface-selected:#30323b;
+  --sidebar:#16171c;--sidebar-accent:#24262e;--border:#30323b;--border-strong:#42454f;--input:#3a3d47;
+  --fg:#f0f1f4;--fg-2:#cdd0d8;--muted:#a5a8b2;--faint:#8b8e99;
+}
+:root[data-mode="dark"] .btn.primary{color:#17181c}
+:root[data-mode="dark"] .tag.ok,
+:root[data-mode="dark"] .status.done,
+:root[data-mode="dark"] .git-badge.green{color:var(--green)}
+:root[data-mode="dark"] .git-badge.amber,
+:root[data-mode="dark"] .status.waiting{color:var(--amber)}
+:root[data-mode="dark"] .git-badge.red,
+:root[data-mode="dark"] .status.failed{color:var(--red)}
+
+@media (max-width:1100px){
+  .settings-page{max-width:100%;padding:14px 16px 24px}
+  .settings-body{max-width:calc(100% - 190px)}
+  .settings-body>*{max-width:100%}
+  .fail-row{grid-template-columns:auto minmax(0,1.7fr) 52px minmax(0,1fr) auto}
+  .fail-row>:nth-child(3){display:none}
+}
+@media (max-width:900px){
+  .page-header{grid-template-columns:1fr;align-items:start}
+  .page-header-actions{justify-content:flex-start}
+  .page-header-sub{white-space:normal}
+  .settings-body{max-width:100%}
+  .fail-row{grid-template-columns:auto minmax(0,1fr) auto;gap:8px}
+  .fail-row>:nth-child(3),.fail-row>:nth-child(4),.fail-row>:nth-child(5){display:none}
+  .chat-empty-hints{max-width:280px}
+}
+/* 主机：主列表 + 右侧概览，消除右侧空白 */
+.hosts-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px;align-items:start}
+.hosts-side{display:flex;flex-direction:column;gap:14px;min-width:0}
+.host-overview{display:flex;flex-direction:column;gap:0}
+.host-overview>div{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid color-mix(in srgb,var(--border) 60%,transparent);font-size:11.5px;color:var(--faint)}
+.host-overview>div:last-child{border-bottom:0}
+.host-overview b{font:600 15px var(--font-sans);color:var(--fg);letter-spacing:-.01em}
+/* 设置卡片不再拉满整屏高度 */
+.settings-body{align-self:start;height:auto;max-height:100%}
+@media (max-width:1100px){.hosts-layout{grid-template-columns:1fr}.hosts-side{flex-direction:row}.hosts-side>.panel{flex:1}}
+@media (max-width:700px){.hosts-side{flex-direction:column}}
+/* Guide：从卡片网格改为编辑式分节，减少“卡片墙” */
+.guide-grid{gap:20px 28px}
+.guide-card{background:transparent;border:0;border-top:1px solid color-mix(in srgb,var(--border) 62%,transparent);border-radius:0;box-shadow:none;padding:14px 0 0}
+.guide-card h2{margin:0 0 7px;font-size:12.5px;color:var(--fg);letter-spacing:-.01em}
+.guide-card p{color:var(--fg-2);font-size:12px;line-height:1.7}
+.guide-card.guide-note{background:color-mix(in srgb,var(--brand-soft) 55%,var(--surface));border-top-color:var(--brand-line);border-radius:10px;padding:14px}
+.guide-wide{padding-top:14px}
+.guide-head h1{font-size:26px}
+.guide-kicker{font-size:9.5px}
+.guide-actions .btn{height:30px}
+/* Notes：与全局字号/间距对齐 */
+.notes-kicker{font-size:10px}
+.notes-head h1{font-size:22px}
+.notes-file{font-size:11.5px}
+.notes-tab{font-size:11px}
+.notes-folder-label{font-size:10px}
+.notes-meta-title{font-size:10px}
+.notes-meta-empty{font-size:11px}
+.notes-log{font-size:9.5px}
+.notes-tabbar{height:36px}
+.notes-note-head{padding:10px 14px}

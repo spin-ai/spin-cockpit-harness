@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Settings as SettingsModel, State } from "../types";
 import { THEMES } from "../themes";
+import { PageHeader } from "./PageHeader";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 type Section = "general" | "appearance" | "execution" | "terminal" | "preview" | "plugins" | "data" | "shortcuts" | "about";
@@ -213,28 +214,26 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
       </aside>
 
       <div className="settings-body" ref={bodyRef}>
-        <header className="settings-head">
-          <div className="settings-head-row">
-            <h2>{current.label}</h2>
-            <div className="row gap8">
-              {savedAt != null && <span className="settings-saved">✓ 已自动保存</span>}
-              {SECTION_KEYS[section] && (
-                <button
-                  className="btn tiny-btn"
-                  title="把本页所有项恢复为默认值"
-                  onClick={() => {
-                    const keys = SECTION_KEYS[section] || [];
-                    const patch: Record<string, unknown> = {};
-                    for (const k of keys) if (DEFAULTS[k] !== undefined) patch[k] = DEFAULTS[k];
-                    if (Object.keys(patch).length) void set(patch as Partial<SettingsModel>);
-                    notify(`已恢复「${current.label}」默认值`);
-                  }}
-                >本页恢复默认</button>
-              )}
-            </div>
-          </div>
-          <p>{current.desc}</p>
-        </header>
+        <PageHeader
+          title={current.label}
+          subtitle={current.desc}
+          actions={<div className="row gap8">
+            {savedAt != null && <span className="settings-saved">✓ 已自动保存</span>}
+            {SECTION_KEYS[section] && (
+              <button
+                className="btn tiny-btn"
+                title="把本页所有项恢复为默认值"
+                onClick={() => {
+                  const keys = SECTION_KEYS[section] || [];
+                  const patch: Record<string, unknown> = {};
+                  for (const k of keys) if (DEFAULTS[k] !== undefined) patch[k] = DEFAULTS[k];
+                  if (Object.keys(patch).length) void set(patch as Partial<SettingsModel>);
+                  notify(`已恢复「${current.label}」默认值`);
+                }}
+              >本页恢复默认</button>
+            )}
+          </div>}
+        />
 
         {section === "general" && (
           <>

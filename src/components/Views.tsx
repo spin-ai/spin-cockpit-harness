@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { Project, ProjectStatus, State } from "../types";
 import { ERROR_CLASS, fmtMs, missingKeyInfo, p50, pct, timeAgo, tokens } from "../ui";
+import { PageHeader } from "./PageHeader";
+import { EmptyState } from "./EmptyState";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
@@ -34,10 +36,11 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
 
   return (
     <div className="page">
-      <div className="page-head">
-        <div><h2>项目</h2><span className="muted">{state.projects.length} 个项目</span></div>
-        <button className="btn primary" onClick={onAdd}>＋ 添加项目</button>
-      </div>
+      <PageHeader
+        title="项目"
+        subtitle={`${state.projects.length} 个项目`}
+        actions={<button className="btn primary" onClick={onAdd}>＋ 添加项目</button>}
+      />
 
       <div className="kpis">
         <div className="kpi"><span>项目</span><b>{state.projects.length}</b></div>
@@ -84,19 +87,26 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
                 ) : (
                   <>
                     <button className="btn tiny-btn primary" disabled={isActive} onClick={() => onSwitch(p.id)}>{isActive ? "使用中" : "打开"}</button>
-                    <button className="btn tiny-btn" onClick={() => act("revealProject", { id: p.id })}>Finder</button>
-                    <button className="btn tiny-btn" onClick={() => startRename(p)}>重命名</button>
-                    <select className="project-status-select" value={p.status} onChange={(e) => act("setProjectStatus", { id: p.id, status: e.target.value })} title="项目状态">
-                      {(Object.keys(PROJECT_STATUS) as ProjectStatus[]).map((s) => <option key={s} value={s}>{PROJECT_STATUS[s]}</option>)}
-                    </select>
-                    <button className="btn tiny-btn danger" onClick={() => void remove(p)}>移除</button>
+                    <details className="row-menu">
+                      <summary className="btn tiny-btn row-menu-trigger" title="更多项目操作" aria-label="更多项目操作">⋯</summary>
+                      <div className="row-menu-pop">
+                        <button onClick={() => act("revealProject", { id: p.id })}>在 Finder 中显示</button>
+                        <button onClick={() => startRename(p)}>重命名</button>
+                        <label className="row-menu-label">状态
+                          <select className="project-status-select" value={p.status} onChange={(e) => act("setProjectStatus", { id: p.id, status: e.target.value })}>
+                            {(Object.keys(PROJECT_STATUS) as ProjectStatus[]).map((s) => <option key={s} value={s}>{PROJECT_STATUS[s]}</option>)}
+                          </select>
+                        </label>
+                        <button className="danger" onClick={() => void remove(p)}>移除项目</button>
+                      </div>
+                    </details>
                   </>
                 )}
               </div>
             </div>
           );
         })}
-        {state.projects.length === 0 && <div className="muted small">还没有项目</div>}
+        {state.projects.length === 0 && <EmptyState compact title="还没有项目" desc="添加一个本地目录，任务、终端和文件树会跟随项目。" action={<button className="btn primary" onClick={onAdd}>＋ 添加项目</button>} />}
       </section>
     </div>
   );
@@ -105,7 +115,11 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
 export function Inbox({ state, now, act, onOpen }: { state: State; now: number; act: Act; onOpen: (id: string) => void }) {
   return (
     <div className="page">
-      <div className="page-head"><div><h2>收件箱</h2><span className="muted">{state.inbox.filter((i) => !i.read).length} 未读</span></div><button className="btn" onClick={() => act("readAllInbox")}>全部已读</button></div>
+      <PageHeader
+        title="收件箱"
+        subtitle={`${state.inbox.filter((i) => !i.read).length} 未读`}
+        actions={<button className="btn" onClick={() => act("readAllInbox")}>全部已读</button>}
+      />
       <div className="panel">
         {state.inbox.map((i) => (
           <button key={i.id} className={`inbox-row ${i.read ? "read" : ""}`} onClick={() => { act("readInbox", { id: i.id }); onOpen(i.todoId); }}>
@@ -114,7 +128,7 @@ export function Inbox({ state, now, act, onOpen }: { state: State; now: number; 
             <span className="muted tiny">{timeAgo(i.at, now)} 前</span>
           </button>
         ))}
-        {state.inbox.length === 0 && <div className="muted small">没有通知</div>}
+        {state.inbox.length === 0 && <EmptyState compact title="收件箱是空的" desc="任务完成、失败或等待确认时会出现在这里。" />}
       </div>
     </div>
   );
@@ -187,13 +201,14 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
 
   return (
     <div className="page">
-      <div className="page-head">
-        <div><h2>主机</h2><span className="muted">{online}/{state.hosts.length} 在线</span></div>
-        <div className="row gap8">
+      <PageHeader
+        title="主机"
+        subtitle={`${online}/${state.hosts.length} 在线`}
+        actions={<div className="row gap8">
           <button className="btn" disabled={probingAll} onClick={() => void probeAll()}>{probingAll ? "探测中…" : "全部探测"}</button>
           <button className="btn primary" onClick={() => (open ? setOpen(false) : openAdd())}>＋ 添加主机</button>
-        </div>
-      </div>
+        </div>}
+      />
 
       {open && (
         <section className="panel host-form">
@@ -216,6 +231,7 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
         </section>
       )}
 
+      <div className="hosts-layout">
       <div className="host-cards">
         {state.hosts.map((h) => {
           const caps = h.caps || [];
@@ -299,14 +315,24 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
           );
         })}
       </div>
-
-      <section className="panel">
-        <div className="panel-head">可用 CLI</div>
-        <div className="row gap6 wrap">
-          {(state.cliCapabilities || []).map((c) => <span className="tag mono" key={c}>{c}</span>)}
-          {(state.cliCapabilities || []).length === 0 && <span className="muted small">—</span>}
-        </div>
-      </section>
+      <aside className="hosts-side">
+        <section className="panel">
+          <div className="panel-head">主机概览</div>
+          <div className="host-overview">
+            <div><span>在线主机</span><b>{online}/{state.hosts.length}</b></div>
+            <div><span>Agent</span><b>{state.agents.length}</b></div>
+            <div><span>运行中</span><b>{state.runs.filter((r) => ["queued", "running", "waiting_input"].includes(r.status)).length}</b></div>
+          </div>
+        </section>
+        <section className="panel">
+          <div className="panel-head">可用 CLI</div>
+          <div className="row gap6 wrap">
+            {(state.cliCapabilities || []).map((c) => <span className="tag mono" key={c}>{c}</span>)}
+            {(state.cliCapabilities || []).length === 0 && <span className="muted small">—</span>}
+          </div>
+        </section>
+      </aside>
+      </div>
     </div>
   );
 }
@@ -447,19 +473,22 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
 
   return (
     <div className="page">
-      <div className="page-head">
-        <div><h2>统计</h2><span className="muted">{scope === "all" ? "全部项目" : state.projects.find((p) => p.id === scope)?.name || "项目"}</span></div>
-        <div className="row gap6">
+      <PageHeader
+        title="统计"
+        subtitle={scope === "all" ? "全部项目" : state.projects.find((p) => p.id === scope)?.name || "项目"}
+        actions={<div className="row gap6 stats-actions">
           <select className="settings-control stats-scope" value={scope} onChange={(e) => setScope(e.target.value)} title="统计范围">
             <option value="all">全部项目</option>
             {state.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
-          {RANGES.map((r) => (
-            <button key={r.id} className={`btn tiny-btn ${range === r.id ? "primary" : ""}`} onClick={() => setRange(r.id)}>{r.label}</button>
-          ))}
+          <div className="seg stats-range">
+            {RANGES.map((r) => (
+              <button key={r.id} className={`seg-btn ${range === r.id ? "on" : ""}`} onClick={() => setRange(r.id)}>{r.label}</button>
+            ))}
+          </div>
           <button className="btn tiny-btn" onClick={exportCsv}>导出 CSV</button>
-        </div>
-      </div>
+        </div>}
+      />
 
       <div className="kpis">
         <div className="kpi"><span>成功率</span><b>{pct(completed, done.length)}</b><small>{completed}/{done.length} · {failed} 失败</small></div>
@@ -528,9 +557,9 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
       <section className="panel">
         <div className="panel-head">
           分组
-          <div className="row gap6">
+          <div className="seg">
             {([["agent", "按 Agent"], ["project", "按项目"], ["host", "按主机"]] as const).map(([id, label]) => (
-              <button key={id} className={`btn tiny-btn ${groupBy === id ? "primary" : ""}`} onClick={() => setGroupBy(id)}>{label}</button>
+              <button key={id} className={`seg-btn ${groupBy === id ? "on" : ""}`} onClick={() => setGroupBy(id)}>{label}</button>
             ))}
           </div>
         </div>
@@ -544,7 +573,7 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
             <span className="tiny muted">{fmtMs(p50(g.ms))}</span>
           </div>
         ))}
-        {groups.length === 0 && <div className="muted small">没有运行记录</div>}
+        {groups.length === 0 && <EmptyState compact title="没有运行记录" desc="所选时间范围内还没有任务运行。" />}
       </section>
 
       <section className="panel">
@@ -572,7 +601,7 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
             </button>
           );
         })}
-        {failures.length === 0 && <div className="muted small">没有失败记录</div>}
+        {failures.length === 0 && <EmptyState compact title="没有失败记录" desc="这段时间内所有运行都正常结束。" />}
       </section>
     </div>
   );
