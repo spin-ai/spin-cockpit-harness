@@ -8,8 +8,8 @@ const PILLARS = [
     kicker: "01 · MULTI-AGENT TERMINAL",
     title: "多智能体终端",
     body: "Chat、真实 PTY、TODO、worktree。一个窗口里看见每个 Agent 的运行现场。",
-    image: "./wiki/layout.png",
-    alt: "多智能体工作台",
+    image: "./wiki/cover-terminal.png",
+    alt: "多智能体终端",
     href: "#/wiki/home",
   },
   {
@@ -24,8 +24,8 @@ const PILLARS = [
     kicker: "03 · LLM WIKI",
     title: "LLM Wiki",
     body: "笔记插件：Source → Page → Citation → Review。Agent 可检索、写 draft，reviewed 由人审核。",
-    image: "./wiki/notes-wiki.png",
-    alt: "LLM Wiki 页面",
+    image: "./wiki/cover-llm-wiki.png",
+    alt: "LLM Wiki",
     href: "#/wiki/llm-wiki",
   },
 ];

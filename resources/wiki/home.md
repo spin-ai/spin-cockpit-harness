@@ -36,9 +36,9 @@ Cockpit Harness 的起点就是这句话：能不能把「对话、任务、终�
 ## 三大能力
 
 <div class="wiki-gallery three">
-<figure><img src="./wiki/send-state.png" alt="多智能体终端" loading="lazy" /><figcaption><b>多智能体终端</b><span>Chat、真实 PTY、TODO、worktree 在同一套状态机里。</span></figcaption></figure>
-<figure><img src="./wiki/mission-state.png" alt="Super Agent" loading="lazy" /><figcaption><b>Super Agent</b><span>Mission / Plan / Delegation / Supervisor，把多个子任务组织起来。</span></figcaption></figure>
-<figure><img src="./wiki/notes-wiki.png" alt="LLM Wiki 页面" loading="lazy" /><figcaption><b>LLM Wiki</b><span>笔记插件：Source → Page → Citation → Review，Agent 可检索、人可审核。</span></figcaption></figure>
+<figure><img src="./wiki/cover-terminal.png" alt="多智能体终端" loading="lazy" /><figcaption><b>多智能体终端</b><span>Chat、真实 PTY、TODO、worktree 在同一套状态机里。</span></figcaption></figure>
+<figure><img src="./wiki/cover-super-agent.png" alt="Super Agent" loading="lazy" /><figcaption><b>Super Agent</b><span>Mission / Plan / Delegation / Supervisor，把多个子任务组织起来。</span></figcaption></figure>
+<figure><img src="./wiki/cover-llm-wiki.png" alt="LLM Wiki" loading="lazy" /><figcaption><b>LLM Wiki</b><span>笔记插件：Source → Page → Citation → Review，Agent 可检索、人可审核。</span></figcaption></figure>
 </div>
 
 [多智能体终端](#/wiki/home) · [Super Agent](#/wiki/super-agent) · [LLM Wiki](#/wiki/llm-wiki)
