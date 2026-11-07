@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { renderMarkdown, slugifyHeading } from "../markdown";
 import { WIKI_GROUPS, WIKI_PAGES, wikiPage } from "../wiki/pages";
+import { WIKI_DEMOS } from "../wiki/demos";
+import { WikiFlowDemo } from "./WikiFlowDemo";
 
 type Heading = { id: string; text: string; level: number };
 
@@ -26,7 +28,9 @@ function plainText(markdown: string) {
 /** Git 视图里的项目 Wiki：内容随仓库版本发布，页面之间用 #/wiki/<id> 跳转。 */
 export function GitWiki({ branch, head }: { branch?: string | null; head?: string | null }) {
   const [activeId, setActiveId] = useState("home");
+  const [activeHeading, setActiveHeading] = useState("");
   const [query, setQuery] = useState("");
+  const [lightbox, setLightbox] = useState<{ images: { src: string; alt: string }[]; index: number } | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const page = wikiPage(activeId);
@@ -51,6 +55,65 @@ export function GitWiki({ branch, head }: { branch?: string | null; head?: strin
   useEffect(() => {
     contentRef.current?.scrollTo({ top: 0, behavior: "auto" });
   }, [queryText]);
+
+  // 右侧目录滚动高亮
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!root) return;
+    const onScroll = () => {
+      const edge = root.getBoundingClientRect().top + 32;
+      let current = "";
+      for (const heading of headings) {
+        const el = root.querySelector<HTMLElement>(`#${CSS.escape(heading.id)}`);
+        if (el && el.getBoundingClientRect().top <= edge) current = heading.id;
+      }
+      setActiveHeading(current || headings[0]?.id || "");
+    };
+    onScroll();
+    root.addEventListener("scroll", onScroll, { passive: true });
+    return () => root.removeEventListener("scroll", onScroll);
+  }, [headings, activeId]);
+
+  // 代码块复制按钮
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!root) return;
+    for (const pre of root.querySelectorAll("pre")) {
+      if (pre.querySelector(".wiki-copy")) continue;
+      const code = pre.querySelector("code");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "wiki-copy";
+      button.textContent = "复制";
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const text = code?.textContent || pre.textContent || "";
+        void window.harness.clipboardWrite(text);
+        button.textContent = "已复制";
+        window.setTimeout(() => { button.textContent = "复制"; }, 1200);
+      });
+      pre.appendChild(button);
+    }
+  }, [html, activeId]);
+
+  // 图片灯箱：Esc 关闭，左右切换
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLightbox(null);
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        setLightbox((current) => {
+          if (!current) return null;
+          const delta = event.key === "ArrowRight" ? 1 : -1;
+          return { ...current, index: (current.index + delta + current.images.length) % current.images.length };
+        });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox]);
 
   // ⌘F 聚焦 Wiki 搜索；Esc 清空
   useEffect(() => {
@@ -77,6 +140,19 @@ export function GitWiki({ branch, head }: { branch?: string | null; head?: strin
   };
 
   const onClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const image = (event.target as HTMLElement).closest("img");
+    if (image && contentRef.current) {
+      const all = [...contentRef.current.querySelectorAll("img")];
+      const index = all.indexOf(image as HTMLImageElement);
+      if (index >= 0) {
+        event.preventDefault();
+        setLightbox({
+          images: all.map((el) => ({ src: (el as HTMLImageElement).currentSrc || (el as HTMLImageElement).src, alt: (el as HTMLImageElement).alt })),
+          index,
+        });
+        return;
+      }
+    }
     const anchor = (event.target as HTMLElement).closest("a");
     if (!anchor) return;
     const href = anchor.getAttribute("href") || "";
@@ -154,6 +230,7 @@ export function GitWiki({ branch, head }: { branch?: string | null; head?: strin
               {head && <span className="mono">HEAD {head.slice(0, 7)}</span>}
             </div>
           </header>
+          {WIKI_DEMOS[page.id] && <WikiFlowDemo {...WIKI_DEMOS[page.id]} />}
           <article className="md-render git-wiki-markdown" dangerouslySetInnerHTML={{ __html: html }} />
           <footer className="git-wiki-pager">
             {prev ? <button className="git-wiki-pager-btn" onClick={() => open(prev.id)}><span>← 上一篇</span><b>{prev.title}</b></button> : <span />}
@@ -168,7 +245,7 @@ export function GitWiki({ branch, head }: { branch?: string | null; head?: strin
           ? headings.map((heading) => (
               <button
                 key={`${heading.level}-${heading.id}`}
-                className={`git-wiki-toc-link level-${heading.level}`}
+                className={`git-wiki-toc-link level-${heading.level} ${activeHeading === heading.id ? "on" : ""}`}
                 onClick={() => scrollTo(heading.id)}
                 title={heading.text}
               >
@@ -180,6 +257,29 @@ export function GitWiki({ branch, head }: { branch?: string | null; head?: strin
           <button className="link" onClick={() => contentRef.current?.scrollTo({ top: 0, behavior: "smooth" })}>回到顶部 ↑</button>
         </div>
       </aside>
+
+      {lightbox && (
+        <div className="wiki-lightbox" role="dialog" aria-modal="true" onClick={() => setLightbox(null)}>
+          <button className="wiki-lightbox-close" onClick={() => setLightbox(null)}>×</button>
+          <button
+            className="wiki-lightbox-nav prev"
+            disabled={lightbox.images.length < 2}
+            onClick={(event) => { event.stopPropagation(); setLightbox({ ...lightbox, index: (lightbox.index - 1 + lightbox.images.length) % lightbox.images.length }); }}
+          >←</button>
+          <figure onClick={(event) => event.stopPropagation()}>
+            <img src={lightbox.images[lightbox.index]?.src} alt={lightbox.images[lightbox.index]?.alt} />
+            <figcaption>
+              {lightbox.images[lightbox.index]?.alt || "预览图"}
+              <span>{lightbox.index + 1} / {lightbox.images.length}</span>
+            </figcaption>
+          </figure>
+          <button
+            className="wiki-lightbox-nav next"
+            disabled={lightbox.images.length < 2}
+            onClick={(event) => { event.stopPropagation(); setLightbox({ ...lightbox, index: (lightbox.index + 1) % lightbox.images.length }); }}
+          >→</button>
+        </div>
+      )}
     </div>
   );
 }
