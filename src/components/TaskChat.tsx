@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { ElementContext, Message, State, Thread } from "../types";
+import type { Delegation, ElementContext, Message, MissionPlanRecord, State, Thread, Todo } from "../types";
 import { RUN_STATUS, STATUS, activeRun, agentOf, duration, lastRun, timeAgo } from "../ui";
 import { ChevronRightIcon, PanelCollapseIcon, SendIcon } from "./Icons";
 
@@ -25,6 +25,10 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
   confirmStop?: boolean;
 }) {
   const todo = thread?.todoId ? state.todos.find((t) => t.id === thread.todoId) ?? null : null;
+  const mission = todo?.kind === "mission" ? todo : null;
+  const missionPlans = mission ? (state.missionPlans ?? []).filter((p) => p.missionId === mission.id) : [];
+  const latestPlan = [...missionPlans].sort((a, b) => b.revision - a.revision)[0] ?? null;
+  const delegations = mission ? (state.delegations ?? []).filter((d) => d.missionId === mission.id) : [];
   const active = todo ? activeRun(todo, state.runs) : null;
   const last = todo ? lastRun(todo, state.runs) : null;
   const agent = agentOf(state.agents, thread?.agentId ?? todo?.agentId ?? null);
@@ -403,13 +407,20 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
     const created = await act("createAgent", { cli: "dsh", projectId }) as { id?: string } | null;
     if (created?.id) await act("setThreadAgent", { threadId: thread.id, agentId: created.id });
   };
+  const useSupervisor = async () => {
+    if (!thread) return;
+    const existing = state.agents.find((a) => a.role === "supervisor" && isRunnable(a));
+    if (existing) { await act("setThreadAgent", { threadId: thread.id, agentId: existing.id }); return; }
+    const created = await act("createAgent", { cli: "dsh", projectId, role: "supervisor" }) as { id?: string } | null;
+    if (created?.id) await act("setThreadAgent", { threadId: thread.id, agentId: created.id });
+  };
 
   return (
     <section className="chat-pane">
       <div className="pane-head">
         <span>CHAT</span>
         <div className="row gap6">
-          {todo && <span className={`pill status ${STATUS[todo.status].cls}`}>{todo.confirmed ? "已确认" : STATUS[todo.status].label}</span>}
+          {todo && <span className={`pill status ${mission ? missionPillClass(mission.missionState) : STATUS[todo.status].cls}`}>{todo.confirmed ? "已确认" : mission ? missionStateLabel(mission.missionState) : STATUS[todo.status].label}</span>}
           {historyThreads.length > 1 && (
             <div className="chat-history" ref={historyRef}>
               <button className="link" onClick={() => setHistoryOpen((v) => !v)}>历史</button>
@@ -451,7 +462,8 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
               <span className={`thread-dot ${todo ? STATUS[todo.status].cls : "todo"}`} />
               <span className="thread-key mono">{todo?.key ?? "draft"}</span>
               <span className="thread-title" title={todo?.title ?? thread.title}>{todo?.title ?? thread.title}</span>
-              {todo && <span className={`pill status ${STATUS[todo.status].cls}`}>{todo.confirmed ? "已确认" : STATUS[todo.status].label}</span>}
+              {todo && mission && <span className={`pill status ${missionPillClass(mission.missionState)}`}>{missionStateLabel(mission.missionState)}</span>}
+              {todo && !mission && <span className={`pill status ${STATUS[todo.status].cls}`}>{todo.confirmed ? "已确认" : STATUS[todo.status].label}</span>}
             </div>
             <div className="thread-meta">
               <span className={`thread-scope ${scopeProjectId ? "" : "global"}`} title={scopeProjectId ? "对话作用于该项目" : "全局对话：切换项目时不隐藏"}>
@@ -470,6 +482,20 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
               ) : null}
             </div>
           </div>
+
+          {mission && (
+            <div className="mission-dock">
+              <MissionOverview
+                mission={mission}
+                plan={latestPlan}
+                delegations={delegations}
+                state={state}
+                now={now}
+                act={act}
+                onOpenThread={onOpenThread}
+              />
+            </div>
+          )}
 
           <div className="chat-body-wrap">
             <div
@@ -507,7 +533,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
                   />
                 );
               })}
-              {active && atBottom && chatItems.length > 0 && (
+              {active && ["running", "waiting_input"].includes(active.status) && atBottom && chatItems.length > 0 && (
                 <div className="chat-typing" aria-label="agent 正在处理">
                   <span /><span /><span />
                   <em>{agent?.name ?? "Agent"} 正在处理</em>
@@ -605,13 +631,17 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
                   <select
                     className="composer-select"
                     value={agentId}
-                    disabled={Boolean(active)}
-                    title="选择 Agent"
+                    disabled={Boolean(active) || Boolean(mission)}
+                    title={mission ? "Mission 由主管继续；不能切换到普通 Agent" : "选择 Agent"}
                     onChange={(e) => void act("setThreadAgent", { threadId: thread.id, agentId: e.target.value })}
                   >
                     {state.agents.map((a) => (
-                      <option key={a.id} value={a.id} disabled={!isRunnable(a)}>
-                        {a.alias || a.name}{isRunnable(a) ? "" : "（终端专用）"}
+                      <option
+                        key={a.id}
+                        value={a.id}
+                        disabled={!isRunnable(a) || (!!todo && !mission && a.role === "supervisor") || (!!mission && a.role !== "supervisor")}
+                      >
+                        {a.role === "supervisor" ? "✦ " : ""}{a.alias || a.name}{isRunnable(a) ? "" : "（终端专用）"}
                       </option>
                     ))}
                   </select>
@@ -622,6 +652,9 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
                 )}
                 {state.agents.length > 0 && runnableAgents.length === 0 && dshAvailable && (
                   <button className="composer-link" onClick={() => void useDshAgent()} title="创建 dsh Agent 并用于当前会话">＋ dsh</button>
+                )}
+                {!todo && dshAvailable && !state.agents.some((a) => a.role === "supervisor") && (
+                  <button className="composer-link" onClick={() => void useSupervisor()} title="创建一个 Mission 主管">＋ 主管</button>
                 )}
                 <span className="thread-meta-sep">/</span>
                 <span className="composer-label" title="对话作用域">◎</span>
@@ -684,6 +717,110 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
       )}
     </section>
   );
+}
+
+function missionStateLabel(value?: string | null) {
+  return ({
+    planning: "规划中", plan_review: "计划待审批", running: "执行中", waiting_children: "等待子任务",
+    in_review: "待确认", done: "已完成", failed: "失败", cancelled: "已取消", interrupted: "已中断",
+  } as Record<string, string>)[value || ""] || "Mission";
+}
+function missionPillClass(value?: string | null) {
+  if (value === "plan_review" || value === "in_review") return "review";
+  if (value === "failed") return "failed";
+  if (value === "cancelled") return "cancelled";
+  if (value === "done") return "done";
+  if (value === "waiting_children") return "waiting";
+  return "running";
+}
+
+function MissionOverview({ mission, plan, delegations, state, now, act, onOpenThread }: {
+  mission: Todo; plan: MissionPlanRecord | null;
+  delegations: Delegation[]; state: State; now: number;
+  act: Act; onOpenThread?: (id: string) => void;
+}) {
+  const draft = plan && plan.status === "draft" ? plan : null;
+  const open = delegations.filter((d) => ["proposed", "queued", "running", "waiting_input", "rework"].includes(d.status));
+  const done = delegations.filter((d) => ["completed", "accepted"].includes(d.status));
+  return (
+    <section className={`mission-panel mission-${mission.missionState || "planning"}`} aria-label="Mission">
+      <div className="mission-head">
+        <span className="mission-mark">✦</span>
+        <b>Mission</b>
+        <span className={`pill status ${missionPillClass(mission.missionState)}`}>{missionStateLabel(mission.missionState)}</span>
+        <span className="tiny muted">{done.length}/{delegations.length} 子任务</span>
+        <span className="spacer" />
+        {mission.missionState === "in_review" && (
+          <button className="btn tiny-btn primary" onClick={() => void act("confirm", { id: mission.id })}>确认完成</button>
+        )}
+        {["interrupted", "failed"].includes(mission.missionState || "") && (
+          <button className="btn tiny-btn" onClick={() => void act("resumeMission", { id: mission.id })}>恢复 Mission</button>
+        )}
+        {mission.missionState !== "done" && mission.missionState !== "cancelled" && (
+          <button className="link mission-danger" onClick={() => { if (window.confirm("取消整个 Mission？所有未完成子任务会一起停止。")) void act("cancelMission", { id: mission.id }); }}>取消 Mission</button>
+        )}
+      </div>
+      {draft && (
+        <div className="mission-plan">
+          <div className="mission-plan-head">
+            <b>计划待审批</b>
+            <span className="tiny muted">rev {draft.revision}</span>
+            <span className="spacer" />
+            <button className="btn tiny-btn" onClick={() => { const feedback = window.prompt("退回原因（可空）", ""); if (feedback !== null) void act("rejectMissionPlan", { id: mission.id, feedback }); }}>退回修改</button>
+            <button className="btn tiny-btn primary" onClick={() => void act("approveMissionPlan", { id: mission.id })}>批准并分派</button>
+          </div>
+          {draft.plan.summary && <p className="mission-summary">{draft.plan.summary}</p>}
+          <ol className="mission-steps">
+            {draft.plan.steps.map((step) => (
+              <li key={step.key}>
+                <span className="mission-step-key mono">{step.key}</span>
+                <span className="mission-step-title">{step.title}</span>
+                <span className="tiny muted">{step.agent || "默认 worker"}</span>
+                {step.dependsOn?.length ? <span className="tiny faint">依赖 {step.dependsOn.join(", ")}</span> : null}
+                {step.acceptance?.length ? <span className="mission-step-accept tiny muted">{step.acceptance.join(" · ")}</span> : null}
+              </li>
+            ))}
+          </ol>
+          {draft.plan.risks?.length ? <div className="mission-risks"><b>风险</b>{draft.plan.risks.map((r, i) => <span key={i}>{r}</span>)}</div> : null}
+        </div>
+      )}
+      {plan && plan.status === "approved" && !draft && (
+        <div className="mission-approved-note">计划已批准 · {delegations.length} 个子任务</div>
+      )}
+      {delegations.length > 0 && (
+        <div className="delegation-list">
+          {delegations.map((d) => {
+            const child = state.todos.find((t) => t.id === d.childTodoId);
+            const childThread = state.threads.find((t) => t.todoId === d.childTodoId);
+            const running = ["queued", "running", "waiting_input", "rework"].includes(d.status);
+            return (
+              <div className={`delegation-card delegation-${d.status}`} key={d.id}>
+                <div className="delegation-main">
+                  <span className={`thread-dot ${running ? "running" : d.status === "failed" ? "failed" : "done"}`} />
+                  <span className="mono tiny faint">{child?.key || "—"}</span>
+                  <b className="ellipsis" title={d.title}>{d.title}</b>
+                  <span className={`pill status ${d.status === "failed" ? "failed" : running ? "running" : "done"}`}>{delegationLabel(d.status)}</span>
+                  <span className="tiny muted">{state.agents.find((a) => a.id === d.agentId)?.alias || d.agentId}</span>
+                  {d.branch && <span className="mono tiny faint ellipsis" title={d.branch}>{d.branch}</span>}
+                  <span className="spacer" />
+                  {childThread && onOpenThread && <button className="link" onClick={() => onOpenThread(childThread.id)}>查看会话</button>}
+                  {running && d.childRunId && <button className="link" onClick={() => void act("stop", { runId: d.childRunId })}>停止</button>}
+                  {["failed", "cancelled"].includes(d.status) && child && <button className="link" onClick={() => void act("retry", { id: child.id })}>重试</button>}
+                </div>
+                {d.resultSummary && <div className="delegation-result">{d.resultSummary.slice(0, 360)}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+function delegationLabel(value: string) {
+  return ({
+    proposed: "待分派", queued: "排队", running: "执行中", waiting_input: "等待审批",
+    completed: "已完成", accepted: "已接受", rework: "返工", failed: "失败", cancelled: "已取消",
+  } as Record<string, string>)[value] || value;
 }
 
 function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry }: {

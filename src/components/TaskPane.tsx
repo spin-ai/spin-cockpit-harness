@@ -188,7 +188,7 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
                 <div
                   key={t.id}
                   ref={(el) => { rowRefs.current[t.id] = el; }}
-                  className={`task-row ${t.id === selectedId ? "on" : ""}`}
+                  className={`task-row ${t.id === selectedId ? "on" : ""} ${t.parentId ? "task-child" : ""} ${t.kind === "mission" ? "task-mission" : ""}`}
                   role="button"
                   tabIndex={0}
                   aria-current={t.id === selectedId ? "true" : undefined}
@@ -202,7 +202,7 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
                 >
                   <div className="row between gap6">
                     <span className="row gap4"><span className={`priority-dot ${t.priority}`} /><span className="mono tiny faint">{t.key}</span></span>
-                    <span className={`pill status ${STATUS[t.status].cls}`}>{t.confirmed ? "已确认" : STATUS[t.status].label}</span>
+                    <span className={`pill status ${STATUS[t.status].cls}`}>{t.confirmed ? "已确认" : t.kind === "mission" ? missionLabel(t.missionState) : STATUS[t.status].label}</span>
                   </div>
                   {editing?.id === t.id ? (
                     <div className="task-edit" onClick={(e) => e.stopPropagation()}>
@@ -271,9 +271,18 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
                         className="task-row-title"
                         onDoubleClick={(e) => { e.stopPropagation(); startEdit(t); }}
                       >
-                        {t.title}
+                        {t.kind === "mission" ? "✦ " : ""}{t.title}
                       </div>
-                      {t.desc && <div className="task-row-desc ellipsis" title={t.desc}>{t.desc}</div>}
+                      {t.kind === "mission" && (
+                        <div className="task-row-desc ellipsis">
+                          {(() => {
+                            const ds = (state.delegations ?? []).filter((d) => d.missionId === t.id);
+                            const done = ds.filter((d) => ["completed", "accepted"].includes(d.status)).length;
+                            return ds.length ? `${done}/${ds.length} 子任务完成` : "等待主管计划";
+                          })()}
+                        </div>
+                      )}
+                      {t.kind !== "mission" && t.desc && <div className="task-row-desc ellipsis" title={t.desc}>{t.desc}</div>}
                     </>
                   )}
                   <div className="row between gap6 tiny muted">
@@ -347,6 +356,15 @@ function elapsed(todo: Todo, state: State, now: number) {
 function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk }: { todo: Todo; state: State; act: Act; confirmStop: boolean; onEdit: () => void; onAsk: () => void }) {
   const active = activeRun(todo, state.runs);
   const last = lastRun(todo, state.runs);
+  if (todo.kind === "mission") {
+    return (
+      <div className="task-quick" onClick={(e) => e.stopPropagation()}>
+        {todo.missionState === "in_review" && <button className="btn tiny-btn primary" onClick={() => act("confirm", { id: todo.id })}>确认 Mission</button>}
+        {active && <button className="btn tiny-btn" onClick={() => { if (!confirmStop || window.confirm("停止主管运行？")) void act("stop", { runId: active.id }); }}>停止主管</button>}
+        {!["done", "cancelled"].includes(todo.missionState || "") && <button className="btn tiny-btn" onClick={() => { if (window.confirm("取消整个 Mission？")) void act("cancelMission", { id: todo.id }); }}>取消</button>}
+      </div>
+    );
+  }
   const runnable = state.agents.filter((a) => a.chatRunnable ?? state.executors?.find((e) => e.id === a.cli)?.implemented);
   const chatAgent = runnable.find((a) => a.id === todo.agentId) || runnable[0] || null;
   const stop = (runId: string) => {
@@ -370,4 +388,11 @@ function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk }: { todo: 
       {!active && last && ["failed", "cancelled"].includes(last.status) && <button className="btn tiny-btn" onClick={() => act("retry", { id: todo.id })}>重试</button>}
     </div>
   );
+}
+
+function missionLabel(value?: string | null) {
+  return ({
+    planning: "规划中", plan_review: "计划待批", running: "执行中", waiting_children: "等待子任务",
+    in_review: "待确认", done: "已完成", failed: "失败", cancelled: "已取消", interrupted: "已中断",
+  } as Record<string, string>)[value || ""] || "Mission";
 }
