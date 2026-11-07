@@ -207,7 +207,7 @@ function searchAll(q, limit = 40) {
 
 function memoryMarkdown(maxChars = 12000) {
   const ranked = [...data.pages].sort((a, b) => {
-    const score = (p) => (p.status === "reviewed" ? 20 : p.status === "stale" ? -5 : 8) + (p.citations ? 3 : 0) + (p.updatedAt || 0) / 1e13;
+    const score = (p) => (p.status === "reviewed" ? 20 : p.status === "stale" ? -5 : 8) + (citationsOf(p.id).length ? 3 : 0) + (p.updatedAt || 0) / 1e13;
     return score(b) - score(a);
   });
   const lines = [
@@ -481,24 +481,77 @@ export async function activate(context) {
       }
     }
 
+    // 2) 页面标题：用正文 H1 / 摘要 / 把 slug 美化，太弱的标题直接改掉
+    const weakTitle = (t) => /^[a-z0-9._\-]+$/i.test(t) || /^untitled/i.test(t);
+    // 摘要里截出来的一行要像「话」：含中文，或至少 3 个词且不含 CSV/公式符号
+    const looksLikeProse = (t) => /[\u4e00-\u9fa5]/.test(t) || (t.split(/\s+/).length >= 3 && !/[,=]/.test(t));
+    const deriveTitle = (page) => {
+      const body = String(page.content || "");
+      const h1 = (body.match(/^#\s+(.+)$/m) || [])[1]?.trim();
+      if (h1 && h1.length >= 2 && h1.length <= 60 && !/^untitled/i.test(h1) && h1 !== page.title) return h1;
+      if (/^[a-z0-9._\-]+$/i.test(page.title)) {
+        return page.title.replace(/[._\-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).trim() || page.title;
+      }
+      const firstLine = String(page.summary || "").replace(/[#>*`]/g, "").split(/[。.!?\n]/)[0].trim();
+      if (firstLine.length >= 6 && firstLine.length <= 60 && looksLikeProse(firstLine) && weakTitle(page.title)) return firstLine;
+      return page.title;
+    };
+
+    const renameMap = new Map(); // oldTitle -> newTitle
+    const taken = new Set([INDEX_TITLE, ...realPages.map((p) => p.title)]);
+    for (const page of realPages) {
+      const next = deriveTitle(page);
+      if (!next || next === page.title) continue;
+      let candidate = next;
+      let n = 2;
+      while ([...taken].some((t) => t !== page.title && t.toLowerCase() === candidate.toLowerCase())) candidate = `${next} ${n++}`;
+      taken.delete(page.title);
+      taken.add(candidate);
+      renameMap.set(page.title, candidate);
+    }
+    let renamed = 0;
+    for (const page of realPages) {
+      const next = renameMap.get(page.title);
+      if (!next) continue;
+      page.title = next;
+      page.slug = slugify(next);
+      page.updatedAt = now();
+      renamed += 1;
+    }
+    // 旧标题的双链改指向新标题（其余页面与索引都会受益）
+    if (renameMap.size) {
+      for (const page of realPages) {
+        let content = String(page.content || "");
+        for (const [oldTitle, newTitle] of renameMap) {
+          content = content.split(`[[${oldTitle}]]`).join(`[[${newTitle}]]`);
+          content = content.split(`[[${oldTitle}|`).join(`[[${newTitle}|`);
+        }
+        page.content = content;
+      }
+    }
+
     const updated = [];
     for (const page of realPages) {
       const title = page.title;
       const body = String(page.content || "");
       const summary = String(page.summary || "").trim();
-      // 保留原有正文：剥离我们自己维护的段落，避免重复堆叠
-      const stripped = body
-        .replace(/^#\s+.*$/m, "")
-        .replace(/##\s*要点[\s\S]*?(?=\n##\s|$)/, "")
-        .replace(/##\s*原文摘录[\s\S]*?(?=\n##\s|$)/, "")
-        .replace(/##\s*相关[\s\S]*$/, "")
-        .trim();
-      // 摘要要点：从整页正文里的列表提取（跳过「相关」里的双链，去重、限 8 条）
-      const bullets = [...new Set((body.match(/^\s*[-*]\s+.+$/gm) || [])
+      // 按 ## 分块解析我们自己维护的结构（比全文正则稳，避免反复整理时摘录被吃掉）
+      const noH1 = body.replace(/^#\s+.*$/m, "");
+      const chunks = noH1.split(/^##\s+/m);
+      const preamble = String(chunks.shift() || "").trim();
+      const blockOf = (name) => String(chunks.find((c) => c.trim().startsWith(name)) || "").replace(/^[^\n]*\n?/, "").trim();
+      const ours = new Set(["要点", "原文摘录", "相关"]);
+      const freeChunks = chunks.filter((c) => !ours.has(c.trim().split(/\s/)[0]));
+      const prevExcerpt = blockOf("原文摘录");
+      const freeText = [preamble, ...freeChunks.map((c) => c.trim())].filter(Boolean).join("\n\n").trim();
+      // 正文被我们完全结构化过时，沿用上一次的摘录，避免每轮都变
+      const excerptSource = freeText || prevExcerpt;
+      // 摘要要点：从自由正文（或上次摘录）里的列表提取，去重、跳过双链
+      const bullets = [...new Set(((freeText || prevExcerpt).match(/^\s*[-*]\s+.+$/gm) || [])
         .map((l) => l.replace(/^\s*[-*]\s+/, "").trim())
         .filter((l) => l && !/^\[\[[^\]]+\]\]/.test(l) && l !== "待整理"))].slice(0, 8);
-      // 原文摘录：把摘录里自带的一级/二级标题降级成加粗，避免和本页的 ## 段落打架
-      const excerpt = stripped
+      // 原文摘录：把摘录里自带的标题降级成加粗，避免和页面结构打架
+      const excerpt = excerptSource
         .split(/\n{2,}/)
         .slice(0, 4)
         .join("\n\n")
@@ -557,13 +610,16 @@ export async function activate(context) {
 
     let createdIndex = false;
     if (dryRun) {
-      return { dryRun: true, wouldUpdate: updated.length, pages: realPages.length, sources: data.sources.length, hasIndex: Boolean(indexPage) };
+      return { dryRun: true, wouldUpdate: updated.length, renames: [...renameMap.entries()].map(([from, to]) => ({ from, to })), pages: realPages.length, sources: data.sources.length, hasIndex: Boolean(indexPage) };
     }
     if (!indexPage) { ensurePage({ title: INDEX_TITLE, summary: "Wiki 索引（自动维护）", content: indexBody }); createdIndex = true; }
     else if (indexPage.content !== indexBody) { indexPage.content = indexBody; indexPage.updatedAt = now(); }
     addLog("wiki.curate", `updated ${updated.length} pages${createdIndex ? " + index" : ""}`);
     await persist();
-    return { updated: updated.length, createdIndex, pages: realPages.length, sources: data.sources.length };
+    return {
+      updated: updated.length, renamed, renames: [...renameMap.entries()].map(([from, to]) => ({ from, to })),
+      createdIndex, pages: realPages.length, sources: data.sources.length,
+    };
   };
   ctx.api.handle("wiki.curate", (args) => curateWiki(args));
 
@@ -593,7 +649,13 @@ export async function activate(context) {
       : data.sources;
     const created = [];
     for (const source of wanted.slice(0, Math.max(1, Number(limit) || 20))) {
-      const title = String(source.title || "Untitled source").replace(/\.[a-z0-9]+$/i, "").trim() || "Untitled source";
+      const rawTitle = String(source.title || "Untitled source").replace(/\.[a-z0-9]+$/i, "").trim() || "Untitled source";
+      // 优先用资料正文里的一级标题（文件名往往只是 doc-import / table-import 这种弱标题）
+      const bodyH1 = (String(source.content || "").match(/^#\s+(.+)$/m) || [])[1]?.trim();
+      const pretty = rawTitle.replace(/[._\-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).trim();
+      const title = bodyH1 && bodyH1.length >= 2 && bodyH1.length <= 60 && !/^untitled/i.test(bodyH1)
+        ? bodyH1
+        : (/^[a-z0-9._\-]+$/i.test(rawTitle) ? pretty : rawTitle);
       const exists = data.pages.find((p) => p.title.toLowerCase() === title.toLowerCase() || p.slug === slugify(title));
       if (exists) continue;
       const body = String(source.content || "").replace(/\r/g, "").trim();

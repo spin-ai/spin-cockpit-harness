@@ -46,12 +46,14 @@ let r = await ev(`
   window.confirm = () => true;
   window.__wait = async (fn, ms = 6000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = fn(); if (v) return v; await new Promise((r) => setTimeout(r, 80)); } return null; };
   await window.harness.action("pluginEnable", { id: "ai.cockpit.notes" });
-  await new Promise((r) => setTimeout(r, 500));
+  await new Promise((r) => setTimeout(r, 800));
   await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.vault.open", args: { path: "${VAULT}" } });
-  const rail = [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.includes("笔记"));
+  const rail = await window.__wait(() => [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.includes("笔记")));
+  if (!rail) return { error: "no notes rail" };
   rail.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 1400));
-  const gen = [...document.querySelectorAll(".notes-actions .btn")].find((b) => b.textContent.includes("生成 Wiki"));
+  await new Promise((r) => setTimeout(r, 1600));
+  const gen = await window.__wait(() => [...document.querySelectorAll(".notes-actions .btn")].find((b) => b.textContent.includes("生成 Wiki")));
+  if (!gen) return { error: "no generate button", page: !!document.querySelector(".notes-page") };
   gen.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 4000));
   const list = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" });
@@ -124,14 +126,27 @@ r = await run(`
   return { modes, fileHint: !!document.querySelector(".notes-source-file"), pickBtn: [...document.querySelectorAll(".notes-source-actions .btn")].some((b) => b.textContent.includes("选择文件")) };`);
 check("导入弹窗三档（文本 / URL / 本地文件）", r.modes?.length === 3 && r.fileHint === true && r.pickBtn === true, JSON.stringify(r));
 
-// ── 自动整理（wiki.curate）────────────────────────────────────
+// ── 自动整理（wiki.curate）：标题 + 大纲 + 索引 ────────────────
 r = await run(`
+  const created = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.createPage", args: { title: "weak-slug-page" } });
+  const p = created.result;
+  await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.savePage", args: { id: p.id, content: "# 更好的标题\\n\\n正文第一段。\\n\\n- 要点一\\n- 要点二\\n" } });
   const res = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.curate", args: {} });
-  const list = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" });
-  const idx = (list?.result?.pages || []).find((p) => p.title === "Wiki 索引");
+  const list = (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" })).result.pages;
+  const full = (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.getPage", args: { id: p.id } })).result.content;
   const again = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.curate", args: {} });
-  return { created: !!idx, createdIndex: res?.result?.createdIndex, updatedAgain: again?.result?.updated };`);
-check("自动整理：生成索引页且幂等", r.created === true && r.updatedAgain === 0, JSON.stringify(r));
+  return {
+    titles: list.map((x) => x.title),
+    index: list.some((x) => x.title === "Wiki 索引"),
+    headings: full.match(/^##\\s+.+$/gm),
+    points: full.split("## 要点")[1]?.split("##")[0]?.trim(),
+    renamedAgain: again?.result?.renamed, updatedAgain: again?.result?.updated,
+  };`);
+check("整理：弱标题改成正文 H1 + 大纲四段 + 索引",
+  r.titles.includes("更好的标题") && !r.titles.includes("weak-slug-page") && r.index === true &&
+  JSON.stringify(r.headings) === JSON.stringify(["## 要点", "## 原文摘录", "## 相关"]) && /要点一/.test(r.points || ""),
+  JSON.stringify({ titles: r.titles, headings: r.headings }));
+check("整理幂等（第二次 renamed/updated 均为 0）", r.renamedAgain === 0 && r.updatedAgain === 0, JSON.stringify({ renamed: r.renamedAgain, updated: r.updatedAgain }));
 
 ws.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");
