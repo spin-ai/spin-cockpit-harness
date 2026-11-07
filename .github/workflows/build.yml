@@ -54,6 +54,9 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Verify plugin manifests
+        run: npm run verify:plugins
+
       # 从 PyPI 取当前平台的 dsh 单文件运行时，并做 ACP 冒烟
       - name: Bundle dsh
         run: npm run bundle:dsh

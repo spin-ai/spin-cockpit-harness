@@ -3,7 +3,7 @@ import type { Settings as SettingsModel, State } from "../types";
 import { THEMES } from "../themes";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
-type Section = "general" | "appearance" | "execution" | "terminal" | "preview" | "data" | "shortcuts" | "about";
+type Section = "general" | "appearance" | "execution" | "terminal" | "preview" | "plugins" | "data" | "shortcuts" | "about";
 
 const SECTIONS: { id: Section; label: string; desc: string }[] = [
   { id: "general", label: "通用", desc: "启动视图、默认 Agent、发送与停止行为；改动即时生效。" },
@@ -11,6 +11,7 @@ const SECTIONS: { id: Section; label: string; desc: string }[] = [
   { id: "execution", label: "执行", desc: "Agent 并发、审批策略和 dsh 启动参数；新 run 生效。" },
   { id: "terminal", label: "终端", desc: "pty 的 shell、字号、回滚缓冲和 dev server 地址识别。" },
   { id: "preview", label: "预览与元素", desc: "前端预览地址、元素拾取截图和注入 Chat 的上下文详细度。" },
+  { id: "plugins", label: "插件", desc: "安装、启用和管理本地插件；插件代码是受信代码，启用前请确认来源。" },
   { id: "data", label: "数据", desc: "本地数据库位置、备份导出和清理。" },
   { id: "shortcuts", label: "快捷键", desc: "当前版本可用的键盘操作。" },
   { id: "about", label: "关于", desc: "版本、运行环境与本地数据。" },
@@ -67,6 +68,8 @@ const SEARCH_INDEX: { section: Section; title: string; hint?: string; k?: string
   { section: "preview", title: "默认地址", k: "previewHomeUrl", hint: "预览标签默认打开的 URL" },
   { section: "preview", title: "保存截图", k: "elementScreenshots", hint: "拾取元素时截图" },
   { section: "preview", title: "上下文详细度", k: "contextDetail", hint: "注入 Chat 的 UI 上下文详略" },
+  { section: "plugins", title: "已安装插件", hint: "Notes / 本地插件" },
+  { section: "plugins", title: "安装插件目录", hint: "包含 plugin.json 的目录" },
   { section: "data", title: "数据库文件", hint: "harness.db 路径" },
   { section: "data", title: "数据目录", hint: "userData" },
   { section: "data", title: "导出备份", hint: "导出 .db" },
@@ -496,6 +499,48 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
               </Row>
               <Row title="重置设置">
                 <button className="btn tiny-btn danger" onClick={() => { if (window.confirm("恢复默认设置？")) void act("resetSettings"); }}>重置</button>
+              </Row>
+            </Card>
+          </>
+        )}
+
+        {section === "plugins" && (
+          <>
+            <Card title="已安装插件">
+              {(!state.plugins || state.plugins.length === 0) && <Row title="还没有插件"><span className="muted small">内置 Notes 会在启动时自动注册。</span></Row>}
+              {(state.plugins || []).map((plugin) => (
+                <div className="settings-plugin-row" key={plugin.id}>
+                  <div className="settings-plugin-main">
+                    <div className="settings-plugin-name">
+                      <b>{plugin.manifest?.name || plugin.id}</b>
+                      {plugin.builtin && <span className="tag">内置</span>}
+                      <span className="mono tiny faint">{plugin.version}</span>
+                      <span className={`pill status ${plugin.enabled ? "done" : "cancelled"}`}>{plugin.enabled ? "已启用" : "已禁用"}</span>
+                    </div>
+                    <div className="settings-plugin-meta">{plugin.id} · {(plugin.permissions || []).join(" · ") || "无权限"}</div>
+                    {plugin.lastError && <div className="settings-plugin-error">{plugin.lastError}</div>}
+                  </div>
+                  <div className="settings-plugin-actions">
+                    <button className="btn tiny-btn" onClick={() => void act(plugin.enabled ? "pluginDisable" : "pluginEnable", { id: plugin.id })}>{plugin.enabled ? "禁用" : "启用"}</button>
+                    {!plugin.builtin && <button className="btn tiny-btn danger" onClick={() => { if (window.confirm(`卸载插件「${plugin.manifest?.name || plugin.id}」？`)) void act("pluginRemove", { id: plugin.id }); }}>卸载</button>}
+                  </div>
+                </div>
+              ))}
+            </Card>
+            <Card title="安装">
+              <Row title="本地插件" hint="选择一个包含 plugin.json 的目录；安装后默认禁用，确认权限后手动启用。">
+                <button className="btn tiny-btn" onClick={() => void act("pluginInstall")}>安装插件目录…</button>
+              </Row>
+              <Row title="Notes 插件" hint="内置 Obsidian-like Notes；启用后在左侧「笔记」里选择 vault。">
+                <span className="muted small">first-party · fs:vault · tasks:write</span>
+              </Row>
+            </Card>
+            <Card title="插件 API">
+              <Row title="API 版本" hint="Host 当前支持的 apiVersion">
+                <span className="mono">1</span>
+              </Row>
+              <Row title="隔离方式" hint="每个插件独立 utilityProcess；插件代码仍以当前用户权限运行。">
+                <span className="muted small">utilityProcess（P0）</span>
               </Row>
             </Card>
           </>

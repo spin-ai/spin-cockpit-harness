@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS context (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS mission_plans (id TEXT PRIMARY KEY, mission_id TEXT, revision INTEGER, status TEXT, plan TEXT, created_at INTEGER, approved_at INTEGER);
 CREATE TABLE IF NOT EXISTS delegations (id TEXT PRIMARY KEY, mission_id TEXT, supervisor_run_id TEXT, child_todo_id TEXT, child_run_id TEXT, agent_id TEXT, plan_step_key TEXT, title TEXT, brief TEXT, acceptance TEXT, status TEXT, result_summary TEXT, artifacts TEXT, branch TEXT, created_at INTEGER, updated_at INTEGER, completed_at INTEGER);
+CREATE TABLE IF NOT EXISTS plugins (id TEXT PRIMARY KEY, version TEXT, path TEXT, enabled INTEGER, builtin INTEGER, manifest TEXT, permissions TEXT, installed_at INTEGER, last_error TEXT, last_run_at INTEGER);
+CREATE TABLE IF NOT EXISTS plugin_kv (plugin_id TEXT, key TEXT, value TEXT, updated_at INTEGER, PRIMARY KEY (plugin_id, key));
+CREATE TABLE IF NOT EXISTS todo_links (id TEXT PRIMARY KEY, todo_id TEXT, plugin_id TEXT, kind TEXT, ref TEXT, title TEXT, created_at INTEGER);
 `;
 
 /** 应用设置默认值。缺失的键一律从这里补齐。 */
@@ -120,6 +123,7 @@ export async function openDb(dir) {
     hosts: [], projects: [], agents: [], todos: [], runs: [], threads: [], messages: [],
     artifacts: [], events: [], inbox: [], context: {}, seq: 0, activeProjectId: null,
     missionPlans: [], delegations: [],
+    plugins: [], pluginKv: [], todoLinks: [],
     settings: { ...DEFAULT_SETTINGS },
   };
 
@@ -193,6 +197,17 @@ export async function openDb(dir) {
     resultSummary: r.result_summary || "", artifacts: J(r.artifacts, []), branch: r.branch || null,
     createdAt: r.created_at || Date.now(), updatedAt: r.updated_at || Date.now(), completedAt: r.completed_at || null,
   }));
+  state.plugins = rows("SELECT * FROM plugins").map((r) => ({
+    id: r.id, version: r.version || "", path: r.path || "", enabled: !!r.enabled, builtin: !!r.builtin,
+    manifest: J(r.manifest, {}), permissions: J(r.permissions, []),
+    installedAt: r.installed_at || 0, lastError: r.last_error || null, lastRunAt: r.last_run_at || null,
+  }));
+  state.pluginKv = rows("SELECT * FROM plugin_kv").map((r) => ({
+    pluginId: r.plugin_id, key: r.key, value: J(r.value, null), updatedAt: r.updated_at || 0,
+  }));
+  state.todoLinks = rows("SELECT * FROM todo_links").map((r) => ({
+    id: r.id, todoId: r.todo_id, pluginId: r.plugin_id, kind: r.kind, ref: r.ref, title: r.title || "", createdAt: r.created_at || 0,
+  }));
   state.context = rows("SELECT * FROM context").map((r) => ({ k: r.k, v: J(r.v, null) })).find((x) => x.k === "current")?.v || {};
   state.settings = { ...DEFAULT_SETTINGS, ...J(rows("SELECT v FROM settings WHERE k='app'")[0]?.v, {}) };
   state.seq = Number(rows("SELECT v FROM meta WHERE k='seq'")[0]?.v || 100);
@@ -234,7 +249,7 @@ export async function openDb(dir) {
   let timer = null;
   const writeNow = () => {
     db.run("BEGIN");
-    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "inbox", "mission_plans", "delegations", "context", "settings", "meta"]) db.run(`DELETE FROM ${t}`);
+    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "inbox", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "context", "settings", "meta"]) db.run(`DELETE FROM ${t}`);
     for (const h of state.hosts) db.run(
       "INSERT INTO hosts (id,name,kind,addr,status,heartbeat,version,port,user,caps,last_probe,latency_ms,max_concurrency,default_cwd,probe_error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [h.id, h.name, h.kind, h.addr, h.status, h.heartbeat || 0, h.version || "—", h.port || 22, h.user || "",
@@ -258,6 +273,9 @@ export async function openDb(dir) {
     for (const i of state.inbox) db.run("INSERT INTO inbox VALUES (?,?,?,?,?,?,?)", [i.id, i.todoId, i.kind, i.title, i.at, i.read ? 1 : 0, i.pinned ? 1 : 0]);
     for (const p of state.missionPlans || []) db.run("INSERT INTO mission_plans VALUES (?,?,?,?,?,?,?)", [p.id, p.missionId, p.revision || 1, p.status || "draft", JSON.stringify(p.plan || {}), p.createdAt || Date.now(), p.approvedAt || null]);
     for (const d of state.delegations || []) db.run("INSERT INTO delegations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [d.id, d.missionId, d.supervisorRunId, d.childTodoId, d.childRunId || null, d.agentId, d.planStepKey || "", d.title, d.brief || "", JSON.stringify(d.acceptance || []), d.status || "proposed", d.resultSummary || "", JSON.stringify(d.artifacts || []), d.branch || null, d.createdAt || Date.now(), d.updatedAt || Date.now(), d.completedAt || null]);
+    for (const p of state.plugins || []) db.run("INSERT INTO plugins VALUES (?,?,?,?,?,?,?,?,?,?)", [p.id, p.version || "", p.path || "", p.enabled ? 1 : 0, p.builtin ? 1 : 0, JSON.stringify(p.manifest || {}), JSON.stringify(p.permissions || []), p.installedAt || 0, p.lastError || null, p.lastRunAt || null]);
+    for (const kv of state.pluginKv || []) db.run("INSERT INTO plugin_kv VALUES (?,?,?,?)", [kv.pluginId, kv.key, JSON.stringify(kv.value), kv.updatedAt || Date.now()]);
+    for (const l of state.todoLinks || []) db.run("INSERT INTO todo_links VALUES (?,?,?,?,?,?,?)", [l.id, l.todoId, l.pluginId, l.kind, l.ref, l.title || "", l.createdAt || Date.now()]);
     db.run("INSERT INTO context VALUES ('current', ?)", [JSON.stringify(state.context)]);
     db.run("INSERT INTO settings VALUES ('app', ?)", [JSON.stringify(state.settings || {})]);
     db.run("INSERT INTO meta VALUES ('seq', ?)", [String(state.seq)]);

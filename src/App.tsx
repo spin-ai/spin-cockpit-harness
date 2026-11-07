@@ -13,9 +13,10 @@ import { CollapsedPane } from "./components/CollapsedPane";
 import { ChatIcon, FilesIcon, ListIcon, TerminalIcon } from "./components/Icons";
 import { Settings } from "./components/Settings";
 import { Guide } from "./components/Guide";
+import { Notes } from "./components/Notes";
 import { THEMES, isDarkTheme, resolveTheme } from "./themes";
 
-type View = "workspace" | "projects" | "inbox" | "stats" | "hosts" | "settings" | "guide";
+type View = "workspace" | "projects" | "inbox" | "stats" | "hosts" | "settings" | "guide" | "notes";
 type PaneId = "todo" | "chat" | "terminal" | "files";
 const COLLAPSED_PANE_W = 34;
 
@@ -26,6 +27,7 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingContext, setPendingContext] = useState<ElementContext | null>(null);
+  const [notesOpenReq, setNotesOpenReq] = useState<{ path: string; n: number } | null>(null);
   const [now, setNow] = useState(Date.now());
   const [todoW, setTodoW] = useStoredSize("cmh.layout.todoW", 220, 180, 520);
   const [chatW, setChatW] = useStoredSize("cmh.layout.chatW", 300, 220, 700);
@@ -134,6 +136,25 @@ export default function App() {
     }
   }, [notify]);
 
+  useEffect(() => {
+    const onDraft = (detail: { text?: string }) => {
+      if (!detail?.text) return;
+      setView("workspace");
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent("harness:chat-draft", { detail })), 100);
+    };
+    const onNotify = (detail: { message?: string }) => {
+      if (detail?.message) notify(detail.message);
+    };
+    const onPluginView = (detail: { id?: string }) => {
+      if (detail?.id === "notes") setView("notes");
+    };
+    const offDraft = window.harness.onPluginChatDraft(onDraft);
+    const offNotify = window.harness.onPluginNotify(onNotify);
+    const offView = window.harness.onPluginOpenView(onPluginView);
+    return () => { offDraft(); offNotify(); offView(); };
+  }, [notify]);
+
+
   const scoped = useMemo(() => {
     if (!state) return null;
     const pid = state.activeProjectId;
@@ -181,6 +202,7 @@ export default function App() {
     return counts;
   }, [state?.todos]);
   const unread = state?.inbox.filter((i) => !i.read).length ?? 0;
+  const notesEnabled = Boolean(state?.plugins?.find((p) => p.id === "ai.cockpit.notes")?.enabled);
 
   const selectTodo = useCallback((todoId: string) => {
     const t = state?.threads.find((x) => x.todoId === todoId);
@@ -200,7 +222,7 @@ export default function App() {
   useEffect(() => {
     const onView = (e: Event) => {
       const next = (e as CustomEvent<string>).detail;
-      if (["workspace", "projects", "stats", "hosts", "settings", "guide"].includes(next)) setView(next as View);
+      if (["workspace", "projects", "stats", "hosts", "settings", "guide", "notes"].includes(next)) setView(next as View);
     };
     window.addEventListener("harness:view", onView);
     return () => window.removeEventListener("harness:view", onView);
@@ -287,6 +309,14 @@ export default function App() {
       { id: "open-settings", label: "打开设置", hint: "⌘,", group: "导航", run: () => setView("settings") },
       { id: "open-model-key", label: "配置模型密钥（DEEPSEEK_API_KEY 等）", group: "导航", hint: "设置 → 执行", run: () => window.dispatchEvent(new CustomEvent("harness:open-settings", { detail: { section: "execution", focus: "dshEnv" } })) },
       { id: "open-guide", label: "使用说明 / Super Agent 怎么用", group: "导航", run: () => setView("guide") },
+      ...(notesEnabled ? [{ id: "open-notes", label: "打开笔记", group: "插件", run: () => setView("notes") }] : []),
+      ...((state.pluginCommands ?? []).map((c) => ({
+        id: `plugin-${c.pluginId}-${c.id}`,
+        label: c.title,
+        hint: c.pluginId,
+        group: "插件",
+        run: () => { void act("pluginRunCommand", { pluginId: c.pluginId, commandId: c.id }).then((res) => { const r = res as { vaultPath?: string; path?: string } | null; if (r?.vaultPath || r?.path) { setView("notes"); if (r.path) setNotesOpenReq({ path: r.path, n: Date.now() }); } }); },
+      }))),
       { id: "reset-layout", label: "重置面板尺寸", group: "布局", run: () => window.dispatchEvent(new Event("harness:reset-layout")) },
     ];
     for (const p of state.projects) {
@@ -391,7 +421,7 @@ export default function App() {
   return (
     <div className="app">
       <div className="main" style={{ gridTemplateColumns: gridCols }}>
-        <Rail view={view} inboxUnread={unread} onChange={(v) => setView(v)} />
+        <Rail view={view} inboxUnread={unread} notesEnabled={notesEnabled} onChange={(v) => setView(v)} />
         {/* 工作区始终挂载、只切显隐：切到收件箱/统计再回来时，终端 pty、标签、滚动位置都不能丢 */}
         {scoped && (
           <div className="workspace-view" style={{ display: view === "workspace" ? "contents" : "none" }}>
@@ -450,6 +480,7 @@ export default function App() {
         {view === "hosts" && <div className="wide"><Hosts state={state} act={act} notify={notify} now={now} /></div>}
         {view === "settings" && <div className="wide settings-wide"><Settings state={state} act={act} notify={notify} /></div>}
         {view === "guide" && <div className="wide"><Guide state={state} act={act} onStartMission={() => void startMission()} onOpenSettings={() => setView("settings")} /></div>}
+        {view === "notes" && <div className="wide"><Notes state={state} act={act} onOpenTodo={selectTodo} openRequest={notesOpenReq} /></div>}
       </div>
 
       <CommandPalette open={paletteOpen} state={state} onClose={() => setPaletteOpen(false)} commands={commands} />

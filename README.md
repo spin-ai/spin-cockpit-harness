@@ -55,6 +55,7 @@ npm run dist                # macOS dmg → release/
 - **Super Agent / Mission**：在 Chat 里选择 `✦ 主管` 或点「＋ 主管」创建 supervisor；一句话先出计划（Mission Plan Card，可退回修改），人工批准后自动创建 child Todo + Delegation + worker run；worker 在独立 worktree 执行，Mission 面板汇总子任务、可取消/恢复/确认；supervisor 通过受控 MCP 工具读写 Mission，不直接改代码（见 [docs/ARCH-super-agent.md](docs/ARCH-super-agent.md)）
 - **Terminal**：任务绑定项目的真实 pty（node-pty + xterm），可多标签、可直接输入；**资源管理器里的文件也在终端区按标签预览**；多标签切换（⌃Tab / ⌘⇧[ ] / ⌘⇧1…9）、**终端窗格任意拆分**（⌘D 右拆 / ⇧⌘D 下拆，递归嵌套 + 拖拽分隔条 + ⌘⌥方向键切焦点）、标签重命名与中键关闭、⌘F 查找、右键菜单（复制 / 粘贴 / 清屏 / 重启）、⌘+/- 字号缩放、链接点击打开、进程退出后可重启；挂载前的输出会回放，不会丢 banner；**预览只有一个标签**：打开 HTML/文本文件就切成文件模式（渲染 / 源码），点地址栏「URL」或终端识别到的 `打开预览 :PORT` 就切成地址模式（dev server / 远程页面），两种模式共用同一 webview、地址栏与**拾取页面元素**；工具栏不再单列「＋ 预览」按钮（避免第二个入口）
 - **UI 上下文**：预览页里点中元素 → Chat 输入框出现元素 chip（selector / 源文件 / 截图）→ 随消息注入当前会话（运行中即 steer）
+- **插件**：Settings → 插件可启停 / 安装目录插件；内置 **Notes** 插件支持打开 Obsidian vault、文件树、Markdown 预览/编辑、搜索、backlinks、Daily Note、从笔记创建 Todo、发送到 Chat（见 [docs/ARCH-plugins.md](docs/ARCH-plugins.md)、[docs/PLUGIN-notes.md](docs/PLUGIN-notes.md)）
 - **右侧栏**：reference 风格三块
   - **资源管理器**：树形展开 / 折叠、文件类型标识、名称筛选（默认隐藏点文件）、全部折叠；**右键菜单**（新建文件/文件夹、在终端打开、Finder 显示、复制路径/相对路径、重命名 F2、复制副本、删除 ⌫）、工具栏新建、行内重命名、自动刷新（窗口重新聚焦时）
   - **会话历史**：按今天 / 昨天 / 更早分组；每行显示标题、状态、Agent、项目、消息数、最近一条消息；点行回到对应 Chat 会话，可展开最近消息
@@ -126,6 +127,7 @@ Chat 的“Agent”是执行目标，不是探测器里所有 CLI 的并集。�
 npm run bundle:dsh        # 当前平台；首次会下载对应 wheel
 npm run smoke:dsh         # --version + ACP initialize + session/new
 npm run verify:mission    # Mission schema + MCP bridge + supervisor profile
+npm run verify:plugins    # 插件 manifest / 入口语法
 npm run dist              # 当前平台原生包（mac dmg / win nsis / linux AppImage）
 ```
 

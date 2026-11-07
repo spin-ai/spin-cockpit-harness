@@ -1,0 +1,27 @@
+{
+  "id": "ai.cockpit.notes",
+  "name": "Notes",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "engines": { "cockpit": ">=0.2.0" },
+  "main": "main.mjs",
+  "defaultEnabled": true,
+  "activation": ["onStartup", "onView:notes"],
+  "permissions": ["fs:vault", "tasks:write", "state:read", "ui:view"],
+  "contributes": {
+    "views": [
+      { "id": "notes", "title": "笔记", "location": "main", "icon": "note" }
+    ],
+    "commands": [
+      { "id": "notes.open", "title": "打开笔记", "description": "打开 Notes 工作区" },
+      { "id": "notes.today", "title": "打开今日笔记", "description": "打开或创建 Daily Note" },
+      { "id": "notes.refresh", "title": "刷新笔记索引", "description": "重新扫描 vault" }
+    ],
+    "events": ["mission.finished"],
+    "settings": [
+      { "key": "vaultPath", "type": "directory", "title": "Vault 路径" },
+      { "key": "dailyFolder", "type": "string", "title": "Daily Notes 文件夹", "default": "daily" },
+      { "key": "dailyFormat", "type": "string", "title": "Daily Notes 文件名", "default": "YYYY-MM-DD" }
+    ]
+  }
+}

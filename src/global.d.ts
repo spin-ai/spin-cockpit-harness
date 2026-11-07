@@ -19,6 +19,9 @@ declare global {
       onTerminalData(cb: (p: { id: string; data: string }) => void): () => void;
       onTerminalUrl(cb: (p: { id: string; url: string }) => void): () => void;
       onTerminalExit(cb: (p: { id: string; exitCode: number | null; signal: string | null }) => void): () => void;
+      onPluginChatDraft(cb: (p: { text: string; context?: unknown }) => void): () => void;
+      onPluginNotify(cb: (p: { message: string; level?: string }) => void): () => void;
+      onPluginOpenView(cb: (p: { id: string }) => void): () => void;
       filesList(rel?: string, root?: string): Promise<{ root: string; rel: string; entries: { name: string; dir: boolean; path: string }[] }>;
       filesRead(rel: string, root?: string): Promise<{ text?: string; dataUrl?: string; size?: number; ext?: string; error?: string }>;
       filesCreate(rel: string, kind: "file" | "folder", name: string, root?: string): Promise<{ path: string; name: string }>;
