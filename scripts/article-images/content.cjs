@@ -527,7 +527,6 @@ const layout = {
           <div class="item"><span class="num">3</span>唯一分派入口</div>
           <div class="item"><span class="num">4</span>真实 PTY 主区域</div>
           <div class="item"><span class="num">5</span>文件 / 预览</div>
-          <div class="note">界面结构示意（非截图）</div>
         </div>
       </div>
     `,
