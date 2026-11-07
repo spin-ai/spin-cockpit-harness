@@ -20,6 +20,7 @@ let data = {
   reviews: [],
   log: [],
   layout: null,
+  vaultPath: "",
 };
 
 function now() { return Date.now(); }
@@ -30,6 +31,81 @@ function slugify(text) {
 }
 function dataFile() { return path.join(ctx.dataDir, "wiki.json"); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
+const VAULT_IGNORE = new Set([".obsidian", ".git", ".trash", "node_modules"]);
+const VAULT_MAX_BYTES = 5 * 1024 * 1024;
+const VAULT_MAX_FILES = 5000;
+let vaultCache = null;
+
+function posix(p) { return String(p).replace(/\\/g, "/"); }
+function vaultRoot() { return data.vaultPath ? path.resolve(data.vaultPath) : ""; }
+function withinVault(rel = "") {
+  const root = vaultRoot();
+  if (!root) throw new Error("还没有打开本地目录");
+  const full = path.resolve(root, String(rel || ""));
+  if (full !== root && !full.startsWith(root + path.sep)) throw new Error("路径必须位于本地目录内");
+  return { root, full };
+}
+function vaultRel(full) { return posix(path.relative(vaultRoot(), full)); }
+function vaultTitle(raw, rel) {
+  const front = String(raw || "").match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const fmTitle = front?.[1]?.match(/^title\s*:\s*(.+)$/mi)?.[1]?.trim().replace(/^["']|["']$/g, "");
+  const heading = String(raw || "").match(/^#\s+(.+)$/m)?.[1]?.trim();
+  return String(fmTitle || heading || path.basename(rel, path.extname(rel))).slice(0, 200);
+}
+async function vaultIndex(force = false) {
+  if (!data.vaultPath) return { path: "", files: [], indexedAt: 0, error: "" };
+  const root = vaultRoot();
+  if (!force && vaultCache && vaultCache.path === root && Date.now() - vaultCache.indexedAt < 1500) return vaultCache;
+  try {
+    const stat = await fs.stat(root);
+    if (!stat.isDirectory()) throw new Error("不是目录");
+    const files = [];
+    async function walk(dir) {
+      let entries = [];
+      try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        if (files.length >= VAULT_MAX_FILES) return;
+        if (entry.name.startsWith(".") && VAULT_IGNORE.has(entry.name)) continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (VAULT_IGNORE.has(entry.name)) continue;
+          await walk(full);
+        } else if (entry.isFile() && /\.md$/i.test(entry.name)) {
+          try {
+            const info = await fs.stat(full);
+            if (info.size > VAULT_MAX_BYTES) continue;
+            const raw = await fs.readFile(full, "utf8");
+            const rel = vaultRel(full);
+            files.push({ path: rel, title: vaultTitle(raw, rel), folder: posix(path.dirname(rel) === "." ? "" : path.dirname(rel)), mtime: info.mtimeMs, size: info.size });
+          } catch { /* skip unreadable */ }
+        }
+      }
+    }
+    await walk(root);
+    files.sort((a, b) => a.path.localeCompare(b.path));
+    vaultCache = { path: root, files, indexedAt: Date.now(), error: "" };
+  } catch (err) {
+    vaultCache = { path: root, files: [], indexedAt: Date.now(), error: String(err?.message || err) };
+  }
+  return vaultCache;
+}
+async function readVaultFile(rel) {
+  const { full } = withinVault(rel);
+  if (!/\.md$/i.test(full)) throw new Error("只支持 Markdown 文件");
+  const [raw, info] = await Promise.all([fs.readFile(full, "utf8"), fs.stat(full)]);
+  if (info.size > VAULT_MAX_BYTES) throw new Error("文件超过 5MB");
+  const safeRel = vaultRel(full);
+  return { path: safeRel, title: vaultTitle(raw, safeRel), folder: posix(path.dirname(safeRel) === "." ? "" : path.dirname(safeRel)), content: raw, mtime: info.mtimeMs, size: info.size };
+}
+async function pickVault() {
+  const chosen = await ctx.fs.pickDirectory({ title: "选择本地 Markdown 目录" });
+  if (!chosen) return null;
+  data.vaultPath = path.resolve(String(chosen));
+  vaultCache = null;
+  addLog("vault.open", data.vaultPath);
+  await persist();
+  return vaultIndex(true);
+}
 
 async function load() {
   try {
@@ -178,6 +254,11 @@ function graphView() {
 async function command(name) {
   if (name === "wiki.open" || name === "wiki.graph") return ctx.ui.openView("notes");
   if (name === "wiki.new") return ctx.ui.openView("notes");
+  if (name === "wiki.openFolder") {
+    const vault = await pickVault();
+    if (vault) await ctx.ui.openView("notes");
+    return vault;
+  }
   throw new Error(`unknown command: ${name}`);
 }
 
@@ -185,13 +266,14 @@ export async function activate(context) {
   ctx = context;
   await load();
 
-  ctx.api.handle("wiki.status", async () => ({ pages: data.pages.length, sources: data.sources.length, drafts: data.pages.filter((p) => p.status === "draft").length, stale: data.pages.filter((p) => p.status === "stale").length }));
+  ctx.api.handle("wiki.status", async () => ({ pages: data.pages.length, sources: data.sources.length, drafts: data.pages.filter((p) => p.status === "draft").length, stale: data.pages.filter((p) => p.status === "stale").length, vaultPath: data.vaultPath }));
   ctx.api.handle("wiki.list", async () => ({
     pages: data.pages.map(pageSummary),
     sources: data.sources.map((s) => ({ id: s.id, title: s.title, kind: s.kind, uri: s.uri, createdAt: s.createdAt, citations: data.citations.filter((c) => c.sourceId === s.id).length })),
     reviews: data.pages.filter((p) => p.status === "draft").map(pageSummary),
     log: data.log.slice(0, 40),
     layout: data.layout,
+    vaultPath: data.vaultPath,
   }));
   ctx.api.handle("wiki.getPage", async ({ id: pageId }) => pageView(data.pages.find((p) => p.id === pageId || p.slug === pageId)));
   ctx.api.handle("wiki.createPage", async ({ title, summary = "" } = {}) => { const page = ensurePage({ title, summary }); await persist(); return pageView(page); });
@@ -256,6 +338,50 @@ export async function activate(context) {
     return source;
   });
   ctx.api.handle("wiki.sources", async () => data.sources.map((s) => ({ id: s.id, title: s.title, kind: s.kind, uri: s.uri, createdAt: s.createdAt, content: s.content })));
+  ctx.api.handle("wiki.vault.get", async () => vaultIndex());
+  ctx.api.handle("wiki.vault.pick", async () => pickVault());
+  ctx.api.handle("wiki.vault.open", async ({ path: openPath } = {}) => {
+    if (!openPath) throw new Error("目录路径不能为空");
+    data.vaultPath = path.resolve(String(openPath));
+    vaultCache = null;
+    addLog("vault.open", data.vaultPath);
+    await persist();
+    return vaultIndex(true);
+  });
+  ctx.api.handle("wiki.vault.file", async ({ path: relPath } = {}) => readVaultFile(relPath));
+  ctx.api.handle("wiki.vault.save", async ({ path: relPath, content = "", mtime } = {}) => {
+    const { full } = withinVault(relPath);
+    if (!/\.md$/i.test(full)) throw new Error("只支持 Markdown 文件");
+    if (mtime != null) {
+      try {
+        const current = await fs.stat(full);
+        if (Math.abs(current.mtimeMs - Number(mtime)) > 1.5) throw new Error("文件已被外部修改；请重新打开后再保存");
+      } catch (err) {
+        if (String(err?.message || err).includes("外部修改")) throw err;
+      }
+    }
+    await fs.writeFile(full, String(content ?? ""), "utf8");
+    vaultCache = null;
+    addLog("vault.save", vaultRel(full));
+    await persist();
+    return readVaultFile(vaultRel(full));
+  });
+  ctx.api.handle("wiki.vault.reveal", async ({ path: relPath } = {}) => {
+    const { full } = withinVault(relPath);
+    await ctx.fs.reveal(full);
+    return true;
+  });
+  ctx.api.handle("wiki.vault.importSource", async ({ path: relPath } = {}) => {
+    const file = await readVaultFile(relPath);
+    const source = {
+      id: id("src"), title: file.title, kind: "local", uri: file.path,
+      content: file.content, hash: hash(file.content), createdAt: now(),
+    };
+    data.sources.unshift(source);
+    addLog("source.import", `${file.title} · ${file.path}`);
+    await persist();
+    return source;
+  });
   ctx.api.handle("wiki.upsertDraft", async ({ title, content = "", summary = "", sourceIds = [] } = {}) => {
     const safeTitle = String(title || "").trim().slice(0, 180);
     if (!safeTitle) throw new Error("title is required");
@@ -317,9 +443,10 @@ export async function activate(context) {
   ctx.commands.register("wiki.open", () => command("wiki.open"));
   ctx.commands.register("wiki.new", () => command("wiki.new"));
   ctx.commands.register("wiki.graph", () => command("wiki.graph"));
+  ctx.commands.register("wiki.openFolder", () => command("wiki.openFolder"));
   ctx.events.on("mission.finished", async (payload) => {
     addLog("mission.finished", payload?.title || payload?.missionId || "");
     await persist();
   });
-  ctx.log.info(`Wiki ready · ${data.pages.length} pages · ${data.sources.length} sources`);
+  ctx.log.info(`Wiki ready · ${data.pages.length} pages · ${data.sources.length} sources${data.vaultPath ? ` · local ${data.vaultPath}` : ""}`);
 }

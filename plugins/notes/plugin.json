@@ -1,7 +1,7 @@
 {
   "id": "ai.cockpit.notes",
   "name": "Wiki",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "apiVersion": 1,
   "engines": {
     "cockpit": ">=0.2.0"
@@ -16,7 +16,8 @@
     "state:read",
     "tasks:write",
     "ui:view",
-    "agent:tools"
+    "agent:tools",
+    "fs:vault"
   ],
   "contributes": {
     "views": [
@@ -42,6 +43,11 @@
         "id": "wiki.graph",
         "title": "打开 Wiki 图谱",
         "description": "查看 Source/Page 关系"
+      },
+      {
+        "id": "wiki.openFolder",
+        "title": "打开本地 Markdown 目录",
+        "description": "打开并浏览本地 Markdown 目录，可直接编辑写回；也可导入为 Wiki Source"
       }
     ],
     "events": [

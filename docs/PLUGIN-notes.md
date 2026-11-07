@@ -1,7 +1,7 @@
 # Plugin · Native LLM Wiki
 
 > **状态：P0 已实现（原生 Wiki 数据 + UI），P1 进行中。**
-> Notes 不再是 Obsidian vault 的文件浏览器；它现在是一个 **原生 LLM Wiki**：Source → Page → Citation → Review → Query。
+> Notes 不再是 vault-first 的 Obsidian 文件浏览器；它现在是一个 **原生 LLM Wiki**：Source → Page → Citation → Review → Query。本地 Markdown 目录仍可作为可选适配器打开、编辑，并导入为 Source。
 > 插件宿主见 [`ARCH-plugins.md`](ARCH-plugins.md)。
 
 ---
@@ -10,7 +10,7 @@
 
 **Wiki = Source + Page + Citation + Review，不依赖外部 vault。**
 
-Obsidian / Logseq 的 Markdown 可以作为导入/导出格式，但不是核心存储模型。
+Obsidian / Logseq 的 Markdown 可以作为导入/导出格式，也可以通过「打开目录」直接浏览和编辑；但它不是核心存储模型。
 
 ---
 
@@ -64,6 +64,9 @@ log
 
 layout
   tabs / split / active / ratio
+
+vaultPath
+  可选的本地 Markdown 目录；只做文件适配器，不改变 Source / Page 模型
 ```
 
 ### 页面状态
@@ -115,6 +118,14 @@ wiki.layout.set
 wiki.log
 wiki.createTask
 wiki.upsertDraft
+
+wiki.vault.get
+wiki.vault.pick
+wiki.vault.open
+wiki.vault.file
+wiki.vault.save
+wiki.vault.reveal
+wiki.vault.importSource
 ```
 
 ### Agent tools
@@ -202,9 +213,10 @@ UI 支持：
 
 - 文本 / Markdown
 - URL（抓取正文）
-- 后续：PDF、网页剪藏、文件导入
+- **本地目录**：打开一个 Markdown 目录，左侧「本地」按文件夹列出文件；可直接编辑并写回，也可「导入为 Source」
+- 后续：PDF、网页剪藏、文件批量导入
 
-Source 不变；page 是派生知识。
+Source 不变；page 是派生知识。本地文件是用户资产，不会被 App 改写为 Wiki page，除非显式导入。
 
 ### 4.2 Curator
 
@@ -239,7 +251,7 @@ Source hash 变化后（P1）：
 
 ```text
 Wiki
-├─ 左侧：页面 / 资料 / 审核
+├─ 左侧：页面 / 资料 / 审核 / 本地
 ├─ 中间：页面 tabs + 阅读/编辑 + 分屏
 └─ 右侧：Status / Citations / Backlinks / Linked Todos
 ```
@@ -249,7 +261,8 @@ Wiki
 - **页面**：标题、draft/reviewed/stale
 - **资料**：source 列表、引用数
 - **审核**：待审核 draft
-- 搜索：页面 / source
+- **本地**：打开 / 更换本地 Markdown 目录，按文件夹列出 `.md`；点击直接编辑并写回磁盘
+- 搜索：页面 / source / 本地文件名
 - 最近 wiki log
 
 ### 中间
@@ -281,6 +294,7 @@ Wiki
 
 - Page / Source 节点
 - citation / page link 边
+- 本地文件不进入图谱，除非导入为 Source
 - 力导向布局
 - 点击节点打开页面
 
@@ -311,6 +325,7 @@ plugins/notes/main.mjs
 - Review 接受/退回
 - 任务 / Chat 联动
 - Wiki MCP tools
+- 本地 Markdown 目录：打开 / 编辑写回 / 导入为 Source / Finder 定位
 
 未实现：
 
@@ -333,7 +348,7 @@ plugins/notes/main.mjs
 - Page CRUD
 - Citation
 - Review
-- UI 替换 vault
+- UI 以 Wiki 为主，保留本地 Markdown 目录适配器（打开 / 编辑 / 导入 Source）
 - Wiki MCP tools
 
 ### P1
