@@ -20,7 +20,7 @@
 
 ## dsh ACP
 
-![ACP 时序](./wiki/acp-sequence.svg)
+![ACP 时序](./wiki/acp-sequence.png)
 
 *图：一句话从 send 到 queueRun、ACP prompt、流式落库、审批与收尾。*
 

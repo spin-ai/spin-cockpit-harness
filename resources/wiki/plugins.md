@@ -32,7 +32,7 @@ Agent 只能写 draft；reviewed 页面不会被静默覆盖。写入会追加 r
 
 Wiki 通过 MCP bridge 向 dsh 暴露工具：
 
-![MCP bridge](./wiki/mcp-bridge.svg)
+![MCP bridge](./wiki/mcp-bridge.png)
 
 *图：dsh / MCP 工具 ↔ 主进程 HTTP bridge ↔ 插件。*
 

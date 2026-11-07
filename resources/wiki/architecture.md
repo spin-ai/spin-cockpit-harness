@@ -2,7 +2,7 @@
 
 ## 进程模型
 
-![全景架构](./wiki/architecture.svg)
+![全景架构](./wiki/architecture.png)
 
 *图：Renderer / Main / Executor / Storage 四层；每个 run 一个 dsh 子进程。*
 

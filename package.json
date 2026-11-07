@@ -25,7 +25,8 @@
     "postinstall": "electron-builder install-app-deps",
     "typecheck": "tsc --noEmit",
     "verify:mission": "node scripts/verify-mission.mjs",
-    "verify:plugins": "node scripts/verify-plugins.mjs"
+    "verify:plugins": "node scripts/verify-plugins.mjs",
+    "wiki:publish": "node scripts/publish-wiki.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.4",
