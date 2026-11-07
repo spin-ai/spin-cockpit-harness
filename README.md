@@ -8,7 +8,7 @@
 Cockpit Harness · 多 Agent 编排工作台：**Chat 分派任务 → project 下开 Terminal → agent 执行 → 看板看状态 → 确认后进 TODO LIST**。
 Electron 桌面应用，本地 SQLite，执行走 `dsh --profile acp`；仓库名 `spin-cockpit-harness`。
 
-> **当前版本：`v0.2.0-alpha.1`（Liftoff，首个公开 Alpha）**
+> **当前版本：`v0.2.0-alpha.2`（Liftoff，公开 Alpha）**
 > Alpha 阶段数据库结构、IPC 与 UI 仍可能变化；升级前请备份本地数据。
 
 ## 下载
@@ -66,6 +66,7 @@ npm run dist                # macOS dmg → release/
 - 资源管理器带 Git 装饰（参考 reference）：修改 / 新增 / 已暂存 / 删除各自着色并带状态字母，被 `.gitignore` 忽略的文件与目录淡色斜体，目录内有改动时显示状态点
 - 右侧栏新增 **Git** 标签（资源管理器 / 会话历史旁边）：分支、暂存/取消暂存、全部暂存、提交框（⌘Enter）、拉取/推送、一键「全屏」看 diff
 - Git（Source Control）：分支 / 上游 / ahead-behind、文件暂存与丢弃、Diff 查看（+N -M）、提交框（⌘Enter）、推送/拉取、分支切换与新建、最近提交；非仓库可一键 `git init`（见 [docs/ARCH-git.md](docs/ARCH-git.md)）
+- Git → 项目 Wiki：内置项目介绍 / 工作流 / 架构 / Agent / 终端 / 主题 / 插件 / 构建 / 版本记录，支持搜索（⌘F）、目录、页间链接与 Git 分支 / HEAD 标识；内容来自 `resources/wiki/*.md` + `CHANGELOG.md`，随仓库版本发布
 - 主机页：本机 + SSH 主机卡片，一次往返探测 CLI / 版本 / git / 远端目录（`caps`），页面可见时 60s 心跳（连续 2 次失败才标离线），每主机并发上限（失焦提交），SSH 主机可编辑地址/用户/端口/远端 cwd，Agent 运行位置切换有确认；主机离线时 Chat 顶部提示并可一键改用本机（见 [docs/ARCH-hosts-stats.md](docs/ARCH-hosts-stats.md)）
 - 统计页：**全部项目 / 单项目范围切换** + 成功率 / 中位耗时 / 排队 p50 / Token（未上报就显示未上报，不写 0）+ 每日趋势（图例 + 空态）+ 4 类失败分类 + 按 Agent/项目/主机分组 + 失败下钻 + CSV 导出；不估算费用
 - 主机只显示机器与可用 CLI；Agent 在项目 Terminal 里启动，带项目内唯一 `@别名`
@@ -177,9 +178,9 @@ npm run pack:system
 
 | 平台 | 产物 | 验证 |
 |---|---|---|
-| macOS arm64 | `Cockpit.Harness-0.2.0-alpha.1-arm64.dmg` | CI `macos-14`；dsh `--version` + ACP initialize/session/new |
-| Linux x86_64 | `Cockpit.Harness-0.2.0-alpha.1.AppImage` | CI `ubuntu-24.04`；dsh ACP、node-pty（ELF）与 Electron 启动通过 |
-| Windows x64 | `Cockpit.Harness.Setup.0.2.0-alpha.1.exe` | CI `windows-2022`；内置 dsh/PTY 与 `app.asar` 结构通过 |
+| macOS arm64 | `Cockpit.Harness-0.2.0-alpha.2-arm64.dmg` | CI `macos-14`；dsh `--version` + ACP initialize/session/new |
+| Linux x86_64 | `Cockpit.Harness-0.2.0-alpha.2.AppImage` | CI `ubuntu-24.04`；dsh ACP、node-pty（ELF）与 Electron 启动通过 |
+| Windows x64 | `Cockpit.Harness.Setup.0.2.0-alpha.2.exe` | CI `windows-2022`；内置 dsh/PTY 与 `app.asar` 结构通过 |
 
 ## 开源与参与
 
