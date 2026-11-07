@@ -32,7 +32,6 @@ node --check electron/plugins/runtime.mjs
 node --check plugins/notes/main.mjs
 npm run verify:mission
 npm run verify:plugins
-npm run plugin:notes      # 只在需要生成独立 Notes 插件包时
 ```
 
 涉及 dsh 执行/PTY 的改动，请额外运行：
