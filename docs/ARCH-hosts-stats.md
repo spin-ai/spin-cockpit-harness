@@ -1,7 +1,6 @@
 # 主机与统计（Hosts & Stats）
 
-> 参考：reference「主机 = 运行位置选择器 + 账号额度」（`docs/assets/cmp/reference-ways-to-run.png`、`reference-usage.jpg`）、reference「机器 × 工具 = Runtime + caps 探测 + 在线心跳 + 用量/错误分类」（`mul-machine.webp`、`mul-runtimes-list.webp`、`mul-exec-log.webp`）。
-> 对比结论见 [`CMP-modules-reference-reference.md`](CMP-modules-reference-reference.md) A/Q 两节。本文只描述**本仓库已落地**的口径与链路。
+> 参考：同类产品的「主机 = 运行位置 + 额度」「机器 × 工具 = Runtime + caps 探测 + 在线心跳 + 用量/错误分类」。本文只描述**本仓库已落地**的口径与链路。
 
 ---
 

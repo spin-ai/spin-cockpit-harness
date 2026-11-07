@@ -1,6 +1,6 @@
 # 资源管理器（File Explorer）
 
-> 参考：reference `src/renderer/src/components/right-sidebar/file-explorer/`（行右键菜单、背景菜单、新建/重命名、Finder 显示、复制路径、终端打开、自动刷新）。
+> 参考：同类产品资源管理器的行右键菜单、背景菜单、新建/重命名、Finder 显示、复制路径、终端打开、自动刷新。
 > 本文记录右侧栏资源管理器已落地的能力、文件操作 IPC 与安全边界。
 
 ---
@@ -56,9 +56,9 @@
 
 **安全边界**：所有 rel 都经 `filesInside(base, rel)` 校验，必须落在当前项目/worktree 根目录内；根目录本身不允许 rename/duplicate/trash。名称拒绝 `.`、`..` 和路径分隔符。
 
-## 5. 与 reference 的差距
+## 5. 与参考实现的差距
 
-| reference 能力 | 现状 |
+| 参考能力 | 现状 |
 |---|---|
 | 多选 / 框选 / 批量操作 | 未做（单行操作） |
 | 拖拽移动、拖入上传 | 未做 |

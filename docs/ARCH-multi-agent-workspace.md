@@ -1,9 +1,9 @@
 # Cockpit Harness 架构方案（4+1 视图）
 
-> 对应需求 `docs/REQ-multi-agent-workspace.md`（76 条）· 参考 `docs/reference-main` 与 `docs/deepseek-harness`
+> 对应需求 `docs/REQ-multi-agent-workspace.md`（76 条）· 参考 `docs/deepseek-harness`
 >
-> **结论**：自研 Electron 壳 + **dsh 作为执行层（ACP）** + **定向复用 reference 源码模块**。
-> reference 一次性 pin 版本、不跟上游；dsh 用协议依赖、不读它的 Cordis 插件树。
+> **结论**：自研 Electron 壳 + **dsh 作为执行层（ACP）** + **定向复用开源实现中的终端 / worktree 模块**。
+> 参考实现一次性 pin 版本、不跟上游；dsh 用协议依赖、不读它的 Cordis 插件树。
 
 ## 0. 决策摘要
 
@@ -11,7 +11,7 @@
 |---|---|---|
 | 宿主 | 自研 Electron + React + TS | 产品形态是编排控制台，不是 IDE |
 | 执行 | **dsh `--profile acp`**，每 run 一个会话 | 会话/工具/审批/技能成熟，事件结构化 |
-| reference | **vendor 指定模块**（MIT，pin commit） | 复用 worktree/终端/Agent 启动/看板 UI，不 fork 整个仓 |
+| 开源参考实现 | **vendor 指定模块**（MIT，pin commit） | 复用 worktree/终端/Agent 启动/看板交互，不 fork 整个仓 |
 | 存储 | 本地 SQLite（WAL） | 单文件、可备份、并发够用 |
 | 远程 | `ssh host 'dsh --profile acp'` + git worktree | MVP 不写守护进程，协议跑在 SSH stdio 上 |
 | 不做 | 代码编辑器、域面板、多租户 | 域面板归 IDE；一期单人 |
@@ -45,7 +45,7 @@
 └──────────────────────────────────────────────────────────┘
 ```
 
-**依赖规则**：Domain 不依赖 Electron、不依赖 dsh/reference；Executor 与 Integrations 只通过接口被 Application 调用；UI 只依赖 IPC 契约。
+**依赖规则**：Domain 不依赖 Electron、不依赖 dsh/参考实现；Executor 与 Integrations 只通过接口被 Application 调用；UI 只依赖 IPC 契约。
 
 ### 1.2 模块职责
 
@@ -53,15 +53,15 @@
 |---|---|---|
 | `core/domain` | Todo/Run/Agent/Host 状态机与不变量 | 自研 |
 | `core/scheduler` | 队列、并发上限、同目录串行、依赖阻塞 | 自研 |
-| `core/executor` | ACP 会话生命周期、事件映射、取消/重试 | ACP 协议；reference `src/main/acp` 参考 |
-| `core/worktree` | 创建/复用/清理 worktree，run 绑定 | reference `src/main/git/*worktree*`、`src/shared/worktree/*` 改写 |
-| `core/terminal` | pty 拉起 Agent、输出尾部、steer 写入 | reference `src/main/terminal/*` 改写 |
-| `core/agent-launch` | CLI 探测、启动参数、resume、审批预设 | reference `src/main/agent-launch/*`、`src/shared/agent-launch/*` |
+| `core/executor` | ACP 会话生命周期、事件映射、取消/重试 | ACP 协议；参考实现 `src/main/acp` |
+| `core/worktree` | 创建/复用/清理 worktree，run 绑定 | 参考实现 `src/main/git/*worktree*`、`src/shared/worktree/*` 改写 |
+| `core/terminal` | pty 拉起 Agent、输出尾部、steer 写入 | 参考实现 `src/main/terminal/*` 改写 |
+| `core/agent-launch` | CLI 探测、启动参数、resume、审批预设 | 参考实现 `src/main/agent-launch/*`、`src/shared/agent-launch/*` |
 | `core/inbox` | 决策/失败/待验收提醒、已读/归档 | 自研 |
 | `core/audit` | 命令、注入、时长、token/成本 | 自研 |
 | `core/context` | Envelope 缓存、pin/stale、深链 | 自研（IDE 侧发布） |
-| `ui/board` | 看板、卡片、拖拽、筛选 | reference `workspace-board` 交互参考 |
-| `ui/kit` | 按钮/弹层/表格/终端/diff | reference `src/renderer/src/components/ui/*` 选摘 |
+| `ui/board` | 看板、卡片、拖拽、筛选 | 开源看板交互参考 |
+| `ui/kit` | 按钮/弹层/表格/终端/diff | 参考实现 UI 组件选摘 |
 
 ### 1.3 领域模型与不变量
 
@@ -181,7 +181,7 @@ packages/core/         domain + scheduler + services（纯 TS）
 packages/executor/     ACP client、进程监管、事件映射
 packages/integrations/ git/worktree、ssh、ide-link
 packages/ui/           board / detail / session / inbox / stats
-vendor/reference/           pin commit 的复用模块 + NOTICE
+vendor/reference/      pin commit 的复用模块 + NOTICE
 docs/                  需求与架构
 ```
 
@@ -192,7 +192,7 @@ docs/                  需求与架构
 - 测试分层：Domain 单测；ACP 契约测试（本地 mock 模型）；worktree 集成测试；UI 冒烟（Playwright）。
 - 离线可跑：mock provider；不需要外部 key。
 
-### 3.3 reference 复用策略（MIT，一次性）
+### 3.3 开源实现复用策略（MIT，一次性）
 
 | 复用 | 方式 | 改造 |
 |---|---|---|
@@ -290,4 +290,4 @@ IDE 选中 → `POST /api/context` → 派活默认携带 → 产物出预览 �
 | M3 | SSH 远程 + 重连 + IDE 深链/Context | 2 周 |
 | M4 | 打包/签名/更新 + 首启 | 1 周 |
 
-**风险**：dsh 仍是 developer preview（锁版本 + 契约测试）；ACP 审批/steer 语义需实测；reference 模块与 IPC 解耦工作量；worktree 边界（锁/清理/冲突）。
+**风险**：dsh 仍是 developer preview（锁版本 + 契约测试）；ACP 审批/steer 语义需实测；参考模块与 IPC 解耦工作量；worktree 边界（锁/清理/冲突）。

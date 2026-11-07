@@ -11,7 +11,7 @@
 
 用**一个界面**管住一支 Agent 队伍（本机 + SSH 远程），把每天的 TODO 变成可追踪、可干预、可收口的执行流。
 
-**形态（已定，不再讨论）**：独立安装包（`.dmg` / `.exe` / `.AppImage`），壳内含本地控制面、本地执行器、SSH 客户端；远程主机只装瘦代理。**不以 VSCodium 为底座，不 fork reference / reference。**
+**形态（已定，不再讨论）**：独立安装包（`.dmg` / `.exe` / `.AppImage`），壳内含本地控制面、本地执行器、SSH 客户端；远程主机只装瘦代理。**不以 VSCodium 为底座，不 fork 参考产品。**
 
 **能力边界（已定）**：做**编排 + 协作 + 审阅**——Agent / 主机 / 运行时、TODO / 项目 / 看板、分派与纠偏、评论与通知、worktree 与 Diff 审阅、统计审计。**不做代码编辑器，也不做数据 / 绘图 / HTML 画布**：这三类域面板归 IDE，harness 只保留**只读产物预览 + 深链回 IDE**，并通过 Context Bridge 把"我正在看什么"传给 Agent。
 
@@ -477,8 +477,8 @@ session.close
 | 决策 | 结论 | 原因 |
 |---|---|---|
 | 是否基于 VSCodium | 否 | 用户不写代码，编辑器只提供 diff 审阅；代价是 200MB+ 包体与独立升级线 |
-| 是否 fork reference | 否 | MIT 已确认；仓库 391MB / 40,548 文件，形态是完整 IDE，接入即回到代码编辑器路线 |
-| 是否 fork reference | 否 | Apache-2.0 + Part I 附加条款：禁止托管第三方、禁止作为售卖产品组件嵌入、禁改品牌；功能覆盖 19 / 43 |
+| 是否 fork 参考 IDE | 否 | MIT 已确认；完整 IDE 形态，接入即回到代码编辑器路线 |
+| 是否 fork 参考 SaaS | 否 | 附加条款限制托管与商业嵌入；只做交互参照 |
 | 执行引擎 | 各家 Agent CLI 为主；**dsh 作为可选 runtime（P1）** | 不把 agent loop 内置成产品本体；dsh 经 ACP 接入，故障半径限制在单个 run |
 | 复用方式 | 只借设计与 MIT 依赖 | xterm.js / node-pty / ssh2 / simple-git / Monaco diff；协议层参考 run 状态机与回写机制，不复制受限代码 |
 | 形态 | 独立 Electron 发包 | 与 IDE 解耦、升级独立、客户无需装环境；一期不含手机端与 relay |
@@ -533,8 +533,6 @@ dsh（MIT）不做底座——理由见 §12——但它的执行层实现比我
 | **DeepSeek Harness**（MIT） | `../deepseek-harness` | **可选 runtime + 设计参照**：ACP 执行器、审批守卫、事件溯源、步边界 steer、任务 DAG、时区调度 | 只接适配器，不 fork 底座；见 §12.1 |
 | **dsh SDK**（MIT） | `@deepseek-ai/dsh-sdk-protocol` · `@deepseek-ai/dsh-sdk-client` | Executor Adapter 的 TypeScript 实现：spawn `dsh --profile sdk`，驱动 session 与事件流 | 直接依赖，锁版本 |
 | **SKILL.md + skill loader**（MIT） | `deepseek-harness/packages/skill/*` | A3 技能对象化：格式、多源发现、按需加载 | 借格式与逻辑，剥 Cordis 依赖 |
-| **reference**（Apache-2.0 + 附加条款） | `docs/reference-main` | **仅作设计参照**：任务详情 section、run 状态机、steer 回执、插件沙箱；不复制 UI 代码 | 许可禁止嵌入售卖产品与改品牌 |
-| **reference**（MIT） | `docs/reference-main` | 可选参考 / 复用：worktree 广播对比、diff 批注、design mode 交互；不接其 IDE 壳 | 保留版权声明，按需摘取 |
 
 ---
 
@@ -542,8 +540,7 @@ dsh（MIT）不做底座——理由见 §12——但它的执行层实现比我
 
 - D2 的运行中注入依赖各 CLI 能力（Claude Code / Codex 支持较好，其余降级）：降级时界面显示「已排队至下一轮」，必须与「已注入」区分；各 CLI 能力矩阵在 M1 实测后填充。
 - C2 广播的产物对比是否需要自动 diff 摘要（当前定为人工对比）。
-- 是否需要把 reference / reference 作为对照验证基线（只用于对齐交互，不复用其受限代码）。
-- **范围风险**：harness 的差异化只剩 IDE 交接闭环 + TODO 优先回写 + 域感知审计；若这三条也砍，建议直接评估 reference 商业授权而非自研。
+- **范围风险**：harness 的差异化只剩 IDE 交接闭环 + TODO 优先回写 + 域感知审计；若这三条也砍，建议直接评估现成商业方案而非自研。
 - **dsh 适配 spike**：ACP create/prompt/cancel + 10 并发 session + 包体测量；通过则列为 P1 runtime，不通过维持原生 CLI。
 - **三处降级**：D3 暂停/继续、F1 SSH 凭据、G1 自由 dock（依据 §12.1 / 附录 A），需产品确认后改验收。
 - K3 的 stale 保留时长（当前建议：保留最后一次，直到 IDE 重新上报；不设 TTL）。
@@ -564,21 +561,18 @@ dsh（MIT）不做底座——理由见 §12——但它的执行层实现比我
 | 6 | 聊天窗口可纠正 | D2（合并）、D5 | 覆盖 | — |
 | 7 | 跑完回应 TODO | E2（执行器校验）、M4、L3 | 覆盖 | — |
 | — | 原文未要求（v0.3 扩容） | G 布局、K 上下文桥、L 接口、M IDE 交接 | 超出 | 占约 4 周；可按需后置 |
-| — | 原文未要求（参考 reference / reference 补齐） | N–T，共 32 条 | 超出 | M5–M6 约 4 周；P0 部分（N/Q/R）已并入 M1–M3 |
+| — | 原文未要求（参考同类产品补齐） | N–T，共 32 条 | 超出 | M5–M6 约 4 周；P0 部分（N/Q/R）已并入 M1–M3 |
 
 ---
 
-## 16. 功能来源（reference / reference 对照）
+## 16. 功能来源（参考实践）
 
 | 来源 | 补入的模块 | 未吸收（及原因） |
 |---|---|---|
-| **reference**：<https://reference.ai/docs/zh>（本地 `docs/reference-main/apps/docs/content/docs/*.zh.mdx`） | N 任务协作（评论 / @ / 快捷操作 / 附件 / 自定义属性 / 视图）、O 项目与小队（项目资源 / 工作流 / 小队）、P 技能与自动化（Skills / Autopilot / 唤醒）、Q 运行时治理（运行时矩阵 / 隔离 / 用量 / 错误分类 / 并发超时）、S 通知与检索、T 集成与客户端 | 多租户 SaaS 与 Docker 自托管（§7 已定本地 SQLite）；聊天平台媒体处理细节；社区维护功能 |
-| **reference**：<https://www.reference.dev/docs>（本地 `docs/reference-main/docs/site/content/docs`） | R 工作树与审阅（worktree 生命周期 / 并行对比 / Diff 批注 / 提交推送 / 变更归属）、S 快捷键与活动流、T4 CLI 自动化（`worktree` / `snapshot` / `click` / `fill`）、G 多标签与分屏（P2） | 终端分屏 / 内置浏览器 / Design Mode / 代码编辑器（归 IDE）；插件宿主沙箱（P2 后再评估） |
 | **DeepSeek Harness** | D2 step 边界 steer、C4 依赖 DAG、B5 时区调度、Q 执行器适配与审批守卫 | 会话中心 UI、会话内 3 态 todo、Cordis 插件底座（见 §12.1） |
+| **同类产品实践** | N 任务协作、O 项目与小队、P 技能与自动化、Q 运行时治理、S 通知与检索、T 集成与客户端；R worktree 审阅、快捷键、CLI 自动化、多标签与分屏 | 多租户 SaaS / Docker 自托管；终端分屏 / 内置浏览器 / Design Mode / 代码编辑器（归 IDE）；插件宿主沙箱 |
 
 **吸收原则**：只借交互与协议设计，不复制受限代码；新增能力必须落到具体编号与验收，否则不入表。
-
-**模块级对比（含截图与改进建议）**：[`CMP-modules-reference-reference.md`](CMP-modules-reference-reference.md) —— A–T 逐模块对比 reference / reference / 本项目，截图见 reference / reference 官方文档。
 
 ---
 
@@ -619,24 +613,16 @@ POST /api/context
 
 | 需求 | 现级别 | 建议 | 依据 |
 |---|---|---|---|
-| D3 暂停/继续 | P0 | 验收改为"停止 + 重试生成新 run"，暂停/继续降 P2 | reference 仅 stop/retry；CLI 进程暂停语义难可靠实现 |
-| F1 SSH 凭据 | P1 | 主路径用一次性 token 安装命令（A2 已定），SSH 密钥/端口转发降为高级选项 | reference 用 daemon + token |
-| G1 自由停靠 | P0 | P0 = 固定四区 + 可缩放/可折叠 + 布局保存；自由 dock 降 P2 | reference 固定 shell + resizable |
+| D3 暂停/继续 | P0 | 验收改为"停止 + 重试生成新 run"，暂停/继续降 P2 | 参考实现仅 stop/retry；CLI 进程暂停语义难可靠实现 |
+| F1 SSH 凭据 | P1 | 主路径用一次性 token 安装命令（A2 已定），SSH 密钥/端口转发降为高级选项 | 参考实现用 daemon + token |
+| G1 自由停靠 | P0 | P0 = 固定四区 + 可缩放/可折叠 + 布局保存；自由 dock 降 P2 | 参考实现固定 shell + resizable |
 
-### A.5 源码核对（`docs/reference-main` / `docs/reference-main`）
-
-43 条口径：**完全满足 19（44%）/ 部分 11 / 缺失 13**；与 reference 重叠约 70%，剩余差异为 C2 / C4 / D4 / B3 / F1 / G1 / M。本次按其文档补入 N–T 共 32 条后，原缺失项（评论 / @ 路由、项目 / 工作流 / 小队、Skills / Autopilot / 唤醒、用量与错误分类、Bot / 移动端）已入表；仍未覆盖的只剩多租户与 Docker 自托管。
-
-- **reference**：Apache-2.0 + Part I 附加条款（禁止托管第三方、禁止嵌入售卖产品、禁改品牌）→ 只能参照设计，不能复制代码。
-- **reference**：MIT（可复用，保留声明）；391MB / 40,548 文件的 Electron + Monaco IDE，接壳等于改定位。
-
----
 
 ## 17. 工程约束与风险
 
 ### 17.1 必须守住的差异化
 
-对比 reference（以 worktree 为中心）与 reference（以 issue + 小队为中心），本项目只有三条真差异，任何改动不得破坏：
+对比以 worktree 为中心与以 issue + 小队为中心的两类参考产品，本项目只有三条真差异，任何改动不得破坏：
 
 | 差异 | 约束 | 评审问题 |
 |---|---|---|

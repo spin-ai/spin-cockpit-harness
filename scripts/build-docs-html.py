@@ -18,7 +18,6 @@ DOCS = ROOT / "docs"
 OUT = DOCS / "REQ-multi-agent-workspace.html"
 
 REQ = DOCS / "REQ-multi-agent-workspace.md"
-CMP = DOCS / "CMP-modules-reference-reference.md"
 ORIG = DOCS / "REQ-original.md"
 
 MD_EXT = ["tables", "fenced_code", "sane_lists", "attr_list", "toc"]
@@ -68,7 +67,7 @@ def add_ids(md: str, kind: str) -> str:
 
 
 def polish(html: str) -> str:
-    """表格包一层可横向滚动；对比截图为卡片；跨文档链接转锚点。"""
+    """表格包一层可横向滚动；跨文档链接转锚点。"""
     def wrap(m: re.Match) -> str:
         table = m.group(0)
         head = re.search(r"<th[^>]*>(.*?)</th>", table, re.S)
@@ -77,9 +76,7 @@ def polish(html: str) -> str:
         return f'<div class="{cls}">{table}</div>'
 
     html = re.sub(r"<table>.*?</table>", wrap, html, flags=re.S)
-    html = html.replace('src="assets/cmp/', 'class="shot" src="assets/cmp/')
     html = re.sub(r'<a href="REQ-multi-agent-workspace\.md"', '<a href="#top"', html)
-    html = re.sub(r'<a href="CMP-modules-reference-reference\.md"', '<a href="#cmp"', html)
     html = re.sub(r'<a href="REQ-original\.md"', '<a href="#orig"', html)
     return html
 
@@ -174,7 +171,6 @@ def main() -> None:
     style, proto = old_style_and_proto()
 
     req_html = polish(md2html(add_ids(strip_first_h1(REQ.read_text(encoding="utf-8")), "req")))
-    cmp_html = polish(md2html(add_ids(strip_first_h1(CMP.read_text(encoding="utf-8")), "cmp")))
     orig_html = polish(md2html(strip_first_h1(ORIG.read_text(encoding="utf-8"))))
 
     proto_html = proto if proto else '<p class="part-lead">（原型图缺失）</p>'
@@ -183,14 +179,6 @@ def main() -> None:
         proto_html = '<div class="part">' + proto + "</div>"
 
     req_html = '<div class="part" id="req">' + req_html + "</div>"
-    cmp_html = (
-        '<div class="part cmp">'
-        '<h2 class="part-head" id="cmp">reference / reference / 本项目对比</h2>'
-        '<p class="part-lead">按模块逐一对比，截图为两家官方文档原图；本项目状态 '
-        "<code>已实现</code> / <code>已排期</code> / <code>缺</code>。建议按 P0 → P2 排序。</p>"
-        + cmp_html
-        + "</div>"
-    )
     orig_html = (
         '<div class="part">'
         '<h2 class="part-head" id="orig">原话拆解与修改建议</h2>'
@@ -203,7 +191,6 @@ def main() -> None:
         [
             ("需求", req_html),
             ("原型", proto_html),
-            ("对比", cmp_html),
             ("附录", orig_html),
         ]
     )
@@ -225,23 +212,21 @@ def main() -> None:
 </nav>
 <main>
   <header class="doc-head" id="top">
-    <h1>Cockpit Harness — 需求与模块对比</h1>
+    <h1>Cockpit Harness — 需求文档</h1>
     <p class="lead">独立发包的多 Agent 编排控制台：TODO / 看板 / 分派 / 纠偏 / 回写，<b>域面板留在 YieldMind-IDE</b>。
-    本文合并三份内容：现行需求（A–T）、界面原型、与 reference / reference 的模块级对比。</p>
+    本文合并两份内容：现行需求（A–T）与界面原型。</p>
     <div class="lede-chips">
       <span>76 条需求 · 57 P0 / 14 P1 / 5 P2</span>
       <span>14 周（M0–M6）</span>
-      <span>截图 52 张</span>
     </div>
   </header>
   {req_html}
   {proto_html}
-  {cmp_html}
   {orig_html}
   <div class="doc-foot">
     由 <code>scripts/build-docs-html.py</code> 生成：源文件
-    <code>docs/REQ-multi-agent-workspace.md</code> + <code>docs/CMP-modules-reference-reference.md</code> +
-    <code>docs/REQ-original.md</code>。截图取自 reference / reference 官方文档，仅作内部对比。
+    <code>docs/REQ-multi-agent-workspace.md</code> +
+    <code>docs/REQ-original.md</code>。
   </div>
 </main>
 </div>

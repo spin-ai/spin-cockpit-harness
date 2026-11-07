@@ -1,19 +1,19 @@
 # Chat UI（会话界面）
 
-> 参考：reference Chat（`docs/reference-main`，`docs/assets/cmp/mul-chat*.webp`）、reference Native Chat 的排版/颜色规范（`docs/reference-main/docs/styleguide/native-chat.md`）、reference 终端右键菜单与卡片式 composer 的交互。
+> 参考：同类产品的扁平 transcript、步骤折叠、native chat 排版与卡片式 composer 交互。
 > 本文记录 harness Chat 的视觉结构与取舍；会话数据模型见 [`ARCH-chat-thread.md`](ARCH-chat-thread.md)。
 
 ---
 
-## 1. 参考产品里值得抄的部分
+## 1. 参考实践
 
 | 参考 | 关键点 | 我们的取舍 |
 |---|---|---|
-| reference Chat | **扁平 transcript**：agent 消息就是正文，不用气泡包起来；用户消息是一条右对齐的浅色块 | 采用。去掉每行边框/卡片，agent 正文 13px/1.68，用户消息右对齐 tint 气泡 |
-| reference Chat | **步骤折叠**：连续的工具调用收成「N steps」，默认折叠，点开看细节 | 采用。连续 `tool` / `thought` 合并成 `tool-group`，默认 ≤2 步展开、>2 步折叠 |
-| reference Chat | **composer 卡片**：一个大圆角输入卡，底部放 agent / 附件 / 发送；发送是紧凑按钮 | 采用。agent/project/工具收进 composer footer，发送按钮显示动作（派活/纠偏/发送） |
-| reference native-chat styleguide | 固定字号阶梯（14 / 12 / 11 / 10 / code 12），二级文字用 faint；行 hover 用低对比背景；focus ring 用 inset | 采用 CSS 变量：正文跟随 `--chat-font-size`，meta 10.5px，工具行 10px，hover 用 `--surface-hover` |
-| reference native-chat | transcript 行不包卡片，状态/动作行弱化；工具输出是代码字体 | 采用。工具行 `mono` 单行摘要 + 展开原文 |
+| 参考实践 A | **扁平 transcript**：agent 消息就是正文，不用气泡包起来；用户消息是一条右对齐的浅色块 | 采用。去掉每行边框/卡片，agent 正文 13px/1.68，用户消息右对齐 tint 气泡 |
+| 参考实践 A | **步骤折叠**：连续的工具调用收成「N steps」，默认折叠，点开看细节 | 采用。连续 `tool` / `thought` 合并成 `tool-group`，默认 ≤2 步展开、>2 步折叠 |
+| 参考实践 A | **composer 卡片**：一个大圆角输入卡，底部放 agent / 附件 / 发送；发送是紧凑按钮 | 采用。agent/project/工具收进 composer footer，发送按钮显示动作（派活/纠偏/发送） |
+| 参考实践 B | 固定字号阶梯（14 / 12 / 11 / 10 / code 12），二级文字用 faint；行 hover 用低对比背景；focus ring 用 inset | 采用 CSS 变量：正文跟随 `--chat-font-size`，meta 10.5px，工具行 10px，hover 用 `--surface-hover` |
+| 参考实践 B | transcript 行不包卡片，状态/动作行弱化；工具输出是代码字体 | 采用。工具行 `mono` 单行摘要 + 展开原文 |
 
 ## 2. 结构
 
