@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ElementContext } from "../types";
-import { CopyIcon, RefreshIcon, RevealIcon, XIcon } from "./Icons";
+import { CopyIcon, ListIcon, RefreshIcon, RevealIcon, XIcon } from "./Icons";
 import { FileVisual, extOf } from "./FileVisual";
+import { renderMarkdown, slugifyHeading } from "../markdown";
+import { requestFilePreview } from "../terminal-events";
 
 // Electron <webview>：独立进程、无 preload；本地 HTML 用 file://，dev server 用 http(s)
 const Webview: any = "webview";
@@ -13,6 +15,19 @@ function normalizeUrl(raw: string) {
   const value = String(raw || "").trim();
   if (!value) return "";
   return /^[a-z]+:\/\//i.test(value) ? value : `http://${value}`;
+}
+
+/** 把 Markdown 里的相对链接解析成相对项目根的路径（支持 ../） */
+function resolveRel(baseRel: string, href: string) {
+  const baseDir = baseRel.includes("/") ? baseRel.slice(0, baseRel.lastIndexOf("/")) : "";
+  const parts = (href.startsWith("/") ? href.slice(1) : `${baseDir}/${href}`).split("/");
+  const out: string[] = [];
+  for (const part of parts) {
+    if (!part || part === ".") continue;
+    if (part === "..") out.pop();
+    else out.push(part);
+  }
+  return out.join("/");
 }
 
 /**
@@ -37,7 +52,10 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   onClose?: () => void;
 }) {
   const isFile = mode === "file";
-  const isHtml = isFile && Boolean(file && ["html", "htm"].includes(extOf(file.name)));
+  const ext = file ? extOf(file.name) : "";
+  const isHtml = isFile && ["html", "htm"].includes(ext);
+  const isMarkdown = isFile && ["md", "markdown"].includes(ext);
+  const isImage = isFile && ["png", "jpg", "jpeg", "webp", "gif", "svg"].includes(ext);
   const abs = useMemo(() => (file?.root ? `${file.root.replace(/[\\/]+$/, "")}/${file.rel}` : ""), [file?.root, file?.rel]);
   const fileUrl = useMemo(() => (abs ? `file://${encodeURI(abs)}` : ""), [abs]);
   const initialWeb = normalizeUrl(url || autoOpenUrl || defaultUrl);
@@ -53,13 +71,30 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   const [picked, setPicked] = useState<ElementContext | null>(null);
   const [pickError, setPickError] = useState("");
   const viewRef = useRef<any>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
   const wcIdRef = useRef<number | null>(null);
   const fileKeyRef = useRef("");
+  // 源码 / 编辑模式：草稿 + 脏标记 + 保存（⌘S）
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [tocOpen, setTocOpen] = useState(false);
+  const editable = isFile && (isHtml || isMarkdown);
+  const dirty = editable && data?.text != null && draft !== data.text;
 
   const src = isFile ? fileUrl : webSrc;
-  const renderWebview = Boolean(src) && (!isFile || fileMode === "render" || isHtml);
+  // webview 只用于网页 / HTML / 图片；Markdown 与其他文本走 DOM 渲染
+  const useWebview = Boolean(src) && (!isFile || isHtml || isImage);
   // HTML 文件即使源码模式也保留 webview，切回来不重新加载
-  const showWebview = !isFile || !isHtml || fileMode === "render";
+  const showWebview = useWebview && (!isFile || !isHtml || fileMode === "render");
+
+  const mdHtml = useMemo(() => {
+    if (!isMarkdown || fileMode !== "render" || data?.text == null) return "";
+    return renderMarkdown(data.text);
+  }, [isMarkdown, fileMode, data?.text]);
+
+  // 同一标签换成另一个文件时回到「渲染」视图
+  useEffect(() => { setFileMode("render"); }, [file?.rel, file?.root]);
 
   // web：地址栏/自动打开发生变化时导航
   useEffect(() => {
@@ -76,7 +111,7 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
     let alive = true;
     if (fileKeyRef.current !== key) { fileKeyRef.current = key; setData(null); }
     window.harness.filesRead(file.rel, file.root)
-      .then((res) => { if (alive) { setData(res); setError(""); } })
+      .then((res) => { if (alive) { setData(res); setDraft(res?.text ?? ""); setError(""); } })
       .catch((e) => { if (alive) setError(String((e as Error)?.message || e)); });
     return () => { alive = false; };
   }, [isFile, file?.rel, file?.root, nonce]);
@@ -178,7 +213,89 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
     try { await window.harness.clipboardWrite(file.rel); } catch { /* ignore */ }
   };
 
-  const canPick = Boolean(src) && (!isFile || fileMode === "render");
+  const canPick = Boolean(src) && (!isFile || (isHtml && fileMode === "render"));
+
+  const onRenderedClick = (e: React.MouseEvent) => {
+    const a = (e.target as HTMLElement).closest("a");
+    if (!a) return;
+    const href = a.getAttribute("href") || "";
+    if (!href) return;
+    if (href.startsWith("#")) {
+      e.preventDefault();
+      const id = decodeURIComponent(href.slice(1));
+      const container = e.currentTarget as HTMLElement;
+      const target = Array.from(container.querySelectorAll<HTMLElement>("[id]")).find((el) => el.id === id);
+      target?.scrollIntoView({ block: "start", behavior: "smooth" });
+      return;
+    }
+    e.preventDefault();
+    if (/^(https?:|mailto:)/i.test(href)) { void window.harness.openExternal(href); return; }
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//")) return;
+    // Markdown 里的相对文档链接：在同一个 root 下打开为新的预览标签
+    const raw = href.split("#")[0].split("?")[0];
+    if (!raw || raw.endsWith("/")) return;
+    const target = resolveRel(file?.rel || "", raw);
+    if (target) requestFilePreview({ rel: target, name: target.split("/").pop(), root: file?.root || root });
+  };
+
+  const save = async () => {
+    if (!file || !dirty || saving) return;
+    setSaving(true);
+    try {
+      await window.harness.filesWrite(file.rel, file.root, draft);
+      setData((cur) => ({ ...(cur || {}), text: draft, error: undefined }));
+      setSavedAt(Date.now());
+      if (isHtml) refresh(); // HTML 改完直接重载预览
+    } catch (e) {
+      setError(String((e as Error)?.message || e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // 编辑器里 ⌘S 保存（只在当前可见标签、且处在源码/编辑模式时生效）
+  useEffect(() => {
+    if (!active || !editable || fileMode !== "source") return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") { e.preventDefault(); void save(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  // 目录：从源码里抽标题（跳过代码块），id 与 renderMarkdown 的锚点一致
+  const headings = useMemo(() => {
+    if (!isMarkdown) return [];
+    const source = (fileMode === "source" ? draft : data?.text) || "";
+    const out: { level: number; text: string; id: string }[] = [];
+    let fence = false;
+    for (const line of source.split("\n")) {
+      if (/^\s*(```|~~~)/.test(line)) { fence = !fence; continue; }
+      if (fence) continue;
+      const m = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+      if (!m) continue;
+      const text = m[2].replace(/[*_`~]/g, "").trim();
+      const id = slugifyHeading(text);
+      if (id) out.push({ level: m[1].length, text, id });
+    }
+    return out;
+  }, [isMarkdown, fileMode, draft, data?.text]);
+
+  const jumpToHeading = (id: string) => {
+    if (fileMode !== "render") setFileMode("render");
+    window.setTimeout(() => {
+      const el = bodyRef.current?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}"]`);
+      el?.scrollIntoView({ block: "start", behavior: "smooth" });
+      el?.classList.add("md-flash");
+      window.setTimeout(() => el?.classList.remove("md-flash"), 1200);
+    }, 60);
+  };
+
+  const fileText = data?.error
+    ? <div className="preview-error">{data.error}</div>
+    : data?.text != null
+      ? <pre className="file-preview-text">{data.text}</pre>
+      : <div className="pane-empty">加载中…</div>;
 
   return (
     <div className="preview-surface">
@@ -205,12 +322,27 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
           )}
         </div>
         <div className="preview-surface-actions">
-          {isFile && isHtml && (
+          {editable && data?.text != null && (
             <div className="file-preview-seg" role="group" aria-label="预览模式">
-              <button className={fileMode === "render" ? "on" : ""} onClick={() => setFileMode("render")}>渲染</button>
-              <button className={fileMode === "source" ? "on" : ""} onClick={() => setFileMode("source")}>源码</button>
+              <button className={fileMode === "render" ? "on" : ""} onClick={() => setFileMode("render")}>{isHtml ? "预览" : "富文本"}</button>
+              <button className={fileMode === "source" ? "on" : ""} onClick={() => setFileMode("source")}>{isHtml ? "编辑" : "源码"}</button>
             </div>
           )}
+          {isMarkdown && headings.length > 0 && (
+            <button
+              className={`icon-btn ${tocOpen ? "on" : ""}`}
+              title="目录（点击标题跳转）"
+              aria-label="目录"
+              aria-pressed={tocOpen}
+              onClick={() => setTocOpen((v) => !v)}
+            ><ListIcon size={13} /></button>
+          )}
+          {dirty && (
+            <button className="btn tiny-btn primary" disabled={saving} title="保存（⌘S）" onClick={() => void save()}>
+              {saving ? "保存中…" : "保存"}
+            </button>
+          )}
+          {!dirty && savedAt && <span className="preview-saved">已保存</span>}
           {canPick && (picking
             ? <button className="btn tiny-btn danger" onClick={() => void cancelPick()}>取消拾取</button>
             : <button className="btn tiny-btn primary" disabled={!ready} title="在页面里点选元素，注入 Chat" onClick={() => void pickElement()}>拾取元素</button>
@@ -234,13 +366,39 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
         </div>
       )}
       {(error || pickError) && <div className="preview-error">{error || pickError}</div>}
-      <div className={`preview-surface-body${showWebview ? " frame" : ""}`}>
-        {isFile && isHtml && fileMode === "source" && (
-          data?.error ? <div className="preview-error">{data.error}</div>
-            : data?.text != null ? <pre className="file-preview-text">{data.text}</pre>
-              : <div className="pane-empty">加载中…</div>
+      <div ref={bodyRef} className={`preview-surface-body${showWebview ? " frame" : ""}${tocOpen && isMarkdown ? " with-toc" : ""}`}>
+        {tocOpen && isMarkdown && (
+          <nav className="md-toc" aria-label="目录">
+            <div className="md-toc-head">目录 <span className="tiny faint">{headings.length}</span></div>
+            {headings.map((h, i) => (
+              <button
+                key={`${h.id}-${i}`}
+                className={`md-toc-item lv${h.level}`}
+                style={{ paddingLeft: 8 + (h.level - 1) * 10 }}
+                title={h.text}
+                onClick={() => jumpToHeading(h.id)}
+              >
+                <span className="ellipsis">{h.text}</span>
+              </button>
+            ))}
+            {headings.length === 0 && <div className="tiny faint" style={{ padding: "4px 8px" }}>没有标题</div>}
+          </nav>
         )}
-        {renderWebview && (
+        <div className="preview-surface-content">
+        {isFile && fileMode === "source" && editable && (
+          <textarea
+            className="file-source-editor"
+            value={draft}
+            spellCheck={false}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="空文件，直接在这里写…"
+          />
+        )}
+        {isFile && !isHtml && !isMarkdown && !isImage && fileText}
+        {isFile && isMarkdown && fileMode === "render" && (
+          <div className="md-render" onClick={onRenderedClick} dangerouslySetInnerHTML={{ __html: mdHtml }} />
+        )}
+        {useWebview && (
           <div className="preview-surface-frame" style={{ display: showWebview ? "flex" : "none" }}>
             <Webview
               ref={viewRef}
@@ -252,6 +410,7 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
           </div>
         )}
         {!src && <div className="pane-empty">输入地址后点「打开」。</div>}
+        </div>
       </div>
     </div>
   );

@@ -709,6 +709,49 @@ function toolArgHint(raw) {
   return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 }
 
+/**
+ * 把 agent 自报的 TODO 列表（`todo_write` 工具入参 / ACP `plan` 更新）归一化成 `todo.subtasks`。
+ * todo_write 每次提交完整列表，所以整体替换；状态映射到看板里的三种状态。
+ */
+const PLAN_STATUS = { pending: "todo", in_progress: "in_progress", completed: "done", cancelled: "cancelled" };
+const PLAN_TOOLS = /^(todo_write|todowrite|write_todos|update_plan|todo)$/i;
+
+function planEntries(u, title) {
+  const raw = u?.rawInput;
+  let list = null;
+  if (Array.isArray(raw)) list = raw;
+  else if (raw && typeof raw === "object") {
+    list = raw.todos ?? raw.items ?? raw.steps ?? raw.plan ?? null;
+  }
+  // ACP 标准 plan 更新：entries 直接在 update 上
+  if (!Array.isArray(list) && Array.isArray(u?.entries)) list = u.entries;
+  if (!Array.isArray(list)) return null;
+  if (!Array.isArray(u?.entries) && !PLAN_TOOLS.test(String(title || ""))) return null;
+  const entries = list
+    .map((item, i) => {
+      if (typeof item === "string") return { id: `s${i}`, title: item.trim(), status: "todo" };
+      if (!item || typeof item !== "object") return null;
+      const text = item.content ?? item.title ?? item.text ?? item.step ?? item.description ?? "";
+      const titleText = String(text).replace(/\s+/g, " ").trim();
+      if (!titleText) return null;
+      const status = PLAN_STATUS[String(item.status ?? item.state ?? "").toLowerCase()] ?? "todo";
+      return { id: `s${i}`, title: titleText.slice(0, 300), status };
+    })
+    .filter(Boolean)
+    .slice(0, 60);
+  return entries;
+}
+
+/** agent 的 TODO 列表落到任务上：TODO LIST 的行内计划（缺失时不重建对象，避免无意义广播） */
+function applyPlan(todo, entries) {
+  if (!todo || !entries) return false;
+  const prev = Array.isArray(todo.subtasks) ? todo.subtasks : [];
+  if (prev.length === entries.length && prev.every((s, i) => s.title === entries[i].title && s.status === entries[i].status)) return false;
+  todo.subtasks = entries;
+  todo.updatedAt = now();
+  return true;
+}
+
 function handleUpdate(run, todo, handle, u) {
   const threadId = handle.threadId || threadForTodo(todo).id;
   handle.threadId = threadId;
@@ -740,6 +783,8 @@ function handleUpdate(run, todo, handle, u) {
     const hint = (u.rawInput ? toolArgHint(u.rawInput) : "") || prev.hint || "";
     const content = `${title}${status ? ` · ${status}` : ""}${hint ? `\n${hint}` : ""}`;
     handle.toolMeta.set(key, { title, status, hint });
+    // agent 用 todo_write 维护自己的清单：同步到任务的 subtasks，TODO LIST 行内可见
+    if (applyPlan(todo, planEntries(u, title))) store.addEvent("todo.plan", `todo.plan ${todo.key} ${todo.subtasks.length} steps`);
     if (existing) store.updateMessage(existing, { content });
     else handle.tools.set(key, store.addMessage(threadId, run.id, "tool", "tool", content).id);
     store.addEvent("run.tool", `run.tool ${title} ${status}`);
@@ -757,7 +802,9 @@ function handleUpdate(run, todo, handle, u) {
       }
     }
   } else if (u.sessionUpdate === "plan") {
-    store.addEvent("run.plan", `run.plan ${(u.entries || []).length} steps`);
+    // 标准 ACP plan 更新（Claude Code 等）：同样落到任务的 subtasks
+    if (applyPlan(todo, planEntries(u, "plan"))) store.addEvent("todo.plan", `todo.plan ${todo.key} ${todo.subtasks.length} steps`);
+    else store.addEvent("run.plan", `run.plan ${(u.entries || []).length} steps`);
   }
   broadcast();
 }
@@ -2848,6 +2895,17 @@ ipcMain.handle("files:trash", async (_e, { rel, root } = {}) => {
   if (full === base) throw new Error("不能删除项目根目录");
   await shell.trashItem(full);
   return true;
+});
+
+ipcMain.handle("files:write", (_e, { rel, root, text } = {}) => {
+  if (typeof text !== "string") throw new Error("text required");
+  if (!rel) throw new Error("rel required");
+  const base = rootOf(root);
+  const full = filesInside(base, rel);
+  fs.mkdirSync(path.dirname(full), { recursive: true });
+  fs.writeFileSync(full, text, "utf8");
+  store.addEvent("file.write", `file.write ${rel} ${Buffer.byteLength(text)}B`);
+  return { ok: true, size: Buffer.byteLength(text) };
 });
 
 ipcMain.handle("files:reveal", (_e, { rel, root } = {}) => {

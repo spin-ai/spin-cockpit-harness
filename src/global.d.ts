@@ -26,6 +26,7 @@ declare global {
       filesDuplicate(rel: string, root?: string): Promise<{ path: string; name: string }>;
       filesTrash(rel: string, root?: string): Promise<boolean>;
       filesReveal(rel: string, root?: string): Promise<boolean>;
+      filesWrite(rel: string, root: string | undefined, text: string): Promise<{ ok: boolean; size: number }>;
       previewPick(webContentsId: number, root?: string): Promise<ElementContext>;
       previewCancel(webContentsId: number): Promise<void>;
       previewDetach(webContentsId: number): Promise<void>;

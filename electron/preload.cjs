@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld("harness", {
   filesDuplicate: (rel, root) => ipcRenderer.invoke("files:duplicate", { rel, root }),
   filesTrash: (rel, root) => ipcRenderer.invoke("files:trash", { rel, root }),
   filesReveal: (rel, root) => ipcRenderer.invoke("files:reveal", { rel, root }),
+  filesWrite: (rel, root, text) => ipcRenderer.invoke("files:write", { rel, root, text }),
   previewPick: (webContentsId, root) => ipcRenderer.invoke("preview:pick", { webContentsId, root }),
   previewCancel: (webContentsId) => ipcRenderer.invoke("preview:cancel", { webContentsId }),
   previewDetach: (webContentsId) => ipcRenderer.invoke("preview:detach", { webContentsId }),
