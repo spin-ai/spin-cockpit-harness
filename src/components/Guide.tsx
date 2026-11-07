@@ -1,4 +1,5 @@
 import type { State } from "../types";
+import { PageHeader } from "./PageHeader";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
@@ -39,17 +40,15 @@ export function Guide({ state, act, onStartMission, onOpenSettings }: {
   const workers = state.agents.filter((a) => (a.role || "worker") !== "supervisor" && a.chatRunnable !== false);
   return (
     <div className="guide-page">
-      <header className="guide-head">
-        <div>
-          <span className="guide-kicker">Cockpit Harness · 使用说明</span>
-          <h1>Super Agent 怎么用</h1>
-          <p>一句话目标 → 主管拆解 → 人工批准 → worker 在独立 worktree 执行 → 主管汇总 → 你确认。</p>
-        </div>
-        <div className="guide-actions">
+      <PageHeader
+        kicker="COCKPIT HARNESS · 使用说明"
+        title="Super Agent 怎么用"
+        subtitle="一句话目标 → 主管拆解 → 人工批准 → worker 在独立 worktree 执行 → 主管汇总 → 你确认。"
+        actions={<div className="guide-actions">
           <button className="btn primary" onClick={onStartMission}>新建 Mission</button>
           <button className="btn" onClick={onOpenSettings}>打开设置</button>
-        </div>
-      </header>
+        </div>}
+      />
 
       <div className="guide-status">
         <div><b>{workers.length}</b><span>可用 worker</span></div>

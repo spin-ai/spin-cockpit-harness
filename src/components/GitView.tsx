@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { State } from "../types";
 import { GitWiki } from "./GitWiki";
+import { EmptyState } from "./EmptyState";
+import { PageHeader } from "./PageHeader";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 type Commit = { hash: string; subject: string; author: string; when: string };
@@ -146,27 +148,32 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
   if (tab === "wiki") {
     return (
       <div className="page git-page">
-        {tabs}
+        <PageHeader title="项目 Wiki" subtitle="随仓库版本发布的内置文档" tabs={tabs} />
         <GitWiki branch={status?.branch} head={commits[0]?.hash} />
       </div>
     );
   }
 
   if (!status) {
-    return <div className="page git-page">{tabs}<div className="muted small" style={{ padding: 20 }}>{error || "读取 git 状态…"}</div></div>;
+    return (
+      <div className="page git-page">
+        <PageHeader title="Git" subtitle={root} tabs={tabs} />
+        <div className="git-page-empty"><EmptyState title="正在读取 Git 状态…" desc={error || "稍等一下"} compact /></div>
+      </div>
+    );
   }
 
   if (!status.isRepo) {
     return (
       <div className="page git-page">
-        {tabs}
-        <div className="page-head"><div><h2>Git</h2><span className="muted">{root}</span></div></div>
+        <PageHeader title="Git" subtitle={root} tabs={tabs} />
         <section className="panel">
-          <div className="panel-head">这不是一个 Git 仓库</div>
-          <div className="row gap8">
-            <button className="btn primary" onClick={() => void run("初始化", () => window.harness.gitInit(root))}>初始化仓库（git init）</button>
-            <span className="tiny muted">初始化后可以在这里暂存、提交、推送。</span>
-          </div>
+          <EmptyState
+            mark="git"
+            title="这不是一个 Git 仓库"
+            desc="初始化后可以在这里暂存、提交、推送。"
+            action={<button className="btn primary" onClick={() => void run("初始化", () => window.harness.gitInit(root))}>初始化仓库（git init）</button>}
+          />
         </section>
       </div>
     );
@@ -193,20 +200,26 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
 
   return (
     <div className="page git-page">
-      {tabs}
-      <div className="page-head">
-        <div><h2>Git</h2><span className="muted">{status.branch || "(detached)"}{status.upstream ? ` → ${status.upstream}` : " · 无上游"}{status.ahead ? ` · ↑${status.ahead}` : ""}{status.behind ? ` · ↓${status.behind}` : ""}</span></div>
-        <div className="row gap6">
+      <PageHeader
+        title="Git"
+        subtitle={`${status.branch || "(detached)"}${status.upstream ? ` → ${status.upstream}` : " · 无上游"}${status.ahead ? ` · ↑${status.ahead}` : ""}${status.behind ? ` · ↓${status.behind}` : ""}`}
+        tabs={tabs}
+        actions={<div className="row gap6">
           <select className="settings-control git-branch-select" value={status.branch || ""} onChange={(e) => checkout(e.target.value)} title="切换分支">
             {!branches.includes(status.branch || "") && <option value={status.branch || ""}>{status.branch || "(detached)"}</option>}
             {branches.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>
-          <button className="btn tiny-btn" onClick={createBranch}>＋ 分支</button>
           <button className="btn tiny-btn" disabled={Boolean(busy)} onClick={refresh}>{loading ? "刷新中…" : "刷新"}</button>
-          <button className="btn tiny-btn" disabled={Boolean(busy)} onClick={() => void pull()}>拉取{status.behind ? ` ↓${status.behind}` : ""}</button>
+          <details className="row-menu">
+            <summary className="btn tiny-btn row-menu-trigger" title="更多 Git 操作" aria-label="更多 Git 操作">⋯</summary>
+            <div className="row-menu-pop">
+              <button onClick={createBranch}>新建分支</button>
+              <button disabled={Boolean(busy)} onClick={() => void pull()}>拉取{status.behind ? ` ↓${status.behind}` : ""}</button>
+            </div>
+          </details>
           <button className="btn tiny-btn primary" disabled={Boolean(busy)} onClick={() => void push()}>推送{status.ahead ? ` ↑${status.ahead}` : ""}</button>
-        </div>
-      </div>
+        </div>}
+      />
 
       {(output || error) && <pre className="git-output">{output || error}</pre>}
 
@@ -280,8 +293,8 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
                           : "ctx";
                   return <span className={`git-diff-line ${cls}`} key={i}>{line || " "}</span>;
                 })}</pre>
-              : <div className="git-empty">没有可显示的 diff（可能是二进制或未改动）</div>
-            : <div className="git-empty">选一个文件看 diff</div>}
+              : <EmptyState mark="±" title="没有可显示的 Diff" desc="选中文件可能是二进制，或内容没有改动。" compact />
+            : <EmptyState mark="±" title="选择一个文件查看 Diff" desc="左侧变更列表里的文件会在这里展开逐行对比。" compact />}
         </section>
       </div>
     </div>

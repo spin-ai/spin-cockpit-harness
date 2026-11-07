@@ -584,7 +584,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
     <section className="terminal-pane">
       <div className="terminal-bar">
         <div className="row gap6" style={{ minWidth: 0 }}>
-          <span className="term-brand">TERMINAL</span>
+          <span className="term-brand">Terminal</span>
           <button className="link" onClick={onOpenProject}>打开项目</button>
           {activeTab?.kind === "terminal" && activeTab.root && paneCount(activeTab.root) > 1 && (
             <span className="term-pane-count">{paneCount(activeTab.root)} 窗格</span>

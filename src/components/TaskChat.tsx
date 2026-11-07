@@ -419,7 +419,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
   return (
     <section className="chat-pane">
       <div className="pane-head">
-        <span>CHAT</span>
+        <span>Chat</span>
         <div className="row gap6">
           {todo && <span className={`pill status ${mission ? missionPillClass(mission.missionState) : STATUS[todo.status].cls}`}>{todo.confirmed ? "已确认" : mission ? missionStateLabel(mission.missionState) : STATUS[todo.status].label}</span>}
           {historyThreads.length > 1 && (
@@ -546,7 +546,14 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
                   <b>{todo ? "还没有消息" : runnableAgents.length > 0 ? "说一句话开始" : dshAvailable ? "还没有可用的 Agent" : "未检测到 dsh"}</b>
                   <p>{todo ? "在下面补充信息、纠偏或追问。" : "直接描述要完成的事；@别名 指定 Agent，或从预览里拾取元素后发送。"}</p>
                   {!todo && (
-                    <button className="link chat-guide-link" onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: "guide" }))}>Super Agent 怎么用？</button>
+                    <div className="chat-empty-hints">
+                      {runnableAgents.length > 0 && <>
+                        <button onClick={() => updateText("帮我实现 ")}>实现功能</button>
+                        <button onClick={() => updateText("审查这段改动：")}>审查改动</button>
+                        <button onClick={() => updateText("运行测试并修复失败：")}>运行测试</button>
+                      </>}
+                      <button className="link chat-guide-link" onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: "guide" }))}>Super Agent 怎么用？</button>
+                    </div>
                   )}
                 </div>
               )}
