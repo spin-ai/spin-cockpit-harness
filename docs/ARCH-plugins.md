@@ -731,7 +731,6 @@ electron/plugins/host.mjs       # 发现 / 生命周期 / RPC / 权限 / 命令
 electron/plugins/runtime.mjs    # utilityProcess 入口 + PluginContext
 plugins/notes/plugin.json       # Notes 独立插件 manifest
 plugins/notes/main.mjs          # vault 索引 / API / commands / mission event
-scripts/build-plugin.mjs        # 生成 release/plugins/*.cockpit-plugin
 src/components/Notes.tsx        # first-party Obsidian-like UI（随 App 提供，但仅在插件启用时出现）
 src/components/Settings.tsx     # 设置 → 插件
 ```
