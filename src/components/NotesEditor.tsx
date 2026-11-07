@@ -1,20 +1,204 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { basicSetup } from "codemirror";
-import { EditorState, type Extension } from "@codemirror/state";
+import { EditorState, Prec, type Extension } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
-import { markdown } from "@codemirror/lang-markdown";
-import { autocompletion, type CompletionContext } from "@codemirror/autocomplete";
+import { deleteMarkupBackward, insertNewlineContinueMarkup, markdown } from "@codemirror/lang-markdown";
+import { autocompletion, startCompletion, type CompletionContext } from "@codemirror/autocomplete";
+import { indentLess, indentMore, redo, undo } from "@codemirror/commands";
+import { openSearchPanel, search } from "@codemirror/search";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 
 export type NotePickerItem = { path: string; title: string };
 
+const notesTheme = EditorView.theme({
+  "&": { height: "100%", color: "var(--fg)", backgroundColor: "transparent" },
+  ".cm-scroller": { fontFamily: "var(--mono)", lineHeight: "1.75" },
+  ".cm-content": { caretColor: "var(--brand)", padding: "10px 14px 28px" },
+  ".cm-line": { padding: "0" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--brand)" },
+  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground, .cm-content ::selection": {
+    backgroundColor: "color-mix(in srgb, var(--brand) 22%, transparent)",
+  },
+  ".cm-gutters": { backgroundColor: "transparent", color: "var(--faint)", border: "none" },
+  ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--brand) 6%, transparent)" },
+  ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--fg-2)" },
+  ".cm-panels": { backgroundColor: "var(--surface)", color: "var(--fg)", borderColor: "var(--border)" },
+  ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--border)" },
+  ".cm-panels input, .cm-panels button": {
+    color: "var(--fg)", backgroundColor: "var(--page-canvas)",
+    border: "1px solid var(--border)", borderRadius: "5px",
+  },
+  ".cm-searchMatch": { backgroundColor: "color-mix(in srgb, var(--amber) 30%, transparent)" },
+  ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "color-mix(in srgb, var(--amber) 48%, transparent)" },
+  ".cm-selectionMatch": { backgroundColor: "color-mix(in srgb, var(--brand) 12%, transparent)" },
+  ".cm-tooltip": { backgroundColor: "var(--surface)", border: "1px solid var(--border)", color: "var(--fg)" },
+  ".cm-tooltip-autocomplete > ul > li": { padding: "3px 6px" },
+  ".cm-tooltip-autocomplete > ul > li[aria-selected]": { backgroundColor: "var(--brand-soft)", color: "var(--fg)" },
+  ".cm-completionLabel": { fontSize: "12px" },
+  ".cm-completionDetail": { color: "var(--faint)", fontStyle: "normal", marginLeft: "8px" },
+});
+
+const notesHighlight = syntaxHighlighting(HighlightStyle.define([
+  { tag: tags.heading1, color: "var(--fg)", fontWeight: "700" },
+  { tag: [tags.heading2, tags.heading3, tags.heading4, tags.heading5, tags.heading6], color: "var(--fg)", fontWeight: "600" },
+  { tag: tags.strong, color: "var(--fg)", fontWeight: "700" },
+  { tag: tags.emphasis, fontStyle: "italic" },
+  { tag: tags.strikethrough, textDecoration: "line-through" },
+  { tag: tags.link, color: "var(--brand)", textDecoration: "underline" },
+  { tag: tags.url, color: "var(--brand)" },
+  { tag: tags.monospace, color: "var(--amber)", backgroundColor: "var(--page-canvas)" },
+  { tag: tags.quote, color: "var(--muted)", fontStyle: "italic" },
+  { tag: tags.list, color: "var(--brand)" },
+  { tag: tags.contentSeparator, color: "var(--faint)" },
+  { tag: [tags.meta, tags.comment], color: "var(--faint)" },
+]));
+
+/** 当前选区；没有选区时插入占位文本并选中它。 */
+function wrapSelection(view: EditorView, before: string, after: string, placeholder: string) {
+  const { from, to } = view.state.selection.main;
+  const selected = view.state.sliceDoc(from, to) || placeholder;
+  view.dispatch({
+    changes: { from, to, insert: `${before}${selected}${after}` },
+    selection: { anchor: from + before.length, head: from + before.length + selected.length },
+    scrollIntoView: true,
+  });
+  view.focus();
+}
+
+function selectedLines(view: EditorView) {
+  const { from, to } = view.state.selection.main;
+  const start = view.state.doc.lineAt(from).from;
+  const end = view.state.doc.lineAt(to).to;
+  return { start, end, lines: view.state.sliceDoc(start, end).split("\n") };
+}
+
+/** 行前缀开关：列表 / 引用 / 任务。 */
+function toggleLinePrefix(view: EditorView, prefix: string) {
+  const { start, end, lines } = selectedLines(view);
+  const all = lines.every((line) => !line.trim() || line.startsWith(prefix));
+  const next = lines.map((line) => {
+    if (!line.trim()) return line;
+    return all ? line.slice(prefix.length) : `${prefix}${line}`;
+  }).join("\n");
+  view.dispatch({ changes: { from: start, to: end, insert: next }, scrollIntoView: true });
+  view.focus();
+}
+
+/** 标题级别开关。 */
+function setHeading(view: EditorView, level: number) {
+  const prefix = `${"#".repeat(level)} `;
+  const { start, end, lines } = selectedLines(view);
+  const all = lines.every((line) => !line.trim() || line.startsWith(prefix));
+  const next = lines.map((line) => {
+    if (!line.trim()) return line;
+    return all ? line.slice(prefix.length) : `${prefix}${line.replace(/^#{1,6}\s+/, "")}`;
+  }).join("\n");
+  view.dispatch({ changes: { from: start, to: end, insert: next }, scrollIntoView: true });
+  view.focus();
+}
+
+function insertCodeBlock(view: EditorView) {
+  const { from, to } = view.state.selection.main;
+  const selected = view.state.sliceDoc(from, to);
+  if (selected) {
+    view.dispatch({
+      changes: { from, to, insert: `\`\`\`\n${selected}\n\`\`\`\n` },
+      selection: { anchor: from + 4, head: from + 4 + selected.length },
+      scrollIntoView: true,
+    });
+  } else {
+    view.dispatch({
+      changes: { from, to, insert: "```\n\n```\n" },
+      selection: { anchor: from + 4 },
+      scrollIntoView: true,
+    });
+  }
+  view.focus();
+}
+
+function insertLink(view: EditorView) {
+  const { from, to } = view.state.selection.main;
+  const selected = view.state.sliceDoc(from, to) || "链接文字";
+  const url = "https://";
+  view.dispatch({
+    changes: { from, to, insert: `[${selected}](${url})` },
+    selection: { anchor: from + selected.length + 3, head: from + selected.length + 3 + url.length },
+    scrollIntoView: true,
+  });
+  view.focus();
+}
+
+function insertWikiLink(view: EditorView) {
+  const { from, to } = view.state.selection.main;
+  const selected = view.state.sliceDoc(from, to);
+  const cursor = from + 2 + selected.length;
+  view.dispatch({
+    changes: { from, to, insert: `[[${selected}]]` },
+    selection: { anchor: cursor, head: cursor },
+    scrollIntoView: true,
+  });
+  view.focus();
+  window.setTimeout(() => startCompletion(view), 0);
+}
+
+function insertTable(view: EditorView) {
+  const { from, to } = view.state.selection.main;
+  const table = "\n| 列 1 | 列 2 |\n| --- | --- |\n|  |  |\n";
+  view.dispatch({ changes: { from, to, insert: table }, selection: { anchor: from + table.length }, scrollIntoView: true });
+  view.focus();
+}
+
+function insertRule(view: EditorView) {
+  const { from, to } = view.state.selection.main;
+  const text = "\n\n---\n\n";
+  view.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + text.length }, scrollIntoView: true });
+  view.focus();
+}
+
+type Tool = { label: string; title: string; action: (view: EditorView) => void };
+const TOOLS: (Tool | "sep")[] = [
+  { label: "↶", title: "撤销 ⌘Z", action: (v) => { undo(v); v.focus(); } },
+  { label: "↷", title: "重做 ⇧⌘Z", action: (v) => { redo(v); v.focus(); } },
+  "sep",
+  { label: "H1", title: "一级标题", action: (v) => setHeading(v, 1) },
+  { label: "H2", title: "二级标题", action: (v) => setHeading(v, 2) },
+  { label: "H3", title: "三级标题", action: (v) => setHeading(v, 3) },
+  "sep",
+  { label: "B", title: "粗体 ⌘B", action: (v) => wrapSelection(v, "**", "**", "粗体") },
+  { label: "I", title: "斜体 ⌘I", action: (v) => wrapSelection(v, "*", "*", "斜体") },
+  { label: "S", title: "删除线", action: (v) => wrapSelection(v, "~~", "~~", "删除线") },
+  { label: "`", title: "行内代码", action: (v) => wrapSelection(v, "`", "`", "code") },
+  "sep",
+  { label: "•", title: "无序列表", action: (v) => toggleLinePrefix(v, "- ") },
+  { label: "1.", title: "有序列表", action: (v) => toggleLinePrefix(v, "1. ") },
+  { label: "☐", title: "任务列表", action: (v) => toggleLinePrefix(v, "- [ ] ") },
+  { label: "❝", title: "引用", action: (v) => toggleLinePrefix(v, "> ") },
+  "sep",
+  { label: "</>", title: "代码块", action: insertCodeBlock },
+  { label: "[[", title: "Wiki 链接；输入 [[ 也可补全", action: insertWikiLink },
+  { label: "🔗", title: "链接 ⌘K", action: insertLink },
+  { label: "▦", title: "表格", action: insertTable },
+  { label: "—", title: "分隔线", action: insertRule },
+  "sep",
+  { label: "⌕", title: "查找 / 替换 ⌘F", action: (v) => { openSearchPanel(v); } },
+];
+
+function countText(text: string) {
+  const cjk = (text.match(/[\u3400-\u9fff]/g) || []).length;
+  const latin = (text.replace(/[\u3400-\u9fff]/g, " ").match(/[A-Za-z0-9_'-]+/g) || []).length;
+  return { chars: text.length, words: cjk + latin };
+}
+
 /**
- * CodeMirror 编辑面：Markdown 高亮 + [[page]] / #tag 补全。
+ * CodeMirror 编辑面：Markdown 高亮 + 格式工具栏 + [[page]] / #tag 补全。
  * 预览仍然是独立渲染，避免把编辑器状态塞进 React。
  */
-export function NotesEditor({ value, pages, tags, onChange, onSave }: {
+export function NotesEditor({ value, pages, tags: tagList, dirty = false, onChange, onSave }: {
   value: string;
   pages: NotePickerItem[];
   tags: string[];
+  dirty?: boolean;
   onChange: (value: string) => void;
   onSave: () => void;
 }) {
@@ -23,11 +207,13 @@ export function NotesEditor({ value, pages, tags, onChange, onSave }: {
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
   const pagesRef = useRef(pages);
-  const tagsRef = useRef(tags);
+  const tagsRef = useRef(tagList);
+  const [stats, setStats] = useState(() => countText(value));
+  const [selectionLength, setSelectionLength] = useState(0);
   onChangeRef.current = onChange;
   onSaveRef.current = onSave;
   pagesRef.current = pages;
-  tagsRef.current = tags;
+  tagsRef.current = tagList;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -50,16 +236,34 @@ export function NotesEditor({ value, pages, tags, onChange, onSave }: {
         options: tagsRef.current.filter((tag) => !query || tag.toLowerCase().includes(query)).slice(0, 24).map((tag) => ({ label: tag, apply: tag })),
       };
     };
+
     const extensions: Extension[] = [
       basicSetup,
       markdown(),
+      search({ top: true }),
+      notesTheme,
+      notesHighlight,
       EditorView.lineWrapping,
       autocompletion({ override: [completion], activateOnTyping: true, maxRenderedOptions: 24 }),
-      keymap.of([
+      Prec.high(keymap.of([
+        { key: "Mod-b", run: (view) => { wrapSelection(view, "**", "**", "粗体"); return true; } },
+        { key: "Mod-i", run: (view) => { wrapSelection(view, "*", "*", "斜体"); return true; } },
+        { key: "Mod-Shift-x", run: (view) => { wrapSelection(view, "~~", "~~", "删除线"); return true; } },
+        { key: "Mod-k", run: (view) => { insertLink(view); return true; } },
+        { key: "Mod-Shift-k", run: (view) => { insertWikiLink(view); return true; } },
         { key: "Mod-s", preventDefault: true, run: () => { onSaveRef.current(); return true; } },
-      ]),
+        { key: "Enter", run: insertNewlineContinueMarkup },
+        { key: "Backspace", run: deleteMarkupBackward },
+        { key: "Tab", run: indentMore },
+        { key: "Shift-Tab", run: indentLess },
+      ])),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) onChangeRef.current(update.state.doc.toString());
+        if (update.docChanged || update.selectionSet) {
+          setStats(countText(update.state.doc.toString()));
+          const { from, to } = update.state.selection.main;
+          setSelectionLength(Math.max(0, to - from));
+        }
       }),
     ];
     const view = new EditorView({
@@ -81,5 +285,36 @@ export function NotesEditor({ value, pages, tags, onChange, onSave }: {
     view.dispatch({ changes: { from: 0, to: current.length, insert: value } });
   }, [value]);
 
-  return <div className="notes-codemirror" ref={hostRef} />;
+  const run = (action: (view: EditorView) => void) => {
+    const view = viewRef.current;
+    if (view) action(view);
+  };
+
+  return (
+    <div className="notes-editor-shell">
+      <div className="notes-editor-toolbar">
+        <div className="notes-tool-group">
+          {TOOLS.map((tool, index) => tool === "sep"
+            ? <i className="notes-tool-sep" key={`sep-${index}`} />
+            : (
+              <button
+                key={tool.label + index}
+                type="button"
+                className={`notes-tool ${tool.label === "B" ? "bold" : ""} ${tool.label === "I" ? "italic" : ""}`}
+                title={tool.title}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => run(tool.action)}
+              >{tool.label}</button>
+            ))}
+        </div>
+        <div className="notes-editor-stats">
+          {selectionLength > 0 && <span>选中 {selectionLength}</span>}
+          <span>{stats.words} 词 · {stats.chars} 字</span>
+          <span className={`notes-save-state ${dirty ? "dirty" : ""}`}>{dirty ? "● 未保存" : "✓ 已保存"}</span>
+          <button type="button" className="notes-save-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => onSaveRef.current()} title="保存 draft（⌘S）">保存</button>
+        </div>
+      </div>
+      <div className="notes-codemirror" ref={hostRef} />
+    </div>
+  );
 }

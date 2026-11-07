@@ -1563,6 +1563,22 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 @media (max-width:900px){.notes-pane-layout.split{flex-direction:column}.notes-pane-layout.split>.notes-editor-pane{width:100%;height:50%;border-right:0;border-bottom:1px solid var(--border)}}
 
 /* Notes CodeMirror */
+.notes-editor-shell{flex:1;min-height:0;display:flex;flex-direction:column}
+.notes-editor-toolbar{display:flex;align-items:center;gap:8px;padding:3px 6px;border-bottom:1px solid var(--border);background:var(--page-canvas);flex:none;overflow:hidden}
+.notes-tool-group{display:flex;align-items:center;gap:1px;overflow-x:auto;scrollbar-width:none;min-width:0}
+.notes-tool-group::-webkit-scrollbar{display:none}
+.notes-tool{height:24px;min-width:24px;padding:0 5px;border:0;border-radius:5px;background:transparent;color:var(--muted);font:11px var(--mono);cursor:pointer;flex:none}
+.notes-tool:hover{background:var(--surface-hover);color:var(--fg)}
+.notes-tool.bold{font-weight:700}
+.notes-tool.italic{font-style:italic}
+.notes-tool-sep{width:1px;height:14px;background:var(--border);margin:0 3px;flex:none}
+.notes-editor-stats{display:flex;align-items:center;gap:8px;margin-left:auto;flex:none;font:9.5px var(--mono);color:var(--faint);white-space:nowrap}
+.notes-save-state.dirty{color:var(--amber)}
+.notes-save-btn{height:22px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--fg-2);font-size:10.5px;padding:0 7px;cursor:pointer}
+.notes-save-btn:hover{background:var(--surface-hover);color:var(--fg)}
+.notes-title-input{width:100%;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--fg);font-size:13px;font-weight:600;padding:1px 4px;outline:none;min-width:0}
+.notes-title-input:hover{border-color:var(--border)}
+.notes-title-input:focus{border-color:var(--brand-line);background:var(--surface);box-shadow:var(--ring)}
 .notes-codemirror{flex:1;min-height:0;overflow:auto;background:var(--surface);font:12.5px/1.75 var(--mono)}
 .notes-codemirror .cm-editor{height:100%;background:transparent;color:var(--fg)}
 .notes-codemirror .cm-scroller{font-family:var(--mono);line-height:1.75;padding:10px 0 24px}

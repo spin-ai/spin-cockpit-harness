@@ -146,12 +146,17 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     setNotice("");
   };
 
+  const updateMeta = (pageId: string, patch: Partial<Pick<Doc, "title" | "summary">>) => {
+    setDocs((current) => current[pageId] ? { ...current, [pageId]: { ...current[pageId], ...patch, dirty: true } } : current);
+    setNotice("");
+  };
+
   const saveDoc = useCallback(async (pageId: string) => {
     const doc = docs[pageId];
     if (!doc || !doc.dirty) return;
     setBusy(true);
     try {
-      const res = await invoke("wiki.savePage", { id: pageId, content: doc.content });
+      const res = await invoke("wiki.savePage", { id: pageId, content: doc.content, title: doc.title, summary: doc.summary });
       if (res) setDocs((current) => ({ ...current, [pageId]: { ...res, dirty: false } }));
       setNotice("已保存 draft");
       await refresh();
@@ -310,7 +315,18 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
         ) : (
           <>
             <div className="notes-note-head">
-              <div className="notes-note-title"><b>{doc.title}</b><span className="mono">{statusLabel(doc.status)} · {doc.citations.length} citations</span></div>
+              <div className="notes-note-title">
+                {mode === "edit"
+                  ? <input
+                      className="notes-title-input"
+                      value={doc.title}
+                      placeholder="页面标题"
+                      onChange={(e) => updateMeta(doc.id, { title: e.target.value })}
+                      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                    />
+                  : <b>{doc.title}</b>}
+                <span className="mono">{statusLabel(doc.status)} · {doc.citations.length} citations{doc.dirty ? " · 未保存" : ""}</span>
+              </div>
               <div className="notes-mode"><button className={mode === "preview" ? "on" : ""} onClick={() => setMode("preview")}>阅读</button><button className={mode === "edit" ? "on" : ""} onClick={() => setMode("edit")}>编辑</button></div>
               <div className="notes-note-actions">
                 {doc.dirty && <button className="btn tiny-btn" onClick={() => void saveDoc(doc.id)} disabled={busy}>保存 draft</button>}
@@ -334,7 +350,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 }
               }} />
             ) : (
-              <NotesEditor key={doc.id} value={doc.content} pages={pages.map((p) => ({ path: p.id, title: p.title }))} tags={[]} onChange={(value) => updateDoc(doc.id, value)} onSave={() => void saveDoc(doc.id)} />
+              <NotesEditor key={doc.id} value={doc.content} pages={pages.map((p) => ({ path: p.id, title: p.title }))} tags={[]} dirty={doc.dirty} onChange={(value) => updateDoc(doc.id, value)} onSave={() => void saveDoc(doc.id)} />
             )}
           </>
         )}
