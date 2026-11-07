@@ -2155,3 +2155,71 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .notes-row-actions .link.tiny[title="接受"]:hover{color:#15803d}
 .notes-search-clear{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;color:var(--faint);font-size:13px;line-height:1;cursor:pointer;padding:2px 4px}
 .notes-search-clear:hover{color:var(--fg)}
+
+/* Wiki：最终一体化布局（2026-11）——去掉三张卡片，只保留主编辑面 */
+.notes-page{padding:16px 22px 14px}
+.notes-head{align-items:center;padding-bottom:12px;margin-bottom:8px;border-bottom:0}
+.notes-head h1{font-size:22px;margin:2px 0 3px}
+.notes-kicker{font-size:9px;letter-spacing:.17em}
+.notes-stats{gap:12px}
+.notes-actions{align-items:center;gap:3px}
+.notes-actions .btn{height:28px;padding:0 8px;border-color:transparent;background:transparent;color:var(--muted);box-shadow:none}
+.notes-actions .btn:hover{background:var(--surface);border-color:transparent;color:var(--fg);box-shadow:var(--shadow-1)}
+.notes-actions .btn.primary{background:var(--fg);border-color:var(--fg);color:#fff;box-shadow:var(--shadow-1)}
+.notes-actions .btn.primary:hover{background:#27272a;border-color:#27272a;color:#fff}
+.notes-actions .btn.tiny-btn{height:26px;font-size:11.5px}
+.notes-actions .icon-btn{width:28px;height:28px;border-color:transparent;background:transparent}
+.notes-actions .icon-btn:hover{background:var(--surface);border-color:transparent;box-shadow:var(--shadow-1)}
+.notes-layout{grid-template-columns:224px minmax(0,1fr) 264px;gap:0;background:transparent;align-items:stretch}
+.notes-sidebar,.notes-meta{border:0;border-radius:0;background:transparent;box-shadow:none;min-height:0;overflow:auto}
+.notes-sidebar{padding:2px 14px 4px 0;gap:6px}
+.notes-meta{padding:6px 2px 10px 18px;gap:18px}
+.notes-main{border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-1);overflow:hidden}
+.notes-wiki-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px;padding:3px;border:1px solid var(--border);border-radius:9px;background:var(--surface);margin:0 0 3px}
+.notes-wiki-tabs button{flex:none;padding:5px 3px;border-radius:6px;font-size:10px;color:var(--muted)}
+.notes-wiki-tabs button:hover{background:var(--surface-hover);color:var(--fg)}
+.notes-wiki-tabs button.on{background:var(--brand-soft);color:var(--brand);box-shadow:inset 0 0 0 1px var(--brand-line)}
+.notes-search-wrap{flex:none}
+.notes-search{height:30px;border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:0 9px}
+.notes-search-wrap .notes-search{background:var(--surface)}
+.notes-search-results{border-bottom:0}
+.notes-search-results button:hover{background:var(--surface-hover)}
+.notes-file{padding:5px 7px;border-radius:6px;font-size:11.5px}
+.notes-file:hover{background:var(--surface);color:var(--fg)}
+.notes-file.on{background:var(--brand-soft);color:var(--brand);box-shadow:inset 2px 0 0 var(--brand)}
+.notes-folder-label{padding:8px 2px 3px;font-size:9.5px;letter-spacing:.04em}
+.notes-sidebar-head{padding:2px 2px 3px;font-size:9px}
+.notes-sidebar-head button{font-size:9.5px;padding:2px 4px;border-radius:5px}
+.notes-sidebar-head button:hover{background:var(--surface);box-shadow:var(--shadow-1)}
+.notes-tabbar{background:var(--surface);border-bottom:1px solid var(--border);min-height:34px;padding:4px 7px 0;gap:3px}
+.notes-tab{border-right:0;border-radius:6px 6px 0 0;padding:5px 9px;color:var(--muted)}
+.notes-tab:hover{background:var(--surface-hover);color:var(--fg)}
+.notes-tab.on{background:var(--page-canvas);color:var(--fg);box-shadow:none}
+.notes-tab-add{font-size:15px;padding:0 7px;border-radius:5px;margin-bottom:3px}
+.notes-tab-add:hover{background:var(--surface-hover)}
+.notes-note-head{padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface)}
+.notes-note-title b{font-size:15px;letter-spacing:-.01em}
+.notes-note-title span{font-size:9.5px}
+.notes-mode{border:0;background:var(--page-canvas);padding:2px;border-radius:6px;gap:1px}
+.notes-mode button{padding:3px 8px;border-radius:4px;color:var(--muted)}
+.notes-mode button.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow-1)}
+.notes-note-actions{gap:2px}
+.notes-preview{padding:22px 28px 44px;max-width:880px;width:100%;margin:0 auto;box-sizing:border-box}
+.notes-meta-title{font-size:9.5px;letter-spacing:.12em;color:var(--faint)}
+.notes-meta-block{gap:5px}
+.notes-meta-empty{font-size:10.5px;line-height:1.6}
+.notes-link{padding:4px 6px;border-radius:6px}
+.notes-link:hover:not(:disabled){background:var(--surface)}
+.notes-log{border-top:0;padding:8px 2px 0;font-size:8.5px;line-height:1.55}
+.notes-empty-mark{box-shadow:var(--shadow-1);border-color:transparent}
+.notes-editor-pane{background:var(--surface)}
+.notes-editor-pane.focused{box-shadow:inset 0 0 0 1px var(--brand-line)}
+.notes-memory{background:var(--surface)}
+@media (max-width:1180px){.notes-layout{grid-template-columns:196px minmax(0,1fr) 220px}.notes-sidebar{padding-right:10px}.notes-meta{padding-left:12px}}
+@media (max-width:900px){.notes-layout{grid-template-columns:1fr;gap:12px}.notes-sidebar,.notes-meta{padding:0;max-height:none}.notes-main{min-height:420px}}
+.notes-sidebar{padding-top:0}
+.notes-meta-block+.notes-meta-block{border-top:0;padding-top:0;margin-top:0}
+.notes-sidebar-foot{border-top:0;padding-top:2px}
+.notes-hub-card{border-color:transparent;box-shadow:var(--shadow-1)}
+.notes-hub-card:hover{border-color:transparent;box-shadow:var(--shadow-2);transform:translateY(-1px)}
+.notes-meta-idle-row{border-color:transparent;background:var(--surface);box-shadow:var(--shadow-1);opacity:1}
