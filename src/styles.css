@@ -1873,3 +1873,90 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .git-wiki-pager-btn.next{text-align:right;margin-left:auto}
 @media (max-width:1100px){.git-wiki{grid-template-columns:200px minmax(0,1fr)}.git-wiki-toc{display:none}}
 @media (max-width:760px){.git-wiki{grid-template-columns:1fr}.git-wiki-side{max-height:210px}.git-wiki-content{padding:14px 16px 22px}}
+
+/* ── Wiki / 笔记：视觉与信息层级（快速改善）───────────────────────── */
+.notes-page{padding:16px 20px 12px;gap:0}
+.notes-head{align-items:center;padding-bottom:10px;border-bottom:1px solid var(--border);margin-bottom:12px}
+.notes-head-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.notes-kicker{font-size:9px;letter-spacing:.18em;color:var(--brand);font-weight:700;text-transform:uppercase}
+.notes-head h1{margin:2px 0 4px;font-size:22px;letter-spacing:-.03em;line-height:1.1}
+.notes-stats{display:flex;gap:11px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.notes-stats b{color:var(--fg);font-weight:600;font-family:var(--mono);font-size:11.5px}
+.notes-stats .warn b{color:var(--amber)}
+.notes-actions{align-items:center;gap:6px}
+.notes-actions-sep{width:1px;height:18px;background:var(--border);margin:0 2px}
+.notes-actions .btn{height:26px;padding:0 9px;font-size:11.5px}
+.notes-actions .icon-btn{width:26px;height:26px}
+
+.notes-layout{grid-template-columns:232px minmax(0,1fr) 252px;gap:12px}
+.notes-sidebar,.notes-main,.notes-meta{border-radius:12px;background:var(--surface);border-color:var(--border)}
+.notes-sidebar{padding:9px;gap:8px}
+.notes-wiki-tabs{display:flex;gap:2px;background:var(--page-canvas);padding:2px;border-radius:8px;border:1px solid var(--border)}
+.notes-wiki-tabs button{flex:1;border:0;background:transparent;border-radius:6px;font-size:11px;padding:4px 2px;color:var(--muted);cursor:pointer}
+.notes-wiki-tabs button em{font-style:normal;color:var(--faint);font-size:10px;margin-left:2px}
+.notes-wiki-tabs button.on{background:var(--surface);color:var(--fg);box-shadow:0 1px 2px rgba(15,23,42,.06)}
+.notes-search-wrap{position:relative;display:flex;align-items:center;flex:none}
+.notes-search-icon{position:absolute;left:8px;color:var(--faint);pointer-events:none}
+.notes-search-wrap .notes-search{width:100%;padding-left:26px;background:var(--page-canvas)}
+.notes-file{padding:5px 7px;border-radius:7px;font-size:12px}
+.notes-file:hover{background:var(--surface-hover)}
+.notes-file.on{background:var(--brand-soft);color:var(--fg)}
+.notes-empty-list{padding:10px 8px;line-height:1.6;color:var(--faint);font-size:11.5px}
+
+/* 中间空状态：三个行动卡片 */
+.notes-hub{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:24px;text-align:center}
+.notes-hub-mark{width:46px;height:46px;display:grid;place-items:center;border-radius:14px;background:linear-gradient(160deg,var(--brand-soft),transparent);border:1px solid var(--brand-line);color:var(--brand);font-size:20px}
+.notes-hub h2{margin:4px 0 0;font-size:17px;letter-spacing:-.01em}
+.notes-hub-sub{margin:0;max-width:460px;font-size:12px;line-height:1.7;color:var(--muted)}
+.notes-hub-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px;width:min(640px,100%)}
+.notes-hub-card{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:12px 13px;border:1px solid var(--border);border-radius:11px;background:var(--surface);text-align:left;cursor:pointer;transition:border-color .12s,box-shadow .12s,transform .12s}
+.notes-hub-card:hover{border-color:var(--brand-line);box-shadow:var(--shadow-float);transform:translateY(-1px)}
+.notes-hub-ico{width:24px;height:24px;display:grid;place-items:center;border-radius:7px;background:var(--brand-soft);color:var(--brand);font-size:13px;margin-bottom:3px}
+.notes-hub-card b{font-size:12.5px;color:var(--fg)}
+.notes-hub-card em{font-style:normal;font-size:11px;color:var(--faint);line-height:1.5}
+.notes-hub-tip{font-size:10.5px;color:var(--faint);margin-top:8px}
+
+/* 右侧未打开时的占位 */
+.notes-meta{padding:10px}
+.notes-meta-idle{display:flex;flex-direction:column;gap:9px}
+.notes-meta-idle-row{display:flex;gap:8px;align-items:flex-start;padding:7px 8px;border:1px dashed var(--border);border-radius:8px;opacity:.85}
+.notes-meta-idle-row b{display:block;font-size:11.5px;color:var(--fg-2);font-weight:600}
+.notes-meta-idle-row em{font-style:normal;font-size:10.5px;color:var(--faint)}
+.notes-meta-empty{font-size:11px;line-height:1.6;color:var(--faint);margin:2px 0 0}
+
+@media (max-width: 1100px){
+  .notes-layout{grid-template-columns:200px minmax(0,1fr)}
+  .notes-meta{display:none}
+  .notes-hub-cards{grid-template-columns:1fr}
+}
+
+/* 文档头 / 工具栏微调 */
+.notes-note-head{gap:10px;padding:10px 14px;background:var(--surface)}
+.notes-note-title b{font-size:16px;letter-spacing:-.01em;line-height:1.25}
+.notes-note-title span{font-size:10px;color:var(--faint);font-family:var(--mono)}
+.notes-doc-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.notes-doc-actions .link.tiny{font-size:11px;color:var(--muted)}
+.notes-doc-actions .link.tiny:hover{color:var(--fg)}
+.btn.ok{color:#15803d;background:var(--green-soft);border-color:var(--green-line)}
+.btn.ok:hover{background:var(--green-soft);border-color:#86efac}
+.notes-mode{border-radius:7px;background:var(--page-canvas);padding:2px;gap:2px;display:flex}
+.notes-mode button{border-radius:5px;font-size:11px;padding:3px 9px;color:var(--muted)}
+.notes-mode button.on{background:var(--surface);color:var(--fg);box-shadow:0 1px 2px rgba(15,23,42,.08)}
+.notes-editor-toolbar{gap:10px;padding:5px 10px;justify-content:space-between}
+.notes-editor-stats{gap:10px;font-size:10.5px;color:var(--faint);display:flex;align-items:center;flex:none}
+.notes-save-btn{height:22px;padding:0 9px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--fg-2);font-size:10.5px;cursor:pointer}
+.notes-save-btn:hover{border-color:var(--brand-line);color:var(--brand)}
+.notes-save-state.dirty{color:var(--amber)}
+.notes-codemirror{padding:6px 4px}
+.notes-meta .notes-review-badge{width:fit-content}
+.notes-meta-title{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase}
+.notes-meta-block+.notes-meta-block{border-top:1px solid var(--border);padding-top:10px;margin-top:10px}
+.notes-meta-block{display:flex;flex-direction:column;gap:6px}
+.notes-meta-title em{font-style:normal;color:var(--faint);font-weight:500;letter-spacing:0;text-transform:none}
+.notes-banner{display:flex;align-items:center;gap:8px;width:fit-content;max-width:min(720px,100%);margin:0 0 8px;padding:5px 6px 5px 10px;border-radius:999px;box-shadow:0 2px 8px rgba(15,23,42,.06)}
+.notes-banner .ellipsis{min-width:0;font-size:11.5px}
+.notes-banner-x{border:0;background:transparent;color:inherit;opacity:.6;font-size:13px;line-height:1;padding:0 4px;cursor:pointer}
+.notes-banner-x:hover{opacity:1}
+.notes-folder-label{position:sticky;top:0;z-index:1;background:var(--surface);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);padding:6px 6px 4px;display:flex;justify-content:space-between;gap:6px;border-bottom:1px solid var(--border);margin-bottom:2px}
+.notes-folder-label em{font-style:normal;color:var(--faint);font-family:var(--mono)}
+.notes-vault-group{margin-bottom:4px}
