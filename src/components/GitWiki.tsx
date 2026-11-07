@@ -26,8 +26,16 @@ function plainText(markdown: string) {
 }
 
 /** Git 视图里的项目 Wiki：内容随仓库版本发布，页面之间用 #/wiki/<id> 跳转。 */
-export function GitWiki({ branch, head }: { branch?: string | null; head?: string | null }) {
-  const [activeId, setActiveId] = useState("home");
+export function GitWiki({ branch, head, pageId, onNavigate, sourceLabel }: {
+  branch?: string | null;
+  head?: string | null;
+  /** 外部路由（GitHub Pages）：当前页面 id 与导航回调 */
+  pageId?: string;
+  onNavigate?: (id: string) => void;
+  /** 非 Electron 环境（GitHub Pages）的来源标签 */
+  sourceLabel?: string;
+}) {
+  const [activeId, setActiveId] = useState(() => (pageId && WIKI_PAGES.some((p) => p.id === pageId) ? pageId : "home"));
   const [activeHeading, setActiveHeading] = useState("");
   const [query, setQuery] = useState("");
   const [lightbox, setLightbox] = useState<{ images: { src: string; alt: string }[]; index: number } | null>(null);
@@ -47,6 +55,11 @@ export function GitWiki({ branch, head }: { branch?: string | null; head?: strin
   const index = WIKI_PAGES.findIndex((item) => item.id === page.id);
   const prev = index > 0 ? WIKI_PAGES[index - 1] : null;
   const next = index >= 0 && index < WIKI_PAGES.length - 1 ? WIKI_PAGES[index + 1] : null;
+
+  useEffect(() => {
+    if (pageId && pageId !== activeId) setActiveId(pageId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageId]);
 
   useEffect(() => {
     contentRef.current?.scrollTo({ top: 0, behavior: "auto" });
@@ -137,6 +150,7 @@ export function GitWiki({ branch, head }: { branch?: string | null; head?: strin
   const open = (id: string) => {
     setActiveId(id);
     setQuery("");
+    onNavigate?.(id);
   };
 
   const onClick = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -212,7 +226,7 @@ export function GitWiki({ branch, head }: { branch?: string | null; head?: strin
           {filtered.length === 0 && <div className="git-wiki-empty">没有匹配的页面</div>}
         </div>
         <div className="git-wiki-side-foot">
-          <span>{branch ? `Git · ${branch}` : "本地文档"}</span>
+          <span>{branch ? `Git · ${branch}` : sourceLabel || "本地文档"}</span>
           {head && <span className="mono">{head.slice(0, 7)}</span>}
         </div>
       </aside>
