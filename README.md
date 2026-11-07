@@ -52,6 +52,7 @@ npm run dist                # macOS dmg → release/
 - **TODO LIST**：一条任务列表，按状态分组；支持搜索（标题/编号/描述/标签）、筛选（全部/进行中/待确认/已确认）、分组折叠、悬停或键盘聚焦显示快捷操作
 - **项目**：在 TODO LIST 下方的常驻项目区，本地目录即项目；支持添加 / 切换 / 管理 / 在 Finder 中显示，任务、终端、文件树跟随当前项目
 - **Chat**：单一输入路径。会话（thread）永远存在：说一句话即派活，运行中发消息即纠偏（带投递回执），已确认任务的消息仅记录；**未派活的对话是全局的**（切项目不消失），composer 里用 `◎ 全局 / 项目 · xxx` 选择这次对话的作用域；**模型可按会话选择**（选项来自 dsh ACP `session/new` 的 configOptions，下一次运行生效）；草稿会话发送 = 派活并创建任务
+- **Super Agent / Mission**：在 Chat 里选择 `✦ 主管` 或点「＋ 主管」创建 supervisor；一句话先出计划（Mission Plan Card，可退回修改），人工批准后自动创建 child Todo + Delegation + worker run；worker 在独立 worktree 执行，Mission 面板汇总子任务、可取消/恢复/确认；supervisor 通过受控 MCP 工具读写 Mission，不直接改代码（见 [docs/ARCH-super-agent.md](docs/ARCH-super-agent.md)）
 - **Terminal**：任务绑定项目的真实 pty（node-pty + xterm），可多标签、可直接输入；**资源管理器里的文件也在终端区按标签预览**；多标签切换（⌃Tab / ⌘⇧[ ] / ⌘⇧1…9）、**终端窗格任意拆分**（⌘D 右拆 / ⇧⌘D 下拆，递归嵌套 + 拖拽分隔条 + ⌘⌥方向键切焦点）、标签重命名与中键关闭、⌘F 查找、右键菜单（复制 / 粘贴 / 清屏 / 重启）、⌘+/- 字号缩放、链接点击打开、进程退出后可重启；挂载前的输出会回放，不会丢 banner；**预览是终端里的一个标签页**（工具栏「＋ 预览」随时可开，默认地址来自设置；终端识别到 dev server 地址时也可一键打开），可在同一标签条里切换/关闭，并**拾取页面元素**；网页预览和本地 HTML 文件渲染共用 `PreviewSurface`（同一 webview 生命周期 + 地址栏 + 渲染/源码 + 拾取）
 - **UI 上下文**：预览页里点中元素 → Chat 输入框出现元素 chip（selector / 源文件 / 截图）→ 随消息注入当前会话（运行中即 steer）
 - **右侧栏**：reference 风格三块
@@ -74,6 +75,7 @@ npm run dist                # macOS dmg → release/
 - 纠偏投递回执：`投递中 / 已注入 / 投递失败·重发`，run 结束未回执一律标失败
 - Chat 内按 run 分组展示；agent 可切换，项目在派活前选择（派活后锁定）
 - Chat 的 Agent 选择只对有执行适配器的 CLI 开放（当前 dsh/ACP）；可在 Chat 里一键纳管 dsh Agent，其他 CLI 标注「终端专用」
+- Mission 模式：`agents.role=supervisor`、计划审批、child Todo/Run/Delegation、worktree 并行、取消级联、重启恢复、Mission 级收件箱/统计；supervisor 会话禁用 dsh 原生 subagent/team/workflow，避免双调度
 - dsh ACP 真实执行：`session/new → prompt → session/update` 流式落库
 - dsh 来源可见：设置页显示当前走 内置 / 自定义 / 系统 PATH，默认不把执行引擎塞进仓库
 - worktree 隔离（cwd 是 git 仓库时自动创建）
@@ -94,6 +96,7 @@ npm run dist                # macOS dmg → release/
 - D5 全局自由对话（不绑任务的常驻 ACP 会话，可随时“转成 TODO”）
 - 非 React 项目的元素→源文件仍需手写 `data-ym-src`；截图只传路径，未作为图片附件给 Agent
 - D4 Agent 主动提问 → 等待输入（目前只有 ACP 审批会进入该状态）
+- Super Agent：远程 supervisor（MCP over SSH）、团队/小队、Native 模式 UI（当前 Mission supervisor 只支持本地；远程 worker 可用）
 - pi / claude / codex / opencode 的 Chat 原生执行适配器（目前仅终端可跑，不静默回退到 dsh）
 - Chat 多选广播 UI（后端 `broadcast` 已在，界面仍为单 Agent）
 - 长会话虚拟化 / 消息回放控制
@@ -122,6 +125,7 @@ Chat 的“Agent”是执行目标，不是探测器里所有 CLI 的并集。�
 ```sh
 npm run bundle:dsh        # 当前平台；首次会下载对应 wheel
 npm run smoke:dsh         # --version + ACP initialize + session/new
+npm run verify:mission    # Mission schema + MCP bridge + supervisor profile
 npm run dist              # 当前平台原生包（mac dmg / win nsis / linux AppImage）
 ```
 
@@ -187,7 +191,7 @@ npm run pack:system
 - [docs/REQ-original.md](docs/REQ-original.md)（纠正版需求）
 - [docs/REQ-multi-agent-workspace.md](docs/REQ-multi-agent-workspace.md)（43 条规格）
 - [docs/ARCH-multi-agent-workspace.md](docs/ARCH-multi-agent-workspace.md)（4+1 视图）
-- [docs/ARCH-super-agent.md](docs/ARCH-super-agent.md)（Super Agent 提案：Mission / Delegation / MCP / 迁移草案，未实现）
+- [docs/ARCH-super-agent.md](docs/ARCH-super-agent.md)（Super Agent：Mission / Delegation / MCP / 迁移与验证）
 - [docs/ARCH-chat-thread.md](docs/ARCH-chat-thread.md)（CHAT 单会话模型：thread / send 状态机 / 迁移）
 - [docs/ARCH-ui-context.md](docs/ARCH-ui-context.md)（预览元素拾取 → Agent 上下文：CDP / 安全边界 / 协议）
 - [docs/ARCH-settings.md](docs/ARCH-settings.md)（设置：分区、逐项生效点、持久化与新增步骤）

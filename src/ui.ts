@@ -51,11 +51,12 @@ export const ERROR_CLASS: Record<string, string> = { auth: "认证", rate_limit:
 export const FINISHED = ["completed", "failed", "cancelled"];
 export const RUN_STATUS: Record<string, string> = {
   queued: "排队", running: "进行中", waiting_input: "等待输入",
-  completed: "完成", failed: "失败", cancelled: "已停止",
+  waiting_plan: "计划待批", waiting_children: "等待子任务",
+  completed: "完成", failed: "失败", cancelled: "已停止", interrupted: "已中断",
 };
 export function agentOf(agents: Agent[], id: string | null) { return agents.find((a) => a.id === id) ?? null; }
 export function activeRun(todo: Todo, runs: Run[]) {
-  return runs.find((r) => r.todoId === todo.id && ["running", "waiting_input"].includes(r.status)) ?? null;
+  return runs.find((r) => r.todoId === todo.id && ["running", "waiting_input", "waiting_plan", "waiting_children"].includes(r.status)) ?? null;
 }
 export function lastRun(todo: Todo, runs: Run[]) {
   const mine = runs.filter((r) => r.todoId === todo.id); return mine.length ? mine[mine.length - 1] : null;

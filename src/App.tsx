@@ -131,9 +131,12 @@ export default function App() {
     const threads = state.threads.filter((t) => !t.todoId || !t.projectId || t.projectId === pid);
     const tids = new Set(threads.map((t) => t.id));
     const runs = state.runs.filter((r) => ids.has(r.todoId));
+    const missionIds = new Set(todos.filter((t) => t.kind === "mission").map((t) => t.id));
+    const delegations = (state.delegations ?? []).filter((d) => missionIds.has(d.missionId));
+    const missionPlans = (state.missionPlans ?? []).filter((p) => missionIds.has(p.missionId));
     return {
       ...state,
-      todos, runs, threads, agents,
+      todos, runs, threads, agents, delegations, missionPlans,
       messages: state.messages.filter((m) => tids.has(m.threadId)),
       artifacts: state.artifacts.filter((a) => ids.has(a.todoId)),
       inbox: state.inbox.filter((i) => ids.has(i.todoId)),

@@ -2,6 +2,16 @@
 
 所有值得注意的变更都记录在这里。版本号遵循 [Semantic Versioning](https://semver.org/)。
 
+## [Unreleased]
+
+### Added
+
+- Super Agent / Mission 模式：主管 Agent（`role=supervisor`）、Plan Card 人工审批、child Todo + Delegation + worker run、Mission 面板与收件箱
+- Mission MCP：`electron/mcp-bridge.mjs`（stdio ↔ Main HTTP）+ `mission_plan` / `task_delegate` / `task_review` / `task_steer` / `task_retry` / `mission_finish`
+- Mission 调度：worktree 并行、依赖 `blockedBy`、Supervisor/子任务并发上限、Mission 时长预算、取消级联、重启恢复
+- `dsh-supervisor.patch.yml`：关闭 dsh 原生 subagent / Team / workflow，保证 Mission 单一调度源
+- `npm run verify:mission`：SQLite + MCP bridge + dsh supervisor profile 的 keyless 验证
+
 ## [0.2.0-alpha.1] - 2026-11-06
 
 首个公开 Alpha，代号 **Liftoff**。

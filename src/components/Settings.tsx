@@ -146,6 +146,49 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
               </Row>
             </Card>
 
+            <Card title="Super Agent / Mission">
+              <Row title="启用 Mission 模式" hint="关闭后不能再创建或运行 supervisor；已有 Mission 保留">
+                <Toggle value={settings.superAgentEnabled !== false} onChange={(v) => void set({ superAgentEnabled: v })} />
+              </Row>
+              <Row title="Supervisor 并发" hint="同一时间最多几个主管会话；子任务仍受全局并发限制">
+                <NumberSetting value={settings.maxSupervisorRuns ?? 1} min={1} max={4} onCommit={(v) => void set({ maxSupervisorRuns: v })} />
+              </Row>
+              <Row title="Mission 子任务上限" hint="每个 Mission 最多创建多少个子任务；Agent 自己的 maxChildren 不能超过它">
+                <NumberSetting value={settings.maxMissionChildren ?? 4} min={1} max={12} onCommit={(v) => void set({ maxMissionChildren: v })} />
+              </Row>
+              <Row title="Mission 时长预算" hint="仅作为主管提示和 UI 约束；真正取消仍需人工或预算硬闸">
+                <NumberSetting value={settings.missionBudgetMinutes ?? 30} min={5} max={240} step={5} onCommit={(v) => void set({ missionBudgetMinutes: v })} />
+              </Row>
+            </Card>
+
+            <Card title="Agent 角色">
+              {state.agents.length === 0 && <Row title="还没有 Agent"><span className="muted small">在 Chat 里点「＋ dsh」纳管</span></Row>}
+              {state.agents.map((agent) => (
+                <div className="settings-agent-row" key={agent.id}>
+                  <div className="settings-agent-name">
+                    <b>{agent.name}</b>
+                    <span className="mono tiny faint">@{agent.alias}</span>
+                  </div>
+                  <select
+                    className="settings-control"
+                    value={agent.role || "worker"}
+                    title="主管可以创建 Mission；worker 只能接子任务"
+                    onChange={(e) => void act("updateAgent", { id: agent.id, role: e.target.value })}
+                  >
+                    <option value="worker">Worker</option>
+                    <option value="supervisor">Supervisor</option>
+                  </select>
+                  {(agent.role === "supervisor") && (
+                    <TextSetting
+                      value={agent.instructions || ""}
+                      placeholder="主管额外要求（如：先做风险评审）"
+                      onCommit={(v) => void act("updateAgent", { id: agent.id, instructions: v })}
+                    />
+                  )}
+                </div>
+              ))}
+            </Card>
+
             <Card title="Chat 执行适配器">
               {(state.executors ?? []).map((e) => (
                 <Row key={e.id} title={e.id}>

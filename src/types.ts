@@ -12,7 +12,8 @@ export interface Host {
   maxConcurrency?: number; defaultCwd?: string; probeError?: string | null;
 }
 export type ErrorClass = "auth" | "rate_limit" | "timeout" | "other";
-export interface Agent { id: string; name: string; hostId: string; cli: string; cwd: string; max: number; approval: string; color: string; skills: string[]; alias: string; projectId?: string; terminalId?: string; chatRunnable?: boolean; }
+export type AgentRole = "worker" | "supervisor";
+export interface Agent { id: string; name: string; hostId: string; cli: string; cwd: string; max: number; approval: string; color: string; skills: string[]; alias: string; projectId?: string; terminalId?: string; chatRunnable?: boolean; role?: AgentRole; instructions?: string; maxChildren?: number; }
 /** Chat 执行适配器：只有 implemented=true 的 CLI 能从 Chat 派活。 */
 export interface Executor { id: string; label: string; kind: string; implemented: boolean; supportsSteer: boolean; available: boolean; }
 export interface Subtask { id: string; title: string; status: string; }
@@ -25,6 +26,7 @@ export interface Thread {
   model?: string;
   modelName?: string;
   effort?: string;
+  kind?: "chat" | "mission";
   createdAt: number; updatedAt: number;
 }
 export interface Todo {
@@ -32,6 +34,27 @@ export interface Todo {
   agentId: string | null; priority: string; due: string; parentId: string | null; tags: string[];
   subtasks: Subtask[]; blockedBy: string[]; missingWriteback: boolean; lastRunFailed: boolean; confirmed: boolean; projectId?: string;
   cwd: string; createdAt: number; updatedAt: number;
+  kind?: "task" | "mission";
+  missionState?: MissionState | null;
+}
+export type MissionState = "planning" | "plan_review" | "running" | "waiting_children" | "in_review" | "done" | "failed" | "cancelled" | "interrupted";
+export interface MissionStep {
+  key: string; title: string; brief?: string; agent?: string; acceptance?: string[]; dependsOn?: string[];
+}
+export interface MissionPlan {
+  summary?: string; steps: MissionStep[]; risks?: string[]; budget?: { maxChildren?: number; maxMinutes?: number };
+}
+export interface MissionPlanRecord {
+  id: string; missionId: string; revision: number; status: "draft" | "approved" | "superseded";
+  plan: MissionPlan; createdAt: number; approvedAt?: number | null;
+}
+export type DelegationStatus = "proposed" | "queued" | "running" | "waiting_input" | "completed" | "accepted" | "rework" | "failed" | "cancelled";
+export interface Delegation {
+  id: string; missionId: string; supervisorRunId: string;
+  childTodoId: string; childRunId: string | null; agentId: string;
+  planStepKey: string; title: string; brief: string; acceptance: string[];
+  status: DelegationStatus; resultSummary: string; artifacts: string[]; branch: string | null;
+  createdAt: number; updatedAt: number; completedAt: number | null;
 }
 export interface Run {
   id: string; todoId: string; agentId: string; status: string; trigger: string;
@@ -43,8 +66,10 @@ export interface Run {
   tokensIn?: number | null; tokensOut?: number | null; usageSource?: "acp" | "unknown";
   errorClass?: ErrorClass | null; exitCode?: number | null;
   queueWaitMs?: number | null; durationMs?: number | null; queueReason?: string | null;
+  kind?: "worker" | "supervisor";
+  delegationId?: string | null;
 }
-export interface Approval { id: string; requestId: string; runId: string; todoId: string; title: string; description: string; options: { id: string; name: string; kind: string }[]; }
+export interface Approval { id: string; requestId: string; runId: string; todoId: string; title: string; description: string; options: { id: string; name: string; kind: string }[]; missionId?: string | null; childTitle?: string | null; }
 /** 预览区拾取的 UI 元素，随消息注入 Agent（见 docs/ARCH-ui-context.md） */
 export interface ElementContext {
   kind: "dom-element";
@@ -85,9 +110,14 @@ export interface Settings {
   previewHomeUrl: string;
   elementScreenshots: boolean;
   contextDetail: "compact" | "standard";
+  superAgentEnabled?: boolean;
+  maxSupervisorRuns?: number;
+  maxMissionChildren?: number;
+  missionBudgetMinutes?: number;
 }
 export interface State {
   hosts: Host[]; agents: Agent[]; todos: Todo[]; runs: Run[]; threads: Thread[]; messages: Message[];
+  missionPlans?: MissionPlanRecord[]; delegations?: Delegation[];
   artifacts: Artifact[]; events: Event[]; inbox: InboxItem[]; context: ContextState;
   approvals: Approval[];
   summary: { activeRuns: number; cost: number; tokens: number; failures: number };

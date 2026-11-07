@@ -1255,3 +1255,39 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .trend-stack i.ok{background:linear-gradient(180deg,var(--green),color-mix(in srgb,var(--green) 72%,var(--surface)))}
 .trend-stack i.bad{background:linear-gradient(180deg,var(--red),color-mix(in srgb,var(--red) 72%,var(--surface)))}
 .trend-col>span{height:20px;line-height:20px;flex:none;text-align:center;font-size:9px;color:var(--faint);white-space:nowrap;overflow:hidden}
+
+/* Super Agent / Mission：对话内的计划与子任务面板 */
+.mission-panel{display:flex;flex-direction:column;gap:10px;margin:0 0 14px;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);box-shadow:var(--shadow-1)}
+.mission-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.mission-mark{color:var(--brand);font-size:15px}
+.mission-head .spacer{flex:1}
+.mission-danger{color:var(--red);font-size:11px}
+.mission-plan{padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--page-canvas)}
+.mission-plan-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.mission-summary{margin:8px 0 0;color:var(--fg-2);font-size:12px;line-height:1.6;white-space:pre-wrap}
+.mission-steps{display:flex;flex-direction:column;gap:6px;margin:9px 0 0;padding:0;list-style:none}
+.mission-steps li{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;font-size:12px;line-height:1.45}
+.mission-step-key{color:var(--faint);font-size:10px}
+.mission-step-title{font-weight:600}
+.mission-step-accept{flex-basis:100%;padding-left:26px}
+.mission-risks{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px;font-size:11px;color:var(--amber)}
+.mission-risks b{color:var(--fg-2);font-weight:600}
+.mission-risks span{padding:2px 6px;border:1px solid var(--amber-line);border-radius:5px;background:var(--amber-soft)}
+.mission-approved-note{font-size:11px;color:var(--green)}
+.delegation-list{display:flex;flex-direction:column;gap:6px}
+.delegation-card{padding:8px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+.delegation-card.delegation-failed{border-color:var(--red-line);background:var(--red-soft)}
+.delegation-main{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.delegation-main .spacer{flex:1}
+.delegation-main b{max-width:min(280px,45%);font-size:12px}
+.delegation-result{margin-top:6px;padding-top:6px;border-top:1px solid var(--border);color:var(--fg-2);font-size:11px;line-height:1.55;white-space:pre-wrap;max-height:120px;overflow:auto}
+.task-row.task-child{margin-left:12px;border-left:2px solid var(--border);border-radius:0 8px 8px 0}
+.task-row.task-mission{border-color:var(--brand-line);background:color-mix(in srgb,var(--brand-soft) 30%,var(--surface))}
+.settings-agent-row{display:grid;grid-template-columns:minmax(140px,1fr) 130px minmax(180px,1.6fr);gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)}
+.settings-agent-row:last-child{border-bottom:0}
+.settings-agent-name{display:flex;flex-direction:column;gap:2px;min-width:0}
+.settings-agent-name b{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:900px){.settings-agent-row{grid-template-columns:1fr 1fr}.settings-agent-row .settings-control:last-child{grid-column:1/-1}}
+.mission-dock{flex:none;max-height:44vh;overflow:auto;padding:0 8px 2px;background:var(--surface);border-bottom:1px solid var(--border)}
+.mission-dock .mission-panel{margin:0 0 8px;box-shadow:none}
+@media (max-height:760px){.mission-dock{max-height:38vh}}
