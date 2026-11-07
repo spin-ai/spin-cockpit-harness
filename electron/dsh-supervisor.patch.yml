@@ -1,0 +1,28 @@
+# Mission 模式的 dsh profile overlay：只保留 Harness 的编排工具。
+# 原生 subagent / Team / workflow 都会绕过 Harness 的 Todo/Run/Delegation，
+# 因此 supervisor 会话必须关掉它们，避免模型同时使用两套调度。
+- id: subagent
+  disabled: true
+- id: subagent-spawn-in-process
+  disabled: true
+- id: subagent-fork-in-process
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- id: tool-subagent-control
+  disabled: true
+- id: agent-team
+  disabled: true
+- id: tool-agent-team
+  disabled: true
+- id: workflow-ptc
+  disabled: true
+- id: tool-workflow
+  disabled: true
+- id: tool-subagent-list-agents
+  disabled: true
+- id: sandbox-policy
+  config:
+    mode: read-only

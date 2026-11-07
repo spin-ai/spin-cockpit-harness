@@ -23,7 +23,8 @@
     "bundle:dsh:optional": "node scripts/bundle-dsh.mjs --optional",
     "smoke:dsh": "node scripts/smoke-dsh.mjs",
     "postinstall": "electron-builder install-app-deps",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:mission": "node scripts/verify-mission.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -82,12 +83,17 @@
       {
         "from": "THIRD_PARTY_NOTICES.md",
         "to": "THIRD_PARTY_NOTICES.md"
+      },
+      {
+        "from": "electron/dsh-supervisor.patch.yml",
+        "to": "dsh-supervisor.patch.yml"
       }
     ],
     "asar": true,
     "asarUnpack": [
       "node_modules/sql.js/dist/*.wasm",
-      "node_modules/node-pty/**"
+      "node_modules/node-pty/**",
+      "electron/mcp-bridge.mjs"
     ],
     "mac": {
       "target": [

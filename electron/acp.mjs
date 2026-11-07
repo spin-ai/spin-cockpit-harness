@@ -28,9 +28,11 @@ export function dshPathEnv(base = process.env) {
 }
 
 export class AcpClient extends EventEmitter {
-  constructor({ cwd, ssh, bin, home, model, effort }) {
+  constructor({ cwd, ssh, bin, home, model, effort, mcpServers = [], patches = [] }) {
     super();
     this.cwd = cwd;
+    this.mcpServers = Array.isArray(mcpServers) ? mcpServers : [];
+    this.patches = Array.isArray(patches) ? patches : [];
     this.bin = bin || DSH_BIN;
     this.home = home || DSH_HOME;
     this.model = model || process.env.DSH_MODEL || "";
@@ -52,7 +54,9 @@ export class AcpClient extends EventEmitter {
       args.push(target, `${this.bin} --profile acp`);
       this.proc = spawn("ssh", args, { env, stdio: ["pipe", "pipe", "pipe"] });
     } else {
-      this.proc = spawn(this.bin, ["--profile", "acp"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+      const args = ["--profile", "acp"];
+      for (const patch of this.patches) args.push("--patch", patch);
+      this.proc = spawn(this.bin, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
     }
     this.proc.on("exit", (code, signal) => {
       this.closed = true;
@@ -81,8 +85,8 @@ export class AcpClient extends EventEmitter {
     }, 20000);
   }
 
-  async newSession(cwd = this.cwd) {
-    const res = await this.request("session/new", { cwd, mcpServers: [] });
+  async newSession(cwd = this.cwd, mcpServers = this.mcpServers) {
+    const res = await this.request("session/new", { cwd, mcpServers });
     this.sessionId = res.sessionId;
     return res;
   }
@@ -94,8 +98,8 @@ export class AcpClient extends EventEmitter {
     if (effort) { try { await this.request("session/set_config_option", { sessionId: this.sessionId, configId: "reasoning_effort", value: effort }); } catch { /* ignore */ } }
   }
 
-  prompt(text) {
-    return this.request("session/prompt", { sessionId: this.sessionId, prompt: [{ type: "text", text }] }, 600000);
+  prompt(text, timeoutMs = 600000) {
+    return this.request("session/prompt", { sessionId: this.sessionId, prompt: [{ type: "text", text }] }, timeoutMs);
   }
 
   cancel() { if (this.sessionId) this.notify("session/cancel", { sessionId: this.sessionId }); }

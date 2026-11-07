@@ -1,6 +1,6 @@
 # Super Agent / Mission 编排（提案）
 
-> **状态：DRAFT / PROPOSAL。** 本文是 v1 设计，尚未实现；数据库迁移见 [`migrations/001-super-agent.sql`](migrations/001-super-agent.sql)。
+> **状态：P0 / P1 + P2 核心已实现（`v0.2.0-alpha.1` 之后的 Mission 分支）。** 远程 supervisor、小队/团队、Native 模式仍为后续；数据库迁移见 [`migrations/001-super-agent.sql`](migrations/001-super-agent.sql)。
 > **前提：** 术语上把「Super Agent」定义为 **Mission 级编排者（Supervisor）**，不是“更强的 worker Agent”。
 > 关联：[`ARCH-multi-agent-workspace.md`](ARCH-multi-agent-workspace.md)、[`ARCH-chat-thread.md`](ARCH-chat-thread.md)、[`REQ-multi-agent-workspace.md`](REQ-multi-agent-workspace.md)。
 
@@ -493,7 +493,7 @@ mission.waiting_children / mission.finished / mission.cancelled / mission.interr
 - 批准后创建 child todos / delegations / runs
 - Mission 进度 / Delegation Card
 - 取消 Mission、基础预算
-- 功能开关默认关闭
+- 功能开关可在设置中关闭（默认开启，便于试用）
 
 **验收：** 一句话目标 → 计划 → 修改 → 批准 → 2 个子任务跑完 → Mission 待确认；计划非法时不创建任何子任务。
 
@@ -509,12 +509,21 @@ mission.waiting_children / mission.finished / mission.cancelled / mission.interr
 
 **验收：** 子任务失败后主管能返工；取消 Mission 无孤儿 run；重启后不重复建 child；Mission 统计不重复计数；worker 不能被派成 supervisor。
 
-### P2：后续
+### P2：已落地的核心 / 后续边界
 
-- 技能路由、团队/小队
-- 远程 Supervisor（MCP over SSH）
-- 更复杂的 DAG 依赖调度
-- 自动汇总 diff / 测试报告
+已落地：
+
+- 计划步骤的前向依赖 + `blockedBy` 调度
+- Mission 时长预算、Supervisor 并发、子任务上限
+- 中断恢复（`resumeMission`）与重启标记 `interrupted`
+- 按 `skills` 的默认 worker 路由（计划未显式指定 agent 时）
+- Mission 级收件箱、取消级联、确认/返工/重试入口
+
+后续：
+
+- 团队 / 小队与多 supervisor
+- 远程 Supervisor（MCP over SSH；当前 supervisor 只支持本地，worker 仍可远程）
+- 自动汇总 diff / 测试报告、复杂 DAG 可视化
 
 ---
 
@@ -526,7 +535,8 @@ mission.waiting_children / mission.finished / mission.cancelled / mission.interr
 | `electron/main.mjs` | `queueRun` / `startRun` / `tick` / `actions.send` / approval / inbox；Mission 分支 |
 | `electron/acp.mjs` | `newSession` 传 `mcpServers`；主管多轮 prompt；`agent.instructions` |
 | `electron/orchestrator.mjs`（新） | Mission 状态机、计划校验、delegation 创建/汇总、预算 |
-| `electron/orchestrator-mcp.mjs`（新，或 bridge） | MCP 工具实现 / 代理 |
+| `electron/mcp-bridge.mjs`（已实现） | MCP stdio ↔ Main HTTP bridge |
+| `electron/dsh-supervisor.patch.yml`（已实现） | 关闭原生 subagent/Team/workflow，保证单一调度源 |
 | `src/types.ts` | Agent.role/instructions/maxChildren；Mission fields；Delegation；Run.kind |
 | `electron/preload.cjs` / `src/global.d.ts` | 新 actions 类型 |
 | `src/components/TaskChat.tsx` | Mission header / Plan Card / Delegation Card |
@@ -594,4 +604,63 @@ mission.waiting_children / mission.finished / mission.cancelled / mission.interr
 - [ ] 取消 Mission 不留下运行中的 child run
 - [ ] 重启后不重复创建 delegation / child todo
 - [ ] 统计页父子 run 不重复计数
-- [ ] 功能开关默认关闭
+- [x] 功能开关可关闭
+
+
+---
+
+## 15. 实现状态与验证
+
+### 已实现（Mission 模式）
+
+| 能力 | 落点 |
+|---|---|
+| Supervisor 角色 / instructions / maxChildren | `agents.role/instructions/max_children`、Chat「＋ 主管」、设置页 Agent 角色 |
+| Mission thread / Mission todo | `threads.kind='mission'`、`todos.kind='mission'` |
+| 计划提交 / 审批 / 退回 | `mission_plans`、`MissionOverview` Plan Card、`mission_plan` MCP tool |
+| 子任务 / Delegation / worktree worker | `delegations`、child Todo/Run、现有 `prepareWorktree` |
+| 子任务事件回灌 / 汇总 | `supervisorPrompt` 事件队列、`mission_finish` |
+| 接受 / 返工 / 重试 / 取消 | `task_review`、`task_retry`、`cancelMission` |
+| 重启恢复 | `recoverMissions` + `resumeMission` |
+| 预算 / 并发 / 上限 | `enforceMissionBudgets`、`maxSupervisorRuns`、`maxMissionChildren` |
+| 防止双调度 | `dsh-supervisor.patch.yml` 禁用原生 subagent/Team/workflow |
+| MCP | `mcp-bridge.mjs` + Main 每 Mission token |
+
+### 验证命令
+
+```sh
+npm run typecheck
+npm run verify:mission
+npm run build
+```
+
+`verify:mission` 覆盖：
+
+1. SQLite `mission_plans` / `delegations` round-trip；
+2. MCP bridge 的 `initialize` / `tools/list` / `tools/call` → HTTP Main；
+3. dsh ACP supervisor patch + stdio MCP 挂载（不调用模型）。
+
+### 已实测（本地 keyless mock）
+
+用 `COCKPIT_TEST_DSH_PATCH` 挂 keyless mock adapter，完整跑通：
+
+```
+用户目标
+→ supervisor 调 mission_plan
+→ mission_state=plan_review
+→ 用户批准
+→ child Todo + Delegation + worker run
+→ worker 完成
+→ delegation=completed
+→ Mission in_review + 收件箱
+→ 用户确认 → done
+```
+
+同时验证了 Mission 面板、计划卡、子任务卡、确认按钮、收件箱和 Chat/TODO 状态联动。
+
+### 明确边界
+
+- **Supervisor 本地**：`Mission 一期只支持本地 supervisor`；远程 worker 仍走现有 SSH run，远程 supervisor / MCP over SSH 未实现。
+- **不混用 Native 模式**：Mission supervisor 的 dsh profile 关闭了原生 `subagent` / `subagent_fork` / Team / workflow；Native 模式作为独立轻量备选，未进入本数据模型。
+- **团队/小队**：未实现；当前是「一个 supervisor + 多个 worker」。
+- **预算**：已做 Mission 时长硬闸；工具轮次/token 硬闸仍是后续增强。

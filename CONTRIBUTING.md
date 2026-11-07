@@ -26,6 +26,8 @@ npm run build
 node --check electron/main.mjs
 node --check electron/db.mjs
 node --check electron/acp.mjs
+node --check electron/mcp-bridge.mjs
+npm run verify:mission
 ```
 
 涉及 dsh 执行/PTY 的改动，请额外运行：
