@@ -14,9 +14,15 @@ import { ChevronDownIcon, ChevronUpIcon, EyeIcon, PanelCollapseIcon, SearchIcon,
 /** 一个终端窗格 = 一个 pty（重启会新建 pty） */
 type PaneState = {
   id: string; cwd: string; title: string;
+  /** terminal = pty；preview/file = 同标签内的预览窗格 */
+  kind?: "terminal" | "preview" | "file";
   terminalId?: string; agentId?: string;
   /** 启动 Agent 的命令：带命令的窗格重启时会重复建 Agent 记录，故不提供重启。 */
   command?: string; projectId?: string;
+  /** preview/file 窗格的数据 */
+  url?: string;
+  rel?: string;
+  rootDir?: string;
 };
 
 /** 二进制拆分树：row = 左右，col = 上下；ratio 是第一个子节点占比 */
@@ -40,6 +46,22 @@ type Tab = {
   /** 后台标签页收到 bell（命令完成 / 需要输入）时的提示点。 */
   attention?: boolean;
 };
+
+const PREVIEW_MIME = "application/x-cockpit-preview";
+
+type PreviewTarget = { tab: Tab; paneId?: string };
+type PreviewDragData = {
+  sourceTabId: string; title: string; kind: "preview" | "file";
+  url?: string; rel?: string; rootDir?: string;
+};
+function findPreviewLocation(tabs: Tab[]): PreviewTarget | null {
+  for (const tab of tabs) if (tab.kind === "preview" || tab.kind === "file") return { tab };
+  for (const tab of tabs) {
+    const pane = findPreviewPane(tab.root);
+    if (pane) return { tab, paneId: pane.id };
+  }
+  return null;
+}
 
 type MenuPoint = { x: number; y: number };
 type SplitDir = "row" | "col";
@@ -72,6 +94,12 @@ function findPaneById(node: PaneNode | undefined, id: string): PaneState | null 
   return findPaneById(node.a, id) ?? findPaneById(node.b, id);
 }
 
+function findPreviewPane(node: PaneNode | undefined): PaneState | null {
+  if (!node) return null;
+  if (node.type === "pane") return node.pane.kind === "preview" || node.pane.kind === "file" ? node.pane : null;
+  return findPreviewPane(node.a) ?? findPreviewPane(node.b);
+}
+
 function updatePaneNode(node: PaneNode, id: string, patch: Partial<PaneState>): PaneNode {
   if (node.type === "pane") return node.pane.id === id ? { type: "pane", pane: { ...node.pane, ...patch } } : node;
   const a = updatePaneNode(node.a, id, patch);
@@ -86,6 +114,20 @@ function insertSplitNode(node: PaneNode, targetPaneId: string, pane: PaneState, 
   }
   const a = insertSplitNode(node.a, targetPaneId, pane, dir, splitId);
   const b = insertSplitNode(node.b, targetPaneId, pane, dir, splitId);
+  return a === node.a && b === node.b ? node : { ...node, a, b };
+}
+
+function insertSplitNodeAt(node: PaneNode, targetPaneId: string, pane: PaneState, dir: SplitDir, splitId: string, side: "before" | "after"): PaneNode {
+  if (node.type === "pane") {
+    if (node.pane.id !== targetPaneId) return node;
+    return {
+      type: "split", id: splitId, dir, ratio: 0.5,
+      a: side === "before" ? { type: "pane", pane } : node,
+      b: side === "before" ? node : { type: "pane", pane },
+    };
+  }
+  const a = insertSplitNodeAt(node.a, targetPaneId, pane, dir, splitId, side);
+  const b = insertSplitNodeAt(node.b, targetPaneId, pane, dir, splitId, side);
   return a === node.a && b === node.b ? node : { ...node, a, b };
 }
 
@@ -206,23 +248,27 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
     return tab;
   }, [makePane]);
 
+  // 只有一个预览标签：打开文件 = 切成文件模式，打开 URL = 切成地址模式（不新增标签）
   const openFilePreviewTab = useCallback((req: { rel: string; name?: string; root?: string }) => {
     if (!req.rel) return;
     const root = req.root || "";
-    const existing = tabs.find((t) => t.kind === "file" && t.rel === req.rel && (t.rootDir || "") === root);
-    if (existing) {
-      if (req.name && req.name !== existing.title) {
-        setTabs((list) => list.map((t) => (t.id === existing.id ? { ...t, title: req.name as string } : t)));
-      }
-      setActive(existing.id);
+    const title = req.name || req.rel.split("/").pop() || "预览";
+    const target = findPreviewLocation(tabs);
+    if (target) {
+      setTabs((list) => list.map((t) => {
+        if (t.id !== target.tab.id) return t;
+        if (target.paneId && t.root) {
+          return { ...t, root: updatePaneNode(t.root, target.paneId, { kind: "file", rel: req.rel, rootDir: root, url: undefined, title }) };
+        }
+        return { ...t, kind: "preview", rel: req.rel, rootDir: root, url: undefined, title: t.renamed ? t.title : title };
+      }));
+      setActive(target.tab.id);
       setFocusToken((n) => n + 1);
       return;
     }
     const tab: Tab = {
-      id: `t${seq.current++}`, kind: "file",
-      cwd: root || state.projectPath,
-      title: req.name || req.rel.split("/").pop() || "预览",
-      rel: req.rel, rootDir: root,
+      id: `t${seq.current++}`, kind: "preview",
+      cwd: root || state.projectPath, title, rel: req.rel, rootDir: root,
     };
     setTabs((list) => [...list, tab]);
     setActive(tab.id);
@@ -258,12 +304,16 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
   const openPreview = useCallback((url: string) => {
     if (!url) return;
     setPreviewReq({ url, n: Date.now() });
-    const existing = tabs.find((t) => t.kind === "preview");
-    if (existing) {
-      setTabs((list) => list.map((t) => (t.id === existing.id
-        ? { ...t, url, title: t.renamed ? t.title : previewTitle(url) }
-        : t)));
-      setActive(existing.id);
+    const target = findPreviewLocation(tabs);
+    if (target) {
+      setTabs((list) => list.map((t) => {
+        if (t.id !== target.tab.id) return t;
+        if (target.paneId && t.root) {
+          return { ...t, root: updatePaneNode(t.root, target.paneId, { kind: "preview", url, rel: undefined, rootDir: undefined, title: previewTitle(url) }) };
+        }
+        return { ...t, kind: "preview", url, rel: undefined, rootDir: undefined, title: t.renamed ? t.title : previewTitle(url) };
+      }));
+      setActive(target.tab.id);
     } else {
       const tab: Tab = { id: `t${seq.current++}`, kind: "preview", cwd: state.projectPath, title: previewTitle(url), url };
       setTabs((list) => [...list, tab]);
@@ -275,8 +325,8 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
   // 工具栏「＋ 预览」/ 命令面板入口：优先复用已打开的预览标签，否则用
   // 当前窗格识别的地址 → 最近一次识别 → 设置里的默认预览地址
   const showPreview = useCallback(() => {
-    const existing = tabs.find((t) => t.kind === "preview");
-    if (existing) { activate(existing.id); return; }
+    const target = findPreviewLocation(tabs);
+    if (target) { activate(target.tab.id); return; }
     openPreview(activeUrl || lastUrl || previewHomeUrl || "http://localhost:5173/");
   }, [tabs, activate, openPreview, activeUrl, lastUrl, previewHomeUrl]);
 
@@ -334,6 +384,62 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
     setFocusToken((n) => n + 1);
     setSearchPaneId(null);
   }, [tabs, close, forgetPanes]);
+
+  const closePane = useCallback((tabId: string, paneId: string) => {
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab?.root) return;
+    const root = removePaneNode(tab.root, paneId);
+    if (!root) { close(tabId); return; }
+    forgetPanes([paneId]);
+    const nextFocus = findPaneById(root, tab.focusedPaneId || "") ? (tab.focusedPaneId || firstPane(root).id) : firstPane(root).id;
+    setTabs(tabs.map((t) => (t.id === tabId ? { ...t, root, focusedPaneId: nextFocus } : t)));
+    setFocusToken((n) => n + 1);
+    setSearchPaneId(null);
+  }, [tabs, close, forgetPanes]);
+
+  // 把预览标签拖进某个 pty 窗格：生成 preview/file pane，并移除原预览标签。
+  const movePreviewToPane = useCallback((data: PreviewDragData, targetTabId: string, targetPaneId: string, dir: SplitDir, side: "before" | "after") => {
+    const target = tabs.find((t) => t.id === targetTabId);
+    if (!target?.root || target.kind !== "terminal") return;
+    const pane: PaneState = {
+      id: `p${seq.current++}`,
+      cwd: data.rootDir || state.projectPath,
+      title: data.title || (data.rel ? "预览" : previewTitle(data.url || "")),
+      kind: data.rel ? "file" : "preview",
+      url: data.url,
+      rel: data.rel,
+      rootDir: data.rootDir,
+    };
+    const root = insertSplitNodeAt(target.root, targetPaneId, pane, dir, `s${seq.current++}`, side);
+    const source = data.sourceTabId ? tabs.find((t) => t.id === data.sourceTabId) : null;
+    if (source) forgetPanes(collectPaneIds(source.root));
+    const next = tabs
+      .filter((t) => !data.sourceTabId || t.id !== data.sourceTabId)
+      .map((t) => (t.id === targetTabId ? { ...t, root, focusedPaneId: pane.id } : t));
+    setTabs(next);
+    setActive(targetTabId);
+    setFocusToken((n) => n + 1);
+    setSearchPaneId(null);
+  }, [tabs, state.projectPath, forgetPanes]);
+
+  // 右键「在右侧打开预览」：优先搬当前预览标签；没有预览就用当前窗格 URL/默认地址。
+  const splitPreviewFocused = useCallback(() => {
+    const tab = tabs.find((t) => t.id === active);
+    if (!tab || tab.kind !== "terminal" || !tab.root) return;
+    const target = tab.focusedPaneId ?? firstPane(tab.root).id;
+    const preview = findPreviewLocation(tabs);
+    if (preview?.paneId) {
+      // 已经在别的 pane 里：先切过去，避免复制出第二个 webview。
+      setActive(preview.tab.id);
+      setFocusToken((n) => n + 1);
+      return;
+    }
+    const url = preview?.tab.url || activeUrl || lastUrl || previewHomeUrl || "http://localhost:5173/";
+    const data: PreviewDragData = preview
+      ? { sourceTabId: preview.tab.id, title: preview.tab.title, kind: preview.tab.kind === "file" ? "file" : "preview", url: preview.tab.url, rel: preview.tab.rel, rootDir: preview.tab.rootDir }
+      : { sourceTabId: "", title: previewTitle(url), kind: "preview", url };
+    movePreviewToPane(data, tab.id, target, "row", "after");
+  }, [tabs, active, activeUrl, lastUrl, previewHomeUrl, movePreviewToPane]);
 
   const closeActiveSurface = useCallback(() => {
     if (!activeTab) return;
@@ -525,7 +631,6 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
             <option value="">＋ Agent</option>
             {(state.cliCapabilities || []).map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
-          <button className="btn tiny-btn" onClick={showPreview}>＋ 预览</button>
           <button className="btn tiny-btn" onClick={newTerminal}>＋ 终端</button>
           {onCollapse && (
             <button className="pane-collapse dark" title="收起终端" aria-label="收起终端" onClick={onCollapse}>
@@ -539,17 +644,25 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
           <div
             key={t.id}
             data-tab-id={t.id}
-            className={`term-tab ${t.id === active ? "on" : ""} ${t.attention ? "attention" : ""}`}
-            title={t.kind === "preview" ? (t.url || "预览") : t.cwd}
+            className={`term-tab ${t.id === active ? "on" : ""} ${t.attention ? "attention" : ""} ${t.kind === "preview" || t.kind === "file" ? "preview-drag" : ""}`}
+            title={t.kind === "preview" ? `${t.url || (t.rel ? `${t.rootDir || ""}/${t.rel}` : "预览")} · 可拖到拆分的窗格` : t.cwd}
+            draggable={t.kind === "preview" || t.kind === "file"}
+            onDragStart={(e) => {
+              if (t.kind !== "preview" && t.kind !== "file") return;
+              const data: PreviewDragData = {
+                sourceTabId: t.id, title: t.title,
+                kind: t.rel ? "file" : "preview", url: t.url, rel: t.rel, rootDir: t.rootDir,
+              };
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData(PREVIEW_MIME, JSON.stringify(data));
+            }}
             onClick={() => activate(t.id)}
             onDoubleClick={() => { setRenaming(t.id); }}
             onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); close(t.id); } }}
           >
-            {t.kind === "file"
-              ? <FileVisual name={t.title} size={12} />
-              : t.kind === "preview"
-                ? <EyeIcon size={12} className="term-tab-icon" />
-                : <span className={`dot ${t.attention ? "amber" : t.taskId ? "green" : "slate"}`} />}
+            {t.kind === "preview"
+              ? (t.rel ? <FileVisual name={t.title} size={12} /> : <EyeIcon size={12} className="term-tab-icon" />)
+              : <span className={`dot ${t.attention ? "amber" : t.taskId ? "green" : "slate"}`} />}
             {renaming === t.id ? (
               <input
                 className="term-rename"
@@ -572,39 +685,20 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
       </div>
       <div className="term-body">
         {tabs.map((t) => {
-          if (t.kind === "file") {
-            const html = ["html", "htm"].includes(extOf(t.title));
-            return (
-              <div key={t.id} className="term-tab-surface" style={{ display: t.id === active ? "flex" : "none" }}>
-                {html ? (
-                  <PreviewSurface
-                    mode="file"
-                    file={{ name: t.title, rel: t.rel || "", root: t.rootDir }}
-                    onClose={() => close(t.id)}
-                    onPicked={onPickedContext}
-                  />
-                ) : (
-                  <FilePreviewPane
-                    name={t.title}
-                    rel={t.rel || ""}
-                    root={t.rootDir}
-                    onClose={() => close(t.id)}
-                    onPicked={onPickedContext}
-                  />
-                )}
-              </div>
-            );
-          }
-          if (t.kind === "preview") {
+          if (t.kind === "file" || t.kind === "preview") {
+            const isFileTab = Boolean(t.rel);
             return (
               <div key={t.id} className="term-tab-surface" style={{ display: t.id === active ? "flex" : "none" }}>
                 <PreviewSurface
-                  mode="web"
+                  mode={isFileTab ? "file" : "web"}
+                  file={isFileTab ? { name: t.title, rel: t.rel || "", root: t.rootDir } : undefined}
                   url={t.url}
                   root={previewRoot}
                   defaultUrl={previewHomeUrl || "http://localhost:5173/"}
-                  autoOpenUrl={previewReq?.url}
+                  autoOpenUrl={isFileTab ? undefined : previewReq?.url}
                   autoOpenKey={previewReq?.n}
+                  active={t.id === active}
+                  onOpenUrl={openPreview}
                   onPicked={onPickedContext}
                   onClose={() => close(t.id)}
                 />
@@ -620,33 +714,46 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
                   node={t.root}
                   focusedId={focusedId}
                   renderPane={(pane) => (
-                    <TermTab
-                      key={pane.id}
-                      pane={pane}
-                      multi={multi}
-                      visible={t.id === active}
-                      focused={focusedId === pane.id}
-                      focusToken={focusToken}
-                      searchOpen={searchPaneId === pane.id}
-                      fontSize={fontSize}
-                      scrollback={terminalScrollback}
-                      onOpenSearch={() => setSearchPaneId(pane.id)}
-                      onCloseSearch={() => setSearchPaneId(null)}
-                      onNewTab={newTerminal}
-                      onClosePane={() => closeFocusedPane(t.id)}
-                      onSplit={splitFocused}
-                      onFocusDir={focusDir}
-                      onFocus={() => focusPane(t.id, pane.id)}
-                      onCycleTab={cycleTab}
-                      onGotoTab={(index) => { const target = tabs[index]; if (target) activate(target.id); }}
-                      onZoom={(delta) => { if (delta === 0) setZoom(0); else changeZoom(delta); }}
-                      onTermId={(termId) => { termToPane.current[termId] = pane.id; patchPane(t.id, pane.id, { terminalId: termId }); }}
-                      onUrl={(url) => setUrlByPane((map) => ({ ...map, [pane.id]: url }))}
-                      onTitle={(title) => onPaneTitle(t.id, pane.id, title)}
-                      onBell={() => { if (t.id !== active) patchTab(t.id, { attention: true }); }}
-                    />
+                    pane.kind === "preview" || pane.kind === "file"
+                      ? <PreviewPane
+                          key={pane.id}
+                          pane={pane}
+                          active={t.id === active}
+                          previewRoot={previewRoot}
+                          previewHomeUrl={previewHomeUrl}
+                          onOpenUrl={(url) => patchPane(t.id, pane.id, { kind: "preview", url, rel: undefined, rootDir: undefined, title: previewTitle(url) })}
+                          onPicked={onPickedContext}
+                          onClose={() => closePane(t.id, pane.id)}
+                        />
+                      : <TermTab
+                          key={pane.id}
+                          pane={pane}
+                          multi={multi}
+                          visible={t.id === active}
+                          focused={focusedId === pane.id}
+                          focusToken={focusToken}
+                          searchOpen={searchPaneId === pane.id}
+                          fontSize={fontSize}
+                          scrollback={terminalScrollback}
+                          onOpenSearch={() => setSearchPaneId(pane.id)}
+                          onCloseSearch={() => setSearchPaneId(null)}
+                          onNewTab={newTerminal}
+                          onClosePane={() => closeFocusedPane(t.id)}
+                          onSplit={splitFocused}
+                          onOpenPreview={splitPreviewFocused}
+                          onFocusDir={focusDir}
+                          onFocus={() => focusPane(t.id, pane.id)}
+                          onCycleTab={cycleTab}
+                          onGotoTab={(index) => { const target = tabs[index]; if (target) activate(target.id); }}
+                          onZoom={(delta) => { if (delta === 0) setZoom(0); else changeZoom(delta); }}
+                          onTermId={(termId) => { termToPane.current[termId] = pane.id; patchPane(t.id, pane.id, { terminalId: termId }); }}
+                          onUrl={(url) => setUrlByPane((map) => ({ ...map, [pane.id]: url }))}
+                          onTitle={(title) => onPaneTitle(t.id, pane.id, title)}
+                          onBell={() => { if (t.id !== active) patchTab(t.id, { attention: true }); }}
+                        />
                   )}
                   onRatio={(splitId, delta) => changeRatio(t.id, splitId, delta)}
+                  onPaneDrop={(paneId, dir, side, data) => movePreviewToPane(data, t.id, paneId, dir, side)}
                 />
               )}
             </div>
@@ -677,13 +784,25 @@ function computeLayout(node: PaneNode, rect: LayoutRect, panes: PanePlacement[],
   }
 }
 
-function SplitSurface({ node, focusedId, renderPane, onRatio }: {
+function SplitSurface({ node, focusedId, renderPane, onRatio, onPaneDrop }: {
   node: PaneNode;
   focusedId: string;
   renderPane: (pane: PaneState) => ReactNode;
   onRatio: (splitId: string, delta: number) => void;
+  onPaneDrop?: (paneId: string, dir: SplitDir, side: "before" | "after", data: PreviewDragData) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [drop, setDrop] = useState<{ paneId: string; dir: SplitDir; side: "before" | "after" } | null>(null);
+  const edgeFor = (e: any): { dir: SplitDir; side: "before" | "after" } => {
+    const box = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - box.left) / Math.max(1, box.width);
+    const y = (e.clientY - box.top) / Math.max(1, box.height);
+    const horizontal = Math.min(x, 1 - x) <= Math.min(y, 1 - y);
+    return {
+      dir: horizontal ? "row" : "col",
+      side: horizontal ? (x < 0.5 ? "before" : "after") : (y < 0.5 ? "before" : "after"),
+    };
+  };
   const panes: PanePlacement[] = [];
   const splits: SplitPlacement[] = [];
   computeLayout(node, { x: 0, y: 0, w: 1, h: 1 }, panes, splits);
@@ -700,8 +819,29 @@ function SplitSurface({ node, focusedId, renderPane, onRatio }: {
             width: `calc(${rect.w * 100}% - 6px)`,
             height: `calc(${rect.h * 100}% - 6px)`,
           }}
+          onDragOver={(e) => {
+            if (!onPaneDrop || !e.dataTransfer.types.includes(PREVIEW_MIME)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setDrop({ paneId: pane.id, ...edgeFor(e) });
+          }}
+          onDragLeave={(e) => {
+            if ((e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) return;
+            setDrop(null);
+          }}
+          onDrop={(e) => {
+            if (!onPaneDrop || !e.dataTransfer.types.includes(PREVIEW_MIME)) return;
+            const raw = e.dataTransfer.getData(PREVIEW_MIME);
+            if (!raw) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const edge = drop?.paneId === pane.id ? drop : { paneId: pane.id, ...edgeFor(e) };
+            setDrop(null);
+            try { onPaneDrop(pane.id, edge.dir, edge.side, JSON.parse(raw)); } catch { /* ignore */ }
+          }}
         >
           {renderPane(pane)}
+          {drop?.paneId === pane.id && <div className={`term-drop-hint ${drop.dir}-${drop.side}`} />}
         </div>
       ))}
       {splits.map(({ split, rect }) => {
@@ -736,6 +876,29 @@ function SplitSurface({ node, focusedId, renderPane, onRatio }: {
   );
 }
 
+function PreviewPane({ pane, active, previewRoot, previewHomeUrl, onOpenUrl, onPicked, onClose }: {
+  pane: PaneState; active: boolean; previewRoot?: string; previewHomeUrl?: string;
+  onOpenUrl: (url: string) => void; onPicked: (ctx: ElementContext) => void; onClose: () => void;
+}) {
+  const isFile = pane.kind === "file" && Boolean(pane.rel);
+  return (
+    <div className="term-preview-pane">
+      <PreviewSurface
+        mode={isFile ? "file" : "web"}
+        file={isFile ? { name: pane.title, rel: pane.rel || "", root: pane.rootDir } : undefined}
+        url={pane.url}
+        autoOpenUrl={isFile ? undefined : pane.url}
+        root={previewRoot}
+        defaultUrl={previewHomeUrl || "http://localhost:5173/"}
+        active={active}
+        onOpenUrl={onOpenUrl}
+        onPicked={onPicked}
+        onClose={onClose}
+      />
+    </div>
+  );
+}
+
 type TermTabProps = {
   pane: PaneState;
   multi: boolean;
@@ -750,6 +913,7 @@ type TermTabProps = {
   onNewTab: () => void;
   onClosePane: () => void;
   onSplit: (dir: SplitDir) => void;
+  onOpenPreview: () => void;
   onFocusDir: (dir: FocusDir) => void;
   onFocus: () => void;
   onCycleTab: (dir: 1 | -1) => void;
@@ -761,7 +925,7 @@ type TermTabProps = {
   onBell: () => void;
 };
 
-function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSize, scrollback, onOpenSearch, onCloseSearch, onNewTab, onClosePane, onSplit, onFocusDir, onFocus, onCycleTab, onGotoTab, onZoom, onTermId, onUrl, onTitle, onBell }: TermTabProps) {
+function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSize, scrollback, onOpenSearch, onCloseSearch, onNewTab, onClosePane, onSplit, onOpenPreview, onFocusDir, onFocus, onCycleTab, onGotoTab, onZoom, onTermId, onUrl, onTitle, onBell }: TermTabProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -1042,6 +1206,7 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
         "sep",
         { label: "向右拆分", hint: "⌘D", run: () => onSplit("row") },
         { label: "向下拆分", hint: "⇧⌘D", run: () => onSplit("col") },
+        { label: "在右侧打开预览", run: onOpenPreview },
         "sep",
         { label: "新建终端", hint: "⌘T", run: onNewTab },
         { label: multi ? "关闭窗格" : "关闭标签", hint: "⌘W", run: onClosePane },

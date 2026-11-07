@@ -1330,3 +1330,14 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .guide-row:first-child{border-top:0;padding-top:0}
 .guide-row b{color:var(--fg)}
 .guide-row span{color:var(--fg-2);min-width:0}
+
+/* 预览窗格：preview 可以作为 terminal split 的一个 pane */
+.term-preview-pane{display:flex;flex:1;width:100%;height:100%;min-width:0;min-height:0}
+.term-preview-pane>.preview-surface{flex:1;width:100%;height:100%;min-width:0}
+.term-tab.preview-drag{cursor:grab}
+.term-tab.preview-drag:active{cursor:grabbing}
+.term-drop-hint{position:absolute;z-index:18;pointer-events:none;background:color-mix(in srgb,var(--brand) 14%,transparent);border:2px solid var(--brand);border-radius:3px;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--brand) 45%,transparent)}
+.term-drop-hint.row-before{left:0;top:0;width:50%;height:100%}
+.term-drop-hint.row-after{right:0;top:0;width:50%;height:100%}
+.term-drop-hint.col-before{left:0;top:0;width:100%;height:50%}
+.term-drop-hint.col-after{left:0;bottom:0;width:100%;height:50%}

@@ -21,7 +21,7 @@ function normalizeUrl(raw: string) {
  * - mode=file：本地 HTML，路径栏 + 渲染/源码 + webview + 拾取 + Finder/复制
  * 同一个 HTML 标签只保留一个 webview；渲染/源码切换与切标签都不重建。
  */
-export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost:5173/", autoOpenUrl, autoOpenKey, root, onPicked, onClose }: {
+export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost:5173/", autoOpenUrl, autoOpenKey, root, active = true, onOpenUrl, onPicked, onClose }: {
   mode: "web" | "file";
   file?: FileInfo;
   url?: string;
@@ -29,6 +29,10 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   autoOpenUrl?: string;
   autoOpenKey?: number;
   root?: string;
+  /** 只有当前可见的预览才允许拾取元素 */
+  active?: boolean;
+  /** 文件模式下切到地址模式（同一个预览标签） */
+  onOpenUrl?: (url: string) => void;
   onPicked?: (ctx: ElementContext) => void;
   onClose?: () => void;
 }) {
@@ -105,6 +109,14 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
       setPickError("");
     };
   }, [src]);
+
+  // 切到别的标签时取消拾取：否则拾取器还挂在隐藏的 webview 上，点了没反应
+  useEffect(() => {
+    if (active || !picking) return;
+    const id = wcIdRef.current;
+    if (id) void window.harness.previewCancel(id).catch(() => {});
+    setPicking(false);
+  }, [active, picking]);
 
   // 从渲染切到源码时退出拾取
   useEffect(() => {
@@ -184,6 +196,13 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
             placeholder="http://localhost:5173"
           />
           {!isFile && <button className="btn tiny-btn" onClick={open}>打开</button>}
+          {isFile && onOpenUrl && (
+            <button
+              className="btn tiny-btn"
+              title="在同一个预览标签里改用地址（dev server / 远程页面）"
+              onClick={() => onOpenUrl(defaultUrl)}
+            >URL</button>
+          )}
         </div>
         <div className="preview-surface-actions">
           {isFile && isHtml && (
