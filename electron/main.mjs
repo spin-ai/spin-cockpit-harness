@@ -652,12 +652,14 @@ async function startRun(run, todo, agent) {
       .filter((m) => m.context)
       .map((m) => formatContext(m.context, contextDetail()))
       .filter(Boolean);
+    const memory = await wikiMemoryContext();
     const prompt = [
       `任务：${todo.title}`,
       todo.desc ? `描述：${todo.desc}` : "",
       todo.acceptance?.length ? `验收：${todo.acceptance.join("；")}` : "",
       instructions.length ? `补充指令：\n${instructions.map((text) => `- ${text}`).join("\n")}` : "",
       contexts.length ? `界面上下文：\n${contexts.join("\n\n")}` : "",
+      memory ? `Wiki 记忆索引（需要详情时使用 wiki_search / wiki_read_page；写入用 wiki_upsert_draft）：\n${memory}` : "",
       "完成后给出结论；如需改文件请直接修改。",
     ].filter(Boolean).join("\n");
     const res = await client.prompt(prompt);
@@ -837,7 +839,8 @@ function startWikiMcpServer() {
       const name = String(payload.name || "");
       const args = payload.arguments || {};
       let result;
-      if (name === "wiki_search") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.search", { query: args.query });
+      if (name === "wiki_memory") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.memory", { maxChars: args.max_chars || 12000 });
+      else if (name === "wiki_search") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.search", { query: args.query });
       else if (name === "wiki_list_sources") result = (await pluginHost.invoke("ai.cockpit.notes", "wiki.sources", {})).map((s) => ({ id: s.id, title: s.title, kind: s.kind, uri: s.uri }));
       else if (name === "wiki_read_source") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.source", { id: args.id });
       else if (name === "wiki_read_page") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: args.id });
@@ -867,6 +870,16 @@ function wikiMcpServers(runId) {
 
 function releaseWikiToken(runId) {
   for (const [token, rec] of wikiTokens) if (rec.runId === runId) wikiTokens.delete(token);
+}
+
+async function wikiMemoryContext() {
+  if (!pluginHost || !store.state.plugins?.some((p) => p.id === "ai.cockpit.notes" && p.enabled)) return "";
+  try {
+    const res = await pluginHost.invoke("ai.cockpit.notes", "wiki.memory", { maxChars: 12000 });
+    return String(res?.markdown || "");
+  } catch {
+    return "";
+  }
 }
 
 async function probeHost(host) {
@@ -1866,7 +1879,8 @@ async function startSupervisorRun(run, mission, agent) {
     await client.start();
     await client.newSession(cwd, mcpServers);
     await client.configure();
-    await supervisorPrompt(run, mission, handle, supervisorInitialPrompt(mission, agent));
+    const memory = await wikiMemoryContext();
+    await supervisorPrompt(run, mission, handle, `${supervisorInitialPrompt(mission, agent)}${memory ? `\n\nWiki 记忆索引：\n${memory}` : ""}`);
   } catch (err) {
     if (!handle.done) failMission(mission, err?.message || err);
   }

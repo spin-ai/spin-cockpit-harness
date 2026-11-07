@@ -20,6 +20,7 @@ type Doc = Page & { dirty: boolean };
 type Pane = { tabs: string[]; active: string | null };
 type Tab = "pages" | "sources" | "review";
 type SourceDraft = { title: string; content: string; url: string; mode: "text" | "url" };
+type MemoryData = { markdown: string; pageCount: number; chars: number };
 
 function emptyPane(): Pane { return { tabs: [], active: null }; }
 function statusLabel(status: string) { return status === "reviewed" ? "已审核" : status === "stale" ? "已过期" : "Draft"; }
@@ -55,6 +56,8 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const [graphLoading, setGraphLoading] = useState(false);
   const [sourceView, setSourceView] = useState<Source | null>(null);
   const [sourceDraft, setSourceDraft] = useState<SourceDraft | null>(null);
+  const [memory, setMemory] = useState<MemoryData | null>(null);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -77,6 +80,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
       setSources(Array.isArray(res.sources) ? res.sources : []);
       setReviews(Array.isArray(res.reviews) ? res.reviews : []);
       setLog(Array.isArray(res.log) ? res.log : []);
+      try { setMemory(await invoke("wiki.memory", { maxChars: 12000 })); } catch { /* memory is optional */ }
       setError("");
     } catch (err) { fail(err); }
   }, [enabled, invoke]);
@@ -257,6 +261,25 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     window.addEventListener("pointerup", up);
   };
 
+  const openMemory = async () => {
+    setGraph(false);
+    setMemoryOpen(true);
+    try { setMemory(await invoke("wiki.memory", { maxChars: 12000 })); } catch (err) { fail(err); }
+  };
+
+  const dream = async () => {
+    setBusy(true);
+    try {
+      const res = await invoke("wiki.dream");
+      if (res) {
+        const issues = Array.isArray(res.issues) ? res.issues : [];
+        setMemory(res.memory || memory);
+        setNotice(issues.length ? `Dream 发现 ${issues.length} 个维护项（见通知/页面）` : "Dream 未发现明显问题");
+        if (issues.length) setSourceDraft(null);
+      }
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
   const openGraph = async () => {
     setGraph(true); setGraphLoading(true);
     try { setGraphData((await invoke("wiki.graph")) || { nodes: [], edges: [] }); } catch (err) { fail(err); } finally { setGraphLoading(false); }
@@ -327,8 +350,9 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
           <button className="btn" onClick={() => { setSourceDraft({ title: "", content: "", url: "", mode: "text" }); }} disabled={busy}>＋ 导入资料</button>
           <button className="btn" onClick={() => void createPage()} disabled={busy}>＋ 页面</button>
           <button className="btn" onClick={() => void refresh()} title="刷新"><RefreshIcon size={13} /></button>
+          <button className={`btn ${memoryOpen ? "primary" : ""}`} onClick={() => { setGraph(false); void openMemory(); }}>记忆</button>
           <button className={`btn ${split ? "primary" : ""}`} onClick={toggleSplit}>分屏</button>
-          <button className={`btn ${graph ? "primary" : ""}`} onClick={() => graph ? setGraph(false) : void openGraph()}>图谱</button>
+          <button className={`btn ${graph ? "primary" : ""}`} onClick={() => { setMemoryOpen(false); graph ? setGraph(false) : void openGraph(); }}>图谱</button>
         </div>
       </header>
       {(error || notice) && <div className={`notes-banner ${error ? "error" : ""}`}>{error || notice}</div>}
@@ -353,7 +377,20 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
         </aside>
 
         <main className="notes-main">
-          {graph ? <GraphView data={graphData} loading={graphLoading} onOpen={(id) => { setGraph(false); void openPage(id, "left"); }} /> : (
+          {memoryOpen ? (
+            <div className="notes-memory">
+              <div className="notes-memory-head"><b>Memory</b><span>{memory?.pageCount || 0} pages · {memory?.chars || 0} chars</span><button className="btn tiny-btn" onClick={() => void dream()} disabled={busy}>Dream</button></div>
+              <div className="notes-preview markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(wikiMarkdown(memory?.markdown || "还没有 Memory 索引。")) }} onClick={(e) => {
+                const anchor = (e.target as HTMLElement).closest("a");
+                const href = anchor?.getAttribute("href") || "";
+                if (!href.startsWith("#wiki/")) return;
+                e.preventDefault();
+                const title = decodeURIComponent(href.slice(6)).split("#")[0];
+                const target = pages.find((p) => p.title === title || p.slug === title || p.id === title);
+                if (target) { setMemoryOpen(false); void openPage(target.id, "left"); }
+              }} />
+            </div>
+          ) : graph ? <GraphView data={graphData} loading={graphLoading} onOpen={(id) => { setGraph(false); void openPage(id, "left"); }} /> : (
             <div className={`notes-pane-layout ${split ? "split" : ""}`} ref={mainRef as React.RefObject<HTMLDivElement>} style={split ? { gridTemplateColumns: `${splitRatio * 100}% 5px minmax(0,1fr)` } : undefined}>
               {renderPane("left")}
               {split && <div className="notes-split-gutter" onPointerDown={startSplitDrag} />}
