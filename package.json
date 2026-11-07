@@ -107,7 +107,8 @@
       "node_modules/sql.js/dist/*.wasm",
       "node_modules/node-pty/**",
       "electron/mcp-bridge.mjs",
-      "electron/plugins/runtime.mjs"
+      "electron/plugins/runtime.mjs",
+      "electron/wiki-mcp-bridge.mjs"
     ],
     "mac": {
       "target": [

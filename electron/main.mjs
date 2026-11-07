@@ -134,6 +134,12 @@ let pluginHost = null;
 const mcpTokens = new Map();
 let mcpServer = null;
 let mcpServerUrl = "";
+let wikiMcpServer = null;
+let wikiMcpUrl = "";
+const wikiTokens = new Map();
+const WIKI_MCP_BRIDGE_PATH = app.isPackaged
+  ? path.join(process.resourcesPath, "app.asar.unpacked", "electron", "wiki-mcp-bridge.mjs")
+  : path.join(__dirname, "wiki-mcp-bridge.mjs");
 /** 探测连续失败计数（内存级）：连续 2 次才标离线，防一次网络抖动把队列卡住 */
 const probeFails = new Map();
 let win = null;
@@ -587,6 +593,7 @@ async function startRun(run, todo, agent) {
     model: thread.model || store.state.settings?.model || undefined,
     effort: thread.effort || store.state.settings?.effort || undefined,
     patches: process.env.COCKPIT_TEST_DSH_PATCH ? [process.env.COCKPIT_TEST_DSH_PATCH] : [],
+    mcpServers: wikiMcpServers(run.id),
   });
   const handle = { client, threadId: thread.id, streamId: null, thoughtId: null, tools: new Map(), toolMeta: new Map(), done: false, stderr: "" };
   active.set(run.id, handle);
@@ -699,6 +706,7 @@ async function startRun(run, todo, agent) {
     handle.done = true;
     if (run.endedAt && run.startedAt) run.durationMs = Math.max(0, run.endedAt - run.startedAt);
     settlePendingSteers(run.id);
+    releaseWikiToken(run.id);
     active.delete(run.id);
     broadcast();
     tick();
@@ -814,6 +822,51 @@ function handleUpdate(run, todo, handle, u) {
     else store.addEvent("run.plan", `run.plan ${(u.entries || []).length} steps`);
   }
   broadcast();
+}
+
+function startWikiMcpServer() {
+  if (wikiMcpServer) return;
+  wikiMcpServer = http.createServer(async (req, res) => {
+    const send = (status, payload) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(payload)); };
+    if (req.method !== "POST") return send(405, { ok: false, error: "method not allowed" });
+    try {
+      const auth = String(req.headers.authorization || "");
+      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+      if (!wikiTokens.has(token)) return send(403, { ok: false, error: "invalid wiki token" });
+      const payload = await readRequestBody(req);
+      const name = String(payload.name || "");
+      const args = payload.arguments || {};
+      let result;
+      if (name === "wiki_search") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.search", { query: args.query });
+      else if (name === "wiki_list_sources") result = (await pluginHost.invoke("ai.cockpit.notes", "wiki.sources", {})).map((s) => ({ id: s.id, title: s.title, kind: s.kind, uri: s.uri }));
+      else if (name === "wiki_read_source") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.source", { id: args.id });
+      else if (name === "wiki_read_page") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: args.id });
+      else if (name === "wiki_upsert_draft") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.upsertDraft", { title: args.title, content: args.content, summary: args.summary, sourceIds: args.source_ids || [] });
+      else if (name === "wiki_add_citation") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.addCitation", { pageId: args.page, sourceId: args.source, quote: args.quote, locator: args.locator });
+      else throw new Error(`unknown wiki tool: ${name}`);
+      return send(200, { ok: true, result });
+    } catch (err) { return send(400, { ok: false, error: String(err?.message || err).slice(0, 1000) }); }
+  });
+  wikiMcpServer.listen(0, "127.0.0.1", () => { wikiMcpUrl = `http://127.0.0.1:${wikiMcpServer.address().port}/call`; console.log(`[wiki.mcp] listening ${wikiMcpUrl}`); });
+  wikiMcpServer.on("error", (err) => console.warn(`[wiki.mcp] ${String(err?.message || err)}`));
+}
+
+function wikiMcpServers(runId) {
+  if (!wikiMcpUrl || !pluginHost || !store.state.plugins?.some((p) => p.id === "ai.cockpit.notes" && p.enabled)) return [];
+  const token = crypto.randomBytes(20).toString("hex");
+  wikiTokens.set(token, { runId, pluginId: "ai.cockpit.notes" });
+  return [{
+    name: "cockpit_wiki", command: process.execPath, args: [WIKI_MCP_BRIDGE_PATH],
+    env: [
+      { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+      { name: "COCKPIT_WIKI_URL", value: wikiMcpUrl },
+      { name: "COCKPIT_WIKI_TOKEN", value: token },
+    ],
+  }];
+}
+
+function releaseWikiToken(runId) {
+  for (const [token, rec] of wikiTokens) if (rec.runId === runId) wikiTokens.delete(token);
 }
 
 async function probeHost(host) {
@@ -1002,7 +1055,7 @@ function now() { return Date.now(); }
 
 const SETTINGS_SPEC = {
   defaultView: { kind: "enum", values: ["workspace", "projects", "stats", "hosts"], fallback: "workspace" },
-  theme: { kind: "enum", values: ["system", "light", "paper", "dark", "midnight", "forest", "graphite"], fallback: "system" },
+  theme: { kind: "enum", values: ["system", "light", "paper", "vslight", "dark", "vsdark", "midnight", "forest", "graphite", "monokai", "onedark", "solarized", "dracula"], fallback: "system" },
   chatFontSize: { kind: "number", min: 11, max: 16, fallback: 13 },
   enterToSend: { kind: "boolean", fallback: true },
   confirmStop: { kind: "boolean", fallback: false },
@@ -1553,6 +1606,7 @@ function finishMission(mission, summary = "", artifacts = [], source = "supervis
     }
   }
   for (const [token, record] of mcpTokens) if (record.missionId === mission.id) mcpTokens.delete(token);
+  if (supervisor) releaseWikiToken(supervisor.id);
   store.addMessage(thread.id, supervisor?.id || null, "agent", "text", text);
   store.addMessage(thread.id, supervisor?.id || null, "system", "system", "Mission 已汇总，等待人工确认");
   for (const ref of artifacts || []) {
@@ -1608,6 +1662,7 @@ function failMission(mission, error) {
     supervisor.error = String(error || "Mission 失败").slice(0, 800);
   }
   for (const [token, record] of mcpTokens) if (record.missionId === mission.id) mcpTokens.delete(token);
+  if (supervisor) releaseWikiToken(supervisor.id);
   store.addMessage(missionThread(mission).id, supervisor?.id || null, "system", "error", `Mission 失败：${String(error || "未知错误").slice(0, 500)}`);
   store.state.inbox.unshift({ id: store.nextId("i"), todoId: mission.id, kind: "mission_failed", title: `Mission 失败 · ${mission.title}`, at: now(), read: false });
   store.addEvent("mission.failed", `mission.failed ${mission.key} ${String(error || "").slice(0, 200)}`);
@@ -1765,7 +1820,7 @@ async function startSupervisorRun(run, mission, agent) {
     home: store.state.settings?.dshHome || undefined,
     model: thread.model || store.state.settings?.model || undefined,
     effort: thread.effort || store.state.settings?.effort || undefined,
-    mcpServers,
+    mcpServers: [...mcpServers, ...wikiMcpServers(run.id)],
     patches: [MISSION_PATCH_PATH, ...(process.env.COCKPIT_TEST_DSH_PATCH ? [process.env.COCKPIT_TEST_DSH_PATCH] : [])],
   });
   const handle = {
@@ -2649,6 +2704,7 @@ const actions = {
     for (const [id, a] of approvals) if (a.runId === runId) approvals.delete(id);
     const handle = active.get(runId);
     if (handle) { handle.done = true; handle.client.cancel(); handle.client.close(); active.delete(runId); }
+    releaseWikiToken(runId);
     const stoppedTodo = store.state.todos.find((t) => t.id === run.todoId);
     if (run.kind === "supervisor" || stoppedTodo?.kind === "mission") {
       for (const [token, record] of mcpTokens) if (record.runId === runId || record.missionId === run.todoId) mcpTokens.delete(token);
@@ -3441,6 +3497,7 @@ app.whenReady().then(async () => {
   store = await openDb(app.getPath("userData"));
   seed();
   startMissionMcpServer();
+  startWikiMcpServer();
   await createWindow();
   try {
     const { PluginHost } = await import("./plugins/host.mjs");
@@ -3460,6 +3517,7 @@ app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(
 app.on("before-quit", () => {
   try { grapeProc?.kill(); } catch { /* ignore */ }
   try { mcpServer?.close(); } catch { /* ignore */ }
+  try { wikiMcpServer?.close(); } catch { /* ignore */ }
   void pluginHost?.stopAll();
   for (const handle of active.values()) { try { handle.client.close(); } catch { /* ignore */ } }
   // 终端 pty 会随应用消失：先按「用户关闭」结算，否则重启后 TODO 会卡在运行中
