@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS todo_links (id TEXT PRIMARY KEY, todo_id TEXT, plugin
 /** 应用设置默认值。缺失的键一律从这里补齐。 */
 export const DEFAULT_SETTINGS = {
   defaultView: "workspace",        // workspace | projects | stats | hosts
-  theme: "system",                // system | light | paper | dark | midnight | forest | graphite
+  theme: "system",                // system | light | paper | vslight | dark | vsdark | midnight | forest | graphite | monokai | onedark | solarized | dracula
   chatFontSize: 13,               // 11–16
   enterToSend: true,
   confirmStop: false,

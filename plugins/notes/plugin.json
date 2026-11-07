@@ -1,27 +1,51 @@
 {
   "id": "ai.cockpit.notes",
-  "name": "Notes",
-  "version": "0.1.0",
+  "name": "Wiki",
+  "version": "0.2.0",
   "apiVersion": 1,
-  "engines": { "cockpit": ">=0.2.0" },
+  "engines": {
+    "cockpit": ">=0.2.0"
+  },
   "main": "main.mjs",
   "defaultEnabled": true,
-  "activation": ["onStartup", "onView:notes"],
-  "permissions": ["fs:vault", "tasks:write", "state:read", "ui:view"],
+  "activation": [
+    "onStartup",
+    "onView:notes"
+  ],
+  "permissions": [
+    "state:read",
+    "tasks:write",
+    "ui:view",
+    "agent:tools"
+  ],
   "contributes": {
     "views": [
-      { "id": "notes", "title": "笔记", "location": "main", "icon": "note" }
+      {
+        "id": "notes",
+        "title": "Wiki",
+        "location": "main",
+        "icon": "note"
+      }
     ],
     "commands": [
-      { "id": "notes.open", "title": "打开笔记", "description": "打开 Notes 工作区" },
-      { "id": "notes.today", "title": "打开今日笔记", "description": "打开或创建 Daily Note" },
-      { "id": "notes.refresh", "title": "刷新笔记索引", "description": "重新扫描 vault" }
+      {
+        "id": "wiki.open",
+        "title": "打开 Wiki",
+        "description": "打开原生 LLM Wiki"
+      },
+      {
+        "id": "wiki.new",
+        "title": "新建 Wiki 页面",
+        "description": "创建一个 draft 页面"
+      },
+      {
+        "id": "wiki.graph",
+        "title": "打开 Wiki 图谱",
+        "description": "查看 Source/Page 关系"
+      }
     ],
-    "events": ["mission.finished"],
-    "settings": [
-      { "key": "vaultPath", "type": "directory", "title": "Vault 路径" },
-      { "key": "dailyFolder", "type": "string", "title": "Daily Notes 文件夹", "default": "daily" },
-      { "key": "dailyFormat", "type": "string", "title": "Daily Notes 文件名", "default": "YYYY-MM-DD" }
+    "events": [
+      "mission.finished"
     ]
   }
 }

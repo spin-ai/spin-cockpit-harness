@@ -55,7 +55,7 @@ npm run dist                # macOS dmg → release/
 - **Super Agent / Mission**：在 Chat 里选择 `✦ 主管` 或点「＋ 主管」创建 supervisor；一句话先出计划（Mission Plan Card，可退回修改），人工批准后自动创建 child Todo + Delegation + worker run；worker 在独立 worktree 执行，Mission 面板汇总子任务、可取消/恢复/确认；supervisor 通过受控 MCP 工具读写 Mission，不直接改代码（见 [docs/ARCH-super-agent.md](docs/ARCH-super-agent.md)）
 - **Terminal**：任务绑定项目的真实 pty（node-pty + xterm），可多标签、可直接输入；**资源管理器里的文件也在终端区按标签预览**；多标签切换（⌃Tab / ⌘⇧[ ] / ⌘⇧1…9）、**终端窗格任意拆分**（⌘D 右拆 / ⇧⌘D 下拆，递归嵌套 + 拖拽分隔条 + ⌘⌥方向键切焦点）、标签重命名与中键关闭、⌘F 查找、右键菜单（复制 / 粘贴 / 清屏 / 重启）、⌘+/- 字号缩放、链接点击打开、进程退出后可重启；挂载前的输出会回放，不会丢 banner；**预览只有一个标签**：打开 HTML/文本文件就切成文件模式（渲染 / 源码），点地址栏「URL」或终端识别到的 `打开预览 :PORT` 就切成地址模式（dev server / 远程页面），两种模式共用同一 webview、地址栏与**拾取页面元素**；工具栏不再单列「＋ 预览」按钮（避免第二个入口）
 - **UI 上下文**：预览页里点中元素 → Chat 输入框出现元素 chip（selector / 源文件 / 截图）→ 随消息注入当前会话（运行中即 steer）
-- **插件**：Settings → 插件可安装 `.cockpit-plugin` / 目录、启停；**Notes 是内置 first-party 插件**，无需额外安装，支持 Obsidian vault、CodeMirror 编辑、多 tab、可拖拽左右分屏、文件树操作、搜索、backlinks、Graph、Daily Note、从笔记创建 Todo、发送到 Chat（见 [docs/ARCH-plugins.md](docs/ARCH-plugins.md)、[docs/PLUGIN-notes.md](docs/PLUGIN-notes.md)）
+- **插件**：Settings → 插件可安装 `.cockpit-plugin` / 目录、启停；**Notes 是内置 first-party 插件**，无需额外安装，原生 Source / Page / Citation / Review、CodeMirror 编辑、多 tab、可拖拽左右分屏、搜索、Graph、任务 / Chat 联动（见 [docs/ARCH-plugins.md](docs/ARCH-plugins.md)、[docs/PLUGIN-notes.md](docs/PLUGIN-notes.md)）
 - **右侧栏**：ORCA 风格三块
   - **资源管理器**：树形展开 / 折叠、文件类型标识、名称筛选（默认隐藏点文件）、全部折叠；**右键菜单**（新建文件/文件夹、在终端打开、Finder 显示、复制路径/相对路径、重命名 F2、复制副本、删除 ⌫）、工具栏新建、行内重命名、自动刷新（窗口重新聚焦时）
   - **会话历史**：按今天 / 昨天 / 更早分组；每行显示标题、状态、Agent、项目、消息数、最近一条消息；点行回到对应 Chat 会话，可展开最近消息
@@ -88,7 +88,7 @@ npm run dist                # macOS dmg → release/
 - 终端易用性（参考 ORCA terminal）：多标签快捷键、**窗格拆分**（二进制布局 / 拖拽比例 / 方向键切焦点）、**预览标签拖入拆分的另一半**（或终端右键「在右侧打开预览」）、查找高亮、右键菜单、链接打开、字号缩放、标签重命名 / 运行中提示点、退出重启、挂载前输出回放（见 [docs/ARCH-terminal-ux.md](docs/ARCH-terminal-ux.md)）
 - 前端预览 + 元素拾取（CDP）：预览作为终端标签页（与 pty 标签并列，⌘W / 中键关闭），终端打印的 dev server 地址自动识别；拾取元素 → 结构化 `<ui-context>` 注入 Agent；源码位置优先 `data-ym-src` / React `_debugSource`；截图落 `userData/ui-context`，不污染 worktree
 - 审批弹窗（ACP `session/request_permission`）：按 ACP 选项渲染（允许一次 / 总是允许 / 拒绝），支持多审批队列提示、焦点陷阱/aria；可在设置里改为自动批准 / 自动拒绝
-- 设置页（通用 / 外观 / 执行 / 终端 / 预览与元素 / 数据 / 快捷键 / 关于）：SQLite 持久化、即时生效；含分区说明/行内 hint、7 套主题（跟随系统 / 浅色 / 纸感 / 深色 / 午夜蓝 / 森林 / 石墨）、默认 Agent、全局并发、dsh 路径/模型、终端字号与回滚、预览地址、备份导出与重置
+- 设置页（通用 / 外观 / 执行 / 终端 / 预览与元素 / 数据 / 快捷键 / 关于）：SQLite 持久化、即时生效；含分区说明/行内 hint、13 套主题（跟随系统 / 浅色 / 纸感 / Light+ / 深色 / Dark+ / Monokai / One Dark / Solarized / Dracula / 午夜蓝 / 森林 / 石墨；终端配色随主题切换）、默认 Agent、全局并发、dsh 路径/模型、终端字号与回滚、预览地址、备份导出与重置
 - 每日模板、产物预览
 - macOS dmg 打包（未签名）
 
@@ -198,7 +198,7 @@ npm run pack:system
 - [docs/ARCH-super-agent.md](docs/ARCH-super-agent.md)（Super Agent：Mission / Delegation / MCP / 迁移与验证）
 - [docs/USAGE-super-agent.md](docs/USAGE-super-agent.md)（Super Agent 使用说明：准备 Agent / 审批计划 / 子任务 / 恢复）
 - [docs/ARCH-plugins.md](docs/ARCH-plugins.md)（插件宿主：manifest / 权限 / utilityProcess / API / 执行器 / UI）
-- [docs/PLUGIN-notes.md](docs/PLUGIN-notes.md)（Notes 插件提案：Obsidian vault / 索引 / UI / 任务联动）
+- [docs/PLUGIN-notes.md](docs/PLUGIN-notes.md)（原生 LLM Wiki：Source / Page / Citation / Review / Graph）
 - [docs/ARCH-chat-thread.md](docs/ARCH-chat-thread.md)（CHAT 单会话模型：thread / send 状态机 / 迁移）
 - [docs/ARCH-ui-context.md](docs/ARCH-ui-context.md)（预览元素拾取 → Agent 上下文：CDP / 安全边界 / 协议）
 - [docs/ARCH-settings.md](docs/ARCH-settings.md)（设置：分区、逐项生效点、持久化与新增步骤）

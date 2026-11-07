@@ -745,7 +745,7 @@ src/components/Settings.tsx     # 设置 → 插件
 - 插件 settings / storage
 - `todos.create/update`、`links.attach/list`
 - `fs.pickDirectory`、`ui.openView`、`chat.draft`、`notify`
-- Notes 内置 first-party 插件：vault 索引、文件树、CodeMirror 编辑、多 tab / 分屏 / Graph、Daily Note、创建任务、发送到 Chat
+- Wiki 内置 first-party 插件：Source / Page / Citation / Review、CodeMirror 编辑、多 tab / 分屏 / Graph、任务 / Chat 联动
 
 当前限制：
 
@@ -753,7 +753,7 @@ src/components/Settings.tsx     # 设置 → 插件
 - Executor 注册 / Agent tools / MCP 尚未接入
 - 安装支持目录与 zip；签名 / 市场未做
 - 权限是 API 层检查；utilityProcess 不是 OS 沙箱
-- Notes 作为 first-party 内置插件随 App 提供；第三方插件仍使用 manifest/runtime
+- Wiki 作为 first-party 内置插件随 App 提供；第三方插件仍使用 manifest/runtime
 
 ## 21. 待拍板
 
