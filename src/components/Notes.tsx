@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { State } from "../types";
 import { renderMarkdown } from "../markdown";
 import { ChevronDownIcon, ChevronRightIcon, RefreshIcon } from "./Icons";
+import { NotesEditor } from "./NotesEditor";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 const PLUGIN_ID = "ai.cockpit.notes";
@@ -48,7 +49,11 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const [left, setLeft] = useState<Pane>(emptyPane);
   const [right, setRight] = useState<Pane>(emptyPane);
   const [split, setSplit] = useState(false);
+  const [splitRatio, setSplitRatio] = useState(0.5);
+  const [layoutReady, setLayoutReady] = useState(false);
   const [focus, setFocus] = useState<"left" | "right">("left");
+  const mainRef = useRef<HTMLElement | null>(null);
+  const restoredVault = useRef("");
   const [mode, setMode] = useState<"preview" | "edit">("preview");
   const [graph, setGraph] = useState(false);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
@@ -58,6 +63,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [folderOpen, setFolderOpen] = useState<Record<string, boolean>>({});
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path: string; kind: "file" | "folder" } | null>(null);
 
   const invoke = useCallback((method: string, args: Record<string, unknown> = {}) => act("pluginInvoke", { pluginId: PLUGIN_ID, method, args }), [act]);
   const fail = (err: unknown) => setError(String((err as Error)?.message || err));
@@ -112,6 +118,38 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openRequest?.n]);
 
+  useEffect(() => {
+    if (!enabled || !status?.vaultPath || restoredVault.current === status.vaultPath) return;
+    restoredVault.current = status.vaultPath;
+    setLayoutReady(false);
+    (async () => {
+      try {
+        const layout = await invoke("notes.layout.get");
+        if (layout && typeof layout === "object") {
+          const leftLayout = layout.left || {};
+          const rightLayout = layout.right || {};
+          const paths = [...new Set([...(leftLayout.tabs || []), ...(rightLayout.tabs || [])])].filter((p: unknown) => typeof p === "string");
+          for (const path of paths) await loadDoc(path);
+          const valid = (p: string) => docs[p] || paths.includes(p);
+          setLeft({ tabs: (leftLayout.tabs || []).filter(valid), active: valid(leftLayout.active) ? leftLayout.active : null });
+          setRight({ tabs: (rightLayout.tabs || []).filter(valid), active: valid(rightLayout.active) ? rightLayout.active : null });
+          setSplit(Boolean(layout.split));
+          setSplitRatio(Number(layout.ratio) >= 0.2 && Number(layout.ratio) <= 0.8 ? Number(layout.ratio) : 0.5);
+          setFocus(layout.focus === "right" ? "right" : "left");
+        }
+      } catch { /* layout is optional */ }
+      setLayoutReady(true);
+    })();
+  }, [enabled, status?.vaultPath, invoke, loadDoc]);
+
+  useEffect(() => {
+    if (!layoutReady || !status?.vaultPath) return;
+    const timer = window.setTimeout(() => {
+      void invoke("notes.layout.set", { layout: { left, right, split, ratio: splitRatio, focus } }).catch(() => {});
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [layoutReady, status?.vaultPath, left, right, split, splitRatio, focus, invoke]);
+
   const closeTab = (where: "left" | "right", path: string) => {
     const doc = docs[path];
     if (doc?.dirty && !window.confirm(`「${doc.title}」有未保存修改，关闭？`)) return;
@@ -128,6 +166,23 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const updateDoc = (path: string, content: string) => {
     setDocs((current) => current[path] ? { ...current, [path]: { ...current[path], content, dirty: true } } : current);
     setNotice("");
+  };
+
+  const forgetPath = (path: string) => {
+    const matches = (p: string) => p === path || p.startsWith(`${path}/`);
+    setLeft((p) => {
+      const tabs = p.tabs.filter((x) => !matches(x));
+      return { tabs, active: p.active && matches(p.active) ? (tabs[0] ?? null) : p.active };
+    });
+    setRight((p) => {
+      const tabs = p.tabs.filter((x) => !matches(x));
+      return { tabs, active: p.active && matches(p.active) ? (tabs[0] ?? null) : p.active };
+    });
+    setDocs((current) => {
+      const next = { ...current };
+      for (const key of Object.keys(next)) if (matches(key)) delete next[key];
+      return next;
+    });
   };
 
   const saveDoc = useCallback(async (path: string) => {
@@ -181,6 +236,57 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
+  const createFolder = async () => {
+    const name = window.prompt("新建文件夹（可包含子目录）", "notes");
+    if (!name) return;
+    setBusy(true);
+    try { await invoke("notes.mkdir", { path: name }); await refreshList(); }
+    catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const renamePath = async (path: string, isFolder: boolean) => {
+    setCtxMenu(null);
+    const current = isFolder ? path : path.split("/").pop() || path;
+    const next = window.prompt("重命名", current);
+    if (!next || next === current) return;
+    const parent = isFolder ? path.split("/").slice(0, -1).join("/") : path.split("/").slice(0, -1).join("/");
+    const target = parent ? `${parent}/${next}` : next;
+    setBusy(true);
+    try {
+      const res = await invoke("notes.rename", { from: path, to: target });
+      if (res?.to) {
+        if (isFolder) { forgetPath(path); }
+        else { forgetPath(path); await loadDoc(res.to); await openNote(res.to); }
+        await refreshList();
+      }
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const trashPath = async (path: string, isFolder: boolean) => {
+    setCtxMenu(null);
+    if (!window.confirm(`删除${isFolder ? "文件夹" : "笔记"}「${path}」？会移动到 vault/.trash。`)) return;
+    setBusy(true);
+    try { await invoke("notes.trash", { path }); forgetPath(path); await refreshList(); }
+    catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const revealPath = async (path: string) => {
+    setCtxMenu(null);
+    try { await invoke("notes.reveal", { path }); } catch (err) { fail(err); }
+  };
+
+  const copyPath = async (path: string) => {
+    setCtxMenu(null);
+    try { await window.harness.clipboardWrite(path); setNotice("已复制路径"); } catch { /* ignore */ }
+  };
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    window.addEventListener("mousedown", close, true);
+    return () => window.removeEventListener("mousedown", close, true);
+  }, [ctxMenu]);
+
   const createTask = async () => {
     if (!activeDoc) return;
     setBusy(true);
@@ -212,6 +318,16 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     setSplit(true);
     setRight(path ? { tabs: [path], active: path } : emptyPane());
     setFocus("right");
+  };
+
+  const startSplitDrag = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const rect = mainRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const move = (ev: PointerEvent) => setSplitRatio(Math.max(0.2, Math.min(0.8, (ev.clientX - rect.left) / Math.max(1, rect.width))));
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
   };
 
   const openGraph = async () => {
@@ -297,12 +413,13 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 void openNote(href.replace(/^#\/?/, "").replace(/\.md$/, ""), which);
               }} />
             ) : (
-              <textarea
-                className="notes-editor"
+              <NotesEditor
+                key={doc.path}
                 value={doc.content}
-                spellCheck={false}
-                onChange={(e) => updateDoc(doc.path, e.target.value)}
-                onKeyDown={(e) => { if (e.key === "s" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void saveDoc(doc.path); } }}
+                pages={files.map((f) => ({ path: f.path, title: f.title }))}
+                tags={tags.map((t) => t.name)}
+                onChange={(value) => updateDoc(doc.path, value)}
+                onSave={() => void saveDoc(doc.path)}
               />
             )}
           </>
@@ -339,6 +456,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
       ) : (
         <div className="notes-layout">
           <aside className="notes-sidebar">
+            <div className="notes-sidebar-head"><span>VAULT</span><button onClick={() => void createFolder()} title="新建文件夹">＋ 文件夹</button></div>
             <input className="notes-search" value={query} onChange={(e) => void search(e.target.value)} placeholder="搜索标题 / 路径 / 内容" />
             <div className="notes-tagbar">
               <button className={!tag ? "on" : ""} onClick={() => setTag("")}>全部</button>
@@ -356,9 +474,9 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 const open = folderOpen[folder] ?? true;
                 return (
                   <div className="notes-folder" key={folder || "__root"}>
-                    {folder && <button className="notes-folder-head" onClick={() => setFolderOpen((f) => ({ ...f, [folder]: !open }))}>{open ? <ChevronDownIcon size={11} /> : <ChevronRightIcon size={11} />}<span>{folder}</span><em>{items.length}</em></button>}
+                    {folder && <button className="notes-folder-head" onClick={() => setFolderOpen((f) => ({ ...f, [folder]: !open }))} onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, path: folder, kind: "folder" }); }}>{open ? <ChevronDownIcon size={11} /> : <ChevronRightIcon size={11} />}<span>{folder}</span><em>{items.length}</em></button>}
                     {(open || !folder) && items.map((file) => (
-                      <button key={file.path} className={`notes-file ${activeDoc?.path === file.path ? "on" : ""}`} onClick={() => void openNote(file.path)} title={file.path}>
+                      <button key={file.path} className={`notes-file ${activeDoc?.path === file.path ? "on" : ""}`} onClick={() => void openNote(file.path)} title={file.path} onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, path: file.path, kind: "file" }); }}>
                         <span className="notes-file-dot" /><span className="ellipsis">{file.title}</span>{file.tags.length > 0 && <em>#{file.tags[0]}</em>}
                       </button>
                     ))}
@@ -373,8 +491,13 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
             {graph ? (
               <GraphView data={graphData} loading={graphLoading} onOpen={(path) => { setGraph(false); void openNote(path, "left"); }} />
             ) : (
-              <div className={`notes-pane-layout ${split ? "split" : ""}`}>
+              <div
+                className={`notes-pane-layout ${split ? "split" : ""}`}
+                ref={mainRef as React.RefObject<HTMLDivElement>}
+                style={split ? { gridTemplateColumns: `${splitRatio * 100}% 5px minmax(0,1fr)` } : undefined}
+              >
                 {renderPane("left")}
+                {split && <div className="notes-split-gutter" onPointerDown={startSplitDrag} title="拖动调整分屏比例" />}
                 {split && renderPane("right")}
               </div>
             )}
@@ -410,6 +533,14 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
           </aside>
         </div>
       )}
+      {ctxMenu && (
+        <div className="notes-ctx" style={{ left: ctxMenu.x, top: ctxMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+          <button onClick={() => void renamePath(ctxMenu.path, ctxMenu.kind === "folder")}>重命名</button>
+          <button onClick={() => void revealPath(ctxMenu.path)}>在 Finder 中显示</button>
+          <button onClick={() => void copyPath(ctxMenu.path)}>复制路径</button>
+          <button className="danger" onClick={() => void trashPath(ctxMenu.path, ctxMenu.kind === "folder")}>删除</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -418,14 +549,43 @@ function GraphView({ data, loading, onOpen }: { data: GraphData | null; loading:
   const nodes = data?.nodes || [];
   const edges = data?.edges || [];
   const positions = useMemo(() => {
-    const map = new Map<string, { x: number; y: number }>();
-    const radius = 38;
-    nodes.forEach((node, i) => {
-      const angle = (i / Math.max(1, nodes.length)) * Math.PI * 2 - Math.PI / 2;
-      map.set(node.path, { x: 50 + Math.cos(angle) * radius, y: 50 + Math.sin(angle) * radius });
+    // Small deterministic force layout: enough to avoid the "circle of nodes"
+    // look without shipping a graph physics dependency in the plugin UI.
+    const cap = nodes.slice(0, 280);
+    const index = new Map(cap.map((n, i) => [n.path, i]));
+    const points = cap.map((_, i) => {
+      const angle = (i / Math.max(1, cap.length)) * Math.PI * 2;
+      return { x: 50 + Math.cos(angle) * 26, y: 50 + Math.sin(angle) * 26 };
     });
-    return map;
-  }, [nodes]);
+    const links = edges.filter((e) => index.has(e.source) && index.has(e.target)).slice(0, 1200);
+    for (let step = 0; step < 80; step++) {
+      const fx = new Array(cap.length).fill(0);
+      const fy = new Array(cap.length).fill(0);
+      for (let i = 0; i < cap.length; i++) {
+        for (let j = i + 1; j < cap.length; j++) {
+          let dx = points[i].x - points[j].x; let dy = points[i].y - points[j].y;
+          const d2 = dx * dx + dy * dy + 0.01;
+          if (d2 > 500) continue;
+          const f = 3.2 / d2;
+          dx *= f; dy *= f;
+          fx[i] += dx; fy[i] += dy; fx[j] -= dx; fy[j] -= dy;
+        }
+      }
+      for (const e of links) {
+        const a = index.get(e.source)!; const b = index.get(e.target)!;
+        const dx = points[b].x - points[a].x; const dy = points[b].y - points[a].y;
+        const f = 0.018;
+        fx[a] += dx * f; fy[a] += dy * f; fx[b] -= dx * f; fy[b] -= dy * f;
+      }
+      for (let i = 0; i < cap.length; i++) {
+        fx[i] += (50 - points[i].x) * 0.008;
+        fy[i] += (50 - points[i].y) * 0.008;
+        points[i].x = Math.max(6, Math.min(94, points[i].x + fx[i]));
+        points[i].y = Math.max(6, Math.min(94, points[i].y + fy[i]));
+      }
+    }
+    return new Map(cap.map((n, i) => [n.path, points[i]]));
+  }, [nodes, edges]);
   if (loading) return <div className="notes-empty"><div className="notes-empty-mark">◎</div><b>构建图谱…</b></div>;
   if (!nodes.length) return <div className="notes-empty"><div className="notes-empty-mark">◎</div><b>还没有可绘制的链接</b><p>给笔记加上 [[wikilink]] 后再试。</p></div>;
   return (

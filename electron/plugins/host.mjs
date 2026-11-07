@@ -9,7 +9,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import AdmZip from "adm-zip";
-import { utilityProcess } from "electron";
+import { shell, utilityProcess } from "electron";
 
 const API_VERSION = 1;
 const PLUGIN_MANIFEST = "plugin.json";
@@ -351,6 +351,11 @@ export class PluginHost {
         if (!permission("fs:vault")) throw new Error("permission denied: fs:vault");
         const res = await this.dialog.showOpenDialog(this.getWin(), { properties: ["openDirectory", "createDirectory"] });
         return res.canceled ? null : res.filePaths[0] || null;
+      }
+      case "fs.reveal": {
+        if (!permission("fs:vault")) throw new Error("permission denied: fs:vault");
+        shell.showItemInFolder(String(params.file || ""));
+        return true;
       }
       case "fs.readProjectFile": {
         if (!permission("fs:project")) throw new Error("permission denied: fs:project");
