@@ -3,15 +3,16 @@ import type { Agent, Message, Run, State, Thread, Todo } from "../types";
 import { agentOf, timeAgo } from "../ui";
 import {
   BotIcon, ChevronDownIcon, ChevronRightIcon, CollapseIcon, CopyIcon, EyeIcon, EyeOffIcon,
-  FileIcon, FilePlusIcon, FilesIcon, FolderIcon,
+  FileIcon, FilePlusIcon, FilesIcon, GitIcon, FolderIcon,
   FolderOpenIcon, FolderPlusIcon, HistoryIcon, InfoIcon, PanelCollapseIcon, RefreshIcon, RevealIcon,
   SearchIcon, UserIcon, WrenchIcon, XIcon,
 } from "./Icons";
 import { FileVisual } from "./FileVisual";
+import { GitPanel } from "./GitPanel";
 import { requestFilePreview, requestTerminalAt } from "../terminal-events";
 
 type Entry = { name: string; dir: boolean; path: string };
-type Tab = "explorer" | "sessions";
+type Tab = "explorer" | "sessions" | "git";
 type SessionStatus = { label: string; cls: string };
 type FsMenuPoint = { x: number; y: number; entry: Entry | null; dir: string };
 type FsMenuItem = { label: string; hint?: string; danger?: boolean; disabled?: boolean; run: () => void } | "sep";
@@ -67,12 +68,13 @@ function dayStart(ts: number) {
  * - 会话历史：按时间分组，点击回到对应 Chat 会话
  * - 预览：点击文件后出现，可关闭
  */
-export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
+export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify = () => {} }: {
   state: State;
   root?: string;
   now: number;
   onSelectThread?: (threadId: string) => void;
   onCollapse?: () => void;
+  notify?: (m: string) => void;
 }) {
   const base = root || state.projectPath;
   const baseRef = useRef(base);
@@ -526,6 +528,14 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
           <FilesIcon size={16} />
         </button>
         <button
+          className={`icon-tab ${tab === "git" ? "on" : ""}`}
+          title="Git（暂存 / 提交 / 推送）"
+          aria-label="Git"
+          onClick={() => setTab("git")}
+        >
+          <GitIcon size={16} />
+        </button>
+        <button
           className={`icon-tab ${tab === "sessions" ? "on" : ""}`}
           title={`会话历史（${state.threads.length}）`}
           aria-label={`会话历史（${state.threads.length}）`}
@@ -591,6 +601,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse }: {
           </>
         )}
 
+        {tab === "git" && <GitPanel state={state} notify={notify} />}
         {tab === "sessions" && (
           <>
             <div className="explorer-bar">

@@ -61,6 +61,13 @@ export default function App() {
     setCollapsed((current) => ({ ...current, [id]: !current[id] }));
   }, []);
 
+  // 右侧 Git 面板的「全屏」：切到 Git 页
+  useEffect(() => {
+    const onOpenGit = () => setView("git");
+    window.addEventListener("harness:open-git", onOpenGit);
+    return () => window.removeEventListener("harness:open-git", onOpenGit);
+  }, []);
+
   // 错误卡片 / 统计失败行：跳到设置页并定位到某个分区（可带 focus 字段）
   useEffect(() => {
     const onOpen = (e: Event) => {
@@ -469,6 +476,7 @@ export default function App() {
                 state={scoped}
                 root={workdir}
                 now={now}
+                notify={notify}
                 onSelectThread={(id) => { setThreadId(id); setView("workspace"); }}
                 onCollapse={() => togglePane("files")}
               />
