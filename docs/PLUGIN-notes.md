@@ -1,7 +1,7 @@
 # Notes 插件：Obsidian-like Markdown 笔记（提案）
 
 > **状态：P0 + 基础 P1 已实现。**
-> 已实现：打开 vault、文件树 / 右键操作、CodeMirror 源码编辑、预览、多 tab、左右编辑分屏（可拖拽比例）、布局恢复、搜索、backlinks/outgoing、Graph、Daily Note、从笔记创建 Todo、发送到 Chat；插件宿主见 [`ARCH-plugins.md`](ARCH-plugins.md)。
+> 已实现：内置 first-party 插件；打开 vault、文件树 / 右键操作、CodeMirror 源码编辑、预览、多 tab、左右编辑分屏（可拖拽比例）、布局恢复、搜索、backlinks/outgoing、Graph、Daily Note、从笔记创建 Todo、发送到 Chat；插件宿主见 [`ARCH-plugins.md`](ARCH-plugins.md)。
 > 未实现：Live Preview、Agent `notes_*` tools、Obsidian 社区插件兼容、Graph 缩放/局部图谱。
 >
 > 目标不是复刻 Obsidian，而是做一个 **能打开 Obsidian vault、能和 Todo / Chat / Mission 联动的 Markdown 笔记**。
@@ -96,12 +96,7 @@ plugins/notes/
 
 构建独立安装包：
 
-```sh
-npm run plugin:notes
-# release/plugins/ai.cockpit.notes-0.1.0.cockpit-plugin
-```
-
-App 安装包不内置 Notes；在 Settings → 插件选择 `.cockpit-plugin` 文件安装。
+Notes 是 **first-party 内置插件**，随 App 提供，不需要额外安装；可在 Settings → 插件启用/禁用。
 
 ```json
 {
