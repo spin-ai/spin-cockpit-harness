@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { State } from "../types";
 import { renderMarkdown } from "../markdown";
-import { ChevronDownIcon, ChevronRightIcon, RefreshIcon } from "./Icons";
+import { ChevronDownIcon, ChevronRightIcon, FolderOpenIcon, RefreshIcon } from "./Icons";
 import { NotesEditor } from "./NotesEditor";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
@@ -13,12 +13,14 @@ type PageSummary = {
   updatedAt: number; citations: number; backlinks: number;
 };
 type Citation = { id: string; pageId: string; sourceId: string; quote?: string; locator?: string; source?: Source };
-type Page = PageSummary & { content: string; citations: Citation[]; backlinks: PageSummary[] };
+type Page = Omit<PageSummary, "citations" | "backlinks"> & { content: string; citations: Citation[]; backlinks: PageSummary[] };
 type Source = { id: string; title: string; kind: string; uri?: string; createdAt: number; citations: number; content?: string };
+type VaultFile = { path: string; title: string; folder: string; mtime: number; size: number };
+type VaultInfo = { path: string; files: VaultFile[]; indexedAt?: number; error?: string };
 type GraphData = { nodes: { id: string; title: string; kind: "page" | "source"; links: number }[]; edges: { source: string; target: string; kind: string }[] };
-type Doc = Page & { dirty: boolean };
+type Doc = Page & { dirty: boolean; local?: boolean; localPath?: string; mtime?: number };
 type Pane = { tabs: string[]; active: string | null };
-type Tab = "pages" | "sources" | "review";
+type Tab = "pages" | "sources" | "review" | "vault";
 type SourceDraft = { title: string; content: string; url: string; mode: "text" | "url" };
 type MemoryData = { markdown: string; pageCount: number; chars: number };
 
@@ -41,6 +43,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const [sources, setSources] = useState<Source[]>([]);
   const [reviews, setReviews] = useState<PageSummary[]>([]);
   const [log, setLog] = useState<{ id: string; kind: string; text: string; at: number }[]>([]);
+  const [vault, setVault] = useState<VaultInfo>({ path: "", files: [] });
   const [tab, setTab] = useState<Tab>("pages");
   const [query, setQuery] = useState("");
   const [searchHits, setSearchHits] = useState<{ kind: string; id: string; title: string; snippet: string }[]>([]);
@@ -85,7 +88,15 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     } catch (err) { fail(err); }
   }, [enabled, invoke]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  const refreshVault = useCallback(async () => {
+    if (!enabled) return;
+    try {
+      const info = await invoke("wiki.vault.get");
+      if (info) setVault({ path: info.path || "", files: Array.isArray(info.files) ? info.files : [], indexedAt: info.indexedAt, error: info.error || "" });
+    } catch (err) { fail(err); }
+  }, [enabled, invoke]);
+
+  useEffect(() => { void refresh(); void refreshVault(); }, [refresh, refreshVault]);
 
   const loadPage = useCallback(async (pageId: string) => {
     const existing = docs[pageId];
@@ -94,6 +105,21 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     if (!page) return null;
     const doc: Doc = { ...page, dirty: false };
     setDocs((current) => ({ ...current, [pageId]: doc }));
+    return doc;
+  }, [docs, invoke]);
+
+  const loadVaultFile = useCallback(async (relPath: string) => {
+    const docId = `vault:${relPath}`;
+    const existing = docs[docId];
+    if (existing) return existing;
+    const file = await invoke("wiki.vault.file", { path: relPath });
+    if (!file) return null;
+    const doc: Doc = {
+      id: docId, slug: "", title: file.title, summary: "", content: file.content,
+      status: "draft", confidence: "medium", updatedAt: file.mtime || Date.now(),
+      citations: [], backlinks: [], dirty: false, local: true, localPath: file.path, mtime: file.mtime,
+    };
+    setDocs((current) => ({ ...current, [docId]: doc }));
     return doc;
   }, [docs, invoke]);
 
@@ -108,11 +134,28 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     setMode("preview");
   }, [focus, split, loadPage]);
 
+  const openVaultFile = useCallback(async (relPath: string, target: "left" | "right" = focus) => {
+    const where = split ? target : "left";
+    setGraph(false);
+    const doc = await loadVaultFile(relPath);
+    if (!doc) return;
+    setPane(where, (p) => ({ tabs: p.tabs.includes(doc.id) ? p.tabs : [...p.tabs, doc.id], active: doc.id }));
+    setFocus(where);
+    setMode("preview");
+    setTab("vault");
+  }, [focus, loadVaultFile, split]);
+
+  const openDoc = useCallback((docId: string, target: "left" | "right" = focus) => {
+    if (docId.startsWith("vault:")) void openVaultFile(docId.slice(6), target);
+    else void openPage(docId, target);
+  }, [focus, openPage, openVaultFile]);
+
   useEffect(() => {
     if (!openRequest?.path) return;
-    void openPage(openRequest.path, "left");
+    if (openRequest.path.startsWith("vault:")) void openVaultFile(openRequest.path.slice(6), "left");
+    else void openPage(openRequest.path, "left");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openRequest?.n]);
+  }, [openRequest?.n, openRequest?.path, openPage, openVaultFile]);
 
   // Restore tabs/layout from the wiki store.
   useEffect(() => {
@@ -123,7 +166,10 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
         if (layout && typeof layout === "object") {
           const leftTabs = (layout.left?.tabs || []).filter((x: unknown) => typeof x === "string");
           const rightTabs = (layout.right?.tabs || []).filter((x: unknown) => typeof x === "string");
-          for (const pageId of [...new Set([...leftTabs, ...rightTabs])]) await loadPage(pageId);
+          for (const docId of [...new Set([...leftTabs, ...rightTabs])]) {
+            if (docId.startsWith("vault:")) await loadVaultFile(docId.slice(6));
+            else await loadPage(docId);
+          }
           setLeft({ tabs: leftTabs, active: layout.left?.active || leftTabs[0] || null });
           setRight({ tabs: rightTabs, active: layout.right?.active || rightTabs[0] || null });
           setSplit(Boolean(layout.split));
@@ -133,7 +179,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
       } catch { /* optional */ }
       setLayoutReady(true);
     })();
-  }, [enabled, layoutReady, invoke, loadPage]);
+  }, [enabled, layoutReady, invoke, loadPage, loadVaultFile]);
 
   useEffect(() => {
     if (!layoutReady) return;
@@ -156,10 +202,19 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     if (!doc || !doc.dirty) return;
     setBusy(true);
     try {
-      const res = await invoke("wiki.savePage", { id: pageId, content: doc.content, title: doc.title, summary: doc.summary });
-      if (res) setDocs((current) => ({ ...current, [pageId]: { ...res, dirty: false } }));
-      setNotice("已保存 draft");
-      await refresh();
+      if (doc.local && doc.localPath) {
+        const res = await invoke("wiki.vault.save", { path: doc.localPath, content: doc.content, mtime: doc.mtime });
+        if (res) {
+          setDocs((current) => ({ ...current, [pageId]: { ...current[pageId], title: res.title || current[pageId].title, content: res.content ?? current[pageId].content, mtime: res.mtime, dirty: false } }));
+          setVault((current) => ({ ...current, files: current.files.map((f) => f.path === doc.localPath ? { ...f, title: res.title || f.title, mtime: res.mtime || f.mtime } : f) }));
+        }
+        setNotice("已写回本地文件");
+      } else {
+        const res = await invoke("wiki.savePage", { id: pageId, content: doc.content, title: doc.title, summary: doc.summary });
+        if (res) setDocs((current) => ({ ...current, [pageId]: { ...res, dirty: false } }));
+        setNotice("已保存 draft");
+        await refresh();
+      }
     } catch (err) { fail(err); } finally { setBusy(false); }
   }, [docs, invoke, refresh]);
 
@@ -202,6 +257,33 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
         ? await invoke("wiki.importUrl", { url: sourceDraft.url, title: sourceDraft.title })
         : await invoke("wiki.importSource", { title: sourceDraft.title, content: sourceDraft.content, kind: "text", uri: "" });
       if (source) { setSourceDraft(null); setTab("sources"); await refresh(); setNotice("已导入 source"); }
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const pickLocalFolder = async () => {
+    setBusy(true);
+    try {
+      const info = await invoke("wiki.vault.pick");
+      if (info) {
+        setVault({ path: info.path || "", files: Array.isArray(info.files) ? info.files : [], indexedAt: info.indexedAt, error: info.error || "" });
+        setTab("vault");
+        setNotice(info.error || `已打开本地目录 · ${info.files?.length || 0} 个 Markdown`);
+      }
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const revealLocalFile = async (doc: Doc) => {
+    if (!doc.localPath) return;
+    try { await invoke("wiki.vault.reveal", { path: doc.localPath }); } catch (err) { fail(err); }
+  };
+
+  const importLocalSource = async (file: VaultFile | Doc) => {
+    const relPath = "path" in file ? file.path : file.localPath;
+    if (!relPath) return;
+    setBusy(true);
+    try {
+      const source = await invoke("wiki.vault.importSource", { path: relPath });
+      if (source) { setTab("sources"); await refresh(); setNotice(`已导入 source · ${source.title}`); }
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
@@ -292,6 +374,16 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
 
   const filteredSources = useMemo(() => sources.filter((s) => !query || `${s.title} ${s.uri || ""}`.toLowerCase().includes(query.toLowerCase())), [sources, query]);
   const filteredPages = useMemo(() => pages.filter((p) => !query || `${p.title} ${p.summary}`.toLowerCase().includes(query.toLowerCase())), [pages, query]);
+  const filteredVaultFiles = useMemo(() => vault.files.filter((f) => !query || `${f.title} ${f.path}`.toLowerCase().includes(query.toLowerCase())), [vault.files, query]);
+  const vaultGroups = useMemo(() => {
+    const groups = new Map<string, VaultFile[]>();
+    for (const file of filteredVaultFiles) {
+      const folder = file.folder || "";
+      if (!groups.has(folder)) groups.set(folder, []);
+      groups.get(folder)!.push(file);
+    }
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [filteredVaultFiles]);
 
   if (!enabled) {
     return <div className="notes-page notes-disabled"><div className="notes-disabled-card"><b>Wiki 插件未启用</b><p>在「设置 → 插件」启用内置 Wiki。</p></div></div>;
@@ -311,28 +403,39 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
           <button className="notes-tab-add" title="新建页面" onClick={() => void createPage()}>＋</button>
         </div>
         {!doc ? (
-          <div className="notes-empty notes-empty-pane"><div className="notes-empty-mark">✦</div><b>Wiki</b><p>从左侧打开页面，或导入 source 后让 Curator 整理。</p></div>
+          <div className="notes-empty notes-empty-pane"><div className="notes-empty-mark">✦</div><b>Wiki</b><p>从左侧打开页面，导入 source，或在「本地」打开 Markdown 目录。</p></div>
         ) : (
           <>
             <div className="notes-note-head">
               <div className="notes-note-title">
-                {mode === "edit"
-                  ? <input
-                      className="notes-title-input"
-                      value={doc.title}
-                      placeholder="页面标题"
-                      onChange={(e) => updateMeta(doc.id, { title: e.target.value })}
-                      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                    />
-                  : <b>{doc.title}</b>}
-                <span className="mono">{statusLabel(doc.status)} · {doc.citations.length} citations{doc.dirty ? " · 未保存" : ""}</span>
+                {doc.local
+                  ? <b>{doc.title}</b>
+                  : mode === "edit"
+                    ? <input
+                        className="notes-title-input"
+                        value={doc.title}
+                        placeholder="页面标题"
+                        onChange={(e) => updateMeta(doc.id, { title: e.target.value })}
+                        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                      />
+                    : <b>{doc.title}</b>}
+                <span className="mono">{doc.local ? `${doc.localPath || ""}${doc.dirty ? " · 未保存" : ""}` : `${statusLabel(doc.status)} · ${doc.citations.length} citations${doc.dirty ? " · 未保存" : ""}`}</span>
               </div>
               <div className="notes-mode"><button className={mode === "preview" ? "on" : ""} onClick={() => setMode("preview")}>阅读</button><button className={mode === "edit" ? "on" : ""} onClick={() => setMode("edit")}>编辑</button></div>
               <div className="notes-note-actions">
-                {doc.dirty && <button className="btn tiny-btn" onClick={() => void saveDoc(doc.id)} disabled={busy}>保存 draft</button>}
-                {doc.status === "draft" && <button className="btn tiny-btn primary" onClick={() => void reviewPage(doc.id, "accept")} disabled={busy}>接受</button>}
-                {doc.status === "draft" && <button className="btn tiny-btn" onClick={() => void reviewPage(doc.id, "reject")} disabled={busy}>退回</button>}
-                <button className="btn tiny-btn" onClick={() => void createTask()} disabled={busy}>创建任务</button>
+                {doc.dirty && <button className="btn tiny-btn" onClick={() => void saveDoc(doc.id)} disabled={busy}>{doc.local ? "保存到文件" : "保存 draft"}</button>}
+                {doc.local ? (
+                  <>
+                    <button className="btn tiny-btn" onClick={() => void importLocalSource(doc)} disabled={busy}>导入为 Source</button>
+                    <button className="btn tiny-btn" onClick={() => void revealLocalFile(doc)}>在 Finder 显示</button>
+                  </>
+                ) : (
+                  <>
+                    {doc.status === "draft" && <button className="btn tiny-btn primary" onClick={() => void reviewPage(doc.id, "accept")} disabled={busy}>接受</button>}
+                    {doc.status === "draft" && <button className="btn tiny-btn" onClick={() => void reviewPage(doc.id, "reject")} disabled={busy}>退回</button>}
+                    <button className="btn tiny-btn" onClick={() => void createTask()} disabled={busy}>创建任务</button>
+                  </>
+                )}
                 <button className="btn tiny-btn" onClick={sendPageToChat}>发送到 Chat</button>
               </div>
             </div>
@@ -345,12 +448,16 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 if (href.startsWith("#wiki/")) {
                   e.preventDefault();
                   const title = decodeURIComponent(href.slice(6)).split("#")[0];
-                  const target = pages.find((p) => p.title === title || p.slug === title || p.id === title);
-                  if (target) void openPage(target.id, which);
+                  const target = pages.find((p) => p.title === title || p.slug === title || p.id === title)
+                    || vault.files.find((f) => f.title === title || f.path.replace(/\.md$/i, "").endsWith(title));
+                  if (target) {
+                    if ("path" in target) void openVaultFile(target.path, which);
+                    else void openPage(target.id, which);
+                  }
                 }
               }} />
             ) : (
-              <NotesEditor key={doc.id} value={doc.content} pages={pages.map((p) => ({ path: p.id, title: p.title }))} tags={[]} dirty={doc.dirty} onChange={(value) => updateDoc(doc.id, value)} onSave={() => void saveDoc(doc.id)} />
+              <NotesEditor key={doc.id} value={doc.content} pages={[...pages.map((p) => ({ path: p.id, title: p.title })), ...vault.files.map((f) => ({ path: `vault:${f.path}`, title: f.title }))]} tags={[]} dirty={doc.dirty} onChange={(value) => updateDoc(doc.id, value)} onSave={() => void saveDoc(doc.id)} />
             )}
           </>
         )}
@@ -361,8 +468,9 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   return (
     <div className="notes-page">
       <header className="notes-head">
-        <div><span className="notes-kicker">NATIVE · LLM WIKI</span><h1>Wiki</h1><p>{pages.length} pages · {sources.length} sources · {reviews.length} drafts</p></div>
+        <div><span className="notes-kicker">NATIVE · LLM WIKI</span><h1>Wiki</h1><p>{pages.length} pages · {sources.length} sources · {reviews.length} drafts{vault.path ? ` · ${vault.files.length} local` : ""}</p></div>
         <div className="notes-actions">
+          <button className="btn" onClick={() => void pickLocalFolder()} disabled={busy} title={vault.path ? "更换本地目录" : "打开本地 Markdown 目录"}><FolderOpenIcon size={13} /> {vault.path ? "目录" : "打开目录"}</button>
           <button className="btn" onClick={() => { setSourceDraft({ title: "", content: "", url: "", mode: "text" }); }} disabled={busy}>＋ 导入资料</button>
           <button className="btn" onClick={() => void createPage()} disabled={busy}>＋ 页面</button>
           <button className="btn" onClick={() => void refresh()} title="刷新"><RefreshIcon size={13} /></button>
@@ -378,13 +486,33 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
             <button className={tab === "pages" ? "on" : ""} onClick={() => setTab("pages")}>页面 <em>{pages.length}</em></button>
             <button className={tab === "sources" ? "on" : ""} onClick={() => setTab("sources")}>资料 <em>{sources.length}</em></button>
             <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>审核 <em>{reviews.length}</em></button>
+            <button className={tab === "vault" ? "on" : ""} onClick={() => setTab("vault")}>本地 <em>{vault.files.length}</em></button>
           </div>
-          <input className="notes-search" value={query} onChange={(e) => void search(e.target.value)} placeholder="搜索页面 / source" />
+          <input className="notes-search" value={query} onChange={(e) => void search(e.target.value)} placeholder="搜索页面 / source / 本地" />
           {searchHits.length > 0 && <div className="notes-search-results">{searchHits.slice(0, 12).map((hit) => <button key={hit.id} onClick={() => hit.kind === "page" ? void openPage(hit.id) : void openSource(hit.id)}><b>{hit.title}</b><span>{hit.kind}</span><em>{hit.snippet}</em></button>)}</div>}
           <div className="notes-tree">
             {tab === "pages" && filteredPages.map((p) => <button key={p.id} className={`notes-file ${activeDoc?.id === p.id ? "on" : ""}`} onClick={() => void openPage(p.id)}><span className={`notes-status-dot ${p.status}`} /><span className="ellipsis">{p.title}</span><em>{p.status === "draft" ? "draft" : p.status === "stale" ? "stale" : ""}</em></button>)}
             {tab === "sources" && filteredSources.map((s) => <button key={s.id} className="notes-file" onClick={() => void openSource(s.id)}><span className="notes-source-icon">▤</span><span className="ellipsis">{s.title}</span><em>{s.citations || 0}</em></button>)}
             {tab === "review" && reviews.map((p) => <button key={p.id} className="notes-file" onClick={() => void openPage(p.id)}><span className={`notes-status-dot ${p.status}`} /><span className="ellipsis">{p.title}</span><em>draft</em></button>)}
+            {tab === "vault" && vault.path && (
+              <>
+                <div className="notes-sidebar-head"><span className="ellipsis" title={vault.path}>{vault.path.split(/[\\/]/).pop() || vault.path}</span><span><button onClick={() => void refreshVault()}>刷新</button><button onClick={() => void pickLocalFolder()}>更换</button></span></div>
+                {vault.error && <div className="notes-empty-list">{vault.error}</div>}
+                {vaultGroups.map(([folder, files]) => (
+                  <div key={folder || "__root"} className="notes-vault-group">
+                    <div className="notes-folder-label">{folder || "根目录"} <em>{files.length}</em></div>
+                    {files.map((f) => <button key={f.path} className={`notes-file ${activeDoc?.local && activeDoc.localPath === f.path ? "on" : ""}`} title={f.path} onClick={() => void openVaultFile(f.path)}><span className="notes-source-icon">▤</span><span className="ellipsis">{f.title}</span></button>)}
+                  </div>
+                ))}
+                {filteredVaultFiles.length === 0 && !vault.error && <div className="notes-empty-list">{query ? "没有匹配的本地文件。" : "目录里还没有 Markdown 文件。"}</div>}
+              </>
+            )}
+            {tab === "vault" && !vault.path && (
+              <div className="notes-vault-empty">
+                <p>打开本地 Markdown 目录，直接编辑并写回磁盘；也可以导入为 Source。</p>
+                <button className="btn primary" onClick={() => void pickLocalFolder()} disabled={busy}>打开目录</button>
+              </div>
+            )}
             {tab === "pages" && filteredPages.length === 0 && <div className="notes-empty-list">还没有页面。创建一个，或导入 source。</div>}
             {tab === "sources" && filteredSources.length === 0 && <div className="notes-empty-list">还没有资料。导入文本或 URL。</div>}
             {tab === "review" && reviews.length === 0 && <div className="notes-empty-list">没有待审核 draft。</div>}
@@ -416,7 +544,18 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
         </main>
 
         <aside className="notes-meta">
-          {activeDoc ? (
+          {activeDoc?.local ? (
+            <>
+              <div className="notes-meta-block"><div className="notes-meta-title">本地文件</div><div className="notes-review-badge local">Markdown</div><p className="notes-meta-empty">{activeDoc.localPath}</p>{activeDoc.mtime && <p className="notes-meta-empty">修改于 {new Date(activeDoc.mtime).toLocaleString()}</p>}</div>
+              <div className="notes-meta-block">
+                <div className="notes-meta-title">操作</div>
+                <button className="notes-link" onClick={() => void importLocalSource(activeDoc)} disabled={busy}><b>导入为 Source</b><span>让 Curator 基于此文件整理 Wiki</span></button>
+                <button className="notes-link" onClick={() => void revealLocalFile(activeDoc)}><b>在 Finder 显示</b><span>打开文件所在位置</span></button>
+                <button className="notes-link" onClick={() => void refreshVault()}><b>刷新目录</b><span>重新扫描本地 Markdown</span></button>
+              </div>
+              <div className="notes-meta-block"><div className="notes-meta-title">目录</div><p className="notes-meta-empty">{vault.path || activeDoc.localPath}</p><button className="notes-link" onClick={() => void pickLocalFolder()} disabled={busy}><b>更换目录</b></button></div>
+            </>
+          ) : activeDoc ? (
             <>
               <div className="notes-meta-block"><div className="notes-meta-title">Status</div><div className={`notes-review-badge ${activeDoc.status}`}>{statusLabel(activeDoc.status)}</div><p className="notes-meta-empty">confidence: {activeDoc.confidence}</p></div>
               <div className="notes-meta-block">
@@ -428,7 +567,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
               <div className="notes-meta-block"><div className="notes-meta-title">Backlinks <em>{activeDoc.backlinks?.length || 0}</em></div>{(activeDoc.backlinks || []).map((b) => <button key={b.id} className="notes-link" onClick={() => void openPage(b.id, focus)}><b>{b.title}</b><span>{statusLabel(b.status)}</span></button>)}</div>
               <div className="notes-meta-block"><div className="notes-meta-title">Linked Todos <em>{linkedTodos.length}</em></div>{linkedTodos.length === 0 && <p className="notes-meta-empty">还没有关联任务</p>}{linkedTodos.map((l) => { const todo = state.todos.find((t) => t.id === l.todoId); return <button key={l.id} className="notes-link" disabled={!todo || !onOpenTodo} onClick={() => todo && onOpenTodo?.(todo.id)}><b>{todo?.title || l.title || l.todoId}</b><span>{todo?.key} {todo?.status}</span></button>; })}</div>
             </>
-          ) : <p className="notes-meta-empty">打开页面后显示 citations / backlinks / 任务。</p>}
+          ) : <p className="notes-meta-empty">打开页面后显示 citations / backlinks / 任务；打开本地文件后显示路径和导入操作。</p>}
         </aside>
       </div>
 
