@@ -97,6 +97,10 @@ export function Guide({ state, act, onStartMission, onOpenSettings }: {
           <p>worktree 只在项目是 git 仓库时创建；否则会回落到项目目录。并行改文件前建议先 `git init` 或使用已有仓库，避免互相覆盖。</p>
         </details>
         <details>
+          <summary>怎么把预览和终端并排？</summary>
+          <p>先打开预览标签，再把它拖到某个终端窗格的左/右/上/下边缘；终端右键菜单也有「在右侧打开预览」。拖入后预览会变成 split 里的一个 pane，原预览标签会消失。</p>
+        </details>
+        <details>
           <summary>能直接让主管改代码吗？</summary>
           <p>不建议。Mission 模式的主管是只读 supervisor，代码改动交给 worker；这样才有 worktree、审批、可回滚的 branch。</p>
         </details>
