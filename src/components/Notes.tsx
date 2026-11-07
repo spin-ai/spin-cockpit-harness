@@ -235,9 +235,20 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   };
 
   // Electron 不支持 window.prompt：直接建「无标题页面」，打开后标题就是可编辑输入框
-  /** 按资料生成 Wiki 草稿骨架（插件内确定性生成，不需要模型） */
+  /**
+   * 按资料生成 Wiki 草稿骨架（确定性生成，不需要模型）。
+   * 如果还没有资料但已经打开本地目录，先自动把本地 Markdown 导入为资料再生成。
+   */
   const generateWiki = async (sourceIds: string[] = []) => {
-    if (!sources.length) { setError("还没有资料：先在「资料」里导入，或在「本地」把 Markdown 导入为资料"); return; }
+    if (!sources.length && !sourceIds.length) {
+      if (!vault.files.length) {
+        setError("还没有可用的资料：先在「本地」打开一个 Markdown 目录，或用「导入资料」粘贴文本 / URL");
+        setTab("pages");
+        return;
+      }
+      const imported = await importAllVault();
+      if (!imported) { setError("本地目录里没有可导入的 Markdown"); return; }
+    }
     setBusy(true);
     try {
       const res = await invoke("wiki.generate", { sourceIds });
@@ -248,10 +259,10 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
-  /** 把本地目录里的 Markdown 全部导入为资料（最多 30 个，避免一次性太大） */
-  const importAllVault = async () => {
+  /** 把本地目录里的 Markdown 全部导入为资料（最多 30 个，避免一次性太大）；返回成功数量 */
+  const importAllVault = async (): Promise<number> => {
     const files = vault.files.slice(0, 30);
-    if (!files.length) { setError("还没有打开本地目录"); return; }
+    if (!files.length) { setError("还没有打开本地目录"); return 0; }
     setBusy(true);
     let ok = 0;
     try {
@@ -267,7 +278,8 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
       setNotice(ok ? `已导入 ${ok} 份本地 Markdown 为资料` : "没有可导入的内容");
       await refresh();
       setTab("sources");
-    } catch (err) { fail(err); } finally { setBusy(false); }
+      return ok;
+    } catch (err) { fail(err); return 0; } finally { setBusy(false); }
   };
 
   const createPage = async () => {
@@ -566,7 +578,12 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
         </div>
         <div className="notes-actions">
           <button className="btn primary" onClick={() => void createPage()} disabled={busy}>＋ 新建页面</button>
-          <button className="btn" onClick={() => void generateWiki()} disabled={busy || !sources.length} title={sources.length ? "按资料生成草稿页面" : "先导入资料"}>{busy ? "生成中…" : "生成 Wiki"}</button>
+          <button
+            className="btn"
+            onClick={() => void generateWiki()}
+            disabled={busy}
+            title={sources.length ? `按 ${sources.length} 份资料生成草稿页面` : vault.files.length ? `会先把本地 ${vault.files.length} 个 Markdown 导入为资料再生成` : "先打开本地目录或导入资料"}
+          >{busy ? "生成中…" : sources.length ? `生成 Wiki (${sources.length})` : "生成 Wiki"}</button>
           <button className="btn" onClick={() => { setSourceDraft({ title: "", content: "", url: "", mode: "text" }); }} disabled={busy}>导入资料</button>
           <button className="btn" onClick={() => void pickLocalFolder()} disabled={busy} title={vault.path ? "更换本地目录" : "打开本地 Markdown 目录"}><FolderOpenIcon size={13} /> {vault.path ? "本地目录" : "打开目录"}</button>
           <div className="notes-actions-sep" />
@@ -613,7 +630,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 {vault.files.length > 0 && (
                   <div className="notes-sidebar-foot">
                     <button className="link tiny" onClick={() => void importAllVault()} disabled={busy}>全部导入为资料（{Math.min(30, vault.files.length)}）</button>
-                    <button className="link tiny" onClick={() => void generateWiki()} disabled={busy || !sources.length}>用资料生成页面 →</button>
+                    <button className="link tiny" onClick={() => void generateWiki()} disabled={busy}>用资料生成页面 →</button>
                   </div>
                 )}
               </>
@@ -629,7 +646,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 还没有页面。
                 <div className="notes-empty-actions">
                   <button className="link tiny" onClick={() => void createPage()} disabled={busy}>＋ 新建</button>
-                  <button className="link tiny" onClick={() => void generateWiki()} disabled={busy || !sources.length}>按资料生成</button>
+                  <button className="link tiny" onClick={() => void generateWiki()} disabled={busy}>按资料生成</button>
                   <button className="link tiny" onClick={() => setSourceDraft({ title: "", content: "", url: "", mode: "text" })} disabled={busy}>导入资料</button>
                 </div>
               </div>
@@ -640,7 +657,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
           {tab === "sources" && (
             <div className="notes-sidebar-foot">
               {vault.files.length > 0 && <button className="link tiny" onClick={() => void importAllVault()} disabled={busy}>导入本地 {Math.min(30, vault.files.length)} 个 .md</button>}
-              <button className="link tiny" onClick={() => void generateWiki()} disabled={busy || !sources.length}>用资料生成页面 →</button>
+              <button className="link tiny" onClick={() => void generateWiki()} disabled={busy}>用资料生成页面 →</button>
             </div>
           )}
           {tab === "sources" && log.length > 0 && <div className="notes-log">{log.slice(0, 5).map((l) => <div key={l.id}>{l.text}</div>)}</div>}

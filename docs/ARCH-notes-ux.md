@@ -61,7 +61,10 @@ Untitled  draft         Draft · 0 citations        STATUS  Draft
 - **「生成 Wiki」**：插件内确定性生成（`wiki.generate`）——每份还没有对应页面的 source 生成一个 draft 页面，
   带摘要（首段）、原文摘录、`来源：[[标题]]`，并建立 citation；返回 `{created, pages}`
   - 不依赖模型与 API key；生成后可以在页面里编辑、审核，或用资料页的「发送到 Chat」让 Agent 精修后回写
-- 头部的「生成 Wiki」在没有资料时 disabled，tooltip 提示「先导入资料」
+- 头部的「生成 Wiki」**不置灰**（置灰按钮点不动、也看不到原因）：
+  · 有资料 → 直接生成，标签显示 `生成 Wiki (N)`
+  · 没资料但已打开本地目录 → 先自动「全部导入为资料」再生成（tooltip 会写清楚）
+  · 两样都没有 → 提示「先在本地打开 Markdown 目录，或导入资料」并停在页面 tab
 
 ## 7. 图谱为什么之前是空的
 
