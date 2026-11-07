@@ -4,7 +4,6 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import type { ElementContext, State, Todo } from "../types";
-import { FilePreviewPane } from "./FilePreviewPane";
 import { FileVisual, extOf } from "./FileVisual";
 import { PreviewSurface } from "./PreviewSurface";
 import { takeTerminalRequests } from "../terminal-events";
