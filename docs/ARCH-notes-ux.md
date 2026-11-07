@@ -72,3 +72,18 @@ Untitled  draft         Draft · 0 citations        STATUS  Draft
 
 现在 `graphView()` 把 **vault 文件也作为 `kind: "file"` 的节点**（`file:<相对路径>`），打开目录后立刻可见；
 边依然是「页面→资料」的 citation 与页面之间的 `[[双链]]`。file 节点不可点击打开页面（只是存在性展示）。
+
+## 8. 删除与行内快捷操作（本轮）
+
+| 对象 | 入口 | 行为 |
+|---|---|---|
+| 资料 source | 「资料」列表行 hover → 删除 | 二次确认；插件 `wiki.deleteSource` 连带清掉它产生的 citation（页面保留），提示「同时移除 N 条引用」 |
+| 页面 page | 「页面」列表行 hover → 删除 | 二次确认；`wiki.deletePage` 同时关闭已打开的 tab、清掉 docs 缓存 |
+| 待审核 draft | 「审核」列表行 hover → 接受 / 退回 | 不用先打开页面；接受后 `reviews` 立即减一 |
+| 搜索 | 输入框右侧 × / `Esc` | 清空关键词与结果 |
+
+实现细节：行结构改成 `.notes-row`（按钮 + `.notes-row-actions`），动作按钮默认 `display:none`，hover 才出现，避免列表噪音；
+hover 时隐藏右侧计数（`em`）给动作让位。
+
+验证：`scripts/e2e-notes.mjs`（4/4）—— 自动导入+生成、删除资料（sources 3→2、edges 6→4）、
+删除页面（pages 3→2、行数同步）、审核快捷接受。

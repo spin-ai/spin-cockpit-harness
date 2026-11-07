@@ -52,6 +52,7 @@ Chat 说一句话
 ## 继续阅读
 
 - [工作流](#/wiki/workflow)
+- [界面与流程](#/wiki/gallery)
 - [架构](#/wiki/architecture)
 - [Agent 与执行适配器](#/wiki/agents)
 - [Super Agent / Mission](#/wiki/super-agent)

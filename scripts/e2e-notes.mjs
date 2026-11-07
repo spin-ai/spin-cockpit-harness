@@ -1,0 +1,98 @@
+#!/usr/bin/env node
+/**
+ * Wiki / 笔记冒烟：生成动线（打开目录 → 自动导入 → 生成页面）+ 删除资料/页面 + 审核快捷操作。
+ *
+ * 前置：隔离 userData 的实例带调试端口在跑：
+ *   COCKPIT_USER_DATA=/tmp/cockpit-e2e \
+ *     ./node_modules/electron/dist/Electron.app/Contents/MacOS/Electron . --remote-debugging-port=9223
+ *
+ * 用法：node scripts/e2e-notes.mjs [port]
+ */
+import fs from "node:fs";
+
+const port = Number(process.argv[2] || 9223);
+const VAULT = "/tmp/notes-vault";
+fs.rmSync(VAULT, { recursive: true, force: true });
+fs.mkdirSync(`${VAULT}/a`, { recursive: true });
+fs.mkdirSync(`${VAULT}/b`, { recursive: true });
+fs.writeFileSync(`${VAULT}/良率.md`, "# 芯片良率\n\n良率是标量，但缺陷有空间结构。\n\n## 要点\n\n- die 级差分\n");
+fs.writeFileSync(`${VAULT}/a/atpg.md`, "# ATPG 笔记\n\nstuck-at 覆盖率 98.9%。\n");
+fs.writeFileSync(`${VAULT}/b/agents.md`, "# 多智能体\n\nMission / Plan / Delegation。\n");
+
+const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+const page = list.find((t) => t.type === "page");
+const ws = new WebSocket(page.webSocketDebuggerUrl);
+let seq = 0; const pending = new Map();
+ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } };
+await new Promise((r) => (ws.onopen = r));
+const send = (method, params = {}) => new Promise((res) => { const id = ++seq; pending.set(id, res); ws.send(JSON.stringify({ id, method, params })); });
+const ev = async (expr) => {
+  const r = await send("Runtime.evaluate", { expression: `(async()=>{ ${expr} })()`, awaitPromise: true, returnByValue: true });
+  if (r.result?.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description);
+  return r.result?.result?.value;
+};
+let fails = 0;
+const check = (n, ok, d = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"} ${n}${d ? " · " + d : ""}`); };
+
+let r = await ev(`
+  // confirm 自动确认 + 等待助手
+  window.confirm = () => true;
+  window.__wait = async (fn, ms = 6000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = fn(); if (v) return v; await new Promise((r) => setTimeout(r, 80)); } return null; };
+  await window.harness.action("pluginEnable", { id: "ai.cockpit.notes" });
+  await new Promise((r) => setTimeout(r, 500));
+  await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.vault.open", args: { path: "${VAULT}" } });
+  const rail = [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.includes("笔记"));
+  rail.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 1400));
+  const gen = [...document.querySelectorAll(".notes-actions .btn")].find((b) => b.textContent.includes("生成 Wiki"));
+  gen.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 4000));
+  const list = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" });
+  return { sources: list?.result?.sources?.length, pages: list?.result?.pages?.length };`);
+check("准备：自动导入 3 资料 + 生成 3 页面", r.sources === 3 && r.pages === 3, JSON.stringify(r));
+
+r = await ev(`
+  const srcTab = await window.__wait(() => [...document.querySelectorAll(".notes-wiki-tabs button")].find((b) => b.textContent.includes("资料")));
+  if (!srcTab) return { error: "no src tab" };
+  srcTab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 500));
+  const row = await window.__wait(() => document.querySelector(".notes-row"));
+  const del = row?.querySelector('.notes-row-actions .link');
+  if (!del) return { error: "no delete action" };
+  del.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 1500));
+  const list = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" });
+  const g = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.graph" });
+  return { sources: list?.result?.sources?.length, edges: g?.result?.edges?.length, rows: document.querySelectorAll(".notes-row").length, notice: document.querySelector(".notes-banner")?.textContent || "" };`);
+check("删除资料：列表减少 + 引用边减少", r.sources === 2 && r.edges === 4, JSON.stringify(r));
+
+r = await ev(`
+  const pagesTab = await window.__wait(() => [...document.querySelectorAll(".notes-wiki-tabs button")].find((b) => b.textContent.includes("页面")));
+  if (!pagesTab) return { error: "no pages tab" };
+  pagesTab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 400));
+  const before = document.querySelectorAll(".notes-row").length;
+  const row = await window.__wait(() => document.querySelector(".notes-row"));
+  const del = row?.querySelector('.notes-row-actions .link');
+  del.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 1500));
+  const list = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" });
+  return { before, pages: list?.result?.pages?.length, rows: document.querySelectorAll(".notes-row").length };`);
+check("删除页面：列表与数据同步", r.before === 3 && r.pages === 2 && r.rows === 2, JSON.stringify(r));
+
+r = await ev(`
+  const reviewTab = await window.__wait(() => [...document.querySelectorAll(".notes-wiki-tabs button")].find((b) => b.textContent.includes("审核")));
+  if (!reviewTab) return { error: "no review tab" };
+  reviewTab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 400));
+  const row = [...document.querySelectorAll(".notes-row")][0];
+  const accept = [...(row?.querySelectorAll(".notes-row-actions .link") || [])].find((b) => b.textContent.trim() === "接受");
+  if (!accept) return { error: "no accept" };
+  accept.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 1500));
+  const list = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" });
+  return { reviews: list?.result?.reviews?.length, notice: document.querySelector(".notes-banner")?.textContent || "" };`);
+check("审核 tab：hover 直接接受（待审核 -1）", r.reviews === 1, JSON.stringify(r));
+ws.close();
+console.log(fails ? `${fails} 项失败` : "全部通过");
+process.exit(fails ? 1 : 0);

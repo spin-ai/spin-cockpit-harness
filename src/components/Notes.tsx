@@ -282,6 +282,32 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     } catch (err) { fail(err); return 0; } finally { setBusy(false); }
   };
 
+  /** 删除资料（连带其引用）；页面保留 */
+  const deleteSource = async (source: { id: string; title: string }) => {
+    if (!window.confirm(`删除资料「${source.title}」？引用它的页面会失去这条引用。`)) return;
+    setBusy(true);
+    try {
+      const res = await invoke("wiki.deleteSource", { id: source.id });
+      if (sourceView?.id === source.id) setSourceView(null);
+      setNotice(`已删除资料${res?.removedCitations ? `，同时移除 ${res.removedCitations} 条引用` : ""}`);
+      await refresh();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  /** 删除页面（关掉相关 tab） */
+  const deletePage = async (page: { id: string; title: string }) => {
+    if (!window.confirm(`删除页面「${page.title}」？不可恢复。`)) return;
+    setBusy(true);
+    try {
+      await invoke("wiki.deletePage", { id: page.id });
+      setDocs((cur) => { const next = { ...cur }; delete next[page.id]; return next; });
+      const strip = (p: Pane) => ({ tabs: p.tabs.filter((x) => x !== page.id), active: p.active === page.id ? null : p.active });
+      setLeft(strip); setRight(strip);
+      setNotice("页面已删除");
+      await refresh();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
   const createPage = async () => {
     setBusy(true);
     try {
@@ -609,13 +635,54 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
           </div>
           <div className="notes-search-wrap">
             <SearchIcon size={12} className="notes-search-icon" />
-            <input className="notes-search" value={query} onChange={(e) => void search(e.target.value)} placeholder="搜索页面 / 资料 / 本地" />
+            <input
+              className="notes-search"
+              value={query}
+              onChange={(e) => void search(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setQuery(""); void search(""); } }}
+              placeholder="搜索页面 / 资料 / 本地"
+            />
+            {query && <button className="notes-search-clear" title="清除（Esc）" onClick={() => { setQuery(""); void search(""); }}>×</button>}
           </div>
           {searchHits.length > 0 && <div className="notes-search-results">{searchHits.slice(0, 12).map((hit) => <button key={hit.id} onClick={() => hit.kind === "page" ? void openPage(hit.id) : void openSource(hit.id)}><b>{hit.title}</b><span>{hit.kind}</span><em>{hit.snippet}</em></button>)}</div>}
           <div className="notes-tree">
-            {tab === "pages" && filteredPages.map((p) => <button key={p.id} className={`notes-file ${activeDoc?.id === p.id ? "on" : ""}`} onClick={() => void openPage(p.id)}><span className={`notes-status-dot ${p.status}`} /><span className="ellipsis">{p.title}</span><em>{p.status === "draft" ? "draft" : p.status === "stale" ? "stale" : ""}</em></button>)}
-            {tab === "sources" && filteredSources.map((s) => <button key={s.id} className="notes-file" onClick={() => void openSource(s.id)}><span className="notes-source-icon">▤</span><span className="ellipsis">{s.title}</span><em>{s.citations || 0}</em></button>)}
-            {tab === "review" && reviews.map((p) => <button key={p.id} className="notes-file" onClick={() => void openPage(p.id)}><span className={`notes-status-dot ${p.status}`} /><span className="ellipsis">{p.title}</span><em>draft</em></button>)}
+            {tab === "pages" && filteredPages.map((p) => (
+              <div key={p.id} className="notes-row">
+                <button className={`notes-file ${activeDoc?.id === p.id ? "on" : ""}`} onClick={() => void openPage(p.id)}>
+                  <span className={`notes-status-dot ${p.status}`} />
+                  <span className="ellipsis">{p.title}</span>
+                  <em>{p.status === "draft" ? "draft" : p.status === "stale" ? "stale" : ""}</em>
+                </button>
+                <span className="notes-row-actions">
+                  <button className="link tiny" title="删除页面" onClick={(e) => { e.stopPropagation(); void deletePage({ id: p.id, title: p.title }); }}>删除</button>
+                </span>
+              </div>
+            ))}
+            {tab === "sources" && filteredSources.map((s) => (
+              <div key={s.id} className="notes-row">
+                <button className="notes-file" onClick={() => void openSource(s.id)}>
+                  <span className="notes-source-icon">▤</span>
+                  <span className="ellipsis">{s.title}</span>
+                  <em title="被引用次数">{s.citations || 0}</em>
+                </button>
+                <span className="notes-row-actions">
+                  <button className="link tiny" title="删除资料" onClick={(e) => { e.stopPropagation(); void deleteSource({ id: s.id, title: s.title }); }}>删除</button>
+                </span>
+              </div>
+            ))}
+            {tab === "review" && reviews.map((p) => (
+              <div key={p.id} className="notes-row">
+                <button className="notes-file" onClick={() => void openPage(p.id)}>
+                  <span className={`notes-status-dot ${p.status}`} />
+                  <span className="ellipsis">{p.title}</span>
+                  <em>draft</em>
+                </button>
+                <span className="notes-row-actions">
+                  <button className="link tiny" title="接受" onClick={(e) => { e.stopPropagation(); void reviewPage(p.id, "accept"); }}>接受</button>
+                  <button className="link tiny" title="退回" onClick={(e) => { e.stopPropagation(); void reviewPage(p.id, "reject"); }}>退回</button>
+                </span>
+              </div>
+            ))}
             {tab === "vault" && vault.path && (
               <>
                 <div className="notes-sidebar-head"><span className="ellipsis" title={vault.path}>{vault.path.split(/[\\/]/).pop() || vault.path}</span><span><button onClick={() => void refreshVault()}>刷新</button><button onClick={() => void pickLocalFolder()}>更换</button></span></div>

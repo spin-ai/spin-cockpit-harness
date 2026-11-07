@@ -340,6 +340,19 @@ export async function activate(context) {
     return source;
   });
   ctx.api.handle("wiki.sources", async () => data.sources.map((s) => ({ id: s.id, title: s.title, kind: s.kind, uri: s.uri, createdAt: s.createdAt, content: s.content })));
+  /** 删除资料：连带清掉它产生的 citation（页面保留，只是少了引用） */
+  ctx.api.handle("wiki.deleteSource", async ({ id: sourceId, ids = [] } = {}) => {
+    const targets = new Set([sourceId, ...(Array.isArray(ids) ? ids : [])].filter(Boolean));
+    if (!targets.size) throw new Error("缺少 source id");
+    const before = data.sources.length;
+    data.sources = data.sources.filter((s) => !targets.has(s.id));
+    const removedCitations = data.citations.filter((c) => targets.has(c.sourceId)).length;
+    data.citations = data.citations.filter((c) => !targets.has(c.sourceId));
+    const removed = before - data.sources.length;
+    if (removed) { addLog("source.delete", `${removed} sources`); await persist(); }
+    return { removed, removedCitations };
+  });
+
   ctx.api.handle("wiki.vault.get", async () => vaultIndex());
   ctx.api.handle("wiki.vault.pick", async () => pickVault());
   ctx.api.handle("wiki.vault.open", async ({ path: openPath } = {}) => {
