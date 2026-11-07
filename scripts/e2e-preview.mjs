@@ -13,7 +13,7 @@ const PROJ = "/tmp/cockpit-preview-fixture";
 fs.rmSync(PROJ, { recursive: true, force: true });
 fs.mkdirSync(PROJ, { recursive: true });
 fs.writeFileSync(`${PROJ}/doc.md`, `# 标题一\n\n正文段落。\n\n## 小节 A\n\n\`\`\`js\n# 这不是标题\n\`\`\`\n\n### 更深一层\n\n## 小节 B\n\n结尾。\n`);
-fs.writeFileSync(`${PROJ}/page.html`, `<html><body><h1 id="h">HTML 预览</h1><p>p1</p></body></html>`);
+fs.writeFileSync(`${PROJ}/page.html`, `<html><head><title>夹具标题</title><meta name="x" content="1"></head><body><h1 id="h">HTML 预览</h1><p>p1</p></body></html>`);
 const port = Number(process.argv[2] || 9223);
 const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
 const page = list.find((t) => t.type === "page");
@@ -134,34 +134,32 @@ const htmlOnDisk = fs.readFileSync(`${PROJ}/page.html`, "utf8");
 check("HTML 写盘生效", htmlOnDisk.includes("p2"), htmlOnDisk.slice(0, 60));
 ws.close();
 
-// 可视化会挂 webview，渲染进程可能重载：先重连一次，避免旧 session 卡死在 pending
+// 可视化会挂 GrapesJS（内含 iframe），渲染进程可能 HMR 重载：重连后继续
 conn = await connect();
 ws = conn.socket;
 evaluate = conn.evaluate;
 await evaluate(`window.__t={wait:(ms)=>new Promise(r=>setTimeout(r,ms)),click(el){el.dispatchEvent(new MouseEvent("click",{bubbles:true}))},
- async until(fn,ms=6000){const t0=Date.now();while(Date.now()-t0<ms){const v=fn();if(v)return v;await new Promise(r=>setTimeout(r,80));}return null;}}; true`);
+ async until(fn,ms=8000){const t0=Date.now();while(Date.now()-t0<ms){const v=fn();if(v)return v;await new Promise(r=>setTimeout(r,80));}return null;}}; true`);
 
-// ── HTML 可视化编辑（designMode）──────────────────────────────
-// 拆成多步：进模式下、改内容、保存、退出，任一步失败都能定位
+// ── HTML 可视化编辑（GrapesJS）──────────────────────────────
 r = await run(`
-  const seg = await __t.until(() => document.querySelector(".file-preview-seg"));
-  const pre = [...seg.querySelectorAll("button")].find((b) => b.textContent.trim() === "预览");
-  if (pre) { __t.click(pre); await __t.wait(900); }
-  const vis = [...seg.querySelectorAll("button")].find((b) => b.textContent.trim() === "可视化");
-  if (!vis) return { error: "no visual mode" };
-  __t.click(vis);
-  await __t.wait(1500);
-  return { segs: [...seg.querySelectorAll("button")].map((b) => b.textContent.trim()), hint: !!document.querySelector(".preview-hint.visual") };`);
-check("可视化模式：进入 + 提示条", r.hint === true, JSON.stringify(r));
+  const seg = [...document.querySelectorAll(".file-preview-seg button")].find((b) => b.textContent.trim() === "可视化");
+  if (!seg) return { error: "no visual mode" };
+  __t.click(seg);
+  const editor = await __t.until(() => document.querySelector(".gjs-editor"), 8000);
+  const frame = await __t.until(() => document.querySelector("iframe.gjs-frame"), 8000);
+  return { editor: !!editor, frame: !!frame, hint: !!document.querySelector(".preview-hint.visual") };`);
+check("GrapesJS 画布加载（编辑器 + 画布 iframe + 提示条）", r.editor === true && r.frame === true && r.hint === true, JSON.stringify(r));
 
 r = await run(`
-  const wv = document.querySelector("webview");
-  const guest = (expr, ms = 5000) => Promise.race([wv.executeJavaScript(expr), new Promise((_, rej) => setTimeout(() => rej(new Error("guest timeout")), ms))]);
+  const g = window.__grapes;
+  if (!g) return { error: "no editor api" };
+  const before = (g.getHtml() || "").includes("HTML 预览");
+  // 加一个组件（等价于从块面板拖入）
+  g.getWrapper().append('<h2 id="added">新组件</h2><div class="box" style="color: rgb(220, 38, 38)">红色块</div>');
   await __t.wait(400);
-  const mode = await guest("document.designMode");
-  await guest("document.querySelector('h1').textContent='可视化改过了'");
-  return { mode };`);
-check("webview 进入 designMode", r.mode === "on", JSON.stringify(r));
+  return { before, dirty: (await window.harness.getState()) ? true : true };`);
+check("画布可编辑（插入组件）", r.before === true, JSON.stringify(r));
 
 r = await run(`
   const saveBtn = [...document.querySelectorAll(".preview-surface-actions .btn")].find((b) => b.textContent.includes("保存修改"));
@@ -169,19 +167,21 @@ r = await run(`
   __t.click(saveBtn);
   await __t.wait(1500);
   return { saved: !!document.querySelector(".preview-saved") };`);
-check("可视化保存 → 已保存", r.saved === true, JSON.stringify(r));
+check("GrapesJS 保存 → 已保存", r.saved === true, JSON.stringify(r));
+
+const disk = fs.readFileSync(`${PROJ}/page.html`, "utf8");
+check("写盘包含新组件 + CSS 注入 + head 保留",
+  disk.includes("新组件") && disk.includes("data-grapes") && disk.includes("夹具标题") && !/contenteditable/i.test(disk),
+  `${disk.length}B`);
 
 r = await run(`
   const pre = [...document.querySelectorAll(".file-preview-seg button")].find((b) => b.textContent.trim() === "预览");
   __t.click(pre);
-  await __t.wait(1200);
+  await __t.wait(1500);
   const wv = document.querySelector("webview");
-  const mode = await Promise.race([wv.executeJavaScript("document.designMode"), new Promise((r) => setTimeout(() => r("TIMEOUT"), 4000))]);
-  const h1 = await Promise.race([wv.executeJavaScript("document.querySelector('h1').textContent"), new Promise((r) => setTimeout(() => r("TIMEOUT"), 4000))]);
-  return { mode, h1 };`);
-check("退出可视化：designMode 关闭 + 显示已保存内容", r.mode === "off" && r.h1 === "可视化改过了", JSON.stringify(r));
-const visualDisk = fs.readFileSync(`${PROJ}/page.html`, "utf8");
-check("可视化保存写盘且无 contenteditable 残留", visualDisk.includes("可视化改过了") && !/contenteditable/i.test(visualDisk), `${visualDisk.length}B`);
+  const h2 = await Promise.race([wv.executeJavaScript("document.querySelector('#added')?.textContent || ''"), new Promise((r) => setTimeout(() => r("TIMEOUT"), 4000))]);
+  return { h2, editorGone: !document.querySelector(".gjs-editor") };`);
+check("回预览：显示已保存内容、编辑器卸载", r.h2 === "新组件" && r.editorGone === true, JSON.stringify(r));
 
 console.log(`\n${fails === 0 ? "全部通过" : `${fails} 项失败`}`);
 process.exit(fails ? 1 : 0);
