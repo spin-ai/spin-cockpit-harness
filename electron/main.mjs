@@ -3047,10 +3047,12 @@ function parsePorcelainZ(raw) {
 ipcMain.handle("git:status", async (_e, { root } = {}) => {
   const inside = await gitRun(root, ["rev-parse", "--is-inside-work-tree"]);
   if (!inside.ok || inside.stdout.trim() !== "true") return { isRepo: false };
-  const [status, counts, branch] = await Promise.all([
+  const [status, counts, branch, ignored] = await Promise.all([
     gitRun(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
     gitRun(root, ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"]),
     gitRun(root, ["status", "--porcelain=v2", "--branch"]),
+    // 资源管理器用来把 ignore 的文件画成淡色斜体（目录以 / 结尾）
+    gitRun(root, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]),
   ]);
   const meta = parseBranchV2(branch.stdout);
   let ahead = 0; let behind = 0;
@@ -3059,7 +3061,11 @@ ipcMain.handle("git:status", async (_e, { root } = {}) => {
     behind = Number.isFinite(b) ? b : 0;
     ahead = Number.isFinite(a) ? a : 0;
   }
-  return { isRepo: true, root: rootOf(root), ...meta, ahead, behind, files: parsePorcelainZ(status.stdout) };
+  return {
+    isRepo: true, root: rootOf(root), ...meta, ahead, behind,
+    files: parsePorcelainZ(status.stdout),
+    ignored: String(ignored.stdout || "").split("\0").filter(Boolean),
+  };
 });
 
 function parseBranchV2(out) {

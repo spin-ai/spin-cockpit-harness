@@ -2,7 +2,7 @@ import type { ElementContext, State } from "./types";
 
 declare global {
   interface GitFile { path: string; index: string; worktree: string; staged: boolean; untracked: boolean; conflict: boolean; }
-  interface GitStatus { isRepo: boolean; root?: string; branch?: string; upstream?: string; oid?: string; detached?: boolean; ahead?: number; behind?: number; files?: GitFile[]; }
+  interface GitStatus { isRepo: boolean; root?: string; branch?: string; upstream?: string; oid?: string; detached?: boolean; ahead?: number; behind?: number; files?: GitFile[]; ignored?: string[]; }
   interface Window {
     harness: {
       getState(): Promise<State>;
