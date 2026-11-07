@@ -162,6 +162,18 @@ r = await run(`
   return { chat: !!chat, todo: !!document.querySelector(".task-row") };`);
 check("失败行下钻回 Chat", r.chat === true, JSON.stringify(r));
 
+// ── 9.5 缺密钥：错误卡片 + 一键跳到设置并聚焦密钥输入框 ─────
+r = await run(`
+  const card = await __t.until(() => document.querySelector(".missing-key-card"), 4000);
+  if (!card) return { error: "no card" };
+  const buttons = [...card.querySelectorAll("button")].map((b) => b.textContent.trim());
+  const go = [...card.querySelectorAll("button")].find((b) => b.textContent.includes("去设置"));
+  __t.click(go);
+  const ta = await __t.until(() => document.querySelector('textarea[data-set-key="dshEnv"]'), 5000);
+  const focused = ta ? await __t.until(() => document.activeElement === ta, 2500) : null;
+  return { buttons, section: document.querySelector(".settings-head h2")?.textContent, ta: !!ta, focused: !!focused };`);
+check("缺密钥错误卡片 + 跳设置并聚焦", r.buttons?.length >= 2 && r.section === "执行" && r.focused === true, JSON.stringify(r));
+
 // ── 10. 设置：搜索跳转 / 行内恢复默认 / 本页恢复默认 ─────────
 r = await run(`
   const btn = [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.includes("设置"));

@@ -38,6 +38,7 @@ export const DEFAULT_SETTINGS = {
   maxConcurrentRuns: 0,           // 0 = 不限制
   approvalPolicy: "ask",          // ask | allow | deny
   dshBinary: "",                  // 空 = 用 PATH 里的 dsh
+  dshEnv: "",                     // 额外环境变量（KEY=VALUE，每行一条），启动 dsh 时注入
   dshHome: "",
   model: "",
   effort: "",

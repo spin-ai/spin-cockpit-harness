@@ -28,7 +28,7 @@ export function dshPathEnv(base = process.env) {
 }
 
 export class AcpClient extends EventEmitter {
-  constructor({ cwd, ssh, bin, home, model, effort, mcpServers = [], patches = [] }) {
+  constructor({ cwd, ssh, bin, home, model, effort, env: extraEnv = null, mcpServers = [], patches = [] }) {
     super();
     this.cwd = cwd;
     this.mcpServers = Array.isArray(mcpServers) ? mcpServers : [];
@@ -46,6 +46,8 @@ export class AcpClient extends EventEmitter {
     this.stderrTail = "";
 
     const env = dshPathEnv();
+    // 设置里配置的 KEY=VALUE 会注入本地 dsh（远端需在目标机自己配）
+    for (const [k, v] of Object.entries(extraEnv || {})) env[k] = v;
     if (this.home) env.DSH_HOME = this.home;
     if (ssh && ssh.host) {
       const target = ssh.user ? `${ssh.user}@${ssh.host}` : ssh.host;

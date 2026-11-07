@@ -74,3 +74,13 @@ export function migrateLocalStorage() {
     }
   } catch { /* ignore */ }
 }
+
+/** 从报错文本认出「缺模型密钥」：返回要设置的环境变量与 provider（与后端 missingKeyInfo 口径一致） */
+export function missingKeyInfo(text: string | null | undefined): { envVars: string[]; provider: string | null } | null {
+  const value = String(text || "");
+  const envVars = [...new Set(value.match(/\b[A-Z][A-Z0-9_]*(?:API_KEY|_KEY|_TOKEN)\b/g) || [])];
+  const looksMissing = /no api key|api key (?:is )?not|missing .{0,16}(?:api key|credential)|credentials? service|not configured|unauthorized/i.test(value);
+  if (!looksMissing && !envVars.length) return null;
+  const provider = (value.match(/provider route "([^"]+)"/) || [])[1] || null;
+  return { envVars: envVars.length ? envVars : ["DEEPSEEK_API_KEY"], provider };
+}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Project, ProjectStatus, State } from "../types";
-import { ERROR_CLASS, fmtMs, p50, pct, timeAgo, tokens } from "../ui";
+import { ERROR_CLASS, fmtMs, missingKeyInfo, p50, pct, timeAgo, tokens } from "../ui";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
@@ -560,6 +560,15 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
               <span className="tiny muted">{agent?.name || "—"}{host ? ` @ ${host.name}` : ""}</span>
               <span className="tiny muted">{fmtMs(r.durationMs)}</span>
               <span className="tiny red ellipsis" title={r.error || ""}>{r.error || "exit"}</span>
+              {missingKeyInfo(r.error) && (
+                <span
+                  className="link tiny"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.dispatchEvent(new CustomEvent("harness:open-settings", { detail: { section: "execution", focus: "dshEnv" } }));
+                  }}
+                >配置密钥</span>
+              )}
             </button>
           );
         })}
