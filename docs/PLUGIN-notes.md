@@ -259,6 +259,16 @@ Wiki
 - `[[Page]]` 内部链接
 - 分屏 + 可拖拽比例
 - 页面状态 / citations 数
+- 编辑模式可直接改标题；保存时同时写回 title / summary
+
+#### 编辑器
+
+- Markdown 工具栏：撤销/重做、H1–H3、粗体/斜体/删除线、行内代码、列表/任务/引用、代码块、Wiki 链接、链接、表格、分隔线、查找替换
+- 快捷键：`⌘B` / `⌘I` / `⌘K` 链接 / `⇧⌘K` Wiki 链接 / `⌘S` 保存 / `⌘F` 查找
+- Markdown 行为：回车续写列表/引用、退格删除标记、Tab / Shift-Tab 缩进
+- `[[` 触发页面补全，`#` 触发 tag 补全
+- 编辑器颜色和高亮跟随当前主题（含终端风格主题）
+- 底部/工具栏显示词数、字数、选区长度、保存状态
 
 ### 右侧
 
@@ -294,7 +304,8 @@ plugins/notes/main.mjs
 已实现：
 
 - 原生 source/page/citation/review 数据
-- CodeMirror 编辑
+- CodeMirror 编辑 + Markdown 工具栏 / 快捷键 / 查找替换 / 列表续写
+- 标题与摘要编辑回写
 - 多 tab / 分屏 / 布局恢复
 - 搜索 / backlinks / graph
 - Review 接受/退回
