@@ -167,3 +167,23 @@ export const PanelExpandIcon = (p: IconProps) => (
 export const ChevronUpIcon = (p: IconProps) => (
   <Svg {...p}><path d="m6 15 6-6 6 6" /></Svg>
 );
+
+export const EllipsisIcon = (p: IconProps) => (
+  <Svg {...p}><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></Svg>
+);
+
+export const SparkleIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8" /><circle cx="12" cy="12" r="2.2" /></Svg>
+);
+
+export const LinkIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" /><path d="M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1" /></Svg>
+);
+
+export const QuoteIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M7 7h4v5H8a2 2 0 0 1-2-2V7M7 12c0 3-1.5 4.5-3 5M17 7h4v5h-4a2 2 0 0 1-2-2V7M17 12c0 3-1.5 4.5-3 5" /></Svg>
+);
+
+export const CopyCheckIcon = (p: IconProps) => (
+  <Svg {...p}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /><path d="m12.5 14.5 1.6 1.6 3-3" /></Svg>
+);

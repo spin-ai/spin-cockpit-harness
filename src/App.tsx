@@ -33,6 +33,7 @@ export default function App() {
   const [todoW, setTodoW] = useStoredSize("cmh.layout.todoW", 220, 180, 520);
   const [chatW, setChatW] = useStoredSize("cmh.layout.chatW", 300, 220, 700);
   const [filesW, setFilesW] = useStoredSize("cmh.layout.filesW", 280, 180, 640);
+  const [focusedPane, setFocusedPane] = useState<PaneId | null>(null);
   const [collapsed, setCollapsed] = useState<Record<PaneId, boolean>>(() => {
     try {
       const raw = JSON.parse(localStorage.getItem("cmh.layout.collapsed") || "{}");
@@ -59,6 +60,16 @@ export default function App() {
   }, []);
   const togglePane = useCallback((id: PaneId) => {
     setCollapsed((current) => ({ ...current, [id]: !current[id] }));
+  }, []);
+
+  // 工作区焦点：指针进入某个 pane 后记住它，用于主次降噪。
+  const markFocusedPane = useCallback((e: React.SyntheticEvent) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>(".todo-pane,.chat-pane,.terminal-pane,.files-pane");
+    const next = el?.classList.contains("todo-pane") ? "todo"
+      : el?.classList.contains("chat-pane") ? "chat"
+        : el?.classList.contains("terminal-pane") ? "terminal"
+          : el?.classList.contains("files-pane") ? "files" : null;
+    if (next) setFocusedPane(next);
   }, []);
 
   // 右侧 Git 面板的「全屏」：切到 Git 页
@@ -438,7 +449,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="main" style={{ gridTemplateColumns: gridCols }}>
+      <div className={`main pane-focus-${focusedPane ?? "none"}`} style={{ gridTemplateColumns: gridCols }} onPointerDownCapture={markFocusedPane} onFocusCapture={markFocusedPane}>
         <Rail view={view} inboxUnread={unread} notesEnabled={notesEnabled} onChange={(v) => setView(v)} />
         {/* 工作区始终挂载、只切显隐：切到收件箱/统计再回来时，终端 pty、标签、滚动位置都不能丢 */}
         {scoped && (

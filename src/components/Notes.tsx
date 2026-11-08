@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { State } from "../types";
 import { renderMarkdown } from "../markdown";
-import { ChevronDownIcon, ChevronRightIcon, FolderOpenIcon, RefreshIcon, SearchIcon } from "./Icons";
+import { ChevronDownIcon, ChevronRightIcon, FileTextIcon, FolderOpenIcon, RefreshIcon, SearchIcon, SparkleIcon } from "./Icons";
 import { NotesEditor } from "./NotesEditor";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
@@ -557,7 +557,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
         </div>
         {!doc ? (
           <div className="notes-hub">
-            <div className="notes-hub-mark">✦</div>
+            <div className="notes-hub-mark"><SparkleIcon size={16} /></div>
             <h2>从这里开始</h2>
             <p className="notes-hub-sub">页面是整理后的知识；资料是原始输入；本地目录可以直接编辑 Markdown 并写回磁盘。</p>
             <div className="notes-hub-cards">
@@ -567,7 +567,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 <em>空白 Markdown，先写再整理</em>
               </button>
               <button className="notes-hub-card" onClick={() => setSourceDraft({ title: "", content: "", url: "", mode: "text" })} disabled={busy}>
-                <span className="notes-hub-ico">▤</span>
+                <span className="notes-hub-ico"><FileTextIcon size={14} /></span>
                 <b>导入资料</b>
                 <em>粘贴文本 / Markdown / URL</em>
               </button>
@@ -725,7 +725,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
             {tab === "sources" && filteredSources.map((s) => (
               <div key={s.id} className="notes-row">
                 <button className="notes-file" onClick={() => void openSource(s.id)}>
-                  <span className="notes-source-icon">▤</span>
+                  <FileTextIcon size={12} className="notes-source-icon" />
                   <span className="ellipsis">{s.title}</span>
                   <em title="被引用次数">{s.citations || 0}</em>
                 </button>
@@ -754,7 +754,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 {vaultGroups.map(([folder, files]) => (
                   <div key={folder || "__root"} className="notes-vault-group">
                     <div className="notes-folder-label">{folder || "根目录"} <em>{files.length}</em></div>
-                    {files.map((f) => <button key={f.path} className={`notes-file ${activeDoc?.local && activeDoc.localPath === f.path ? "on" : ""}`} title={f.path} onClick={() => void openVaultFile(f.path)}><span className="notes-source-icon">▤</span><span className="ellipsis">{f.title}</span></button>)}
+                    {files.map((f) => <button key={f.path} className={`notes-file ${activeDoc?.local && activeDoc.localPath === f.path ? "on" : ""}`} title={f.path} onClick={() => void openVaultFile(f.path)}><FileTextIcon size={12} className="notes-source-icon" /><span className="ellipsis">{f.title}</span></button>)}
                   </div>
                 ))}
                 {filteredVaultFiles.length === 0 && !vault.error && <div className="notes-empty-list">{query ? "没有匹配的本地文件。" : "目录里还没有 Markdown 文件。"}</div>}
@@ -932,7 +932,7 @@ function GraphView({ data, loading, onOpen }: { data: GraphData | null; loading:
     }
     return new Map(cap.map((n, i) => [n.id, points[i]]));
   }, [nodes, edges]);
-  if (loading) return <div className="notes-empty"><div className="notes-empty-mark">✦</div><b>构建 Wiki 图谱…</b></div>;
-  if (!nodes.length) return <div className="notes-empty notes-graph-empty"><div className="notes-empty-mark">✦</div><b>还没有图谱</b><p>图谱由「页面」「资料」和「本地 Markdown」组成；页面引用资料、页面之间用 <code>[[双链]]</code> 时才会连线。</p></div>;
+  if (loading) return <div className="notes-empty"><div className="notes-empty-mark"><SparkleIcon size={16} /></div><b>构建 Wiki 图谱…</b></div>;
+  if (!nodes.length) return <div className="notes-empty notes-graph-empty"><div className="notes-empty-mark"><SparkleIcon size={16} /></div><b>还没有图谱</b><p>图谱由「页面」「资料」和「本地 Markdown」组成；页面引用资料、页面之间用 <code>[[双链]]</code> 时才会连线。</p></div>;
   return <div className="notes-graph"><svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">{edges.map((e, i) => { const a = positions.get(e.source); const b = positions.get(e.target); return a && b ? <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} /> : null; })}{nodes.map((n) => { const p = positions.get(n.id); if (!p) return null; return <g key={n.id} onClick={() => { if (n.kind !== "file") onOpen(n.id); }} className={`notes-graph-node ${n.kind}`} style={n.kind === "file" ? { cursor: "default" } : undefined}><circle cx={p.x} cy={p.y} r={Math.min(3.2, 1.5 + Math.sqrt(n.links) * .55)} /><text x={p.x} y={p.y - 4.5} textAnchor="middle">{n.title.slice(0, 18)}</text></g>; })}</svg><div className="notes-graph-count">{nodes.length} nodes · {edges.length} links</div></div>;
 }
