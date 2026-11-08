@@ -16,6 +16,7 @@ type PaneState = {
   /** terminal = pty；preview/file = 同标签内的预览窗格 */
   kind?: "terminal" | "preview" | "file";
   terminalId?: string;
+  branch?: string | null;
   /** preview/file 窗格的数据 */
   url?: string;
   rel?: string;
@@ -38,6 +39,7 @@ type Tab = {
   /** 文件预览标签：相对路径 + 根目录 */
   rel?: string; rootDir?: string;
   taskId?: string;
+  branch?: string | null;
   /** 用户手动重命名后不再跟随 shell 标题。 */
   renamed?: boolean;
   /** 后台标签页收到 bell（命令完成 / 需要输入）时的提示点。 */
@@ -53,6 +55,16 @@ type PreviewDragData = {
   sourceTabId: string; title: string; kind: "preview" | "file";
   url?: string; rel?: string; rootDir?: string;
 };
+function countPreviewPanes(node: PaneNode | undefined): number {
+  if (!node) return 0;
+  if (node.type === "pane") return node.pane.kind === "preview" || node.pane.kind === "file" ? 1 : 0;
+  return countPreviewPanes(node.a) + countPreviewPanes(node.b);
+}
+
+function previewCount(tabs: Tab[]): number {
+  return tabs.reduce((n, tab) => n + (tab.kind === "preview" || tab.kind === "file" ? 1 : countPreviewPanes(tab.root)), 0);
+}
+
 function findPreviewLocation(tabs: Tab[]): PreviewTarget | null {
   for (const tab of tabs) if (tab.kind === "preview" || tab.kind === "file") return { tab };
   for (const tab of tabs) {
@@ -220,14 +232,15 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
   // 切标签 / 切窗格时关闭查找，避免搜索栏留在别的终端上
   useEffect(() => { setSearchPaneId(null); }, [active, activeFocusedId]);
 
-  const makePane = useCallback((init: { cwd: string; title?: string; terminalId?: string }): PaneState => ({
+  const makePane = useCallback((init: { cwd: string; title?: string; terminalId?: string; branch?: string | null }): PaneState => ({
     id: `p${seq.current++}`,
     cwd: init.cwd,
     title: init.title || basename(init.cwd),
     terminalId: init.terminalId,
+    branch: init.branch || null,
   }), []);
 
-  const addTab = useCallback((init: { cwd: string; title?: string; taskId?: string; terminalId?: string }) => {
+  const addTab = useCallback((init: { cwd: string; title?: string; taskId?: string; terminalId?: string; branch?: string | null }) => {
     const pane = makePane(init);
     const tab: Tab = {
       id: `t${seq.current++}`,
@@ -235,6 +248,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
       cwd: pane.cwd,
       title: pane.title,
       taskId: init.taskId,
+      branch: init.branch || null,
       root: { type: "pane", pane },
       focusedPaneId: pane.id,
     };
@@ -357,6 +371,19 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
     if (target) { activate(target.tab.id); return; }
     openPreview(activeUrl || lastUrl || previewHomeUrl || "http://localhost:5173/");
   }, [tabs, activate, openPreview, activeUrl, lastUrl, previewHomeUrl]);
+
+  // 显式新建预览：最多 3 个，避免后台 webview 太多
+  const newPreviewTab = useCallback((url?: string) => {
+    if (previewCount(tabs) >= 3) {
+      window.dispatchEvent(new CustomEvent("harness:toast", { detail: "最多同时打开 3 个预览页；先关闭一个再新建" }));
+      return;
+    }
+    const target = (url || activeUrl || lastUrl || previewHomeUrl || "http://localhost:5173/").trim();
+    const tab: Tab = { id: `t${seq.current++}`, kind: "preview", cwd: state.projectPath, title: previewTitle(target), url: target };
+    setTabs((list) => [...list, tab]);
+    setActive(tab.id);
+    setFocusToken((n) => n + 1);
+  }, [tabs, activeUrl, lastUrl, previewHomeUrl, state.projectPath]);
 
   const splitFocused = useCallback((dir: SplitDir) => {
     const tab = tabs.find((t) => t.id === active);
@@ -578,7 +605,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
       if (pending.cwd) addTab({ cwd: pending.cwd, title: basename(pending.cwd) });
       if (pending.file) openFilePreviewTab(pending.file);
       const adopt = takeTerminalAdopt();
-      if (adopt) addTab({ cwd: adopt.cwd, title: adopt.title || basename(adopt.cwd), terminalId: adopt.terminalId, taskId: adopt.taskId });
+      if (adopt) addTab({ cwd: adopt.cwd, title: adopt.title || basename(adopt.cwd), terminalId: adopt.terminalId, taskId: adopt.taskId, branch: adopt.branch });
     };
     consumeRequests();
     window.addEventListener("harness:new-terminal", onNew);
@@ -664,6 +691,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
             <button className="link" title="把当前终端接到选中的任务，接管后的运行会显示在 TODO" onClick={() => void attachToTask()}>接入 {todo.key}</button>
           )}
           <button className="btn tiny-btn" onClick={newTerminal}>＋ 终端</button>
+          <button className="btn tiny-btn" title="新建预览（默认复用已有预览；这里显式开新标签，最多 3 个）" onClick={() => newPreviewTab()}>＋ 预览</button>
           {onCollapse && (
             <button className="pane-collapse dark" title="收起终端" aria-label="收起终端" onClick={onCollapse}>
               <PanelCollapseIcon size={13} />
@@ -677,7 +705,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
             key={t.id}
             data-tab-id={t.id}
             className={`term-tab ${t.id === active ? "on" : ""} ${t.attention ? "attention" : ""} ${t.kind === "preview" || t.kind === "file" ? "preview-drag" : ""}`}
-            title={t.kind === "preview" ? `${t.url || (t.rel ? `${t.rootDir || ""}/${t.rel}` : "预览")} · 可拖到拆分的窗格` : t.cwd}
+            title={t.kind === "preview" ? `${t.url || (t.rel ? `${t.rootDir || ""}/${t.rel}` : "预览")} · 可拖到拆分的窗格` : `${t.cwd}${t.branch ? ` · ${t.branch}` : ""}`}
             draggable={t.kind === "preview" || t.kind === "file"}
             onDragStart={(e) => {
               if (t.kind !== "preview" && t.kind !== "file") return;

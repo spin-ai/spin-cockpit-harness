@@ -25,7 +25,7 @@ export function takeTerminalRequests(): { file: FilePreviewRequest | null; cwd: 
   return result;
 }
 
-export type TerminalAdoptRequest = { terminalId: string; cwd: string; title?: string; taskId?: string };
+export type TerminalAdoptRequest = { terminalId: string; cwd: string; title?: string; taskId?: string; branch?: string | null };
 let pendingAdopt: TerminalAdoptRequest | null = null;
 
 /** Chat → 终端：把已经创建好的 pty 接管为终端标签。 */

@@ -18,8 +18,8 @@ const modelCatalogCache = new Map<string, ModelCatalog>();
  * - 已派活但没运行：发一句话 = 新起一次运行
  * 任务状态与操作按钮只在 TODO LIST 行内维护，这里不再重复。
  */
-export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpenThread, threads = [], context, onClearContext, onCollapse, enterToSend = true, confirmStop = false }: {
-  state: State; thread: Thread | null; now: number; act: Act; onSelect: (id: string) => void; onNewThread: () => void; onOpenThread?: (id: string) => void; threads?: Thread[];
+export function TaskChat({ state, globalState, thread, now, act, onSelect, onNewThread, onOpenThread, onOpenGlobal, threads = [], context, onClearContext, onCollapse, enterToSend = true, confirmStop = false }: {
+  state: State; globalState?: State; thread: Thread | null; now: number; act: Act; onSelect: (id: string) => void; onNewThread: () => void; onOpenThread?: (id: string) => void; onOpenGlobal?: (id: string) => void; threads?: Thread[];
   context: ElementContext | null; onClearContext: () => void;
   onCollapse?: () => void;
   enterToSend?: boolean;
@@ -30,8 +30,15 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
   const missionPlans = mission ? (state.missionPlans ?? []).filter((p) => p.missionId === mission.id) : [];
   const latestPlan = [...missionPlans].sort((a, b) => b.revision - a.revision)[0] ?? null;
   const delegations = mission ? (state.delegations ?? []).filter((d) => d.missionId === mission.id) : [];
-  const active = todo ? activeRun(todo, state.runs) : null;
+  const activeRuns = todo ? state.runs.filter((r) => r.todoId === todo.id && ["running", "waiting_input", "waiting_plan", "waiting_children"].includes(r.status)) : [];
+  const [steerRunId, setSteerRunId] = useState("");
+  const active = activeRuns.find((r) => r.id === steerRunId) || activeRuns[0] || null;
   const last = todo ? lastRun(todo, state.runs) : null;
+  useEffect(() => {
+    if (!activeRuns.length) { if (steerRunId) setSteerRunId(""); return; }
+    if (!activeRuns.some((r) => r.id === steerRunId)) setSteerRunId(activeRuns[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRuns.map((r) => r.id).join(",")]);
   const agent = agentOf(state.agents, thread?.agentId ?? todo?.agentId ?? null);
   const isRunnable = (a: (typeof state.agents)[number] | null | undefined) =>
     Boolean(a && (a.chatRunnable ?? state.executors?.find((e) => e.id === String(a.cli || "").trim().toLowerCase())?.implemented));
@@ -58,6 +65,15 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
   const [modelCatalog, setModelCatalog] = useState<ModelCatalog>({ models: [], efforts: [] });
   const [modelLoading, setModelLoading] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [progressOpen, setProgressOpen] = useState(false);
+  const [progressScope, setProgressScope] = useState<"session" | "project" | "all">("all");
+  const [previewAllocation, setPreviewAllocation] = useState(true);
+  const [chatOnly, setChatOnly] = useState(false);
+  const [proposal, setProposal] = useState<{
+    text: string; projectId: string | null; projectName: string;
+    agentId: string; agentName: string; agentAlias: string;
+    runtime: "acp" | "terminal"; worktree: string; reason: string; summary: string;
+  } | null>(null);
   const [inputHistoryIndex, setInputHistoryIndex] = useState<number | null>(null);
   const historyRef = useRef<HTMLDivElement>(null);
   const inputHistoryDraft = useRef("");
@@ -159,6 +175,8 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
 
   // 切会话时保留各自的草稿，避免打字内容丢失
   useEffect(() => {
+    setProposal(null);
+    setChatOnly(false);
     if (!thread) { setText(""); return; }
     setText(drafts.current[thread.id] ?? "");
     stickRef.current = true;
@@ -177,6 +195,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
 
   const updateText = (value: string) => {
     setInputHistoryIndex(null);
+    setProposal(null);
     applyText(value);
   };
 
@@ -279,17 +298,31 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
     setUnseen(0);
   };
 
-  const send = async () => {
-    const value = text.trim();
+  const send = async (override?: { text?: string; allocation?: { projectId: string | null; agentId: string } }) => {
+    const value = (override?.text ?? text).trim();
     if (!value || sending || !thread) return;
+    if (!todo && !override && !chatOnly && previewAllocation) {
+      setSending(true);
+      const p = await act("proposeDispatch", { threadId: thread.id, text: value, agentId, projectId: scopeProjectId || undefined });
+      setSending(false);
+      if (p) setProposal({ ...p, text: value });
+      return;
+    }
     setSending(true);
-    const res = await act("send", { threadId: thread.id, text: value, agentId, projectId: scopeProjectId || undefined, context: context ?? null });
+    const res = chatOnly && !todo
+      ? await act("chat", { threadId: thread.id, text: value, agentId, projectId: scopeProjectId || undefined })
+      : await act("send", {
+        threadId: thread.id, text: value, agentId, projectId: scopeProjectId || undefined,
+        context: context ?? null, allocation: override?.allocation,
+        runId: activeRuns.length > 1 ? active?.id : undefined,
+      });
     setSending(false);
     if (!res || res.mode === "error") { textRef.current?.focus(); return; } // 失败保留草稿
     setText("");
     drafts.current[thread.id] = "";
     setInputHistoryIndex(null);
     inputHistoryDraft.current = "";
+    setProposal(null);
     if (context) onClearContext();
     stickRef.current = true;
     atBottomRef.current = true;
@@ -305,7 +338,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
           cols: 120,
           rows: 32,
         });
-        requestTerminalAdopt({ terminalId: created.id, cwd: created.cwd, title: res.title, taskId: res.todoId });
+        requestTerminalAdopt({ terminalId: created.id, cwd: created.cwd, title: res.title, taskId: res.todoId, branch: res.branch });
       } catch (err) {
         window.dispatchEvent(new CustomEvent("harness:toast", { detail: `终端启动失败：${String((err as Error)?.message || err)}` }));
       }
@@ -368,7 +401,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
             ? "queue"
             : "run";
   const terminalDispatch = !todo && dispatchAgent?.chatRuntime === "terminal";
-  const sendLabel = blocked ? "发送" : baseMode === "dispatch" ? (terminalDispatch ? "终端派活" : "派活") : baseMode === "steer" ? "纠偏" : baseMode === "run" ? "发送并运行" : "发送";
+  const sendLabel = blocked ? "发送" : baseMode === "dispatch" ? (chatOnly ? "只聊" : previewAllocation ? "预览分配" : terminalDispatch ? "终端派活" : "派活") : baseMode === "steer" ? "纠偏" : baseMode === "run" ? "发送并运行" : "发送";
   const blockedReason = blocked
     ? (dispatchAgent ? (dispatchAgent.chatRuntime === "terminal" ? `未检测到 ${dispatchAgent.cli}` : `「${dispatchAgent.cli}」仅终端可用`) : "没有可用的 Agent")
     : undefined;
@@ -384,6 +417,40 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
           : "输入消息…";
 
   const project = state.projects.find((p) => p.id === scopeProjectId) ?? null;
+  const gs = globalState || state;
+  const progressTodo = (todoId: string) => gs.todos.find((t) => t.id === todoId) || null;
+  const progressInScope = (todoId: string) => {
+    const t = progressTodo(todoId);
+    if (progressScope === "session") return Boolean(todo?.id && todoId === todo.id);
+    if (progressScope === "project") {
+      const pid = todo?.projectId || scopeProjectId || state.activeProjectId;
+      return Boolean(t && (!pid || t.projectId === pid));
+    }
+    return true;
+  };
+  const progressRuns = (gs.runs || [])
+    .filter((r) => ["queued", "running", "waiting_input"].includes(r.status) && progressInScope(r.todoId))
+    .sort((a, b) => (b.startedAt || b.createdAt || 0) - (a.startedAt || a.createdAt || 0));
+  const progressReview = (gs.todos || [])
+    .filter((t) => t.kind !== "chat" && t.status === "in_review" && !t.confirmed && progressInScope(t.id))
+    .slice(0, 5);
+  const progressTerminals = (gs.terminals || [])
+    .filter((t) => t.status === "running" && (progressScope === "all" || (t.projectId && (t.projectId === (todo?.projectId || scopeProjectId || state.activeProjectId)))))
+    .filter((t) => !progressRuns.some((r) => r.terminalId === t.id));
+  const progressCount = progressRuns.length + progressReview.length + progressTerminals.length;
+
+  const openGlobalTodo = (todoId: string) => {
+    if (onOpenGlobal) onOpenGlobal(todoId);
+    else onSelect(todoId);
+  };
+  const openGlobalTerminal = (t: { terminalId: string; cwd: string; title: string; taskId?: string | null }) => {
+    requestTerminalAdopt({ terminalId: t.terminalId, cwd: t.cwd, title: t.title, taskId: t.taskId || undefined });
+  };
+  const promoteChat = async () => {
+    if (!todo) return;
+    const res = await act("promoteChat", { id: todo.id });
+    if (res) onSelect(todo.id);
+  };
 
   // 把连续的 tool / thought 收成一组，避免一屏都是工具气泡
   type ChatItem =
@@ -464,6 +531,9 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
               )}
             </div>
           )}
+          <button className={`link ${progressOpen ? "on" : ""}`} onClick={() => setProgressOpen((v) => !v)} title="所有项目 / 终端的全局进展">
+            进展{progressCount > 0 ? ` ${progressCount}` : ""}
+          </button>
           <button className="link" onClick={onNewThread} title="新建会话">＋ 新任务</button>
           {onCollapse && (
             <button className="pane-collapse" title="收起 Chat" aria-label="收起 Chat" onClick={onCollapse}>
@@ -472,6 +542,65 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
           )}
         </div>
       </div>
+
+      {progressOpen && (
+        <div className="chat-progress">
+          <div className="chat-progress-head">
+            <span>全局进展</span>
+            <div className="seg">
+              {([["session", "当前会话"], ["project", "当前项目"], ["all", "所有项目"]] as const).map(([id, label]) => (
+                <button key={id} className={progressScope === id ? "on" : ""} onClick={() => setProgressScope(id)}>{label}</button>
+              ))}
+            </div>
+          </div>
+          <div className="chat-progress-list">
+            {progressRuns.slice(0, 8).map((run) => {
+              const t = progressTodo(run.todoId);
+              const a = agentOf(gs.agents, run.agentId);
+              return (
+                <div key={run.id} className="chat-progress-row">
+                  <button className="progress-main" onClick={() => openGlobalTodo(run.todoId)} title={t?.title || run.todoId}>
+                    <span className={`dot ${run.status === "waiting_input" ? "amber" : run.status === "queued" ? "slate" : "green"}`} />
+                    <span className="ellipsis">{t?.key} {t?.title || run.todoId}</span>
+                    <em>{a?.name || "Agent"} · {RUN_STATUS[run.status] || run.status} · {duration(run, now)}</em>
+                  </button>
+                  <span className="row gap4">
+                    {run.terminalId && <button className="link tiny" onClick={() => openGlobalTerminal({ terminalId: run.terminalId!, cwd: t?.cwd || run.cwd || "", title: t?.title || "终端", taskId: run.todoId })}>终端</button>}
+                    <button className="link tiny" onClick={() => { if (!confirmStop || window.confirm("停止这个运行？")) void act("stop", { runId: run.id }); }}>停止</button>
+                  </span>
+                </div>
+              );
+            })}
+            {progressTerminals.slice(0, 6).map((term) => {
+              const a = agentOf(gs.agents, term.agentId);
+              return (
+                <div key={term.id} className="chat-progress-row">
+                  <button className="progress-main" onClick={() => openGlobalTerminal({ terminalId: term.id, cwd: term.cwd, title: term.title })} title={term.cwd}>
+                    <span className="dot green" />
+                    <span className="ellipsis">{term.title || "终端"}</span>
+                    <em>{a?.name || "未绑定任务"} · 运行中 · {timeAgo(term.createdAt, now)}前</em>
+                  </button>
+                  <span className="row gap4">
+                    <button className="link tiny" onClick={() => openGlobalTerminal({ terminalId: term.id, cwd: term.cwd, title: term.title })}>打开</button>
+                    <button className="link tiny" onClick={() => void window.harness.closeTerminal(term.id)}>关闭</button>
+                  </span>
+                </div>
+              );
+            })}
+            {progressReview.map((t) => (
+              <div key={t.id} className="chat-progress-row">
+                <button className="progress-main" onClick={() => openGlobalTodo(t.id)}>
+                  <span className="dot amber" />
+                  <span className="ellipsis">{t.key} {t.title}</span>
+                  <em>待确认</em>
+                </button>
+                <button className="link tiny" onClick={() => openGlobalTodo(t.id)}>打开</button>
+              </div>
+            ))}
+            {progressCount === 0 && <div className="chat-progress-empty">这个范围没有运行中或待处理的事项。</div>}
+          </div>
+        </div>
+      )}
 
       {!thread ? (
         <div className="pane-empty">点「＋ 新任务」开始</div>
@@ -492,7 +621,18 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
               {agent && <><span className="thread-meta-sep">/</span><span className="ellipsis" title={agent.name}>@{agent.alias || agent.name}</span></>}
               {thread.modelName && <><span className="thread-meta-sep">·</span><span className="ellipsis" title={thread.modelName}>{thread.modelName}</span></>}
               <span className="spacer" />
-              {active ? (
+              {todo?.kind === "chat" && (
+                <button className="link tiny" onClick={() => void promoteChat()} title="把这段聊天变成 TODO 任务">转为任务</button>
+              )}
+              {activeRuns.length > 1 ? (
+                <>
+                  <select className="composer-select" value={active?.id || ""} onChange={(e) => setSteerRunId(e.target.value)} title="选择这次纠偏的目标 Agent">
+                    {activeRuns.map((r) => <option key={r.id} value={r.id}>{agentOf(state.agents, r.agentId)?.name || r.agentId}</option>)}
+                  </select>
+                  <span className="run-live">{duration(active, now)}</span>
+                  <button className="link composer-stop" onClick={stop}>停止</button>
+                </>
+              ) : active ? (
                 <>
                   <span className="run-live">{duration(active, now)}</span>
                   <button className="link composer-stop" onClick={stop}>停止</button>
@@ -584,6 +724,35 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
             )}
           </div>
 
+          {proposal && (
+            <div className="dispatch-preview">
+              <div className="dispatch-preview-head">分配建议 <span className="tiny faint">确认后才创建任务和运行</span></div>
+              <div className="dispatch-preview-grid">
+                <label>项目
+                  <select value={proposal.projectId || ""} onChange={(e) => setProposal((p) => p ? { ...p, projectId: e.target.value || null, projectName: state.projects.find((x) => x.id === e.target.value)?.name || "全局" } : p)}>
+                    <option value="">全局</option>
+                    {state.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </label>
+                <label>Agent
+                  <select value={proposal.agentId} onChange={(e) => setProposal((p) => {
+                    if (!p) return p;
+                    const a = state.agents.find((x) => x.id === e.target.value);
+                    return a ? { ...p, agentId: a.id, agentName: a.name, agentAlias: a.alias || a.name, runtime: a.chatRuntime === "terminal" ? "terminal" : "acp" } : p;
+                  })}>
+                    {runnableAgents.map((a) => <option key={a.id} value={a.id}>{a.name}{a.chatRuntime === "terminal" ? "（终端）" : ""}</option>)}
+                  </select>
+                </label>
+                <div>执行方式<b>{proposal.runtime === "terminal" ? "终端 pty" : "ACP"}</b></div>
+                <div>worktree<b>{proposal.worktree}</b></div>
+              </div>
+              <div className="dispatch-preview-reason">{proposal.reason}</div>
+              <div className="row gap6" style={{ justifyContent: "flex-end" }}>
+                <button className="btn tiny-btn" onClick={() => setProposal(null)}>取消</button>
+                <button className="btn tiny-btn primary" disabled={sending} onClick={() => void send({ text: proposal.text, allocation: { projectId: proposal.projectId, agentId: proposal.agentId } })}>确认派活</button>
+              </div>
+            </div>
+          )}
           <div className="composer-shell">
             {mentionOpen && (
               <div className="mention-pop">
@@ -737,6 +906,12 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
                         </option>
                       ))}
                     </select>
+                  </>
+                )}
+                {!todo && (
+                  <>
+                    <button className={`chat-toggle ${chatOnly ? "on" : ""}`} title="不创建可见任务，只和 Agent 对话；可随时转为任务" onClick={() => { setChatOnly((v) => !v); setProposal(null); }}>只聊</button>
+                    <button className={`chat-toggle ${previewAllocation && !chatOnly ? "on" : ""}`} title="发送前先看项目 / Agent / 执行方式建议" onClick={() => setPreviewAllocation((v) => !v)}>预览分配</button>
                   </>
                 )}
                 <button

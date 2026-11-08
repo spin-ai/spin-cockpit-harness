@@ -20,9 +20,19 @@ export function repoRoot(cwd) {
   return r.ok && r.out ? r.out : null;
 }
 
-export function prepareWorktree({ cwd, todoKey, runId }) {
+/**
+ * mode:
+ * - never：原地跑，不建 worktree
+ * - auto：git 仓库才建（默认）
+ * - always：要求 git；不是仓库时报错，避免用户以为已经隔离
+ */
+export function prepareWorktree({ cwd, todoKey, runId, mode = "auto" }) {
   const repo = repoRoot(cwd);
-  if (!repo) return { cwd, branch: null, repo: null, created: false };
+  if (mode === "never") return { cwd, branch: null, repo, created: false, skipped: "never" };
+  if (!repo) {
+    if (mode === "always") return { cwd, branch: null, repo: null, created: false, error: "worktree=always 但当前目录不是 git 仓库" };
+    return { cwd, branch: null, repo: null, created: false };
+  }
 
   const safeKey = String(todoKey || "todo").replace(/[^a-zA-Z0-9_-]/g, "");
   const stamp = Date.now().toString(36).slice(-5);

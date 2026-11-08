@@ -20,6 +20,8 @@ let data = {
   reviews: [],
   log: [],
   trash: [],
+  pins: [],
+  recents: [],
   layout: null,
   vaultPath: "",
 };
@@ -118,7 +120,7 @@ async function pickVault() {
 async function load() {
   try {
     const raw = JSON.parse(await fs.readFile(dataFile(), "utf8"));
-    data = { ...data, ...raw, trash: Array.isArray(raw.trash) ? raw.trash : [] };
+    data = { ...data, ...raw, trash: Array.isArray(raw.trash) ? raw.trash : [], pins: Array.isArray(raw.pins) ? raw.pins : [], recents: Array.isArray(raw.recents) ? raw.recents : [] };
     seq = Number(raw.seq) || seq;
   } catch { /* first run */ }
 }
@@ -226,12 +228,12 @@ function searchAll(q, limit = 40) {
     if (!hit) continue;
     const total = hit.score + (titleHit ? 6 : 0) + (page.status === "reviewed" ? 2 : 0) + Math.min(3, citationsOf(page.id).length);
     const at = Math.max(0, hit.at || 0);
-    out.push({ kind: "page", id: page.id, title: page.title, snippet: page.content.slice(Math.max(0, at - 60), at + 180).replace(/\s+/g, " "), rank: total });
+    out.push({ kind: "page", id: page.id, title: page.title, status: page.status, at: page.updatedAt, snippet: page.content.slice(Math.max(0, at - 60), at + 180).replace(/\s+/g, " "), rank: total });
   }
   for (const source of data.sources) {
     const hit = searchScore(sourceText(source), query);
     if (!hit) continue;
-    out.push({ kind: "source", id: source.id, title: source.title, snippet: source.content.slice(Math.max(0, hit.at - 60), hit.at + 180).replace(/\s+/g, " "), rank: hit.score });
+    out.push({ kind: "source", id: source.id, title: source.title, status: "source", at: source.createdAt, snippet: source.content.slice(Math.max(0, hit.at - 60), hit.at + 180).replace(/\s+/g, " "), rank: hit.score });
   }
   return out.sort((a, b) => (b.rank || 0) - (a.rank || 0)).slice(0, limit);
 }
@@ -327,11 +329,92 @@ export async function activate(context) {
     sources: data.sources.map((s) => ({ id: s.id, title: s.title, kind: s.kind, uri: s.uri, createdAt: s.createdAt, citations: data.citations.filter((c) => c.sourceId === s.id).length })),
     reviews: data.pages.filter((p) => p.status === "draft").map(pageSummary),
     trash: data.trash.map((t) => ({ id: t.id, kind: t.kind, title: t.title, deletedAt: t.deletedAt })),
+    pins: data.pins,
+    recents: data.recents.map((r) => ({ id: r.id, at: r.at })),
     log: data.log.slice(0, 40),
     layout: data.layout,
     vaultPath: data.vaultPath,
   }));
   ctx.api.handle("wiki.getPage", async ({ id: pageId }) => pageView(data.pages.find((p) => p.id === pageId || p.slug === pageId)));
+  ctx.api.handle("wiki.pin", async ({ id: pageId, pinned } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    const has = data.pins.includes(page.id);
+    const next = typeof pinned === "boolean" ? pinned : !has;
+    data.pins = next ? [...new Set([page.id, ...data.pins])] : data.pins.filter((id) => id !== page.id);
+    addLog("page.pin", `${page.title} ${next ? "pin" : "unpin"}`);
+    await persist();
+    return data.pins;
+  });
+  ctx.api.handle("wiki.touch", async ({ id: pageId } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) return [];
+    data.recents = [{ id: page.id, at: now() }, ...data.recents.filter((r) => r.id !== page.id)].slice(0, 20);
+    await persist();
+    return data.recents;
+  });
+  /** 本地检索式问答：不把整库上传；答案只从页面原文抽句，并强制带页面引用。 */
+  /** 导出为项目下的 Markdown 目录（wiki-export/），保留页面正文与引用列表。 */
+  ctx.api.handle("wiki.exportMarkdown", async () => {
+    const dir = "wiki-export";
+    let count = 0;
+    const errors = [];
+    for (const page of data.pages) {
+      const cites = citationsOf(page.id).map((c) => `- ${c.source?.title || c.sourceId}${c.quote ? `：${c.quote}` : ""}`).join("\n");
+      const body = `${page.content || ""}\n\n${cites ? `## 引用\n\n${cites}\n` : ""}`;
+      const name = `${page.slug || slugify(page.title)}.md`;
+      try {
+        await ctx.fs.writeProjectFile(`${dir}/${name}`, body);
+        count += 1;
+      } catch (err) { errors.push(`${name}: ${String(err?.message || err)}`); }
+    }
+    addLog("wiki.export", `${count} pages → ${dir}`);
+    return { dir, count, errors: errors.slice(0, 5) };
+  });
+  ctx.api.handle("wiki.ask", async ({ question, limit = 3 } = {}) => {
+    const q = String(question || "").trim();
+    if (!q) throw new Error("问题不能为空");
+    const chars = [...q.replace(/\s+/g, "")];
+    const scoreSentence = (sentence) => {
+      const text = String(sentence || "").toLowerCase();
+      let hit = 0;
+      for (const ch of chars) if (text.includes(ch.toLowerCase())) hit += 1;
+      return chars.length ? hit / chars.length : 0;
+    };
+    const ranked = data.pages.map((page) => {
+      const search = searchScore(`${page.title}\n${page.summary}\n${page.content}`, q);
+      const sentences = String(page.content || "")
+        .replace(/```[\s\S]*?```/g, " ")
+        .split(/(?<=[。！？.!?])\s+|\n+/)
+        .map((x) => x.replace(/^#+\s*/, "").trim())
+        .filter((x) => x.length > 8);
+      const picked = sentences.map((text) => ({ text, s: scoreSentence(text) })).filter((x) => x.s > 0.2).sort((a, b) => b.s - a.s).slice(0, 2);
+      return { page, score: (search?.score || 0) + picked.reduce((n, x) => n + x.s * 4, 0), picked };
+    }).filter((x) => x.picked.length > 0).sort((a, b) => b.score - a.score).slice(0, limit);
+    if (!ranked.length) {
+      return { found: false, answer: "Wiki 里没有找到能回答这个问题的页面或资料。", citations: [] };
+    }
+    const lines = ranked.map(({ page, picked }) => `- ${picked.map((x) => x.text).join(" ")} [[${page.title}]]`);
+    return {
+      found: true,
+      answer: `根据 Wiki 页面：\n\n${lines.join("\n")}`,
+      citations: ranked.map(({ page }) => ({ id: page.id, title: page.title })),
+    };
+  });
+  ctx.api.handle("wiki.unlinked", async ({ id: pageId } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    return page ? unlinkedMentionsOf(page) : [];
+  });
+  ctx.api.handle("wiki.byTag", async ({ tag } = {}) => {
+    const key = String(tag || "").replace(/^#/, "").toLowerCase();
+    if (!key) return [];
+    const out = [];
+    for (const page of data.pages) {
+      const hit = String(page.content || "").match(new RegExp(`(^|[\\s（(])#${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=[\\s，。；,.;)]|$)`, "iu"));
+      if (hit) out.push(pageSummary(page));
+    }
+    return out;
+  });
   ctx.api.handle("wiki.createPage", async ({ title, summary = "" } = {}) => { const page = ensurePage({ title, summary }); await persist(); return pageView(page); });
   ctx.api.handle("wiki.savePage", async ({ id: pageId, content, title, summary, status } = {}) => {
     const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);

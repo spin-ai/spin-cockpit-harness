@@ -10,7 +10,7 @@ const PLUGIN_ID = "ai.cockpit.notes";
 type PageSummary = {
   id: string; slug: string; title: string; summary: string;
   status: "draft" | "reviewed" | "stale"; confidence: "low" | "medium" | "high";
-  updatedAt: number; citations: number; backlinks: number;
+  updatedAt: number; citations: number; backlinks: number; snippet?: string;
 };
 type Citation = { id: string; pageId: string; sourceId: string; quote?: string; locator?: string; source?: Source };
 type Page = Omit<PageSummary, "citations" | "backlinks"> & { content: string; citations: Citation[]; backlinks: PageSummary[] };
@@ -24,15 +24,23 @@ type Tab = "pages" | "sources" | "review" | "vault" | "trash";
 type SourceDraft = { title: string; content: string; url: string; mode: "text" | "url" | "file" };
 type MemoryData = { markdown: string; pageCount: number; chars: number };
 type TrashItem = { id: string; kind: "page" | "source"; title: string; deletedAt: number };
+type SearchHit = { kind: string; id: string; title: string; status?: string; at?: number; snippet: string };
 
 function emptyPane(): Pane { return { tabs: [], active: null }; }
 function statusLabel(status: string) { return status === "reviewed" ? "已审核" : status === "stale" ? "已过期" : "Draft"; }
+function escapeRegExp(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function markText(text: string, query: string) {
+  const q = String(query || "").trim();
+  if (!q) return text;
+  const parts = String(text || "").split(new RegExp(`(${escapeRegExp(q)})`, "ig"));
+  return parts.map((part, i) => i % 2 ? <mark key={i}>{part}</mark> : part);
+}
 
 function wikiMarkdown(text: string) {
   return String(text || "").replace(/\[\[([^\]|#]+)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]/g, (_m, target: string, heading: string, alias: string) => {
     const label = alias || (heading ? `${target}#${heading}` : target);
     return `[${label}](#wiki/${encodeURIComponent(target.trim())})`;
-  });
+  }).replace(/(^|\s)#([\p{L}\p{N}_-]{1,40})/gu, "$1[#$2](#tag/$2)");
 }
 
 export function Notes({ state, act, onOpenTodo, openRequest }: {
@@ -45,6 +53,8 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const [reviews, setReviews] = useState<PageSummary[]>([]);
   const [trash, setTrash] = useState<TrashItem[]>([]);
   const [tags, setTags] = useState<{ tag: string; count: number }[]>([]);
+  const [pins, setPins] = useState<string[]>([]);
+  const [recents, setRecents] = useState<{ id: string; at: number }[]>([]);
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickText, setQuickText] = useState("");
   const [quickBusy, setQuickBusy] = useState(false);
@@ -52,7 +62,22 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const [vault, setVault] = useState<VaultInfo>({ path: "", files: [] });
   const [tab, setTab] = useState<Tab>("pages");
   const [query, setQuery] = useState("");
-  const [searchHits, setSearchHits] = useState<{ kind: string; id: string; title: string; snippet: string }[]>([]);
+  const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
+  const [searchStatus, setSearchStatus] = useState("all");
+  const [searchKind, setSearchKind] = useState("all");
+  const [searchTime, setSearchTime] = useState("all");
+  const [searchHistory, setSearchHistory] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("cmh.wiki.searchHistory") || "[]").slice(0, 8); } catch { return []; }
+  });
+  const [tagFilter, setTagFilter] = useState("");
+  const [tagPages, setTagPages] = useState<PageSummary[]>([]);
+  const [highlightQuery, setHighlightQuery] = useState("");
+  const [unlinked, setUnlinked] = useState<PageSummary[]>([]);
+  const [linkHover, setLinkHover] = useState<{ title: string; summary: string; status: string; x: number; y: number } | null>(null);
+  const [askOpen, setAskOpen] = useState(false);
+  const [askQuestion, setAskQuestion] = useState("");
+  const [askResult, setAskResult] = useState<{ found: boolean; answer: string; citations: { id: string; title: string }[] } | null>(null);
+  const [askLoading, setAskLoading] = useState(false);
   const [docs, setDocs] = useState<Record<string, Doc>>({});
   const [left, setLeft] = useState<Pane>(emptyPane);
   const [right, setRight] = useState<Pane>(emptyPane);
@@ -107,6 +132,8 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
       setSources(Array.isArray(res.sources) ? res.sources : []);
       setReviews(Array.isArray(res.reviews) ? res.reviews : []);
       setTrash(Array.isArray(res.trash) ? res.trash : []);
+      setPins(Array.isArray(res.pins) ? res.pins : []);
+      setRecents(Array.isArray(res.recents) ? res.recents : []);
       setLog(Array.isArray(res.log) ? res.log : []);
       try { setTags(await invoke("wiki.tags")); } catch { /* tags 可选 */ }
       try { setMemory(await invoke("wiki.memory", { maxChars: 12000 })); } catch { /* memory is optional */ }
@@ -158,7 +185,11 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     setPane(where, (p) => ({ tabs: p.tabs.includes(pageId) ? p.tabs : [...p.tabs, pageId], active: pageId }));
     setFocus(where);
     setMode("preview");
-  }, [focus, split, loadPage]);
+    try {
+      const next = await invoke("wiki.touch", { id: pageId });
+      if (Array.isArray(next)) setRecents(next);
+    } catch { /* 最近打开是可选功能 */ }
+  }, [focus, split, loadPage, invoke]);
 
   const openVaultFile = useCallback(async (relPath: string, target: "left" | "right" = focus) => {
     const where = split ? target : "left";
@@ -310,7 +341,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
-  /** 把本地目录里的 Markdown 全部导入为资料（最多 30 个，避免一次性太大）；返回成功数量 */
+  /** 把本地目录里的 Markdown 全部导入为资料；单个失败不阻塞；返回成功数量 */
   /** 本地目录里还没变成资料的文件（按 uri 判断，避免重复导入） */
   const pendingVaultFiles = useMemo(() => {
     const imported = new Set(sources.map((s) => s.uri).filter(Boolean));
@@ -318,7 +349,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   }, [vault.files, sources]);
 
   const importAllVault = async (): Promise<number> => {
-    const files = pendingVaultFiles.slice(0, 30);
+    const files = pendingVaultFiles;
     if (!vault.files.length) { setError("还没有打开本地目录"); return 0; }
     if (!files.length) { setNotice("本地目录里的 Markdown 都已经导入为资料了"); return sources.length; }
     setBusy(true);
@@ -546,7 +577,15 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const search = async (value: string) => {
     setQuery(value);
     if (!value.trim()) { setSearchHits([]); return; }
-    try { setSearchHits((await invoke("wiki.search", { query: value })) || []); } catch { /* ignore */ }
+    try {
+      setSearchHits((await invoke("wiki.search", { query: value })) || []);
+      const term = value.trim();
+      setSearchHistory((current) => {
+        const next = [term, ...current.filter((x) => x !== term)].slice(0, 8);
+        try { localStorage.setItem("cmh.wiki.searchHistory", JSON.stringify(next)); } catch { /* ignore */ }
+        return next;
+      });
+    } catch { /* ignore */ }
   };
 
   const toggleSplit = () => {
@@ -692,6 +731,11 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 const href = anchor?.getAttribute("href") || "";
                 if (!href) return;
                 if (/^https?:/i.test(href)) { e.preventDefault(); void window.harness.openExternal(href); return; }
+                if (href.startsWith("#tag/")) {
+                  e.preventDefault();
+                  void openTag(decodeURIComponent(href.slice(5)));
+                  return;
+                }
                 if (href.startsWith("#wiki/")) {
                   e.preventDefault();
                   const title = decodeURIComponent(href.slice(6)).split("#")[0];
@@ -700,6 +744,8 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                   if (target) {
                     if ("path" in target) void openVaultFile(target.path, which);
                     else void openPage(target.id, which);
+                  } else {
+                    void createLinkedPage(title);
                   }
                 }
               }} />
@@ -712,8 +758,243 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     );
   };
 
+  const openHit = async (hit: SearchHit) => {
+    setHighlightQuery(query.trim());
+    if (hit.kind === "page") await openPage(hit.id);
+    else await openSource(hit.id);
+  };
+
+  // 搜索结果点击后：在预览 DOM 里包 <mark> 并滚到第一个命中
+  useEffect(() => {
+    if (!highlightQuery || mode !== "preview") return;
+    const container = document.querySelector<HTMLElement>(".notes-preview");
+    if (!container) return;
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = [];
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      if ((node as Text).nodeValue?.trim()) nodes.push(node as Text);
+    }
+    const re = new RegExp(escapeRegExp(highlightQuery), "gi");
+    let first: HTMLElement | null = null;
+    for (const textNode of nodes) {
+      if (!re.test(textNode.nodeValue || "")) continue;
+      re.lastIndex = 0;
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      for (const match of (textNode.nodeValue || "").matchAll(re)) {
+        const at = match.index ?? 0;
+        if (at > last) frag.appendChild(document.createTextNode((textNode.nodeValue || "").slice(last, at)));
+        const mark = document.createElement("mark");
+        mark.className = "notes-hit";
+        mark.textContent = match[0];
+        frag.appendChild(mark);
+        if (!first) first = mark;
+        last = at + match[0].length;
+      }
+      if (last < (textNode.nodeValue || "").length) frag.appendChild(document.createTextNode((textNode.nodeValue || "").slice(last)));
+      textNode.parentNode?.replaceChild(frag, textNode);
+    }
+    if (first) {
+      first.scrollIntoView({ block: "center", behavior: "smooth" });
+      first.classList.add("flash");
+      window.setTimeout(() => first?.classList.remove("flash"), 1400);
+    }
+  }, [activeDoc?.id, highlightQuery, mode]);
+
+  useEffect(() => {
+    if (!activeDoc || activeDoc.local) { setUnlinked([]); return; }
+    let alive = true;
+    invoke("wiki.unlinked", { id: activeDoc.id })
+      .then((res) => { if (alive) setUnlinked(Array.isArray(res) ? res : []); })
+      .catch(() => { if (alive) setUnlinked([]); });
+    return () => { alive = false; };
+  }, [activeDoc?.id, activeDoc?.local, invoke, pages.length]);
+
+  // 双链样式：已有页面给摘要 tooltip，缺失页面标红，点击可创建
+  useEffect(() => {
+    if (mode !== "preview") return;
+    const root = document.querySelector<HTMLElement>(".notes-preview");
+    if (!root) return;
+    for (const link of root.querySelectorAll<HTMLAnchorElement>('a[href^="#wiki/"]')) {
+      const title = decodeURIComponent(link.getAttribute("href")?.slice(6) || "").split("#")[0];
+      const target = pages.find((p) => p.title === title || p.slug === title || p.id === title)
+        || vault.files.find((f) => f.title === title || f.path.replace(/\.md$/i, "").endsWith(title));
+      if (target) {
+        link.classList.add("wiki-link-ok");
+        if ("summary" in target && target.summary) link.title = target.summary;
+      } else {
+        link.classList.add("wiki-link-missing");
+        link.title = `创建「${title}」`;
+      }
+    }
+  }, [activeDoc?.id, activeDoc?.content, mode, pages, vault.files]);
+
+  // 双链 hover 摘要浮层（原生 title 只做兜底）
+  useEffect(() => {
+    if (mode !== "preview") return;
+    const root = document.querySelector<HTMLElement>(".notes-preview");
+    if (!root) return;
+    const onOver = (event: Event) => {
+      const link = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href^="#wiki/"]');
+      if (!link) return;
+      const title = decodeURIComponent(link.getAttribute("href")?.slice(6) || "").split("#")[0];
+      const page = pages.find((p) => p.title === title || p.slug === title || p.id === title);
+      if (!page?.summary) return;
+      const rect = link.getBoundingClientRect();
+      setLinkHover({ title: page.title, summary: page.summary, status: page.status, x: Math.min(window.innerWidth - 300, rect.left), y: Math.min(window.innerHeight - 130, rect.bottom + 6) });
+    };
+    const onOut = (event: Event) => {
+      const link = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href^="#wiki/"]');
+      if (link) setLinkHover(null);
+    };
+    root.addEventListener("mouseover", onOver);
+    root.addEventListener("mouseout", onOut);
+    return () => { root.removeEventListener("mouseover", onOver); root.removeEventListener("mouseout", onOut); };
+  }, [activeDoc?.id, mode, pages]);
+
+  const createLinkedPage = async (title: string) => {
+    if (!title.trim()) return;
+    try {
+      const page = await invoke("wiki.createPage", { title: title.trim() });
+      if (page) {
+        await invoke("wiki.savePage", {
+          id: page.id, title: title.trim(),
+          content: `# ${title.trim()}\n\n来源：[[${activeDoc?.title || "Wiki"}]]\n`,
+        });
+        await refresh();
+        await openPage(page.id);
+        setNotice(`已创建页面「${title.trim()}」`);
+      }
+    } catch (err) { fail(err); }
+  };
+
+  const askWiki = async () => {
+    const question = askQuestion.trim();
+    if (!question) return;
+    setAskLoading(true);
+    setAskResult(null);
+    try {
+      const res = await invoke("wiki.ask", { question });
+      if (res) setAskResult(res);
+    } catch (err) { fail(err); } finally { setAskLoading(false); }
+  };
+
+  const saveAnswer = async () => {
+    if (!askResult?.found) return;
+    try {
+      const title = askQuestion.trim().slice(0, 60) || "Wiki 问答";
+      const page = await invoke("wiki.upsertDraft", {
+        title,
+        content: `# ${title}\n\n${askResult.answer}\n`,
+        summary: `来自问答：${askQuestion.trim()}`,
+      });
+      if (page) {
+        setAskOpen(false);
+        setAskQuestion("");
+        setAskResult(null);
+        await refresh();
+        await openPage(page.id);
+        setNotice("问答已存为 draft");
+      }
+    } catch (err) { fail(err); }
+  };
+
+  const exportPdf = async () => {
+    if (!activeDoc) return;
+    const body = renderMarkdown(wikiMarkdown(activeDoc.content));
+    const html = `<!doctype html><html><head><meta charset="utf-8"><style>body{font:14px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#1c1917;max-width:760px;margin:40px auto;padding:0 24px}pre{background:#f6f2eb;padding:10px;border-radius:6px;overflow:auto}code{font-family:Menlo,monospace}h1,h2,h3{line-height:1.3}blockquote{border-left:3px solid #ddd;margin-left:0;padding-left:12px;color:#666}</style></head><body>${body}</body></html>`;
+    try {
+      const file = await window.harness.exportPdf(html, activeDoc.title);
+      if (file) setNotice("PDF 已导出");
+    } catch (err) { fail(err); }
+  };
+
+  const exportMarkdown = async () => {
+    setBusy(true);
+    try {
+      const res = await invoke("wiki.exportMarkdown");
+      if (res) {
+        setNotice(`已导出 ${res.count} 个页面到 ${res.dir}/${res.errors?.length ? `（${res.errors.length} 个失败）` : ""}`);
+        try { await window.harness.filesReveal(res.dir, state.projectPath); } catch { /* ignore */ }
+      }
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const pinPage = async (pageId: string) => {
+    try {
+      const next = await invoke("wiki.pin", { id: pageId });
+      if (Array.isArray(next)) setPins(next);
+    } catch (err) { fail(err); }
+  };
+
+  const openTag = async (tag: string) => {
+    const key = tag.replace(/^#/, "");
+    setTagFilter(key);
+    setTab("pages");
+    setGraph(false);
+    try { setTagPages((await invoke("wiki.byTag", { tag: key })) || []); } catch { setTagPages([]); }
+  };
+
+  const pageRow = (p: PageSummary) => (
+    <div key={p.id} className="notes-row">
+      <button className={`notes-file ${activeDoc?.id === p.id ? "on" : ""}`} onClick={() => void openPage(p.id)}>
+        <span className={`notes-status-dot ${p.status}`} />
+        <span className="ellipsis">{p.title}</span>
+        <em>{p.status === "draft" ? "draft" : p.status === "stale" ? "stale" : ""}</em>
+      </button>
+      <span className="notes-row-actions">
+        <button className="link tiny" title={pins.includes(p.id) ? "取消收藏" : "收藏 / 置顶"} onClick={(e) => { e.stopPropagation(); void pinPage(p.id); }}>{pins.includes(p.id) ? "★" : "☆"}</button>
+        <button className="link tiny" title="删除页面" onClick={(e) => { e.stopPropagation(); void deletePage({ id: p.id, title: p.title }); }}>删除</button>
+      </span>
+    </div>
+  );
+
+  const timeCutoff = searchTime === "7d" ? Date.now() - 7 * 86400e3 : searchTime === "30d" ? Date.now() - 30 * 86400e3 : 0;
+  const filteredHits = searchHits.filter((hit) => (searchKind === "all" || hit.kind === searchKind)
+    && (searchStatus === "all" || hit.status === searchStatus)
+    && (!timeCutoff || (hit.at || 0) >= timeCutoff));
+  const pinnedPages = pages.filter((p) => pins.includes(p.id));
+  const recentPages = recents.map((r) => pages.find((p) => p.id === r.id)).filter((p): p is PageSummary => Boolean(p)).filter((p) => !pins.includes(p.id)).slice(0, 4);
+  const restPages = filteredPages.filter((p) => !pins.includes(p.id) && !recentPages.some((r) => r.id === p.id));
+
   return (
     <div className="notes-page">
+      {askOpen && (
+        <div className="modal-mask" role="dialog" aria-modal="true" aria-label="问我的 Wiki">
+          <div className="modal wiki-ask">
+            <h3>问 Wiki</h3>
+            <p className="tiny muted">只检索本地页面与资料；每段结论都带页面引用；没有依据会直接说没有。</p>
+            <textarea
+              autoFocus
+              rows={3}
+              value={askQuestion}
+              onChange={(e) => setAskQuestion(e.target.value)}
+              placeholder="例如：芯片良率结论是什么？"
+              onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void askWiki(); } }}
+            />
+            <div className="row gap6" style={{ justifyContent: "flex-end" }}>
+              <button className="btn tiny-btn" onClick={() => { setAskOpen(false); setAskResult(null); }}>关闭</button>
+              <button className="btn tiny-btn primary" disabled={askLoading || !askQuestion.trim()} onClick={() => void askWiki()}>{askLoading ? "检索中…" : "提问"}</button>
+            </div>
+            {askResult && (
+              <div className="wiki-ask-result">
+                <div className="notes-preview markdown-body" onClick={(e) => {
+                  const a = (e.target as HTMLElement).closest("a");
+                  const href = a?.getAttribute("href") || "";
+                  if (!href.startsWith("#wiki/")) return;
+                  e.preventDefault();
+                  const title = decodeURIComponent(href.slice(6)).split("#")[0];
+                  const target = pages.find((p) => p.title === title || p.slug === title || p.id === title);
+                  if (target) { setAskOpen(false); void openPage(target.id); }
+                }} dangerouslySetInnerHTML={{ __html: renderMarkdown(wikiMarkdown(askResult.answer)) }} />
+                {askResult.citations.length > 0 && <div className="wiki-ask-cites">{askResult.citations.map((c) => <button key={c.id} onClick={() => { setAskOpen(false); void openPage(c.id); }}>{c.title}</button>)}</div>}
+                {askResult.found && <button className="btn tiny-btn" onClick={() => void saveAnswer()}>存为 Wiki draft</button>}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       {quickOpen && (
         <div className="modal-mask" role="dialog" aria-modal="true" aria-label="快速记录">
           <div className="modal quick-capture">
@@ -770,6 +1051,9 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
           <div className="notes-actions-sep" />
           <button className={`btn tiny-btn ${memoryOpen ? "primary" : ""}`} onClick={() => { setGraph(false); void openMemory(); }}>记忆</button>
           <button className={`btn tiny-btn ${split ? "primary" : ""}`} onClick={toggleSplit}>分屏</button>
+          <button className="btn tiny-btn" onClick={() => setAskOpen(true)} title="只基于本地 Wiki 页面回答，带页面引用">问 Wiki</button>
+          <button className="btn tiny-btn" onClick={() => void exportMarkdown()} disabled={busy || pages.length === 0} title="导出到当前项目的 wiki-export/ 目录">导出 .md</button>
+          <button className="btn tiny-btn" onClick={() => void exportPdf()} disabled={!activeDoc} title="把当前页面导出为单页 PDF">导出 PDF</button>
           <button className={`btn tiny-btn ${graph ? "primary" : ""}`} onClick={() => { setMemoryOpen(false); graph ? setGraph(false) : void openGraph(); }}>图谱</button>
           <button className="icon-btn" onClick={() => void refresh()} title="刷新"><RefreshIcon size={13} /></button>
         </div>
@@ -800,20 +1084,53 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
             />
             {query && <button className="notes-search-clear" title="清除（Esc）" onClick={() => { setQuery(""); void search(""); }}>×</button>}
           </div>
-          {searchHits.length > 0 && <div className="notes-search-results">{searchHits.slice(0, 12).map((hit) => <button key={hit.id} onClick={() => hit.kind === "page" ? void openPage(hit.id) : void openSource(hit.id)}><b>{hit.title}</b><span>{hit.kind}</span><em>{hit.snippet}</em></button>)}</div>}
+          {(searchStatus !== "all" || searchKind !== "all" || searchTime !== "all" || searchHits.length > 0) && (
+            <div className="notes-search-filters">
+              <select value={searchKind} onChange={(e) => setSearchKind(e.target.value)}>
+                <option value="all">全部来源</option>
+                <option value="page">页面</option>
+                <option value="source">资料</option>
+              </select>
+              <select value={searchStatus} onChange={(e) => setSearchStatus(e.target.value)}>
+                <option value="all">全部状态</option>
+                <option value="draft">Draft</option>
+                <option value="reviewed">已审核</option>
+                <option value="stale">已过期</option>
+              </select>
+              <select value={searchTime} onChange={(e) => setSearchTime(e.target.value)}>
+                <option value="all">全部时间</option>
+                <option value="7d">最近 7 天</option>
+                <option value="30d">最近 30 天</option>
+              </select>
+            </div>
+          )}
+          {searchHistory.length > 0 && !query && (
+            <div className="notes-search-history">
+              {searchHistory.map((term) => <button key={term} onClick={() => void search(term)}>{term}</button>)}
+            </div>
+          )}
+          {filteredHits.length > 0 && <div className="notes-search-results">{filteredHits.slice(0, 12).map((hit) => <button key={hit.kind + hit.id} onClick={() => void openHit(hit)}><b>{markText(hit.title, query)}</b><span>{hit.kind}</span><em>{markText(hit.snippet, query)}</em></button>)}</div>}
           <div className="notes-tree">
-            {tab === "pages" && filteredPages.map((p) => (
-              <div key={p.id} className="notes-row">
-                <button className={`notes-file ${activeDoc?.id === p.id ? "on" : ""}`} onClick={() => void openPage(p.id)}>
-                  <span className={`notes-status-dot ${p.status}`} />
-                  <span className="ellipsis">{p.title}</span>
-                  <em>{p.status === "draft" ? "draft" : p.status === "stale" ? "stale" : ""}</em>
-                </button>
-                <span className="notes-row-actions">
-                  <button className="link tiny" title="删除页面" onClick={(e) => { e.stopPropagation(); void deletePage({ id: p.id, title: p.title }); }}>删除</button>
-                </span>
-              </div>
-            ))}
+            {tab === "pages" && !tagFilter && pinnedPages.length > 0 && (
+              <>
+                <div className="notes-folder-label">收藏 <em>{pinnedPages.length}</em></div>
+                {pinnedPages.map(pageRow)}
+              </>
+            )}
+            {tab === "pages" && !tagFilter && recentPages.length > 0 && (
+              <>
+                <div className="notes-folder-label">最近 <em>{recentPages.length}</em></div>
+                {recentPages.map(pageRow)}
+              </>
+            )}
+            {tab === "pages" && tagFilter && (
+              <>
+                <div className="notes-folder-label">标签 #{tagFilter} <button className="link tiny" onClick={() => setTagFilter("")}>清除</button></div>
+                {tagPages.map(pageRow)}
+                {tagPages.length === 0 && <div className="notes-empty-list">没有页面使用这个标签。</div>}
+              </>
+            )}
+            {tab === "pages" && !tagFilter && restPages.map(pageRow)}
             {tab === "sources" && filteredSources.map((s) => (
               <div key={s.id} className="notes-row">
                 <button className="notes-file" onClick={() => void openSource(s.id)}>
@@ -853,7 +1170,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 {vault.files.length > 0 && (
                   <div className="notes-sidebar-foot">
                     <button className="link tiny" onClick={() => void importAllVault()} disabled={busy || pendingVaultFiles.length === 0}>
-                    {pendingVaultFiles.length === 0 ? "已全部导入为资料" : `全部导入为资料（${Math.min(30, pendingVaultFiles.length)}）`}
+                    {pendingVaultFiles.length === 0 ? "已全部导入为资料" : `全部导入为资料（${pendingVaultFiles.length}）`}
                   </button>
                     <button className="link tiny" onClick={() => void generateWiki()} disabled={busy}>用资料生成页面 →</button>
                   </div>
@@ -898,7 +1215,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
             <div className="notes-sidebar-foot">
               {vault.files.length > 0 && (
                 <button className="link tiny" onClick={() => void importAllVault()} disabled={busy || pendingVaultFiles.length === 0}>
-                  {pendingVaultFiles.length === 0 ? "本地文件已全部导入" : `导入本地 ${Math.min(30, pendingVaultFiles.length)} 个 .md`}
+                  {pendingVaultFiles.length === 0 ? "本地文件已全部导入" : `导入本地 ${pendingVaultFiles.length} 个 .md`}
                 </button>
               )}
               <button className="link tiny" onClick={() => void generateWiki()} disabled={busy}>用资料生成页面 →</button>
@@ -962,7 +1279,8 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 {activeDoc.citations.map((c) => <button key={c.id} className="notes-link" onClick={() => c.sourceId && void openSource(c.sourceId)}><b>{c.source?.title || c.sourceId}</b>{c.quote && <span>{c.quote.slice(0, 80)}</span>}</button>)}
                 {sources.length > 0 && <select className="notes-cite-select" value="" onChange={(e) => { if (e.target.value) void addCitation(e.target.value); }}><option value="">＋ 引用 source</option>{sources.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}</select>}
               </div>
-              <div className="notes-meta-block"><div className="notes-meta-title">Backlinks <em>{activeDoc.backlinks?.length || 0}</em></div>{(activeDoc.backlinks || []).map((b) => <button key={b.id} className="notes-link" onClick={() => void openPage(b.id, focus)}><b>{b.title}</b><span>{statusLabel(b.status)}</span></button>)}</div>
+              <div className="notes-meta-block"><div className="notes-meta-title">Backlinks <em>{activeDoc.backlinks?.length || 0}</em></div>{(activeDoc.backlinks || []).map((b) => <button key={b.id} className="notes-link" onClick={() => void openPage(b.id, focus)}><b>{b.title}</b><span>{statusLabel(b.status)}</span>{b.snippet && <em>{b.snippet}</em>}</button>)}</div>
+              {unlinked.length > 0 && <div className="notes-meta-block"><div className="notes-meta-title">Unlinked mentions <em>{unlinked.length}</em></div>{unlinked.map((b) => <button key={b.id} className="notes-link" onClick={() => void openPage(b.id, focus)}><b>{b.title}</b><em>{b.snippet}</em></button>)}</div>}
               <div className="notes-meta-block"><div className="notes-meta-title">Linked Todos <em>{linkedTodos.length}</em></div>{linkedTodos.length === 0 && <p className="notes-meta-empty">还没有关联任务</p>}{linkedTodos.map((l) => { const todo = state.todos.find((t) => t.id === l.todoId); return <button key={l.id} className="notes-link" disabled={!todo || !onOpenTodo} onClick={() => todo && onOpenTodo?.(todo.id)}><b>{todo?.title || l.title || l.todoId}</b><span>{todo?.key} {todo?.status}</span></button>; })}</div>
             </>
           ) : (
@@ -1005,6 +1323,13 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
         </div>
       )}
 
+      {linkHover && (
+        <div className="wiki-hover-card" style={{ left: linkHover.x, top: linkHover.y }}>
+          <b>{linkHover.title}</b>
+          <span className={`notes-status-dot ${linkHover.status}`} />
+          <p>{linkHover.summary}</p>
+        </div>
+      )}
       {sourceView && (
         <div className="notes-source-modal" onClick={() => setSourceView(null)}>
           <div className="notes-source-card" onClick={(e) => e.stopPropagation()}>
@@ -1019,8 +1344,10 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
 }
 
 function GraphView({ data, loading, onOpen }: { data: GraphData | null; loading: boolean; onOpen: (id: string) => void }) {
-  const nodes = data?.nodes || [];
-  const edges = data?.edges || [];
+  const [kindFilter, setKindFilter] = useState<"all" | "page" | "source" | "file">("all");
+  const nodes = (data?.nodes || []).filter((n) => kindFilter === "all" || n.kind === kindFilter);
+  const ids = new Set(nodes.map((n) => n.id));
+  const edges = (data?.edges || []).filter((e) => ids.has(e.source) && ids.has(e.target));
   const positions = useMemo(() => {
     const cap = nodes.slice(0, 280);
     const index = new Map(cap.map((n, i) => [n.id, i]));
@@ -1040,5 +1367,5 @@ function GraphView({ data, loading, onOpen }: { data: GraphData | null; loading:
   }, [nodes, edges]);
   if (loading) return <div className="notes-empty"><div className="notes-empty-mark"><SparkleIcon size={16} /></div><b>构建 Wiki 图谱…</b></div>;
   if (!nodes.length) return <div className="notes-empty notes-graph-empty"><div className="notes-empty-mark"><SparkleIcon size={16} /></div><b>还没有图谱</b><p>图谱由「页面」「资料」和「本地 Markdown」组成；页面引用资料、页面之间用 <code>[[双链]]</code> 时才会连线。</p></div>;
-  return <div className="notes-graph"><svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">{edges.map((e, i) => { const a = positions.get(e.source); const b = positions.get(e.target); return a && b ? <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} /> : null; })}{nodes.map((n) => { const p = positions.get(n.id); if (!p) return null; return <g key={n.id} onClick={() => { if (n.kind !== "file") onOpen(n.id); }} className={`notes-graph-node ${n.kind}`} style={n.kind === "file" ? { cursor: "default" } : undefined}><circle cx={p.x} cy={p.y} r={Math.min(3.2, 1.5 + Math.sqrt(n.links) * .55)} /><text x={p.x} y={p.y - 4.5} textAnchor="middle">{n.title.slice(0, 18)}</text></g>; })}</svg><div className="notes-graph-count">{nodes.length} nodes · {edges.length} links</div></div>;
+  return <div className="notes-graph"><div className="notes-graph-filter">{([["all","全部"],["page","页面"],["source","资料"],["file","本地文件"]] as const).map(([id,label]) => <button key={id} className={kindFilter === id ? "on" : ""} onClick={() => setKindFilter(id)}>{label}</button>)}</div><svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">{edges.map((e, i) => { const a = positions.get(e.source); const b = positions.get(e.target); return a && b ? <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} /> : null; })}{nodes.map((n) => { const p = positions.get(n.id); if (!p) return null; return <g key={n.id} onClick={() => { if (n.kind !== "file") onOpen(n.id); }} className={`notes-graph-node ${n.kind}`} style={n.kind === "file" ? { cursor: "default" } : undefined}><circle cx={p.x} cy={p.y} r={Math.min(3.2, 1.5 + Math.sqrt(n.links) * .55)} /><text x={p.x} y={p.y - 4.5} textAnchor="middle">{n.title.slice(0, 18)}</text></g>; })}</svg><div className="notes-graph-count">{nodes.length} nodes · {edges.length} links</div></div>;
 }

@@ -56,21 +56,21 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 
 ```
 导航 | TODO LIST | Chat | Terminal | 资源管理器 / 会话历史
-工作区 / 项目 / 统计 / 主机 / 设置
+工作区 / 场景 / 项目 / 统计 / 主机 / 设置
 ```
 
-- **导航**：工作区 / 项目 / 统计 / 主机 / Git / 设置（`⌘,`，左分区导航 + 右行式表单）
+- **导航**：工作区 / 场景 / 项目 / 统计 / 主机 / Git / 设置（`⌘,`，左分区导航 + 右行式表单）
 - **TODO LIST**：一条任务列表，按状态分组；支持搜索（标题/编号/描述/标签）、筛选（全部/进行中/待确认/已确认）、分组折叠、悬停或键盘聚焦显示快捷操作
 - **项目**：在 TODO LIST 下方的常驻项目区，本地目录即项目；支持添加 / 切换 / 管理 / 在 Finder 中显示，任务、终端、文件树跟随当前项目
 - **Chat**：单一输入路径。会话（thread）永远存在：说一句话即派活，运行中发消息即纠偏（带投递回执），已确认任务的消息仅记录；**未派活的对话是全局的**（切项目不消失），composer 里用 `◎ 全局 / 项目 · xxx` 选择这次对话的作用域；**模型可按会话选择**（选项来自 dsh ACP `session/new` 的 configOptions，下一次运行生效）；草稿会话发送 = 派活并创建任务
 - **Super Agent / Mission**：在 Chat 里选择 `✦ 主管` 或点「＋ 主管」创建 supervisor；一句话先出计划（Mission Plan Card，可退回修改），人工批准后自动创建 child Todo + Delegation + worker run；worker 在独立 worktree 执行，Mission 面板汇总子任务、可取消/恢复/确认；supervisor 通过受控 MCP 工具读写 Mission，不直接改代码（见 [docs/ARCH-super-agent.md](docs/ARCH-super-agent.md)）
-- **Terminal**：任务绑定项目的真实 pty（node-pty + xterm），可多标签、可直接输入；**资源管理器里的文件也在终端区按标签预览**；多标签切换（⌃Tab / ⌘⇧[ ] / ⌘⇧1…9）、**终端窗格任意拆分**（⌘D 右拆 / ⇧⌘D 下拆，递归嵌套 + 拖拽分隔条 + ⌘⌥方向键切焦点）、标签重命名与中键关闭、⌘F 查找、右键菜单（复制 / 粘贴 / 清屏 / 重启）、⌘+/- 字号缩放、链接点击打开、进程退出后可重启；挂载前的输出会回放，不会丢 banner；**预览只有一个标签**：打开 HTML/文本文件就切成文件模式（渲染 / 源码），点地址栏「URL」或终端识别到的 `打开预览 :PORT` 就切成地址模式（dev server / 远程页面），两种模式共用同一 webview、地址栏与**拾取页面元素**；工具栏不再单列「＋ 预览」按钮（避免第二个入口）
+- **Terminal**：任务绑定项目的真实 pty（node-pty + xterm），可多标签、可直接输入；**资源管理器里的文件也在终端区按标签预览**；多标签切换（⌃Tab / ⌘⇧[ ] / ⌘⇧1…9）、**终端窗格任意拆分**（⌘D 右拆 / ⇧⌘D 下拆，递归嵌套 + 拖拽分隔条 + ⌘⌥方向键切焦点）、标签重命名与中键关闭、⌘F 查找、右键菜单（复制 / 粘贴 / 清屏 / 重启）、⌘+/- 字号缩放、链接点击打开、进程退出后可重启；挂载前的输出会回放，不会丢 banner；**预览默认复用同一个标签**：打开 HTML/文本文件就切成文件模式（渲染 / 源码），点地址栏「URL」或终端识别到的 `打开预览 :PORT` 就切成地址模式；需要并排时点「＋ 预览」显式新建，最多 3 个，后台 webview 不卸载
 - **UI 上下文**：预览页里点中元素 → Chat 输入框出现元素 chip（selector / 源文件 / 截图）→ 随消息注入当前会话（运行中即 steer）
 - **插件**：Settings → 插件可安装 `.cockpit-plugin` / 目录、启停；**Notes 是内置 first-party 插件**，无需额外安装，原生 Source / Page / Citation / Review、Memory 顶层索引 / 注入、CodeMirror 编辑、多 tab、可拖拽左右分屏、搜索、Graph、任务 / Chat 联动；也支持打开本地 Markdown 目录，直接编辑写回或导入为 Source（见 [docs/ARCH-plugins.md](docs/ARCH-plugins.md)、[docs/PLUGIN-notes.md](docs/PLUGIN-notes.md)）
 - **右侧栏**：三块
   - **资源管理器**：树形展开 / 折叠、文件类型标识、名称筛选（默认隐藏点文件）、全部折叠；**右键菜单**（新建文件/文件夹、在终端打开、Finder 显示、复制路径/相对路径、重命名 F2、复制副本、删除 ⌫）、工具栏新建、行内重命名、自动刷新（窗口重新聚焦时）
   - **会话历史**：按今天 / 昨天 / 更早分组；每行显示标题、状态、Agent、项目、消息数、最近一条消息；点行回到对应 Chat 会话，可展开最近消息
-  - **会话历史**之外不再挤一个预览 tab：点击文件 / 右键「预览」会在**终端区唯一的预览标签**里打开（Markdown 富文本用 TipTap/ProseMirror 内核：格式工具栏 + 输入规则 + `/` 块菜单 + 表格 + ⌘⇧M 切源码 + 目录；HTML 预览/可视化/源码三段，可视化是 **GrapesJS 画布**（拖组件、改文字、调样式，保存回写完整 HTML，懒加载）；源码编辑同样 ⌘S 保存）（再次点别的文件是替换，不会堆一排预览标签）（文本 / 图片 / Markdown / HTML；Markdown 和 HTML 支持「渲染 / 源码」切换；HTML 渲染里可直接**拾取元素**并把 selector / 源码位置注入 Chat；Markdown 相对文档链接可直接跳转；HTML 标签切换 / 源码渲染 / 刷新都不会重载 webContents；可 Finder 显示、复制路径、刷新、关闭）
+  - **会话历史**之外不再挤一个预览 tab：点击文件 / 右键「预览」会在**终端区默认预览标签**里打开（Markdown 富文本用 TipTap/ProseMirror 内核：格式工具栏 + 输入规则 + `/` 块菜单 + 表格 + ⌘⇧M 切源码 + 目录；HTML 预览/可视化/源码三段，可视化是 **GrapesJS 画布**（拖组件、改文字、调样式，保存回写完整 HTML，懒加载）；源码编辑同样 ⌘S 保存）（再次点别的文件是替换，不会堆一排预览标签）（文本 / 图片 / Markdown / HTML；Markdown 和 HTML 支持「渲染 / 源码」切换；HTML 渲染里可直接**拾取元素**并把 selector / 源码位置注入 Chat；Markdown 相对文档链接可直接跳转；HTML 标签切换 / 源码渲染 / 刷新都不会重载 webContents；可 Finder 显示、复制路径、刷新、关闭）
 - **可拖拽布局**：TODO / Chat / Terminal / 文件四列之间的分隔条可左右拖动，TODO 列表与项目区之间的分隔条可上下拖动；尺寸自动记住，`⌘K → 重置面板宽度 / 高度` 可恢复默认
 - **可收起面板**：TODO / Chat / Terminal / 右侧栏都能收起成窄条，点击窄条展开；项目区也可单独折叠；状态自动记住
 - 状态分组就是看板：纵向排列在 TODO 列里
@@ -92,11 +92,13 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 - 纠偏投递回执：`投递中 / 已注入 / 投递失败·重发`，run 结束未回执一律标失败
 - Chat 内按 run 分组展示；agent 可切换，项目在派活前选择（派活后锁定）
 - Chat 的 Agent 有两种执行方式：`dsh` 走 ACP（结构化流 / 审批 / 纠偏回执）；`pi / claude / codex / opencode` 走真实 pty（Chat 派活后自动开终端标签、在 worktree 里启动 CLI；后续消息直接写入同一个 pty）
+- Chat 派活前可先看**分配建议**（项目 / Agent / runtime / worktree / 理由），确认后才创建任务；支持不建可见任务的「只聊」会话，可随时转为 TODO
+- Chat / TODO 有**全局进展**：当前会话 / 当前项目 / 所有项目；未绑定任务的终端 Agent 也会出现在进展和场景页
 - Chat 里可以无终端纳管 dsh，也可以用「＋ Agent」创建 pi 等终端 Agent
-- Mission 模式：`agents.role=supervisor`、计划审批、child Todo/Run/Delegation、worktree 并行、取消级联、重启恢复、Mission 级待处理/统计；supervisor 会话禁用 dsh 原生 subagent/team/workflow，避免双调度
+- Mission 模式：`agents.role=supervisor`、计划审批、child Todo/Run/Delegation、worktree 并行、取消级联、重启恢复、Mission 级待处理/统计；Mission child 也支持 terminal Agent（自动开终端，退出后回写 delegation）；supervisor 会话禁用 dsh 原生 subagent/team/workflow，避免双调度
 - dsh ACP 真实执行：`session/new → prompt → session/update` 流式落库
 - dsh 来源可见：设置页显示当前走 内置 / 自定义 / 系统 PATH，默认不把执行引擎塞进仓库
-- worktree 隔离（cwd 是 git 仓库时自动创建）
+- worktree 隔离（`auto`：git 才建；`always`：强制 git；`never`：原地；项目场景可覆盖）
 - 队列 / 每 agent 并发；停止 / 重试
 - 状态分组 + 确认 → 就地进入「已确认」
 - 终端（真实 pty）、项目文件树；文件预览与网页预览统一在终端标签区
@@ -137,7 +139,7 @@ Chat 的“Agent”是执行目标，按 CLI 自动选择执行方式：
 - `@别名` 同样遵守执行方式
 - 设置 → 执行 → 「Chat 执行方式」可以看到矩阵
 
-终端模式没有 ACP 的 `session/update`、审批队列和精确完成回执：Chat 负责派活/纠偏，实际输出在终端标签里；pty 退出即结束本轮 run。Mission / supervisor 强制使用 ACP，不能混用。
+终端模式没有 ACP 的 `session/update`、审批队列和精确完成回执：Chat 负责派活/纠偏，实际输出在终端标签里；pty 退出即结束本轮 run。supervisor 强制使用 ACP；Mission child 可以是 ACP，也可以是 terminal Agent。
 
 ## 内置 dsh（默认）
 

@@ -15,9 +15,11 @@ import { ChatIcon, FilesIcon, ListIcon, TerminalIcon } from "./components/Icons"
 import { Settings } from "./components/Settings";
 import { Guide } from "./components/Guide";
 import { Notes } from "./components/Notes";
+import { ScenePage } from "./components/ScenePage";
+import { requestTerminalAdopt, requestTerminalAt } from "./terminal-events";
 import { THEMES, isDarkTheme, resolveTheme } from "./themes";
 
-type View = "workspace" | "projects" | "stats" | "hosts" | "git" | "settings" | "guide" | "notes";
+type View = "workspace" | "scene" | "projects" | "stats" | "hosts" | "git" | "settings" | "guide" | "notes";
 type PaneId = "todo" | "chat" | "terminal" | "files";
 const COLLAPSED_PANE_W = 34;
 
@@ -25,6 +27,7 @@ export default function App() {
   const [state, setState] = useState<State | null>(null);
   const [view, setView] = useState<View>("workspace");
   const [threadId, setThreadId] = useState<string | null>(null);
+  const [todoAll, setTodoAll] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingContext, setPendingContext] = useState<ElementContext | null>(null);
@@ -216,15 +219,19 @@ export default function App() {
   }, [state, selected]);
   const projectCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const t of state?.todos ?? []) if (t.projectId) counts[t.projectId] = (counts[t.projectId] ?? 0) + 1;
+    for (const t of state?.todos ?? []) if (t.projectId && t.kind !== "chat") counts[t.projectId] = (counts[t.projectId] ?? 0) + 1;
     return counts;
   }, [state?.todos]);
   const notesEnabled = Boolean(state?.plugins?.find((p) => p.id === "ai.cockpit.notes")?.enabled);
 
-  const selectTodo = useCallback((todoId: string) => {
+  const selectTodo = useCallback(async (todoId: string) => {
+    const todo = state?.todos.find((t) => t.id === todoId);
+    if (todo?.projectId && todo.projectId !== state?.activeProjectId) {
+      await act("switchProject", { id: todo.projectId });
+    }
     const t = state?.threads.find((x) => x.todoId === todoId);
     if (t) { setThreadId(t.id); setView("workspace"); }
-  }, [state]);
+  }, [state, act]);
 
   useEffect(() => {
     if (!state) return;
@@ -236,7 +243,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.activeProjectId]);
 
-  // 全局快速记录（⌘⇧K）：先切到 Wiki，再让 Notes 弹输入框
+  // 主进程自动起的终端 Agent（普通多 Agent / Mission child）：接管成终端标签
+  useEffect(() => window.harness.onTerminalAdopt((p) => {
+    if (p?.terminalId) requestTerminalAdopt({ ...p, title: p.title || "Agent 终端" });
+  }), []);
+
+  // 全局快速记录（⌘⇧K）：先切到 Wiki，再让 Notes 弹输入框  // 全局快速记录（⌘⇧K）：先切到 Wiki，再让 Notes 弹输入框
   useEffect(() => {
     return window.harness.onQuickCapture(() => {
       if (!notesEnabled) { notify("先在设置 → 插件里启用 Notes"); return; }
@@ -257,7 +269,7 @@ export default function App() {
   useEffect(() => {
     const onView = (e: Event) => {
       const next = (e as CustomEvent<string>).detail;
-      if (["workspace", "projects", "stats", "hosts", "settings", "guide", "notes"].includes(next)) setView(next as View);
+      if (["workspace", "scene", "projects", "stats", "hosts", "settings", "guide", "notes"].includes(next)) setView(next as View);
     };
     window.addEventListener("harness:view", onView);
     return () => window.removeEventListener("harness:view", onView);
@@ -328,10 +340,12 @@ export default function App() {
     if (!state) return [];
     const list: Command[] = [
       { id: "view-workspace", label: "工作区", hint: "⌘1", group: "导航", run: () => setView("workspace") },
+      { id: "view-scene", label: "场景", group: "导航", run: () => setView("scene") },
       { id: "view-projects", label: "项目", group: "导航", run: () => setView("projects") },
       { id: "view-stats", label: "统计", group: "导航", run: () => setView("stats") },
       { id: "view-hosts", label: "主机", group: "导航", run: () => setView("hosts") },
       { id: "view-git", label: "Git / 源码管理", group: "导航", run: () => setView("git") },
+      { id: "quick-capture", label: "快速记录到 Wiki", hint: "⌘⇧K", group: "任务", run: () => void act("openQuickCapture") },
       { id: "new-thread", label: "新建会话", hint: "⌘N", group: "任务", run: () => void newThread() },
       { id: "new-task", label: "新建任务", hint: "⌘⇧N", group: "任务", run: () => dispatchInWorkspace(() => new Event("harness:new-task")) },
       { id: "new-terminal", label: "新建终端标签", hint: "⌘T", group: "终端", run: () => dispatchInWorkspace(() => new Event("harness:new-terminal")) },
@@ -344,7 +358,7 @@ export default function App() {
       { id: "open-settings", label: "打开设置", hint: "⌘,", group: "导航", run: () => setView("settings") },
       { id: "open-model-key", label: "配置模型密钥（DEEPSEEK_API_KEY 等）", group: "导航", hint: "设置 → 执行", run: () => window.dispatchEvent(new CustomEvent("harness:open-settings", { detail: { section: "execution", focus: "dshEnv" } })) },
       { id: "open-guide", label: "使用说明 / Super Agent 怎么用", group: "导航", run: () => setView("guide") },
-      ...(notesEnabled ? [{ id: "open-notes", label: "打开笔记", group: "插件", run: () => setView("notes") }] : []),
+      ...(notesEnabled ? [{ id: "open-notes", label: "打开 Wiki", group: "插件", run: () => setView("notes") }] : []),
       ...((state.pluginCommands ?? []).map((c) => ({
         id: `plugin-${c.pluginId}-${c.id}`,
         label: c.title,
@@ -465,7 +479,7 @@ export default function App() {
               <CollapsedPane label="TODO" title="TODO 列表" icon={<ListIcon size={16} />} onExpand={() => togglePane("todo")} />
             ) : (
               <TaskPane
-                state={scoped}
+                state={todoAll ? state : scoped}
                 selectedId={selected?.id ?? null}
                 now={now}
                 act={act}
@@ -476,13 +490,15 @@ export default function App() {
                 onSwitchProject={(id) => void switchProject(id)}
                 onCollapse={() => togglePane("todo")}
                 confirmStop={state.settings?.confirmStop}
+                allProjects={todoAll}
+                onToggleScope={() => setTodoAll((v) => !v)}
               />
             )}
             {sep1 === "6px" ? <Splitter onDelta={resizeTodo} /> : <div className="splitter-off" />}
             {collapsed.chat ? (
               <CollapsedPane label="CHAT" title="Chat" icon={<ChatIcon size={16} />} onExpand={() => togglePane("chat")} />
             ) : (
-              <TaskChat state={scoped} thread={thread} threads={scoped.threads} now={now} act={act} onSelect={selectTodo} onNewThread={() => void newThread()} onOpenThread={(id) => { setThreadId(id); setView("workspace"); }} context={pendingContext} onClearContext={() => setPendingContext(null)} onCollapse={() => togglePane("chat")} enterToSend={state.settings?.enterToSend ?? true} confirmStop={state.settings?.confirmStop ?? false} />
+              <TaskChat state={scoped} globalState={state} thread={thread} threads={scoped.threads} now={now} act={act} onSelect={selectTodo} onOpenGlobal={(id) => void openTodoFromPalette(id)} onNewThread={() => void newThread()} onOpenThread={(id) => { setThreadId(id); setView("workspace"); }} context={pendingContext} onClearContext={() => setPendingContext(null)} onCollapse={() => togglePane("chat")} enterToSend={state.settings?.enterToSend ?? true} confirmStop={state.settings?.confirmStop ?? false} />
             )}
             {sep2 === "6px" ? <Splitter onDelta={resizeChat} /> : <div className="splitter-off" />}
             {/* 收起只隐藏不卸载：保住 pty / 标签 / 文件预览；展开后 ResizeObserver 会重新 fit */}
@@ -510,6 +526,7 @@ export default function App() {
           </>
           </div>
         )}
+        {view === "scene" && <div className="wide"><ScenePage state={state} act={act} notify={notify} onOpenProject={(id) => void switchProject(id)} onOpenTerminal={(cwd) => { setView("workspace"); window.setTimeout(() => requestTerminalAt(cwd), 90); }} /></div>}
         {view === "projects" && <div className="wide"><Projects state={state} now={now} act={act} notify={notify} onAdd={() => void addProject()} onSwitch={(id) => void switchProject(id)} /></div>}
         {view === "stats" && scoped && <div className="wide"><Stats state={state} onOpen={(id) => void openTodoFromPalette(id)} /></div>}
         {view === "hosts" && <div className="wide"><Hosts state={state} act={act} notify={notify} now={now} /></div>}

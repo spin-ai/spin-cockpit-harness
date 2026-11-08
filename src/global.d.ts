@@ -18,6 +18,10 @@ declare global {
       terminalResize(id: string, cols: number, rows: number): Promise<void>;
       clipboardRead(): Promise<string>;
       clipboardWrite(text: string): Promise<void>;
+      quickCaptureSave(text: string): Promise<{ ok: boolean; error?: string; page?: string | null }>;
+      quickCaptureClose(): Promise<void>;
+      onQuickCaptureSubmit(cb: () => void): () => void;
+      exportPdf(html: string, title: string): Promise<string | null>;
       openExternal(url: string): Promise<boolean>;
       onTerminalData(cb: (p: { id: string; data: string }) => void): () => void;
       onTerminalUrl(cb: (p: { id: string; url: string }) => void): () => void;
@@ -26,6 +30,7 @@ declare global {
       onPluginNotify(cb: (p: { message: string; level?: string }) => void): () => void;
       onPluginOpenView(cb: (p: { id: string }) => void): () => void;
       onQuickCapture(cb: () => void): () => void;
+      onTerminalAdopt(cb: (p: { terminalId: string; cwd: string; title?: string; taskId?: string; branch?: string | null }) => void): () => void;
       filesList(rel?: string, root?: string): Promise<{ root: string; rel: string; entries: { name: string; dir: boolean; path: string }[] }>;
       filesRead(rel: string, root?: string): Promise<{ text?: string; dataUrl?: string; size?: number; ext?: string; error?: string }>;
       filesCreate(rel: string, kind: "file" | "folder", name: string, root?: string): Promise<{ path: string; name: string }>;

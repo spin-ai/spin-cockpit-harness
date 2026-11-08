@@ -1,5 +1,11 @@
 # LLM Wiki
 
+- 写作：停笔 1s 自动保存；页面 / 资料删除进回收站，可恢复或彻底删除；`⌘⇧K` 独立快捕小窗。
+- 检索：中文按字模糊匹配、标题加权、命中高亮/定位、搜索历史与状态/时间/来源筛选。
+- 双链：hover 摘要、红链创建、反链上下文、unlinked mentions、图谱按类型筛选。
+- 问 Wiki：只检索本地页面/资料，抽句回答并带 `[[页面]]` 引用；无依据明确说没有；可存 draft。
+- 迁移：本地 Markdown 全量导入；导出 Markdown 目录或当前页面 PDF。
+
 > 不是聊天记录，也不是 Obsidian vault 浏览器。Wiki 是 Source → Page → Citation → Review 的可追溯知识库，Agent 能检索，人负责审核。
 
 ![LLM Wiki 封面](./wiki/cover-llm-wiki.png)
