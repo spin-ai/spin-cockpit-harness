@@ -3,6 +3,8 @@ import type { State } from "../types";
 import { renderMarkdown } from "../markdown";
 import { ChevronDownIcon, ChevronRightIcon, FileTextIcon, FolderOpenIcon, RefreshIcon, SearchIcon, SparkleIcon } from "./Icons";
 import { NotesEditor } from "./NotesEditor";
+import { PageHeader } from "./PageHeader";
+import { RowMenu } from "./RowMenu";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 const PLUGIN_ID = "ai.cockpit.notes";
@@ -27,7 +29,22 @@ type TrashItem = { id: string; kind: "page" | "source"; title: string; deletedAt
 type SearchHit = { kind: string; id: string; title: string; status?: string; at?: number; snippet: string };
 
 function emptyPane(): Pane { return { tabs: [], active: null }; }
-function statusLabel(status: string) { return status === "reviewed" ? "已审核" : status === "stale" ? "已过期" : "Draft"; }
+function statusLabel(status: string) { return status === "reviewed" ? "已审核" : status === "stale" ? "已过期" : "草稿"; }
+function confidenceLabel(level?: string) { return level === "high" ? "高" : level === "low" ? "低" : "中"; }
+
+/** 相对时间：列表第二行用，避免一列绝对时间戳比标题还长 */
+function timeAgo(at?: number) {
+  if (!at) return "";
+  const diff = Date.now() - at;
+  const min = Math.round(diff / 60000);
+  if (min < 1) return "刚刚";
+  if (min < 60) return `${min} 分钟前`;
+  const hour = Math.round(min / 60);
+  if (hour < 24) return `${hour} 小时前`;
+  const day = Math.round(hour / 24);
+  if (day < 30) return `${day} 天前`;
+  return new Date(at).toLocaleDateString([], { month: "numeric", day: "numeric" });
+}
 function escapeRegExp(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 function markText(text: string, query: string) {
   const q = String(query || "").trim();
@@ -652,7 +669,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     const doc = current.active ? docs[current.active] : null;
     return (
       <section className={`notes-editor-pane ${focus === which ? "focused" : ""}`} onMouseDown={() => setFocus(which)}>
-        <div className="notes-tabbar">
+        <div className={`notes-tabbar ${current.tabs.length === 0 ? "empty" : ""}`}>
           {current.tabs.map((pageId) => {
             const d = docs[pageId];
             if (!d) return null;
@@ -705,24 +722,45 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                         onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
                       />
                     : <b>{doc.title}</b>}
-                <span className="mono">{doc.local ? `${doc.localPath || ""}${doc.dirty ? " · 未保存" : ""}` : `${statusLabel(doc.status)} · ${doc.citations.length} citations${doc.dirty ? " · 未保存" : ""}`}</span>
+                <span className="notes-note-sub">
+                  {doc.local ? (
+                    <>
+                      <span className="notes-review-badge local">本地文件</span>
+                      <span className="ellipsis mono">{doc.localPath}</span>
+                      {doc.dirty && <span className="notes-dirty">未保存</span>}
+                    </>
+                  ) : (
+                    <>
+                      <span className={`notes-status-dot ${doc.status}`} />
+                      {statusLabel(doc.status)}
+                      <i>·</i>
+                      {doc.citations.length} 引用
+                      <i>·</i>
+                      {timeAgo(doc.updatedAt)}
+                      {doc.dirty && <span className="notes-dirty">未保存</span>}
+                    </>
+                  )}
+                </span>
               </div>
               <div className="notes-doc-actions">
                 <div className="notes-mode"><button className={mode === "preview" ? "on" : ""} onClick={() => setMode("preview")}>阅读</button><button className={mode === "edit" ? "on" : ""} onClick={() => setMode("edit")}>编辑</button></div>
                 {doc.dirty && <button className="btn tiny-btn primary" onClick={() => void saveDoc(doc.id)} disabled={busy}>{doc.local ? "保存到文件" : "保存 draft"}</button>}
-                {doc.local ? (
-                  <>
-                    <button className="link tiny" onClick={() => void importLocalSource(doc)} disabled={busy}>导入为 Source</button>
-                    <button className="link tiny" onClick={() => void revealLocalFile(doc)}>Finder</button>
-                  </>
-                ) : (
-                  <>
-                    {doc.status === "draft" && <button className="btn tiny-btn ok" onClick={() => void reviewPage(doc.id, "accept")} disabled={busy}>接受</button>}
-                    {doc.status === "draft" && <button className="link tiny" onClick={() => void reviewPage(doc.id, "reject")} disabled={busy}>退回</button>}
-                    <button className="link tiny" onClick={() => void createTask()} disabled={busy}>创建任务</button>
-                  </>
-                )}
-                <button className="link tiny" onClick={sendPageToChat}>发送到 Chat</button>
+                {!doc.local && doc.status === "draft" && <button className="btn tiny-btn ok" onClick={() => void reviewPage(doc.id, "accept")} disabled={busy}>接受</button>}
+                <RowMenu title="页面操作">
+                  {doc.local ? (
+                    <>
+                      <button onClick={() => void importLocalSource(doc)} disabled={busy}>导入为 Source</button>
+                      <button onClick={() => void revealLocalFile(doc)}>在 Finder 显示</button>
+                    </>
+                  ) : (
+                    <>
+                      {doc.status === "draft" && <button onClick={() => void reviewPage(doc.id, "reject")} disabled={busy}>退回</button>}
+                      <button onClick={() => void createTask()} disabled={busy}>创建任务</button>
+                      <button onClick={() => void exportPdf()}>导出 PDF</button>
+                    </>
+                  )}
+                  <button onClick={sendPageToChat}>发送到 Chat</button>
+                </RowMenu>
               </div>
             </div>
             {mode === "preview" ? (
@@ -937,11 +975,13 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   };
 
   const pageRow = (p: PageSummary) => (
-    <div key={p.id} className="notes-row">
-      <button className={`notes-file ${activeDoc?.id === p.id ? "on" : ""}`} onClick={() => void openPage(p.id)}>
+    <div key={p.id} className={`notes-row ${activeDoc?.id === p.id ? "on" : ""}`}>
+      <button className={`notes-file ${activeDoc?.id === p.id ? "on" : ""}`} onClick={() => void openPage(p.id)} title={p.title}>
         <span className={`notes-status-dot ${p.status}`} />
-        <span className="ellipsis">{p.title}</span>
-        <em>{p.status === "draft" ? "draft" : p.status === "stale" ? "stale" : ""}</em>
+        <span className="notes-file-main">
+          <span className="ellipsis">{p.title}</span>
+          <span className="notes-file-sub">{statusLabel(p.status)} · {timeAgo(p.updatedAt)}</span>
+        </span>
       </button>
       <span className="notes-row-actions">
         <button className="link tiny" title={pins.includes(p.id) ? "取消收藏" : "收藏 / 置顶"} onClick={(e) => { e.stopPropagation(); void pinPage(p.id); }}>{pins.includes(p.id) ? "★" : "☆"}</button>
@@ -1020,44 +1060,42 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
           </div>
         </div>
       )}
-      <header className="notes-head">
-        <div className="notes-head-main">
-          <span className="notes-kicker">NATIVE · LLM WIKI</span>
-          <h1>Wiki</h1>
+      <PageHeader
+        kicker="NATIVE · LLM WIKI"
+        title="Wiki"
+        subtitle={(
           <div className="notes-stats">
             <span><b>{pages.length}</b> 页面</span>
             <span><b>{sources.length}</b> 资料</span>
             <span className={reviews.length ? "warn" : ""}><b>{reviews.length}</b> 待审核</span>
             {vault.path && <span><b>{vault.files.length}</b> 本地文件</span>}
           </div>
-        </div>
-        <div className="notes-actions">
-          <button className="btn primary" onClick={() => void createPage()} disabled={busy}>＋ 新建页面</button>
-          <button
-            className="btn"
-            onClick={() => void generateWiki()}
-            disabled={busy}
-            title={sources.length ? `按 ${sources.length} 份资料生成草稿页面` : vault.files.length ? `会先把本地 ${vault.files.length} 个 Markdown 导入为资料再生成` : "先打开本地目录或导入资料"}
-          >{busy ? "生成中…" : sources.length ? `生成 Wiki (${sources.length})` : "生成 Wiki"}</button>
-          <button
-            className="btn"
-            onClick={() => void curateWiki()}
-            disabled={busy || pages.length === 0}
-            title="统一页面大纲（要点 / 原文摘录 / 相关）、补页面互链，并重建「Wiki 索引」页"
-          >整理 Wiki</button>
-          <button className="btn" onClick={() => void importDocuments()} disabled={busy} title="从磁盘选择 Markdown / 文本 / JSON / CSV 等文档">导入文档</button>
-          <button className="btn" onClick={() => { setSourceDraft({ title: "", content: "", url: "", mode: "text" }); }} disabled={busy}>粘贴文本 / URL</button>
-          <button className="btn" onClick={() => void pickLocalFolder()} disabled={busy} title={vault.path ? "更换本地目录" : "打开本地 Markdown 目录"}><FolderOpenIcon size={13} /> {vault.path ? "本地目录" : "打开目录"}</button>
-          <div className="notes-actions-sep" />
-          <button className={`btn tiny-btn ${memoryOpen ? "primary" : ""}`} onClick={() => { setGraph(false); void openMemory(); }}>记忆</button>
-          <button className={`btn tiny-btn ${split ? "primary" : ""}`} onClick={toggleSplit}>分屏</button>
-          <button className="btn tiny-btn" onClick={() => setAskOpen(true)} title="只基于本地 Wiki 页面回答，带页面引用">问 Wiki</button>
-          <button className="btn tiny-btn" onClick={() => void exportMarkdown()} disabled={busy || pages.length === 0} title="导出到当前项目的 wiki-export/ 目录">导出 .md</button>
-          <button className="btn tiny-btn" onClick={() => void exportPdf()} disabled={!activeDoc} title="把当前页面导出为单页 PDF">导出 PDF</button>
-          <button className={`btn tiny-btn ${graph ? "primary" : ""}`} onClick={() => { setMemoryOpen(false); graph ? setGraph(false) : void openGraph(); }}>图谱</button>
-          <button className="icon-btn" onClick={() => void refresh()} title="刷新"><RefreshIcon size={13} /></button>
-        </div>
-      </header>
+        )}
+        actions={(
+          <>
+            <button className="btn primary" onClick={() => void createPage()} disabled={busy}>＋ 新建页面</button>
+            <RowMenu title="更多 Wiki 操作" popClassName="notes-menu">
+              <div className="row-menu-label">生成与整理</div>
+              <button onClick={() => void generateWiki()} disabled={busy} title={sources.length ? `按 ${sources.length} 份资料生成草稿页面` : "先打开本地目录或导入资料"}>
+                {busy ? "生成中…" : sources.length ? `生成 Wiki（${sources.length} 份资料）` : "生成 Wiki"}
+              </button>
+              <button onClick={() => void curateWiki()} disabled={busy || pages.length === 0}>整理大纲 / 互链 / 索引</button>
+              <div className="row-menu-label">导入</div>
+              <button onClick={() => void importDocuments()} disabled={busy}>导入文档…</button>
+              <button onClick={() => setSourceDraft({ title: "", content: "", url: "", mode: "text" })} disabled={busy}>粘贴文本 / URL…</button>
+              <button onClick={() => void pickLocalFolder()} disabled={busy}>{vault.path ? "更换本地目录…" : "打开本地目录…"}</button>
+              <div className="row-menu-label">查看与导出</div>
+              <button onClick={() => setAskOpen(true)}>问 Wiki</button>
+              <button onClick={() => { setMemoryOpen(false); graph ? setGraph(false) : void openGraph(); }}>{graph ? "关闭图谱" : "图谱"}</button>
+              <button onClick={() => { setGraph(false); void openMemory(); }}>{memoryOpen ? "关闭记忆" : "记忆"}</button>
+              <button onClick={toggleSplit}>{split ? "取消分屏" : "分屏"}</button>
+              <button onClick={() => void exportMarkdown()} disabled={busy || pages.length === 0}>导出 Markdown…</button>
+              <button onClick={() => void exportPdf()} disabled={!activeDoc}>导出当前页 PDF…</button>
+            </RowMenu>
+            <button className="icon-btn" onClick={() => void refresh()} title="刷新" aria-label="刷新"><RefreshIcon size={13} /></button>
+          </>
+        )}
+      />
       {(error || notice) && (
         <div className={`notes-banner ${error ? "error" : ""}`}>
           <span className="ellipsis">{error || notice}</span>
@@ -1067,11 +1105,11 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
       <div className="notes-layout">
         <aside className="notes-sidebar">
           <div className="notes-wiki-tabs">
-            <button className={tab === "pages" ? "on" : ""} onClick={() => setTab("pages")}>页面 <em>{pages.length}</em></button>
-            <button className={tab === "sources" ? "on" : ""} onClick={() => setTab("sources")}>资料 <em>{sources.length}</em></button>
-            <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>审核 <em>{reviews.length}</em></button>
-            <button className={tab === "vault" ? "on" : ""} onClick={() => setTab("vault")}>本地 <em>{vault.files.length}</em></button>
-            <button className={tab === "trash" ? "on" : ""} onClick={() => setTab("trash")}>回收站 <em>{trash.length}</em></button>
+            <button className={tab === "pages" ? "on" : ""} onClick={() => setTab("pages")}>页面</button>
+            <button className={tab === "sources" ? "on" : ""} onClick={() => setTab("sources")}>资料</button>
+            <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>审核{reviews.length ? `·${reviews.length}` : ""}</button>
+            <button className={tab === "vault" ? "on" : ""} onClick={() => setTab("vault")}>本地</button>
+            <button className={tab === "trash" ? "on" : ""} onClick={() => setTab("trash")}>回收站</button>
           </div>
           <div className="notes-search-wrap">
             <SearchIcon size={12} className="notes-search-icon" />
@@ -1267,21 +1305,40 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
             <>
               <div className="notes-meta-block">
                 <div className="notes-meta-title">页面</div>
-                <p className="notes-meta-empty">
-                  {String(activeDoc.content || "").replace(/\s+/g, " ").trim().length} 字
-                  {activeDoc.updatedAt ? ` · 更新于 ${new Date(activeDoc.updatedAt).toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : ""}
-                </p>
+                <div className="notes-meta-kv">
+                  <span>字数</span><b>{String(activeDoc.content || "").replace(/\s+/g, " ").trim().length}</b>
+                  <span>更新</span><b>{timeAgo(activeDoc.updatedAt)}</b>
+                </div>
               </div>
-              <div className="notes-meta-block"><div className="notes-meta-title">Status</div><div className={`notes-review-badge ${activeDoc.status}`}>{statusLabel(activeDoc.status)}</div><p className="notes-meta-empty">confidence: {activeDoc.confidence}</p></div>
               <div className="notes-meta-block">
-                <div className="notes-meta-title">Citations <em>{activeDoc.citations.length}</em></div>
-                {activeDoc.citations.length === 0 && <p className="notes-meta-empty">还没有引用 source</p>}
+                <div className="notes-meta-title">状态</div>
+                <div className="notes-meta-row">
+                  <span className={`notes-review-badge ${activeDoc.status}`}>{statusLabel(activeDoc.status)}</span>
+                  <span className="notes-meta-hint">置信度 {confidenceLabel(activeDoc.confidence)}</span>
+                </div>
+              </div>
+              <div className="notes-meta-block">
+                <div className="notes-meta-title">引用来源 <em>{activeDoc.citations.length}</em></div>
+                {activeDoc.citations.length === 0 && <p className="notes-meta-empty">还没有引用资料。用下面的选择器添加，或在正文里标注出处。</p>}
                 {activeDoc.citations.map((c) => <button key={c.id} className="notes-link" onClick={() => c.sourceId && void openSource(c.sourceId)}><b>{c.source?.title || c.sourceId}</b>{c.quote && <span>{c.quote.slice(0, 80)}</span>}</button>)}
                 {sources.length > 0 && <select className="notes-cite-select" value="" onChange={(e) => { if (e.target.value) void addCitation(e.target.value); }}><option value="">＋ 引用 source</option>{sources.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}</select>}
               </div>
-              <div className="notes-meta-block"><div className="notes-meta-title">Backlinks <em>{activeDoc.backlinks?.length || 0}</em></div>{(activeDoc.backlinks || []).map((b) => <button key={b.id} className="notes-link" onClick={() => void openPage(b.id, focus)}><b>{b.title}</b><span>{statusLabel(b.status)}</span>{b.snippet && <em>{b.snippet}</em>}</button>)}</div>
-              {unlinked.length > 0 && <div className="notes-meta-block"><div className="notes-meta-title">Unlinked mentions <em>{unlinked.length}</em></div>{unlinked.map((b) => <button key={b.id} className="notes-link" onClick={() => void openPage(b.id, focus)}><b>{b.title}</b><em>{b.snippet}</em></button>)}</div>}
-              <div className="notes-meta-block"><div className="notes-meta-title">Linked Todos <em>{linkedTodos.length}</em></div>{linkedTodos.length === 0 && <p className="notes-meta-empty">还没有关联任务</p>}{linkedTodos.map((l) => { const todo = state.todos.find((t) => t.id === l.todoId); return <button key={l.id} className="notes-link" disabled={!todo || !onOpenTodo} onClick={() => todo && onOpenTodo?.(todo.id)}><b>{todo?.title || l.title || l.todoId}</b><span>{todo?.key} {todo?.status}</span></button>; })}</div>
+              <div className="notes-meta-block">
+                <div className="notes-meta-title">反向链接 <em>{activeDoc.backlinks?.length || 0}</em></div>
+                {(activeDoc.backlinks || []).length === 0 && <p className="notes-meta-empty">还没有页面链接到这里。在别的页面写 [[{activeDoc.title}]] 就会出现在这里。</p>}
+                {(activeDoc.backlinks || []).map((b) => <button key={b.id} className="notes-link" onClick={() => void openPage(b.id, focus)}><b>{b.title}</b><span>{statusLabel(b.status)}</span>{b.snippet && <em>{b.snippet}</em>}</button>)}
+              </div>
+              {unlinked.length > 0 && (
+                <div className="notes-meta-block">
+                  <div className="notes-meta-title">未链接提及 <em>{unlinked.length}</em></div>
+                  {unlinked.map((b) => <button key={b.id} className="notes-link" onClick={() => void openPage(b.id, focus)}><b>{b.title}</b><em>{b.snippet}</em></button>)}
+                </div>
+              )}
+              <div className="notes-meta-block">
+                <div className="notes-meta-title">关联任务 <em>{linkedTodos.length}</em></div>
+                {linkedTodos.length === 0 && <p className="notes-meta-empty">还没有关联任务。页面右上角「⋯ → 创建任务」可以从这里派活。</p>}
+                {linkedTodos.map((l) => { const todo = state.todos.find((t) => t.id === l.todoId); return <button key={l.id} className="notes-link" disabled={!todo || !onOpenTodo} onClick={() => todo && onOpenTodo?.(todo.id)}><b>{todo?.title || l.title || l.todoId}</b><span>{todo?.key} {todo?.status}</span></button>; })}
+              </div>
             </>
           ) : (
             <div className="notes-meta-idle">

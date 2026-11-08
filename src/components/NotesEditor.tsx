@@ -8,20 +8,21 @@ import { indentLess, indentMore, redo, undo } from "@codemirror/commands";
 import { openSearchPanel, search } from "@codemirror/search";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
+import { CheckSquareIcon, CodeIcon, LinkIcon, QuoteIcon, RedoIcon, RuleIcon, SearchIcon, TableIcon, UndoIcon } from "./Icons";
 
 export type NotePickerItem = { path: string; title: string };
 
 const notesTheme = EditorView.theme({
   "&": { height: "100%", color: "var(--fg)", backgroundColor: "transparent" },
-  ".cm-scroller": { fontFamily: "var(--mono)", lineHeight: "1.75" },
-  ".cm-content": { caretColor: "var(--brand)", padding: "10px 14px 28px" },
+  ".cm-scroller": { fontFamily: "var(--font-sans)", fontSize: "13.5px", lineHeight: "1.72" },
+  ".cm-content": { caretColor: "var(--brand)", padding: "20px 0 120px" },
   ".cm-line": { padding: "0" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--brand)" },
   ".cm-selectionBackground, &.cm-focused .cm-selectionBackground, .cm-content ::selection": {
-    backgroundColor: "color-mix(in srgb, var(--brand) 22%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--fg) 14%, transparent)",
   },
-  ".cm-gutters": { backgroundColor: "transparent", color: "var(--faint)", border: "none" },
-  ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--brand) 6%, transparent)" },
+  ".cm-gutters": { display: "none" },
+  ".cm-activeLine": { backgroundColor: "transparent", boxShadow: "inset 2px 0 0 color-mix(in srgb, var(--brand) 32%, transparent)" },
   ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--fg-2)" },
   ".cm-panels": { backgroundColor: "var(--surface)", color: "var(--fg)", borderColor: "var(--border)" },
   ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--border)" },
@@ -29,9 +30,9 @@ const notesTheme = EditorView.theme({
     color: "var(--fg)", backgroundColor: "var(--page-canvas)",
     border: "1px solid var(--border)", borderRadius: "5px",
   },
-  ".cm-searchMatch": { backgroundColor: "color-mix(in srgb, var(--amber) 30%, transparent)" },
-  ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "color-mix(in srgb, var(--amber) 48%, transparent)" },
-  ".cm-selectionMatch": { backgroundColor: "color-mix(in srgb, var(--brand) 12%, transparent)" },
+  ".cm-searchMatch": { backgroundColor: "color-mix(in srgb, var(--amber) 24%, transparent)" },
+  ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "color-mix(in srgb, var(--amber) 40%, transparent)" },
+  ".cm-selectionMatch": { backgroundColor: "color-mix(in srgb, var(--fg) 8%, transparent)" },
   ".cm-tooltip": { backgroundColor: "var(--surface)", border: "1px solid var(--border)", color: "var(--fg)" },
   ".cm-tooltip-autocomplete > ul > li": { padding: "3px 6px" },
   ".cm-tooltip-autocomplete > ul > li[aria-selected]": { backgroundColor: "var(--brand-soft)", color: "var(--fg)" },
@@ -156,32 +157,39 @@ function insertRule(view: EditorView) {
   view.focus();
 }
 
-type Tool = { label: string; title: string; action: (view: EditorView) => void };
-const TOOLS: (Tool | "sep")[] = [
-  { label: "↶", title: "撤销 ⌘Z", action: (v) => { undo(v); v.focus(); } },
-  { label: "↷", title: "重做 ⇧⌘Z", action: (v) => { redo(v); v.focus(); } },
-  "sep",
-  { label: "H1", title: "一级标题", action: (v) => setHeading(v, 1) },
-  { label: "H2", title: "二级标题", action: (v) => setHeading(v, 2) },
-  { label: "H3", title: "三级标题", action: (v) => setHeading(v, 3) },
-  "sep",
-  { label: "B", title: "粗体 ⌘B", action: (v) => wrapSelection(v, "**", "**", "粗体") },
-  { label: "I", title: "斜体 ⌘I", action: (v) => wrapSelection(v, "*", "*", "斜体") },
-  { label: "S", title: "删除线", action: (v) => wrapSelection(v, "~~", "~~", "删除线") },
-  { label: "`", title: "行内代码", action: (v) => wrapSelection(v, "`", "`", "code") },
-  "sep",
-  { label: "•", title: "无序列表", action: (v) => toggleLinePrefix(v, "- ") },
-  { label: "1.", title: "有序列表", action: (v) => toggleLinePrefix(v, "1. ") },
-  { label: "☐", title: "任务列表", action: (v) => toggleLinePrefix(v, "- [ ] ") },
-  { label: "❝", title: "引用", action: (v) => toggleLinePrefix(v, "> ") },
-  "sep",
-  { label: "</>", title: "代码块", action: insertCodeBlock },
-  { label: "[[", title: "Wiki 链接；输入 [[ 也可补全", action: insertWikiLink },
-  { label: "🔗", title: "链接 ⌘K", action: insertLink },
-  { label: "▦", title: "表格", action: insertTable },
-  { label: "—", title: "分隔线", action: insertRule },
-  "sep",
-  { label: "⌕", title: "查找 / 替换 ⌘F", action: (v) => { openSearchPanel(v); } },
+type Tool = { key: string; title: string; icon: React.ReactNode; action: (view: EditorView) => void };
+const TOOLS: (Tool[] | "sep")[] = [
+  [
+    { key: "undo", title: "撤销 ⌘Z", icon: <UndoIcon size={14} />, action: (v) => { undo(v); v.focus(); } },
+    { key: "redo", title: "重做 ⇧⌘Z", icon: <RedoIcon size={14} />, action: (v) => { redo(v); v.focus(); } },
+  ],
+  [
+    { key: "h1", title: "一级标题", icon: <b className="notes-tool-h">H1</b>, action: (v) => setHeading(v, 1) },
+    { key: "h2", title: "二级标题", icon: <b className="notes-tool-h">H2</b>, action: (v) => setHeading(v, 2) },
+    { key: "h3", title: "三级标题", icon: <b className="notes-tool-h">H3</b>, action: (v) => setHeading(v, 3) },
+  ],
+  [
+    { key: "bold", title: "粗体 ⌘B", icon: <b className="notes-tool-b">B</b>, action: (v) => wrapSelection(v, "**", "**", "粗体") },
+    { key: "italic", title: "斜体 ⌘I", icon: <i className="notes-tool-i">I</i>, action: (v) => wrapSelection(v, "*", "*", "斜体") },
+    { key: "strike", title: "删除线", icon: <s className="notes-tool-s">S</s>, action: (v) => wrapSelection(v, "~~", "~~", "删除线") },
+    { key: "code", title: "行内代码", icon: <CodeIcon size={14} />, action: (v) => wrapSelection(v, "`", "`", "code") },
+  ],
+  [
+    { key: "ul", title: "无序列表", icon: <span className="notes-tool-glyph">•</span>, action: (v) => toggleLinePrefix(v, "- ") },
+    { key: "ol", title: "有序列表", icon: <span className="notes-tool-glyph">1.</span>, action: (v) => toggleLinePrefix(v, "1. ") },
+    { key: "task", title: "任务列表", icon: <CheckSquareIcon size={14} />, action: (v) => toggleLinePrefix(v, "- [ ] ") },
+    { key: "quote", title: "引用", icon: <QuoteIcon size={14} />, action: (v) => toggleLinePrefix(v, "> ") },
+  ],
+  [
+    { key: "codeblock", title: "代码块", icon: <span className="notes-tool-glyph">{"{}"}</span>, action: insertCodeBlock },
+    { key: "wikilink", title: "Wiki 链接；输入 [[ 也可补全", icon: <span className="notes-tool-glyph">[[</span>, action: insertWikiLink },
+    { key: "link", title: "链接 ⌘K", icon: <LinkIcon size={14} />, action: insertLink },
+    { key: "table", title: "表格", icon: <TableIcon size={14} />, action: insertTable },
+    { key: "rule", title: "分隔线", icon: <RuleIcon size={14} />, action: insertRule },
+  ],
+  [
+    { key: "search", title: "查找 / 替换 ⌘F", icon: <SearchIcon size={14} />, action: (v) => { openSearchPanel(v); } },
+  ],
 ];
 
 function countText(text: string) {
@@ -293,28 +301,31 @@ export function NotesEditor({ value, pages, tags: tagList, dirty = false, onChan
   return (
     <div className="notes-editor-shell">
       <div className="notes-editor-toolbar">
-        <div className="notes-tool-group">
-          {TOOLS.map((tool, index) => tool === "sep"
-            ? <i className="notes-tool-sep" key={`sep-${index}`} />
-            : (
+        {TOOLS.map((group, index) => group === "sep" ? null : (
+          <div className="notes-tool-group" key={`g${index}`}>
+            {index > 0 && <i className="notes-tool-sep" />}
+            {group.map((tool) => (
               <button
-                key={tool.label + index}
+                key={tool.key}
                 type="button"
-                className={`notes-tool ${tool.label === "B" ? "bold" : ""} ${tool.label === "I" ? "italic" : ""}`}
+                className="notes-tool"
                 title={tool.title}
+                aria-label={tool.title}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => run(tool.action)}
-              >{tool.label}</button>
+              >{tool.icon}</button>
             ))}
-        </div>
-        <div className="notes-editor-stats">
-          {selectionLength > 0 && <span>选中 {selectionLength}</span>}
-          <span>{stats.words} 词 · {stats.chars} 字</span>
-          <span className={`notes-save-state ${dirty ? "dirty" : ""}`}>{dirty ? "● 未保存" : "✓ 已保存"}</span>
-          <button type="button" className="notes-save-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => onSaveRef.current()} title="保存 draft（⌘S）">保存</button>
-        </div>
+          </div>
+        ))}
       </div>
       <div className="notes-codemirror" ref={hostRef} />
+      <div className="notes-editor-status">
+        <span>{stats.words} 词 · {stats.chars} 字</span>
+        {selectionLength > 0 && <span>选中 {selectionLength}</span>}
+        <span className={`notes-save-state ${dirty ? "dirty" : ""}`}>{dirty ? "未保存" : "已保存"}</span>
+        <span className="notes-editor-hint">⌘S 保存 · ⌘F 查找</span>
+        <button type="button" className={`notes-save-btn ${dirty ? "dirty" : ""}`} onMouseDown={(e) => e.preventDefault()} onClick={() => onSaveRef.current()} title="保存（⌘S）">保存</button>
+      </div>
     </div>
   );
 }

@@ -139,3 +139,23 @@ hover 时隐藏右侧计数（`em`）给动作让位。
 实现：插件 `wiki.curate`（确定性，不需要模型）；UI 在收到结果后刷新列表，并把当前打开的页面重新 `wiki.getPage` 一次（整理可能改写它）。
 
 > 注意：`Wiki 索引` 是自动维护页，不要手改（下次整理会覆盖）；其它页面只重写上面四个段落，正文其它内容保留。
+
+## 12. 视觉收口（2026-11）：一个主面 / 收高亮 / 收按钮
+
+按 `docs/DESIGN-SYSTEM.md` 复核后重做了 Wiki 页的表层（不动插件能力）：
+
+| 问题 | 处理 |
+|---|---|
+| 页面自建 `h1` + 统计行 + 13 个按钮 | 改用 `PageHeader`（`kicker / title / subtitle 统计 / actions`）；只留「＋ 新建页面」primary + `⋯` 菜单（生成 / 整理 / 导入 / 查看 / 导出）+ 刷新 |
+| 三块面板各自 `border + 12px 圆角` | 左栏与右栏退回画布，只用 1px hairline 分栏；只有主编辑面是有边界的主面 |
+| 顶部四层 chrome（页面头 → tab → 文档头 → 工具栏 → 状态） | 页面头一行；tab 32px；文档头 52px（标题 + 状态 · 引用 · 时间 + 阅读/编辑 + 保存 + `⋯`）；工具栏 24px 图标；字数 / 保存状态沉到编辑器底部状态条 |
+| 编辑器整行灰底 + 行号 + 等宽排中文 | `.cm-gutters` 隐藏；正文 `--font-sans` 13.5px/1.72；单栏 660px 居中（`--notes-col`，预览同宽，切换不跳）；当前行无底色无块状高亮 |
+| CodeMirror 选中用 brand 22% | 改 `fg` 14% alpha，对齐规范 |
+| 右栏 `Status / Citations / Backlinks / Linked Todos` 英文大写 + `confidence:` | 统一中文（状态 / 引用来源 / 反向链接 / 未链接提及 / 关联任务 / 置信度），数字 `tabular-nums`，块之间 hairline，空块给一句「怎么才会有」 |
+| 列表行「标题 + 彩点 + draft」一行 | 两行：状态点 + 标题 / 状态 · 相对时间；hover 出 `⋯`（收藏 / 删除）；选中保留左侧 2px hairline |
+| 工具栏 glyph 混排（🔗 ❝ ⌕ ▦） | 新增 `UndoIcon / RedoIcon / CodeIcon / TableIcon / RuleIcon / CheckSquareIcon`，工具栏按「撤销 · 标题 · 行内 · 列表 · 插入 · 查找」分组，1px 分隔 |
+| 分屏中缝 hover 变实色竖条 | 5px 命中区 + 1px hairline，hover 只加深 |
+| 图谱节点全同色、字粗线细 | 页面 brand / 资料 amber / 本地文件 faint；边 `stroke-width:.3`，标签按类型 1.9–2.1px |
+
+验证：`npm run typecheck` / `build` / `verify:plugins` / `verify:design` 全过；
+用临时数据目录起 Electron + CDP 截图，亮色（列表 / 阅读 / 编辑）与暗色（编辑）各一张比对。

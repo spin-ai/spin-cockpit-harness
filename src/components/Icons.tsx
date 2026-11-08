@@ -187,3 +187,31 @@ export const QuoteIcon = (p: IconProps) => (
 export const CopyCheckIcon = (p: IconProps) => (
   <Svg {...p}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /><path d="m12.5 14.5 1.6 1.6 3-3" /></Svg>
 );
+
+export const UndoIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M4 9h10a5 5 0 0 1 0 10h-3" /><path d="m8 5-4 4 4 4" /></Svg>
+);
+
+export const RedoIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M20 9H10a5 5 0 0 0 0 10h3" /><path d="m16 5 4 4-4 4" /></Svg>
+);
+
+export const CodeIcon = (p: IconProps) => (
+  <Svg {...p}><path d="m9 7-5 5 5 5M15 7l5 5-5 5" /></Svg>
+);
+
+export const TableIcon = (p: IconProps) => (
+  <Svg {...p}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18M9 10v9" /></Svg>
+);
+
+export const RuleIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M4 12h16" /><path d="M7 7h10M7 17h10" opacity=".35" /></Svg>
+);
+
+export const CheckSquareIcon = (p: IconProps) => (
+  <Svg {...p}><rect x="3.5" y="3.5" width="17" height="17" rx="3" /><path d="m8 12.5 2.5 2.5L16 9.5" /></Svg>
+);
+
+export const NoteIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M6 3.5h8.5L19 8v12.5H6z" /><path d="M14 3.5V8h5" /><path d="M9 12h7M9 16h5" /></Svg>
+);
