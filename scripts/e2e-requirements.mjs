@@ -20,6 +20,7 @@ const root = repoRoot();
 const args = process.argv.slice(2);
 const list = args.includes("--list");
 const keep = args.includes("--keep");
+const runSkipped = args.includes("--run-skipped");
 const onlyArg = args.find((a) => a.startsWith("--only="));
 const only = onlyArg ? onlyArg.slice("--only=".length).split(",").map((s) => s.trim().toUpperCase()).filter(Boolean) : null;
 const portArg = args.find((a) => a.startsWith("--port="));
@@ -81,7 +82,7 @@ try {
   if (!ready) throw new Error("应用首屏未就绪");
 
   for (const test of selected) {
-    if (test.skip) {
+    if (test.skip && !runSkipped) {
       console.log(`SKIP ${test.id.padEnd(10)} ${test.title} — ${test.skip}`);
       skipped += 1;
       results.push({ id: test.id, status: "skip", reason: test.skip });
