@@ -53,7 +53,7 @@ export default function App() {
   // 资源管理器里的「预览 / 在终端中打开」：如果终端面板收起了，先展开再交给 TerminalPanel
   useEffect(() => {
     const expandTerminal = () => setCollapsed((c) => (c.terminal ? { ...c, terminal: false } : c));
-    const events = ["harness:open-file-preview", "harness:open-terminal-at", "harness:new-terminal", "harness:open-preview", "harness:split-terminal"];
+    const events = ["harness:open-file-preview", "harness:open-terminal-at", "harness:adopt-terminal", "harness:new-terminal", "harness:open-preview", "harness:split-terminal"];
     for (const name of events) window.addEventListener(name, expandTerminal);
     return () => { for (const name of events) window.removeEventListener(name, expandTerminal); };
   }, []);
@@ -226,6 +226,15 @@ export default function App() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.activeProjectId]);
+
+  useEffect(() => {
+    const onToast = (e: Event) => {
+      const message = String((e as CustomEvent).detail || "");
+      if (message) notify(message);
+    };
+    window.addEventListener("harness:toast", onToast);
+    return () => window.removeEventListener("harness:toast", onToast);
+  }, [notify]);
 
   useEffect(() => {
     const onView = (e: Event) => {

@@ -13,21 +13,28 @@
 
 所以矩阵是：
 
-| CLI | Chat 派活 | 说明 |
+| CLI | Chat 执行 | 说明 |
 |---|---|---|
-| `dsh` | ✅ ACP | `dsh --profile acp`；支持运行中纠偏 |
-| `pi` / `claude` / `codex` / `opencode` | ❌ 仅终端 | 尚未接入 Chat 执行适配器；选中会明确报错 |
+| `dsh` | ✅ ACP | `dsh --profile acp`；结构化流、审批、纠偏回执 |
+| `pi` / `claude` / `codex` / `opencode` | ✅ 终端 pty | Chat 派活后打开终端标签，在 worktree 里启动 CLI；steer 直接写 pty |
 
-> 不静默回退：选了 `pi` 却实际跑 dsh 是错误行为，现在会直接提示。
+> 不静默回退：选了 `pi` 就走 pi 的终端，不会偷偷换成 dsh。
 
 ## Agent 是什么
 
 一个 Agent = 名称 + CLI + 主机 + cwd + 别名 + 并发上限；Mission 模式额外有 `role`（worker / supervisor）。
 
 - 在终端里启动 CLI 会自动登记 Agent；
-- 也可以在 Chat 里点「＋ dsh」纳管一个无需终端的 dsh Agent；
+- 也可以在 Chat 里点「＋ dsh」纳管一个无需终端的 dsh Agent，或用「＋ Agent」创建 pi / claude / codex / opencode 终端 Agent；
 - `@别名` 在项目内唯一，用来从 Chat 路由。
 - supervisor 只读、只派给 worker；worker 才写代码。详见 [Super Agent / Mission](#/wiki/super-agent)。
+
+## 两种 Chat 执行方式
+
+- **ACP（dsh）**：每个 run 一个独立 `dsh --profile acp` 子进程；`session/update` 流式写回 Chat，支持审批和运行中纠偏回执。
+- **终端 pty（pi / claude / codex / opencode）**：Chat 派活时准备 worktree，打开终端标签并启动 CLI；任务文本写入 pty，运行中消息也直接写回同一个 pty。输出在终端里，pty 退出即结束本轮 run。
+
+Mission / supervisor 强制使用 ACP，不能混用两种调度。
 
 ## dsh ACP 的一次 run
 

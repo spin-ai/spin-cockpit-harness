@@ -6,7 +6,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import type { ElementContext, State, Todo } from "../types";
 import { FileVisual, extOf } from "./FileVisual";
 import { PreviewSurface } from "./PreviewSurface";
-import { takeTerminalRequests } from "../terminal-events";
+import { takeTerminalAdopt, takeTerminalRequests } from "../terminal-events";
 import { Splitter } from "./Splitter";
 import { ChevronDownIcon, ChevronUpIcon, EyeIcon, PanelCollapseIcon, SearchIcon, SplitDownIcon, SplitRightIcon, XIcon } from "./Icons";
 
@@ -45,6 +45,8 @@ type Tab = {
 };
 
 const PREVIEW_MIME = "application/x-cockpit-preview";
+// StrictMode 会先卸载再挂载：接管已有 pty 时，只有仍属于当前实例才关闭。
+const terminalOwners = new Map<string, symbol>();
 
 type PreviewTarget = { tab: Tab; paneId?: string };
 type PreviewDragData = {
@@ -543,6 +545,8 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
       const pending = takeTerminalRequests();
       if (pending.cwd) addTab({ cwd: pending.cwd, title: basename(pending.cwd) });
       if (pending.file) openFilePreviewTab(pending.file);
+      const adopt = takeTerminalAdopt();
+      if (adopt) addTab({ cwd: adopt.cwd, title: adopt.title || basename(adopt.cwd), terminalId: adopt.terminalId, taskId: adopt.taskId });
     };
     consumeRequests();
     window.addEventListener("harness:new-terminal", onNew);
@@ -551,6 +555,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
     window.addEventListener("harness:split-terminal", onSplit);
     window.addEventListener("harness:open-file-preview", consumeRequests);
     window.addEventListener("harness:open-terminal-at", consumeRequests);
+    window.addEventListener("harness:adopt-terminal", consumeRequests);
     return () => {
       window.removeEventListener("harness:new-terminal", onNew);
       window.removeEventListener("harness:close-terminal", onClose);
@@ -558,6 +563,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
       window.removeEventListener("harness:split-terminal", onSplit);
       window.removeEventListener("harness:open-file-preview", consumeRequests);
       window.removeEventListener("harness:open-terminal-at", consumeRequests);
+      window.removeEventListener("harness:adopt-terminal", consumeRequests);
     };
   }, [newTerminal, closeActiveSurface, showPreview, splitFocused, addTab, openFilePreviewTab]);
 
@@ -1005,6 +1011,7 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
   onUrlRef.current = onUrl;
 
   useEffect(() => {
+    const owner = Symbol("term");
     const host = hostRef.current;
     if (!host) return;
     const term = new Terminal({
@@ -1071,6 +1078,7 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
 
     const attach = (id: string) => {
       termId = id;
+      terminalOwners.set(id, owner);
       onTermIdRef.current(id);
       void window.harness.attachTerminal(id).then((res) => {
         if (disposed) return;
@@ -1129,7 +1137,14 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
       scrollSub.dispose();
       offData();
       offExit();
-      if (termId) void window.harness.closeTerminal(termId);
+      if (termId) {
+        const closeId = termId;
+        window.setTimeout(() => {
+          if (terminalOwners.get(closeId) !== owner) return;
+          terminalOwners.delete(closeId);
+          void window.harness.closeTerminal(closeId);
+        }, 0);
+      }
       term.dispose();
       termRef.current = null;
       fitRef.current = null;

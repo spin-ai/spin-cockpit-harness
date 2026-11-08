@@ -13,7 +13,7 @@ export interface Host {
 }
 export type ErrorClass = "auth" | "rate_limit" | "timeout" | "other";
 export type AgentRole = "worker" | "supervisor";
-export interface Agent { id: string; name: string; hostId: string; cli: string; cwd: string; max: number; approval: string; color: string; skills: string[]; alias: string; projectId?: string; terminalId?: string; chatRunnable?: boolean; role?: AgentRole; instructions?: string; maxChildren?: number; }
+export interface Agent { id: string; name: string; hostId: string; cli: string; cwd: string; max: number; approval: string; color: string; skills: string[]; alias: string; projectId?: string; terminalId?: string; chatRunnable?: boolean; chatRuntime?: "acp" | "terminal"; role?: AgentRole; instructions?: string; maxChildren?: number; }
 /** Chat 执行适配器：只有 implemented=true 的 CLI 能从 Chat 派活。 */
 export interface Executor { id: string; label: string; kind: string; implemented: boolean; supportsSteer: boolean; available: boolean; }
 export interface Subtask { id: string; title: string; status: string; }

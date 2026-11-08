@@ -24,3 +24,18 @@ export function takeTerminalRequests(): { file: FilePreviewRequest | null; cwd: 
   pendingCwd = null;
   return result;
 }
+
+export type TerminalAdoptRequest = { terminalId: string; cwd: string; title?: string; taskId?: string };
+let pendingAdopt: TerminalAdoptRequest | null = null;
+
+/** Chat → 终端：把已经创建好的 pty 接管为终端标签。 */
+export function requestTerminalAdopt(detail: TerminalAdoptRequest) {
+  pendingAdopt = detail;
+  window.dispatchEvent(new CustomEvent("harness:adopt-terminal", { detail }));
+}
+
+export function takeTerminalAdopt(): TerminalAdoptRequest | null {
+  const result = pendingAdopt;
+  pendingAdopt = null;
+  return result;
+}

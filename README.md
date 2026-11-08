@@ -89,7 +89,8 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 - 会话（thread）模型：消息宿主是会话而非任务，派活是会话的一条消息；单一 `send` 路径
 - 纠偏投递回执：`投递中 / 已注入 / 投递失败·重发`，run 结束未回执一律标失败
 - Chat 内按 run 分组展示；agent 可切换，项目在派活前选择（派活后锁定）
-- Chat 的 Agent 选择只对有执行适配器的 CLI 开放（当前 dsh/ACP）；可在 Chat 里一键纳管 dsh Agent，其他 CLI 标注「终端专用」
+- Chat 的 Agent 有两种执行方式：`dsh` 走 ACP（结构化流 / 审批 / 纠偏回执）；`pi / claude / codex / opencode` 走真实 pty（Chat 派活后自动开终端标签、在 worktree 里启动 CLI；后续消息直接写入同一个 pty）
+- Chat 里可以无终端纳管 dsh，也可以用「＋ Agent」创建 pi 等终端 Agent
 - Mission 模式：`agents.role=supervisor`、计划审批、child Todo/Run/Delegation、worktree 并行、取消级联、重启恢复、Mission 级收件箱/统计；supervisor 会话禁用 dsh 原生 subagent/team/workflow，避免双调度
 - dsh ACP 真实执行：`session/new → prompt → session/update` 流式落库
 - dsh 来源可见：设置页显示当前走 内置 / 自定义 / 系统 PATH，默认不把执行引擎塞进仓库
@@ -99,6 +100,7 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 - 终端（真实 pty）、项目文件树；文件预览与网页预览统一在终端标签区
 - 终端易用性：多标签快捷键、**窗格拆分**（二进制布局 / 拖拽比例 / 方向键切焦点）、**预览标签拖入拆分的另一半**（或终端右键「在右侧打开预览」）、查找高亮、右键菜单、链接打开、字号缩放、标签重命名 / 运行中提示点、退出重启、挂载前输出回放（见 [docs/ARCH-terminal-ux.md](docs/ARCH-terminal-ux.md)）
 - 前端预览 + 元素拾取（CDP）：预览作为终端标签页（与 pty 标签并列，⌘W / 中键关闭），终端打印的 dev server 地址自动识别；拾取元素 → 结构化 `<ui-context>` 注入 Agent；源码位置优先 `data-ym-src` / React `_debugSource`；截图落 `userData/ui-context`，不污染 worktree
+- Chat 终端模式：派活时准备 worktree、打开终端标签、启动 CLI 并写入任务；运行中消息直接写回 pty；pty 退出后 run 进入待确认
 - 审批弹窗（ACP `session/request_permission`）：按 ACP 选项渲染（允许一次 / 总是允许 / 拒绝），支持多审批队列提示、焦点陷阱/aria；可在设置里改为自动批准 / 自动拒绝
 - 设置页（通用 / 外观 / 执行 / 终端 / 预览与元素 / 数据 / 快捷键 / 关于）：SQLite 持久化、即时生效；含分区说明/行内 hint、13 套主题（跟随系统 / 浅色 / 纸感 / Light+ / 深色 / Dark+ / Monokai / One Dark / Solarized / Dracula / 午夜蓝 / 森林 / 石墨；终端配色随主题切换）、默认 Agent、全局并发、dsh 路径/模型、终端字号与回滚、预览地址、备份导出与重置
 - 每日模板、产物预览
@@ -106,32 +108,34 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 
 ## 未实现
 
-- 任务与 Terminal 会话真正绑定（目前 Terminal 独立于 ACP run，Chat 的 agent 不在 Terminal 里）
-- Agent 在 Terminal 内登录后由 harness 捕获完成/回写
+- 终端模式的 ACP 级审批 / 结构化事件 / 精确完成回写（目前以 pty 退出为完成信号）
+- dsh 的交互式 TUI profile（当前 dsh 只走 ACP；终端模式需要 pi/claude/codex/opencode 这类 CLI）
 - D5 全局自由对话（不绑任务的常驻 ACP 会话，可随时“转成 TODO”）
 - 非 React 项目的元素→源文件仍需手写 `data-ym-src`；截图只传路径，未作为图片附件给 Agent
 - D4 Agent 主动提问 → 等待输入（目前只有 ACP 审批会进入该状态）
 - Super Agent：远程 supervisor（MCP over SSH）、团队/小队、Native 模式 UI（当前 Mission supervisor 只支持本地；远程 worker 可用）
-- pi / claude / codex / opencode 的 Chat 原生执行适配器（目前仅终端可跑，不静默回退到 dsh）
+- pi / claude / codex / opencode 的 ACP 执行适配器（目前 Chat 走终端 pty，不走 ACP）
 - Chat 多选广播 UI（后端 `broadcast` 已在，界面仍为单 Agent）
 - 长会话虚拟化 / 消息回放控制
 - 远端 worktree（远端直接用绝对 cwd）、断线重连、守护进程纳管
 - 签名 / 公证 / 自动更新、Windows/Linux 构建验证
 - 未确认任务的“当前运行”聚合视图（看板之外）
 
-## Agent 选择与执行适配器
+## Agent 选择与执行方式
 
-Chat 的“Agent”是执行目标，不是探测器里所有 CLI 的并集。每个 CLI 必须登记一个执行适配器才能从 Chat 派活：
+Chat 的“Agent”是执行目标，按 CLI 自动选择执行方式：
 
-| CLI | Chat 派活 | 说明 |
+| CLI | Chat 执行 | 说明 |
 |---|---|---|
-| `dsh` | ✅ | ACP（`--profile acp`），支持运行中纠偏 |
-| `pi` / `claude` / `codex` / `opencode` | ❌ 终端专用 | 尚未接入 Chat 适配器；选中会明确报错，不会偷偷换成 dsh |
+| `dsh` | ✅ ACP | `--profile acp`；结构化流、审批、纠偏回执 |
+| `pi` / `claude` / `codex` / `opencode` | ✅ 终端 pty | Chat 派活后开终端标签、在 worktree 里启动 CLI；steer 直接写 pty |
 
-- 新装环境 Chat 里没有 Agent 时，点「＋ dsh」即可纳管一个（不需要先开终端）
-- 在终端启动的 Agent 会出现在下拉框；非 dsh 的标记「终端专用」且不可选
-- `@别名` 同样遵守适配器规则
-- 设置 → 执行 → 「Chat 执行适配器」可以看到矩阵
+- 新装环境 Chat 里没有 Agent 时，点「＋ dsh」即可纳管一个 ACP Agent
+- 输入框下方「＋ Agent」可以创建 pi / claude / codex / opencode 终端 Agent
+- `@别名` 同样遵守执行方式
+- 设置 → 执行 → 「Chat 执行方式」可以看到矩阵
+
+终端模式没有 ACP 的 `session/update`、审批队列和精确完成回执：Chat 负责派活/纠偏，实际输出在终端标签里；pty 退出即结束本轮 run。Mission / supervisor 强制使用 ACP，不能混用。
 
 ## 内置 dsh（默认）
 
