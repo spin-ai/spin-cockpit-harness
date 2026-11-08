@@ -404,9 +404,10 @@ npm run test:e2e:requirements -- --list
 npm run test:e2e:requirements
 npm run test:e2e:requirements -- --only=THEME,GIT
 npm run test:e2e:requirements -- --keep   # 保留隔离 userData 便于排查
+npm run test:e2e:requirements -- --run-skipped  # 临时执行 skip 用例
 ```
 
-已代码化（17 条）：
+已代码化（22 条）：
 
 | 自动化 ID | 对应用例 |
 |---|---|
@@ -427,5 +428,10 @@ npm run test:e2e:requirements -- --keep   # 保留隔离 userData 便于排查
 | CH-02 | 纠偏回执 pending → injected |
 | CH-04 | 已确认任务消息只记录 |
 | WT-01 | git 项目 run 使用 harness worktree 并显示 |
+| WK-06 | Wiki 自动保存 / 回收站恢复（fake 页面） |
+| PV-06 | 预览控制：地址栏/前进后退/设备/缩放/查找 |
+| WT-06 | worktree 策略 never / Scene always |
+| FG-03 | Git API：status/diff/stage/commit/log |
+| E2E-01 | 普通 TODO 广播给两个 Agent（独立 run/worktree） |
 
-暂未代码化（保留手工或等优化完成）：PV-06、WK-06、E2E-01、E2E-03、E2E-05。SCENE / TASK / CHAT / WORKTREE 已接 fake ACP 或临时项目；WK-06 已写代码但暂 skip，等 Wiki 插件并行优化稳定后启用；E2E 仍需真实模型长流程或 Mission 夹具。
+暂未代码化（保留手工）：E2E-03（Mission 审批/子任务长流程）、E2E-05（Wiki 生成/审核/提问）。这两条依赖真实模型或 Mission 夹具，继续保留手工 E2E。

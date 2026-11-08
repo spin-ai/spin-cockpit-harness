@@ -4,6 +4,7 @@
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 
 const THEMES = ["system", "light", "paper", "vslight", "dark", "vsdark", "midnight", "forest", "graphite", "monokai", "onedark", "solarized", "dracula"];
@@ -334,15 +335,14 @@ export const TESTS = [
   {
     id: "WK-06",
     group: "WIKI",
-    skip: "Wiki 插件仍在并行优化，pluginInvoke 方法注册偶发不可用；优化完成后启用",
     title: "Wiki 自动保存 + 删除 → 回收站 → 恢复",
     async fn(ctx) {
       await gotoRail(ctx, "Wiki", ".notes-page");
-      const title = `E2E Autosave ${Date.now()}`;
       const marker = `autosave-${Date.now()}`;
-      await ctx.ev(`window.prompt=()=>${JSON.stringify(title)}; true`);
       await ctx.ev(`(()=>{const b=document.querySelector(".notes-tab-add"); if(b) window.__e2e.click(b); return true;})()`);
       await ctx.sleep(800);
+      const title = await ctx.ev(`document.querySelector(".notes-title-input")?.value || ""`);
+      assert(title.length > 0, "新建页面没有标题输入框");
       await ctx.ev(`document.querySelector(".cm-content")?.focus(); true`);
       await ctx.send("Input.insertText", { text: marker });
       await ctx.sleep(2200);
@@ -360,6 +360,162 @@ export const TESTS = [
       await ctx.sleep(300);
       const restored = await ctx.ev(`window.harness.action("pluginInvoke",{pluginId:"ai.cockpit.notes",method:"wiki.list",args:{}}).then(r=>r.result)`);
       assert((restored.pages || []).some((p) => p.title === title), "回收站恢复失败");
+    },
+  },
+  {
+    id: "PV-06",
+    group: "PREVIEW",
+    title: "预览：地址栏 / 前进后退 / 设备宽度 / 缩放 / 页内查找",
+    async fn(ctx) {
+      const server = http.createServer((_req, res) => {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end("<!doctype html><html><body><h1>E2E Preview</h1><p>preview body</p></body></html>");
+      });
+      await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const url = `http://127.0.0.1:${server.address().port}/`;
+      const oldHome = (await ctx.state()).settings.previewHomeUrl;
+      try {
+        await openWorkspace(ctx);
+        // 先关掉已有终端/文件预览标签，避免 showPreview 复用文件预览而不是设置里的 URL
+        for (let i = 0; i < 8; i += 1) {
+          const closed = await ctx.ev(`(()=>{const b=document.querySelector(".term-tab.on .term-close") || document.querySelector(".term-tab .term-close"); if(!b) return false; window.__e2e.click(b); return true;})()`);
+          if (!closed) break;
+          await ctx.sleep(150);
+        }
+        await ctx.action("setSettings", { previewHomeUrl: url });
+        await ctx.sleep(450);
+        await ctx.ev(`window.dispatchEvent(new Event("harness:open-preview")); true`);
+        const ready = await ctx.ev(`(async()=>await window.__e2e.until(() => {
+          const surface=document.querySelector(".preview-surface");
+          return !!(surface && surface.querySelector(".preview-surface-bar"));
+        }, 8000))()`);
+        assert(ready, "预览标签未打开");
+        const controls = await ctx.ev(`(()=>({
+          address: document.querySelector(".preview-surface-address")?.value || "",
+          devices: [...document.querySelectorAll(".preview-device option")].map((o) => o.textContent),
+          back: !!document.querySelector('button[title="后退"]'),
+          forward: !!document.querySelector('button[title="前进"]'),
+          find: !!document.querySelector('button[title="页内查找"]'),
+          devtools: !!document.querySelector('button[title="开发者工具"]'),
+          external: !!document.querySelector('button[title="在系统浏览器打开"]'),
+          zoom: !!document.querySelector(".preview-zoom"),
+        }))()`);
+        assert(controls.address.includes(url), `地址栏=${controls.address}`);
+        assert(controls.devices.length === 3, `设备宽度选项=${controls.devices.length}`);
+        assert(controls.back && controls.forward, "前进/后退按钮缺失");
+        assert(controls.find && controls.devtools && controls.external && controls.zoom, "预览控制按钮不完整");
+        const before = await ctx.ev(`document.querySelector(".preview-zoom-value")?.textContent || ""`);
+        await ctx.ev(`(()=>{const b=[...document.querySelectorAll(".preview-zoom button")].find((x)=>x.textContent.includes("＋")); if(b) window.__e2e.click(b); return true;})()`);
+        await ctx.sleep(200);
+        const after = await ctx.ev(`document.querySelector(".preview-zoom-value")?.textContent || ""`);
+        assert(before !== after, `缩放没有变化: ${before}`);
+        await ctx.ev(`(()=>{const b=document.querySelector('button[title="页内查找"]'); if(b) window.__e2e.click(b); return true;})()`);
+        await ctx.sleep(200);
+        assert(await ctx.ev(`!!document.querySelector(".preview-find")`), "页内查找面板未打开");
+      } finally {
+        await ctx.action("setSettings", { previewHomeUrl: oldHome }).catch(() => {});
+        await new Promise((resolve) => server.close(resolve));
+      }
+    },
+  },
+  {
+    id: "WT-06",
+    group: "WORKTREE",
+    skip: process.platform === "win32" ? "fake ACP 仅 POSIX" : undefined,
+    title: "worktree 策略：never 原地 / Scene always 覆盖",
+    async fn(ctx) {
+      const dir = makeProject(ctx, "wt-policy", { "README.md": "# Policy\n" }, true);
+      await ctx.action("addProject", { path: dir, name: "E2E Policy" });
+      await ctx.sleep(400);
+      const s = await ctx.state();
+      const project = s.projects.find((p) => p.path === dir);
+      assert(project, "项目未添加");
+      await ctx.action("switchProject", { id: project.id });
+      await ctx.sleep(300);
+      try {
+        await ctx.action("setSettings", { worktreeMode: "never" });
+        const setup = await setupFakeAgent(ctx, project.id);
+        const first = await dispatch(ctx, setup, `policy-never-${Date.now()}`);
+        const { value: run1 } = await waitForState(ctx, (st) => st.runs.find((r) => r.todoId === first.todoId && r.cwd), 12000);
+        assert(run1.cwd === dir, `never 策略仍建了 worktree: ${run1.cwd}`);
+        assert(!run1.branch, `never 策略不该有分支: ${run1.branch}`);
+        await ctx.action("stop", { runId: run1.id });
+
+        await ctx.action("saveScene", { projectId: project.id, text: "worktree: always\nruntime: auto\nconcurrency: 1" });
+        await ctx.sleep(200);
+        const thread = await ctx.action("newThread", { projectId: project.id });
+        await ctx.action("setThreadAgent", { threadId: thread.id, agentId: setup.agent.id });
+        const second = await dispatch(ctx, { ...setup, thread }, `policy-always-${Date.now()}`);
+        const { value: run2 } = await waitForState(ctx, (st) => st.runs.find((r) => r.todoId === second.todoId && r.cwd && r.cwd !== dir), 12000);
+        assert(String(run2.branch || "").startsWith("harness/"), `Scene always 未建分支: ${run2.branch}`);
+        await ctx.action("stop", { runId: run2.id });
+        await ctx.action("cleanupWorktree", { runId: run2.id });
+      } finally {
+        await ctx.action("setSettings", { worktreeMode: "auto" }).catch(() => {});
+      }
+    },
+  },
+  {
+    id: "FG-03",
+    group: "FILES",
+    title: "Git API：status / diff / stage / commit / log",
+    async fn(ctx) {
+      const dir = makeProject(ctx, "git-api", { "README.md": "# Git API\n" }, true);
+      await ctx.action("addProject", { path: dir, name: "E2E Git" });
+      await ctx.sleep(400);
+      const s = await ctx.state();
+      const project = s.projects.find((p) => p.path === dir);
+      assert(project, "项目未添加");
+      await ctx.action("switchProject", { id: project.id });
+      fs.writeFileSync(path.join(dir, "README.md"), "# Git API\n\nchanged-body\n");
+      const status = await ctx.ev(`window.harness.gitStatus(${JSON.stringify(dir)})`);
+      assert(status.isRepo, "gitStatus 不是仓库");
+      assert((status.files || []).some((f) => f.path === "README.md" && !f.staged), "status 没看到 README 改动");
+      const diff = await ctx.ev(`window.harness.gitDiff(${JSON.stringify(dir)}, "README.md", false)`);
+      assert(String(diff.diff || "").includes("changed-body"), "diff 没包含改动");
+      await ctx.ev(`window.harness.gitStage(${JSON.stringify(dir)}, ["README.md"])`);
+      const staged = await ctx.ev(`window.harness.gitStatus(${JSON.stringify(dir)})`);
+      assert((staged.files || []).some((f) => f.path === "README.md" && f.staged), "stage 后文件未暂存");
+      const commit = await ctx.ev(`window.harness.gitCommit(${JSON.stringify(dir)}, "e2e git commit")`);
+      assert(commit.ok !== false, `commit 失败: ${commit.error || commit.output || ""}`);
+      const clean = await ctx.ev(`window.harness.gitStatus(${JSON.stringify(dir)})`);
+      assert((clean.files || []).length === 0, `commit 后工作区不干净: ${JSON.stringify(clean.files)}`);
+      const log = await ctx.ev(`window.harness.gitLog(${JSON.stringify(dir)})`);
+      assert((log.commits || []).some((c) => c.subject === "e2e git commit"), "git log 没看到提交");
+    },
+  },
+  {
+    id: "E2E-01",
+    group: "E2E",
+    skip: process.platform === "win32" ? "fake ACP 仅 POSIX" : undefined,
+    title: "普通 TODO 广播给两个 Agent：独立 run / worktree",
+    async fn(ctx) {
+      const dirA = makeProject(ctx, "multi-a", { "README.md": "# A\n" }, true);
+      const dirB = makeProject(ctx, "multi-b", { "README.md": "# B\n" }, true);
+      await ctx.action("addProject", { path: dirA, name: "E2E Multi A" });
+      await ctx.sleep(350);
+      let s = await ctx.state();
+      const pA = s.projects.find((p) => p.path === dirA);
+      const pB = s.projects.find((p) => p.path === dirB) || (await ctx.action("addProject", { path: dirB, name: "E2E Multi B" }));
+      assert(pA && pB, "多 Agent 项目未添加");
+      await ctx.action("switchProject", { id: pA.id });
+      await ctx.sleep(250);
+      await ctx.action("setSettings", { dshBinary: ctx.fakeDsh, maxConcurrentRuns: 4, approvalPolicy: "allow" });
+      const agentA = await ctx.action("createAgent", { cli: "dsh", projectId: pA.id });
+      const agentB = await ctx.action("createAgent", { cli: "dsh", projectId: pB.id });
+      assert(agentA.id !== agentB.id, "两个项目应生成不同 Agent");
+      const todo = await ctx.action("createTodo", { title: `multi-${Date.now()}`, cwd: dirA, agentId: agentA.id });
+      await ctx.action("broadcast", { id: todo.id, agentIds: [agentA.id, agentB.id] });
+      const { value: runs } = await waitForState(ctx, (st) => {
+        const list = st.runs.filter((r) => r.todoId === todo.id && r.cwd);
+        return list.length >= 2 ? list : null;
+      }, 15000);
+      assert(new Set(runs.map((r) => r.agentId)).size >= 2, "广播没有生成两个 Agent 的 run");
+      assert(new Set(runs.map((r) => r.cwd)).size >= 2, "两个 run 没有独立 worktree");
+      await ctx.action("stop", { runId: runs[0].id });
+      await ctx.action("stop", { runId: runs[1].id });
+      await ctx.action("cleanupWorktree", { runId: runs[0].id }).catch(() => {});
+      await ctx.action("cleanupWorktree", { runId: runs[1].id }).catch(() => {});
     },
   },
   {
@@ -518,19 +674,9 @@ export const TESTS = [
       await ctx.action("cleanupWorktree", { runId: run.id });
     },
   },
-  {
-    id: "PV-06",
-    group: "PREVIEW",
-    skip: "需要 dev server / 多预览夹具；先保留手工用例",
-    title: "预览浏览器控制 / 设备宽度 / 多预览",
-  },
 ,
-  {
-    id: "E2E-01",
-    group: "E2E",
-    skip: "依赖真实 ACP 模型与长流程；保留为手工 E2E",
-    title: "多项目 × 多 Agent 全链路",
-  },
+,
+,
   {
     id: "E2E-03",
     group: "E2E",
