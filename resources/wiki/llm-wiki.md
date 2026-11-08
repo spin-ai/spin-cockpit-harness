@@ -127,3 +127,13 @@ wiki.dream
 - **LLM Wiki**：Wiki 负责“把做过的事沉淀成可检索、可审核的知识”。
 
 三者共用同一套本地数据：任务、run、消息、Wiki、插件都在同一个工作台里。
+
+
+## 存储：索引 + 分片
+
+- `wiki-index.json`：页面 / 资料的轻量 metadata、引用、审核、收藏、最近、日志。
+- `pages/<id>.md`、`sources/<id>.txt`：正文按 ID 分片；列表只读 metadata，打开单页才读对应分片。
+- `wiki-search.json`：搜索索引，只在搜索 / 问 Wiki / 反链时读取。
+- `revisions/<pageId>.ndjson`：修订历史单独追加，不进入索引。
+- `wiki-trash.json`：回收站 metadata；删除时保留正文分片，恢复不丢内容，彻底删除才移除。
+- 旧 `wiki.json` 首次启动自动迁移为 `wiki.json.bak`。

@@ -24,6 +24,7 @@
 - **分配预览 / 纯聊天 / 全局进展**：Chat 派活前建议、只聊会话、可选范围的进展 dock
 - **场景与 worktree 策略**：`worktree: auto | always | never`，项目 Scene 覆盖全局；任务行可打开 / 清理 worktree
 - **Mission terminal child**：Mission 子任务可使用终端 Agent，退出后结算 delegation
+- **Wiki 存储拆分**：`wiki-index.json` 轻量 metadata + `pages/<id>.md` / `sources/<id>.txt` 正文分片 + `wiki-search.json` 搜索索引；单页按需读，旧 `wiki.json` 自动迁移并保留 `.bak`；1000 页面实测 list 23ms / search 5ms / 单页 1ms
 - **Wiki 增强**：问 Wiki（本地检索抽句 + 引用）、收藏 / 最近、标签筛选、`#tag` 点击、双链 hover / 红链创建 / 反链上下文 / unlinked mentions / 图谱筛选、Markdown/PDF 导出、全量本地导入
 - **快速记录独立小窗**：`⌘⇧K` 不切主窗口，剪贴板预填，直接存为 draft
 - **统计 / 设置 / 数据迁移**：统计按 runtime 分组；设置增加 worktree 默认与 Runtime 视图；新增 `scenes` / `terminals` 表与 run 的 runtime / worktree_cleaned 迁移

@@ -240,12 +240,18 @@ function loadSearchSync() {
     const raw = JSON.parse(fsSync.readFileSync(searchFile(), "utf8"));
     if (Array.isArray(raw) && !searchDirty) searchCache = raw;
   } catch { /* missing */ }
-  if (!searchCache || searchDirty) buildSearchCacheFromShards();
+  if (!searchCache || searchDirty) {
+    buildSearchCacheFromShards();
+    try { fsSync.mkdirSync(ctx.dataDir, { recursive: true }); writeAtomic(searchFile(), JSON.stringify(searchCache)); searchDirty = false; } catch { /* next persist retries */ }
+  }
   if (!backlinkIndex) rebuildBacklinkIndex();
   return searchCache;
 }
 
 function updateSearchEntry(kind, item) {
+  if (!searchCache) {
+    try { loadSearchSync(); } catch { searchDirty = true; }
+  }
   if (!searchCache) { searchDirty = true; return; }
   const entry = searchEntry(kind, item);
   const idx = searchCache.findIndex((x) => x.kind === kind && x.id === item.id);

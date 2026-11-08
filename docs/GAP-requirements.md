@@ -3,7 +3,7 @@
 > 基于 `REQ-modules-original.md` 的第一轮确认，只列**当前代码还需要改什么**。
 > P0 = 阻塞主流程；P1 = 体验/效率；P2 = 后续。已实现项不重复列。
 
-**状态**：本清单已全部落地；仅「更多 Chat 执行适配器」和「1000 页面性能」保留为后续（前者按需，后者需要把单文件 JSON 拆成索引/分片）。问 Wiki 目前是**本地检索抽句**，未接外部模型，因此不会上传整库。
+**状态**：本清单已全部落地；仅「更多 Chat 执行适配器」保留为后续（按需）。Wiki 已拆为 `wiki-index.json` + `pages/` / `sources/` 正文分片 + `wiki-search.json` 搜索索引；实测 1000 页面 list 23ms、search 5ms、单页读取 1ms。问 Wiki 目前是**本地检索抽句**，未接外部模型，因此不会上传整库。
 
 ---
 
@@ -145,8 +145,8 @@
   hover 预览、红链创建、反链上下文、unlinked mentions、图谱节点跳转/按类型过滤。
   位置：`Notes.tsx`、`plugins/notes/main.mjs`
 
-- [ ] **P1 迁移与规模（1000 页面性能待做）**
-  已完成：整批导入、导出 Markdown / PDF。待做：1000 页面下列表与搜索 <200ms（当前 wiki.json 全量读入）。
+- [x] **P1 迁移与规模（索引 / 分片）**
+  整批导入、导出 Markdown / PDF；Wiki 存储拆成轻量索引 + 正文分片 + 搜索索引，1000 页面实测 list 23ms / search 5ms / 单页 1ms。
   位置：`plugins/notes/main.mjs`、`Notes.tsx`
 
 ---
