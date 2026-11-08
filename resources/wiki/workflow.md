@@ -27,6 +27,13 @@ send(threadId, text)
 
 如果消息里带 `@别名`，就路由到对应 Agent 或项目；如果从预览里拾取了元素，则把结构化界面上下文一起带进 prompt。
 
+## 两种执行方式
+
+- `dsh` 走 ACP：结构化流、审批、纠偏回执。
+- `pi / claude / codex / opencode` 走真实 pty：Chat 派活后自动打开终端标签，在 worktree 里启动 CLI；后续消息直接写进同一个 pty，输出在终端里。
+
+Mission / supervisor 强制 ACP。终端模式以 pty 退出作为本轮 run 的结束信号。
+
 ## 任务生命周期
 
 ```text

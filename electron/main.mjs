@@ -72,10 +72,10 @@ function remoteDshBin() {
 // 其他 CLI 仍是「终端专用」，不静默回退到 dsh，避免选 pi 实际跑 dsh。
 const EXECUTORS = [
   { id: "dsh", label: "dsh · ACP", kind: "acp", implemented: true, supportsSteer: true },
-  { id: "pi", label: "pi · 终端专用", kind: "native", implemented: false, supportsSteer: false },
-  { id: "claude", label: "claude · 终端专用", kind: "native", implemented: false, supportsSteer: false },
-  { id: "codex", label: "codex · 终端专用", kind: "native", implemented: false, supportsSteer: false },
-  { id: "opencode", label: "opencode · 终端专用", kind: "native", implemented: false, supportsSteer: false },
+  { id: "pi", label: "pi · 终端", kind: "native", implemented: false, supportsSteer: false },
+  { id: "claude", label: "claude · 终端", kind: "native", implemented: false, supportsSteer: false },
+  { id: "codex", label: "codex · 终端", kind: "native", implemented: false, supportsSteer: false },
+  { id: "opencode", label: "opencode · 终端", kind: "native", implemented: false, supportsSteer: false },
 ];
 
 function executorFor(agentOrCli) {
@@ -83,16 +83,43 @@ function executorFor(agentOrCli) {
   return EXECUTORS.find((e) => e.id === cli) || null;
 }
 
+function cliAvailable(cli) {
+  const id = String(cli || "").trim().toLowerCase();
+  return Boolean(executorList().find((e) => e.id === id)?.available || (store.state.cliCapabilities || []).includes(id));
+}
+
+/**
+ * Chat 的执行方式：
+ * - dsh 走 ACP（结构化流 / 审批 / 纠偏回执）
+ * - 其他终端原生 CLI（pi / claude / codex / opencode）走 pty
+ * - supervisor / Mission 强制 ACP，不能混用
+ */
+function chatRuntimeOf(agent) {
+  if (!agent) return null;
+  const explicit = agent.chatRuntime === "acp" || agent.chatRuntime === "terminal" ? agent.chatRuntime : null;
+  if ((agent.role || "worker") === "supervisor") return "acp";
+  if (explicit) return explicit;
+  return String(agent.cli || "").trim().toLowerCase() === "dsh" ? "acp" : "terminal";
+}
+
 function chatRunnable(agent) {
-  return Boolean(agent && executorFor(agent)?.implemented);
+  if (!agent) return false;
+  if (chatRuntimeOf(agent) === "terminal") return cliAvailable(agent.cli);
+  return Boolean(executorFor(agent)?.implemented);
 }
 
 function chatAgentError(agent) {
   if (!agent) return "未选择 Agent";
+  const runtime = chatRuntimeOf(agent);
+  const host = store.state.hosts.find((h) => h.id === agent.hostId);
+  if (runtime === "terminal") {
+    if (host?.kind === "ssh") return "终端模式暂不支持远端 Agent；请改用 ACP 或本机 Agent。";
+    if (!cliAvailable(agent.cli)) return `未检测到可用的 ${agent.cli}：请先安装，或在设置 → 执行里配置可执行文件路径。`;
+    return null;
+  }
   const executor = executorFor(agent);
   if (!executor) return `Agent「${agent.name}」的 CLI「${agent.cli}」还没有 Chat 执行适配器；目前只有 dsh 可以从 Chat 派活。`;
   if (!executor.implemented) return `「${agent.cli}」还没有接入 Chat 执行适配器；目前只有 dsh 可以从 Chat 派活，其他 CLI 请在终端里运行。`;
-  const host = store.state.hosts.find((h) => h.id === agent.hostId);
   if (host?.kind !== "ssh" && !executorList().find((e) => e.id === executor.id)?.available) {
     return `未检测到可用的 ${executor.id}：请先安装，或在设置 → 执行里配置可执行文件路径。`;
   }
@@ -113,8 +140,12 @@ function defaultChatAgent(projectId = store.state.activeProjectId) {
   const preferred = pickChatAgent(store.state.settings?.defaultAgentId);
   if (preferred && (preferred.role || "worker") !== "supervisor") return preferred;
   const runnable = store.state.agents.filter((a) => chatRunnable(a) && (a.role || "worker") !== "supervisor");
-  // 不跨项目兜底：当前项目没有可用 Agent 时，让用户显式纳管
-  return runnable.find((a) => a.projectId === projectId) || runnable.find((a) => !a.projectId) || null;
+  // 默认优先 ACP（有结构化回执），没有 ACP 时才用终端 Agent。
+  return runnable.find((a) => chatRuntimeOf(a) === "acp" && a.projectId === projectId)
+    || runnable.find((a) => chatRuntimeOf(a) === "acp" && !a.projectId)
+    || runnable.find((a) => a.projectId === projectId)
+    || runnable.find((a) => !a.projectId)
+    || null;
 }
 function defaultSupervisorAgent(projectId = store.state.activeProjectId) {
   return store.state.agents.find((a) => a.role === "supervisor" && chatRunnable(a) && (!a.projectId || a.projectId === projectId))
@@ -326,6 +357,27 @@ function openDelegations(missionId) {
 
 // 纠偏投递：pending → injected / failed，失败不再伪装成“已注入”
 function deliverSteer({ thread, todo, run, messageId, text }) {
+  // 终端 Agent：没有 ACP handle，直接把纠正写进同一个 pty。
+  if (run.terminalId) {
+    const term = terminals.get(run.terminalId);
+    if (!term) {
+      store.updateMessage(messageId, { delivery: "failed" });
+      store.addMessage(thread.id, run.id, "system", "error", "投递失败：终端已关闭。可等任务结束后重发。");
+      return "failed";
+    }
+    try {
+      const payload = String(text || "").replace(/\r?\n/g, "\r");
+      term.write(payload.endsWith("\r") ? payload : `${payload}\r`);
+      const current = store.state.messages.find((m) => m.id === messageId);
+      if (current && current.delivery === "pending") store.updateMessage(messageId, { delivery: "injected", injected: true });
+      store.addEvent("run.message", `run.message terminal ${todo.key}`);
+      return "injected";
+    } catch (err) {
+      store.updateMessage(messageId, { delivery: "failed" });
+      store.addEvent("run.steer_failed", `run.steer_failed terminal ${todo.key} ${String(err?.message || err).slice(0, 160)}`);
+      return "failed";
+    }
+  }
   const handle = active.get(run.id);
   if (!handle) {
     store.updateMessage(messageId, { delivery: "failed" });
@@ -381,7 +433,7 @@ function snapshot() {
     todoLinks: store.state.todoLinks || [],
     settings: store.state.settings || { ...DEFAULT_SETTINGS },
     // 只给渲染层：哪些 Agent 真的能从 Chat 派活（executor 已接入）
-    agents: store.state.agents.map((a) => ({ ...a, chatRunnable: chatRunnable(a) })),
+    agents: store.state.agents.map((a) => ({ ...a, chatRunnable: chatRunnable(a), chatRuntime: chatRuntimeOf(a) })),
     executors: executorList(),
     dbPath: store.file,
     userDataPath: app.getPath("userData"),
@@ -2272,9 +2324,11 @@ const actions = {
     const id = String(cli || "").trim().toLowerCase();
     const executor = EXECUTORS.find((e) => e.id === id);
     if (!executor) throw new Error(`未知 CLI：${cli}`);
-    if (!executor.implemented) throw new Error(`${executor.id} 还没有接入 Chat 执行适配器；请在终端里运行，或选择 dsh`);
+    const runtime = id === "dsh" ? "acp" : "terminal";
+    if (runtime === "acp" && !executor.implemented) throw new Error(`${executor.id} 还没有接入 Chat 执行适配器；请在终端里运行，或选择 dsh`);
     if (!executorList().find((e) => e.id === executor.id)?.available) throw new Error(`未检测到可用的 ${executor.id}：请先安装，或在设置 → 执行里配置可执行文件路径`);
     const safeRole = role === "supervisor" ? "supervisor" : "worker";
+    if (safeRole === "supervisor" && runtime !== "acp") throw new Error("主管只能使用 ACP Agent（dsh）");
     if (safeRole === "supervisor" && !store.state.settings?.superAgentEnabled) throw new Error("Super Agent 已关闭，请先在设置 → 执行中打开");
     const pid = projectId || store.state.activeProjectId;
     const project = store.state.projects.find((p) => p.id === pid) || activeProject();
@@ -2291,11 +2345,11 @@ const actions = {
       hostId: "h-local", cli: executor.id, cwd: project?.path || workspaceRoot,
       max: 1, approval: "ask", skills: [], color: PROJECT_COLORS[store.state.agents.length % PROJECT_COLORS.length],
       alias: uniqueAgentAlias(safeRole === "supervisor" ? "lead" : executor.id, pid), projectId: pid || null, terminalId: "",
-      role: safeRole, instructions: String(instructions || "").slice(0, 4000),
+      role: safeRole, chatRuntime: runtime, instructions: String(instructions || "").slice(0, 4000),
       maxChildren: Math.max(1, Math.min(12, Number(maxChildren) || 4)),
     };
     store.state.agents.push(agent);
-    store.addEvent("agent.created", `agent.created ${agent.name} @${agent.alias} (${executor.id}/${safeRole})`);
+    store.addEvent("agent.created", `agent.created ${agent.name} @${agent.alias} (${executor.id}/${safeRole}/${runtime})`);
     return agent;
   },
   updateAgent: ({ id, role, instructions, maxChildren }) => {
@@ -2484,6 +2538,21 @@ const actions = {
       thread.project = cwd;
       thread.updatedAt = now();
       store.addEvent("todo.created", `todo.created ${todo.key} ${mention ? `via @${mention}` : "via element"}`);
+      // 终端 Agent：Chat 只负责派活，真正的工作发生在 pty 里；renderer 拿到参数后创建终端标签。
+      if (chatRuntimeOf(mentionAgent) === "terminal") {
+        const worktree = prepareWorktree({ cwd, todoKey: todo.key, runId: `chat-${Date.now().toString(36)}` });
+        const terminalCwd = worktree.cwd || cwd;
+        if (worktree.created) store.addEvent("run.worktree", `run.worktree ${terminalCwd} @ ${worktree.branch}`);
+        else if (worktree.error) store.addEvent("run.worktree", `worktree skipped: ${worktree.error}`);
+        store.addMessage(thread.id, null, "system", "system", `派活到终端 · ${mentionAgent.name}`);
+        return {
+          mode: "terminal", threadId: thread.id, todoId: todo.id,
+          cwd: terminalCwd, branch: worktree.branch || null,
+          command: mentionAgent.cli, projectId: project?.id || null, agentId: mentionAgent.id,
+          title: todo.title,
+          prompt: context ? `${value}\n\n${formatContext(context, contextDetail())}` : value,
+        };
+      }
       const run = queueRun(todo, mentionAgent, "chat");
       // 把这条消息绑定到本轮 run，startRun 才能收集到它的 context
       store.updateMessage(userMsg.id, { runId: run.id });
@@ -2528,6 +2597,19 @@ const actions = {
     boundTodo.agentId = agent.id;
     thread.agentId = agent.id;
     thread.updatedAt = now();
+    if (chatRuntimeOf(agent) === "terminal") {
+      const worktree = prepareWorktree({ cwd: boundTodo.cwd || agent.cwd || workspaceRoot, todoKey: boundTodo.key, runId: `chat-${Date.now().toString(36)}` });
+      const terminalCwd = worktree.cwd || boundTodo.cwd || agent.cwd || workspaceRoot;
+      if (worktree.created) store.addEvent("run.worktree", `run.worktree ${terminalCwd} @ ${worktree.branch}`);
+      else if (worktree.error) store.addEvent("run.worktree", `worktree skipped: ${worktree.error}`);
+      return {
+        mode: "terminal", threadId: thread.id, todoId: boundTodo.id,
+        cwd: terminalCwd, branch: worktree.branch || null,
+        command: agent.cli, projectId: boundTodo.projectId || thread.projectId || null, agentId: agent.id,
+        title: boundTodo.title,
+        prompt: context ? `${value}\n\n${formatContext(context, contextDetail())}` : value,
+      };
+    }
     const isMissionTodo = isMission(boundTodo);
     const run = queueRun(boundTodo, agent, isMissionTodo ? "mission" : "chat", null, isMissionTodo ? "supervisor" : "worker");
     store.updateMessage(userMsg.id, { runId: run.id });
@@ -3262,12 +3344,14 @@ function settleTerminalRun(info, status) {
   broadcast();
 }
 
-ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, cols, rows } = {}) => {
+ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, agentId, branch, initialInput, cols, rows } = {}) => {
   const id = `term-${Date.now().toString(36)}`;
   const settings = store.state.settings || {};
   const shell = settings.shellPath || (process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/zsh");
   const fallbackShell = process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/zsh";
   const cwdResolved = cwd || activeProjectPath();
+  const existingAgent = agentId ? store.state.agents.find((a) => a.id === agentId) || null : null;
+  const commandToRun = String(command || existingAgent?.cli || "").trim();
   const spawnOptions = {
     name: "xterm-256color",
     cols: Math.max(20, Math.min(500, Number(cols) || 120)),
@@ -3275,30 +3359,33 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
     cwd: cwdResolved,
     env: { ...process.env, TERM: "xterm-256color" },
   };
-  const spawnArgs = command ? [] : (process.platform === "win32" ? [] : ["-l"]);
+  const spawnArgs = commandToRun ? [] : (process.platform === "win32" ? [] : ["-l"]);
   let term;
   try {
-    term = pty.spawn(command || shell, spawnArgs, spawnOptions);
+    term = pty.spawn(commandToRun || shell, spawnArgs, spawnOptions);
   } catch (err) {
-    if (command) throw err;
+    if (commandToRun) throw err;
     store.addEvent("terminal.shell_fallback", `terminal.shell_fallback ${shell} → ${fallbackShell}: ${String(err?.message || err).slice(0, 120)}`);
     // cwd 可能已被删除（worktree 清理等）：回落到项目根目录，避免终端直接起不来
     let safeCwd = cwdResolved;
     try { fs.accessSync(safeCwd); } catch { safeCwd = activeProjectPath(); }
     term = pty.spawn(fallbackShell, spawnArgs, { ...spawnOptions, cwd: safeCwd });
   }
-  let agent = null;
+  let agent = existingAgent;
   let run = null;
-  if (command) {
+  if (commandToRun) {
     const pid = projectId || store.state.activeProjectId;
     const project = store.state.projects.find((p) => p.id === pid) || activeProject();
-    agent = {
-      id: store.nextId("ag"), name: `${project?.name || "project"} · ${command}`, hostId: "h-local",
-      cli: command, cwd: cwdResolved, max: 1, approval: "ask", skills: [], color: "teal",
-      alias: uniqueAgentAlias(command, pid), projectId: pid, terminalId: id,
-    };
-    store.state.agents.push(agent);
-    store.addEvent("agent.started", `agent.started ${agent.name} @${agent.alias}`);
+    if (!agent) {
+      agent = {
+        id: store.nextId("ag"), name: `${project?.name || "project"} · ${commandToRun}`, hostId: "h-local",
+        cli: commandToRun, cwd: cwdResolved, max: 1, approval: "ask", skills: [], color: "teal",
+        alias: uniqueAgentAlias(commandToRun, pid), projectId: pid, terminalId: id,
+        role: "worker", chatRuntime: commandToRun === "dsh" ? "acp" : "terminal",
+      };
+      store.state.agents.push(agent);
+      store.addEvent("agent.started", `agent.started ${agent.name} @${agent.alias}`);
+    }
     // 绑定到选中的任务：TODO 列表才能显示「运行中」和计时，项目面板的并发/运行数也才有来源。
     const todo = todoId ? store.state.todos.find((t) => t.id === todoId) : null;
     if (todo) {
@@ -3306,13 +3393,13 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
         id: store.nextId("r"), todoId: todo.id, agentId: agent.id, status: "running",
         trigger: "terminal", kind: "worker", delegationId: null,
         startedAt: Date.now(), endedAt: null, cost: 0, tokens: null, error: null, parentRunId: null,
-        cwd: cwdResolved, branch: null, hostId: agent.hostId || null, createdAt: Date.now(),
+        cwd: cwdResolved, branch: branch || null, hostId: agent.hostId || null, createdAt: Date.now(),
         tokensIn: null, tokensOut: null, usageSource: "unknown", errorClass: null, exitCode: null,
         queueWaitMs: 0, durationMs: null, queueReason: null, terminalId: id,
       };
       store.state.runs.push(run);
       todo.status = "in_progress";
-      todo.agentId = todo.agentId || agent.id;
+      todo.agentId = agent.id;
       todo.lastRunFailed = false;
       todo.updatedAt = Date.now();
       store.addEvent("run.started", `run.started terminal todo=${todo.key} agent=${agent.name}`);
@@ -3348,6 +3435,14 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
     settleTerminalRun(info, status);
   });
   terminals.set(id, term);
+  if (initialInput) {
+    const payload = String(initialInput).replace(/\r?\n/g, "\r");
+    setTimeout(() => {
+      const live = terminals.get(id);
+      if (!live) return;
+      try { live.write(payload.endsWith("\r") ? payload : `${payload}\r`); } catch { /* ignore */ }
+    }, 1500);
+  }
   return { id, cwd: cwdResolved, agent, run };
 });
 

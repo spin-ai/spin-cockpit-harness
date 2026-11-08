@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import type { Delegation, ElementContext, Message, MissionPlanRecord, State, Thread, Todo } from "../types";
 import { RUN_STATUS, STATUS, activeRun, agentOf, duration, lastRun, missingKeyInfo, timeAgo } from "../ui";
 import { ChevronRightIcon, PanelCollapseIcon, SendIcon } from "./Icons";
+import { requestTerminalAdopt } from "../terminal-events";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 type ModelOption = { value: string; name: string; group?: string };
@@ -292,6 +293,23 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
     if (context) onClearContext();
     stickRef.current = true;
     atBottomRef.current = true;
+    if (res.mode === "terminal") {
+      try {
+        const created = await window.harness.createTerminal(res.cwd, {
+          command: res.command,
+          projectId: res.projectId,
+          todoId: res.todoId,
+          agentId: res.agentId,
+          branch: res.branch,
+          initialInput: res.prompt,
+          cols: 120,
+          rows: 32,
+        });
+        requestTerminalAdopt({ terminalId: created.id, cwd: created.cwd, title: res.title, taskId: res.todoId });
+      } catch (err) {
+        window.dispatchEvent(new CustomEvent("harness:toast", { detail: `终端启动失败：${String((err as Error)?.message || err)}` }));
+      }
+    }
     if (res.todoId) onSelect(res.todoId);
     if (res.view) window.dispatchEvent(new CustomEvent("harness:view", { detail: res.view }));
     textRef.current?.focus();
@@ -309,7 +327,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
     if (!mentionMatch) return [];
     const query = mentionMatch[1].toLowerCase();
     return [
-      ...state.agents.map((a) => ({ kind: "agent", alias: a.alias || a.name, label: a.name, note: isRunnable(a) ? "" : " · 终端专用" })),
+      ...state.agents.map((a) => ({ kind: "agent", alias: a.alias || a.name, label: a.name, note: isRunnable(a) ? (a.chatRuntime === "terminal" ? " · 终端" : "") : " · 未安装" })),
       ...state.projects.map((p) => ({ kind: "project", alias: p.alias, label: p.name, note: "" })),
     ].filter((x) => x.alias.toLowerCase().startsWith(query));
   }, [mentionMatch?.[1], state.agents, state.projects]);
@@ -349,9 +367,10 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
           : queuedRun
             ? "queue"
             : "run";
-  const sendLabel = blocked ? "发送" : baseMode === "dispatch" ? "派活" : baseMode === "steer" ? "纠偏" : baseMode === "run" ? "发送并运行" : "发送";
+  const terminalDispatch = !todo && dispatchAgent?.chatRuntime === "terminal";
+  const sendLabel = blocked ? "发送" : baseMode === "dispatch" ? (terminalDispatch ? "终端派活" : "派活") : baseMode === "steer" ? "纠偏" : baseMode === "run" ? "发送并运行" : "发送";
   const blockedReason = blocked
-    ? (dispatchAgent ? `「${dispatchAgent.cli}」仅终端可用` : "没有可用的 Agent")
+    ? (dispatchAgent ? (dispatchAgent.chatRuntime === "terminal" ? `未检测到 ${dispatchAgent.cli}` : `「${dispatchAgent.cli}」仅终端可用`) : "没有可用的 Agent")
     : undefined;
 
   const placeholder = context
@@ -652,7 +671,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
                         value={a.id}
                         disabled={!isRunnable(a) || (!!todo && !mission && a.role === "supervisor") || (!!mission && a.role !== "supervisor")}
                       >
-                        {a.role === "supervisor" ? "✦ " : ""}{a.alias || a.name}{isRunnable(a) ? "" : "（终端专用）"}
+                        {a.role === "supervisor" ? "✦ " : ""}{a.alias || a.name}{isRunnable(a) ? (a.chatRuntime === "terminal" ? "（终端）" : "") : "（未安装）"}
                       </option>
                     ))}
                   </select>
@@ -661,6 +680,22 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
                 ) : (
                   <span className="composer-none">未检测到 Agent</span>
                 )}
+                <select
+                  className="composer-select add-agent"
+                  value=""
+                  title="添加 Agent（dsh 走 ACP，其他 CLI 走终端）"
+                  onChange={async (e) => {
+                    const cli = e.target.value;
+                    if (!cli) return;
+                    const created = await act("createAgent", { cli, projectId });
+                    if (created?.id) await act("setThreadAgent", { threadId: thread.id, agentId: created.id });
+                  }}
+                >
+                  <option value="">＋ Agent</option>
+                  {(state.executors || []).filter((x) => x.available).map((x) => (
+                    <option key={x.id} value={x.id}>{x.id} · {x.implemented ? "ACP" : "终端"}</option>
+                  ))}
+                </select>
                 {state.agents.length > 0 && workerRunnable.length === 0 && dshAvailable && (
                   <button className="composer-link" onClick={() => void useDshAgent()} title="创建 worker Agent 并用于当前会话">＋ dsh</button>
                 )}

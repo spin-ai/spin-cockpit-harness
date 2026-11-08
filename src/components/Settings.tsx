@@ -60,7 +60,7 @@ const SEARCH_INDEX: { section: Section; title: string; hint?: string; k?: string
   { section: "execution", title: "Mission 子任务上限", k: "maxMissionChildren", hint: "每个 Mission 最多子任务" },
   { section: "execution", title: "Mission 时长预算", k: "missionBudgetMinutes", hint: "主管预算提示" },
   { section: "execution", title: "Agent 角色", hint: "worker / supervisor" },
-  { section: "execution", title: "Chat 执行适配器", hint: "哪些 CLI 能派活" },
+  { section: "execution", title: "Chat 执行方式", hint: "dsh 走 ACP；其他 CLI 走终端 pty" },
   { section: "execution", title: "已检测到的 CLI", hint: "dsh / pi / claude / codex / opencode" },
   { section: "terminal", title: "Shell 路径", k: "shellPath", hint: "留空用 $SHELL" },
   { section: "terminal", title: "终端字号", k: "terminalFontSize", hint: "10–18px" },
@@ -251,7 +251,7 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
                   <option value="">自动</option>
                   {state.agents.map((a) => (
                     <option key={a.id} value={a.id} disabled={a.chatRunnable === false}>
-                      {a.name}{a.chatRunnable === false ? "（终端专用）" : ""}
+                      {a.name}{a.chatRuntime === "terminal" ? "（终端）" : ""}
                     </option>
                   ))}
                 </select>
@@ -415,8 +415,8 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
             <Card title="Chat 执行适配器">
               {(state.executors ?? []).map((e) => (
                 <Row key={e.id} title={e.id}>
-                  <span className={`tag ${e.implemented && e.available ? "ok" : ""}`}>
-                    {e.implemented ? (e.available ? "可派活" : "未安装") : "终端专用"}
+                  <span className={`tag ${e.available ? "ok" : ""}`}>
+                    {e.implemented ? (e.available ? "ACP · 可派活" : "未安装") : (e.available ? "终端 pty · 可派活" : "未安装")}
                   </span>
                 </Row>
               ))}
