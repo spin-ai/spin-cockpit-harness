@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /**
- * Markdown 富文本（ORCA 风格）冒烟：默认即可编辑 + 格式工具栏 + ⌘S 写回 + ⌘⇧M 切源码。
+ * Markdown 富文本（ORCA 风格）冒烟：
+ * 工具栏（代码块/表格/分割线/删除线）、Markdown 输入规则（"### " → H3）、
+ * 斜杠菜单插入块、⌘S 写回 Markdown、⌘⇧M 富文本 ⇄ 源码。
  *
  * 前置：隔离 userData 的实例带调试端口在跑；脚本会写 /tmp/rich.md：
  *   COCKPIT_USER_DATA=/tmp/cockpit-e2e \
@@ -34,50 +36,60 @@ let r = await ev(`
   await window.harness.action("switchProject", { id: p.id });
   await new Promise((r) => setTimeout(r, 900));
   const row = await window.__w(() => [...document.querySelectorAll(".tree-row")].find((el) => el.textContent.includes("rich.md")));
-  if (!row) return { error: "no row" };
   row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  const bar = await window.__w(() => document.querySelector(".md-toolbar"));
-  const btns = [...document.querySelectorAll(".preview-surface-actions .btn")].map((b) => b.textContent.trim());
-  return { toolbar: !!bar, tools: [...(bar?.querySelectorAll(".md-tool") || [])].map((b) => b.title || b.textContent.trim()), extraButtons: btns };`);
-check("富文本默认即可编辑，有格式工具栏（没有「编辑富文本」按钮）", r.toolbar === true && r.tools.length >= 8 && !r.extraButtons.includes("编辑富文本"), JSON.stringify(r));
+  await window.__w(() => document.querySelector(".md-toolbar"));
+  const tools = [...document.querySelectorAll(".md-tool")].map((b) => b.title || b.textContent.trim());
+  return { tools };`);
+check("工具栏含代码块 / 表格 / 分割线 / 删除线", r.tools.includes("代码块") && r.tools.includes("表格") && r.tools.includes("分割线") && r.tools.includes("删除线（⌘⇧X）"), JSON.stringify(r.tools));
 
+// Markdown 输入规则：新建空块输入 "### " → H3
 r = await ev(`
   const el = document.querySelector(".md-render");
-  return { editable: el?.getAttribute("contenteditable"), cursor: getComputedStyle(el).cursor };`);
-check("渲染容器 contentEditable=true", r.editable === "true", JSON.stringify(r));
-
-r = await ev(`
-  const el = document.querySelector(".md-render");
-  const h1 = el.querySelector("h1");
-  const range = document.createRange(); range.selectNodeContents(h1);
+  el.focus();
+  const p = document.createElement("p"); p.textContent = ""; el.appendChild(p);
+  const range = document.createRange(); range.selectNodeContents(p); range.collapse(false);
   const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-  const tool = [...document.querySelectorAll(".md-tool")].find((b) => b.textContent.trim() === "H2");
-  tool.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 400));
-  return { h2: el.querySelector("h2")?.textContent || null, h1: el.querySelector("h1")?.textContent || null };`);
-check("工具栏可用：选中标题 → H2", r.h2 === "富文本测试" && r.h1 === null, JSON.stringify(r));
+  p.textContent = "### ";
+  const r2 = document.createRange(); r2.selectNodeContents(p); r2.collapse(false); sel.removeAllRanges(); sel.addRange(r2);
+  el.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+  await new Promise((r) => setTimeout(r, 250));
+  return { h3: !!el.querySelector("h3"), text: el.querySelector("h3")?.textContent || null };`);
+check("输入「### 」自动变 H3（Markdown 快捷键）", r.h3 === true, JSON.stringify(r));
 
+// 斜杠菜单
 r = await ev(`
   const el = document.querySelector(".md-render");
-  el.querySelector("p").textContent = "段落被改过。";
-  el.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  el.focus();
+  const p = document.createElement("p"); p.textContent = ""; el.appendChild(p);
+  const range = document.createRange(); range.selectNodeContents(p); range.collapse(false);
+  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  el.dispatchEvent(new KeyboardEvent("keydown", { key: "/", bubbles: true }));
   await new Promise((r) => setTimeout(r, 300));
+  const menu = document.querySelector(".md-slash");
+  const items = [...document.querySelectorAll(".md-slash-item")].map((b) => b.textContent.trim());
+  const table = [...document.querySelectorAll(".md-slash-item")].find((b) => b.textContent.includes("表格"));
+  table?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 300));
+  return { menu: !!menu, items, table: !!el.querySelector("table") };`);
+check("斜杠菜单可插入块（表格）", r.menu === true && r.items.length >= 8 && r.table === true, JSON.stringify({ menu: r.menu, count: r.items.length, table: r.table }));
+
+// 保存到 md：表格成 pipe 表格
+r = await ev(`
   window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", metaKey: true, bubbles: true }));
   await new Promise((r) => setTimeout(r, 1200));
   return { saved: !!document.querySelector(".preview-saved") };`);
 const disk = fs.readFileSync("/tmp/rich.md", "utf8");
-check("⌘S 保存：H2 与段落写入 Markdown", /^## 富文本测试/m.test(disk) && /段落被改过/.test(disk), JSON.stringify(disk.slice(0, 60)));
+check("表格/标题写入 Markdown", /\| 列 1 \| 列 2 \|/.test(disk) && /^### /m.test(disk), JSON.stringify(disk.split("\n").slice(0, 12)));
 
+// ⌘⇧M 往返
 r = await ev(`
   window.dispatchEvent(new KeyboardEvent("keydown", { key: "M", metaKey: true, shiftKey: true, bubbles: true }));
-  await new Promise((r) => setTimeout(r, 500));
-  const seg = [...document.querySelectorAll(".file-preview-seg button")].map((b) => ({ t: b.textContent.trim(), on: b.className.includes("on") }));
-  const editor = !!document.querySelector(".file-source-editor");
+  await new Promise((r) => setTimeout(r, 400));
+  const src = !!document.querySelector(".file-source-editor");
   window.dispatchEvent(new KeyboardEvent("keydown", { key: "M", metaKey: true, shiftKey: true, bubbles: true }));
-  await new Promise((r) => setTimeout(r, 500));
-  const back = !!document.querySelector(".md-render");
-  return { seg, editor, back };`);
-check("⌘⇧M 切源码再切回（ORCA 习惯）", r.editor === true && r.back === true && r.seg[0]?.on === false, JSON.stringify(r));
+  await new Promise((r) => setTimeout(r, 400));
+  return { src, back: !!document.querySelector(".md-render") };`);
+check("⌘⇧M 富文本 ⇄ 源码", r.src === true && r.back === true, JSON.stringify(r));
 ws.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");
 process.exit(fails ? 1 : 0);

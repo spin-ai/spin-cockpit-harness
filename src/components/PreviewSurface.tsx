@@ -295,9 +295,135 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
       const sel = window.getSelection();
       const text = sel?.toString() || url;
       document.execCommand("insertHTML", false, `<a href="${url.replace(/"/g, "&quot;")}">${text}</a>`);
+    } else if (command === "codeBlock") {
+      document.execCommand("insertHTML", false, "<pre><code>代码</code></pre><p><br></p>");
+    } else if (command === "table") {
+      document.execCommand("insertHTML", false, [
+        "<table><thead><tr><th>列 1</th><th>列 2</th></tr></thead>",
+        "<tbody><tr><td>内容</td><td>内容</td></tr>",
+        "<tr><td>内容</td><td>内容</td></tr></tbody></table><p><br></p>",
+      ].join(""));
+    } else if (command === "hr") {
+      document.execCommand("insertHTML", false, "<hr><p><br></p>");
+    } else if (command === "strikeThrough") {
+      document.execCommand("strikeThrough", false);
     } else {
       document.execCommand(command, false, value);
     }
+    setRichDirty(true);
+  };
+
+  // ── Markdown 输入规则（ORCA / Notion 那种：打 "# " 直接变标题） ──────────
+  const [slash, setSlash] = useState<{ x: number; y: number; query: string } | null>(null);
+
+  const blockOfCaret = () => {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    const node = sel.anchorNode;
+    const el = (node?.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement)) || null;
+    return { sel, el, block: el?.closest("p,div,li,h1,h2,h3,h4,h5,h6,blockquote,pre") as HTMLElement | null };
+  };
+
+  const caretOffsetInBlock = (block: HTMLElement) => {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return 0;
+    const range = sel.getRangeAt(0).cloneRange();
+    range.selectNodeContents(block);
+    range.setEnd(sel.getRangeAt(0).endContainer, sel.getRangeAt(0).endOffset);
+    return range.toString().length;
+  };
+
+  const clearBlockPrefix = (block: HTMLElement, count: number) => {
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    let remaining = count;
+    let node = walker.nextNode() as Text | null;
+    while (node && remaining > 0) {
+      const take = Math.min(node.data.length, remaining);
+      node.deleteData(0, take);
+      remaining -= take;
+      node = walker.nextNode() as Text | null;
+    }
+  };
+
+  /** 在空/行首块里按 Markdown 语法转换（space 或 enter 触发） */
+  const applyMarkdownRule = (): boolean => {
+    const ctx = blockOfCaret();
+    if (!ctx?.block || !ctx.sel) return false;
+    const { block } = ctx;
+    const before = (block.textContent || "").slice(0, caretOffsetInBlock(block));
+    const heading = before.match(/^(#{1,4})\s$/);
+    const bullet = before.match(/^[-*+]\s$/);
+    const ordered = before.match(/^(\d+)[.)]\s$/);
+    const quote = before.match(/^>\s$/);
+    if (heading) {
+      clearBlockPrefix(block, before.length);
+      document.execCommand("formatBlock", false, `h${heading[1].length}`);
+      return true;
+    }
+    if (bullet || ordered) {
+      clearBlockPrefix(block, before.length);
+      document.execCommand("formatBlock", false, "p");
+      document.execCommand(ordered ? "insertOrderedList" : "insertUnorderedList", false);
+      return true;
+    }
+    if (quote) {
+      clearBlockPrefix(block, before.length);
+      document.execCommand("formatBlock", false, "blockquote");
+      return true;
+    }
+    return false;
+  };
+
+  const onRichKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); richCmd("link"); return; }
+    if (mod && e.shiftKey && e.key.toLowerCase() === "x") { e.preventDefault(); richCmd("strikeThrough"); return; }
+    if (e.key === "Enter") {
+      // 空列表项回车退出列表（浏览器默认已处理），这里只处理 ``` 代码块
+      const ctx = blockOfCaret();
+      const text = (ctx?.block?.textContent || "").trimEnd();
+      if (text === "```" && ctx?.block) {
+        e.preventDefault();
+        ctx.block.remove();
+        document.execCommand("insertHTML", false, "<pre><code>代码</code></pre><p><br></p>");
+        setRichDirty(true);
+      }
+      return;
+    }
+    if (e.key === " ") {
+      // 先让空格落进 DOM 再判断前缀
+      window.setTimeout(() => { if (applyMarkdownRule()) setRichDirty(true); }, 0);
+      return;
+    }
+    if (e.key === "/") {
+      const ctx = blockOfCaret();
+      const empty = !(ctx?.block?.textContent || "").trim();
+      if (empty) {
+        const rect = window.getSelection()?.getRangeAt(0).getBoundingClientRect();
+        window.setTimeout(() => setSlash({ x: rect?.left || 120, y: (rect?.bottom || 120) + 6, query: "" }), 0);
+      }
+    }
+    if (slash && e.key === "Escape") { setSlash(null); e.preventDefault(); }
+  };
+
+  const slashCommands: { id: string; label: string; hint: string; run: () => void }[] = [
+    { id: "h1", label: "标题 1", hint: "#", run: () => richCmd("formatBlock", "h1") },
+    { id: "h2", label: "标题 2", hint: "##", run: () => richCmd("formatBlock", "h2") },
+    { id: "h3", label: "标题 3", hint: "###", run: () => richCmd("formatBlock", "h3") },
+    { id: "ul", label: "无序列表", hint: "-", run: () => richCmd("insertUnorderedList") },
+    { id: "ol", label: "有序列表", hint: "1.", run: () => richCmd("insertOrderedList") },
+    { id: "quote", label: "引用", hint: ">", run: () => richCmd("formatBlock", "blockquote") },
+    { id: "code", label: "代码块", hint: "```", run: () => richCmd("codeBlock") },
+    { id: "table", label: "表格", hint: "|", run: () => richCmd("table") },
+    { id: "hr", label: "分割线", hint: "---", run: () => richCmd("hr") },
+  ];
+
+  /** 粘贴只取纯文本，避免带进外部富文本把 Markdown 结构带坏 */
+  const onRichPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const text = e.clipboardData?.getData("text/plain");
+    if (text == null) return;
+    e.preventDefault();
+    document.execCommand("insertText", false, text);
     setRichDirty(true);
   };
 
@@ -493,11 +619,15 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
           <button className="md-tool" title="无序列表" onClick={() => richCmd("insertUnorderedList")}>•</button>
           <button className="md-tool" title="有序列表" onClick={() => richCmd("insertOrderedList")}>1.</button>
           <button className="md-tool" title="引用" onClick={() => richCmd("formatBlock", "blockquote")}>❝</button>
+          <button className="md-tool" title="代码块" onClick={() => richCmd("codeBlock")}>▤</button>
+          <button className="md-tool" title="表格" onClick={() => richCmd("table")}>⊞</button>
+          <button className="md-tool" title="分割线" onClick={() => richCmd("hr")}>—</button>
           <i className="md-tool-sep" />
-          <button className="md-tool" title="链接" onClick={() => richCmd("link")}>🔗</button>
+          <button className="md-tool" title="链接（⌘K）" onClick={() => richCmd("link")}>🔗</button>
+          <button className="md-tool" title="删除线（⌘⇧X）" onClick={() => richCmd("strikeThrough")}>S</button>
           <button className="md-tool" title="清除格式" onClick={() => richCmd("removeFormat")}>⌫</button>
           <span className="spacer" />
-          <span className="md-toolbar-hint">富文本 · ⌘⇧M 切源码{richDirty ? " · 未保存" : ""}</span>
+          <span className="md-toolbar-hint">{(mdRef.current?.textContent || "").trim().length} 字 · 输入 / 插入块 · ⌘⇧M 切源码{richDirty ? " · 未保存" : ""}</span>
         </div>
       )}
       {(error || pickError) && <div className="preview-error">{error || pickError}</div>}
@@ -541,16 +671,40 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
         )}
         {isFile && !isHtml && !isMarkdown && !isImage && fileText}
         {isFile && isMarkdown && fileMode === "render" && (
-          <div
-            ref={mdRef}
-            className="md-render editing"
-            contentEditable
-            suppressContentEditableWarning
-            spellCheck
-            onInput={() => setRichDirty(true)}
-            onClick={(e) => { if (e.metaKey || e.ctrlKey) onRenderedClick(e); }}
-            dangerouslySetInnerHTML={{ __html: mdHtml }}
-          />
+          <>
+            <div
+              ref={mdRef}
+              className="md-render editing"
+              contentEditable
+              suppressContentEditableWarning
+              spellCheck
+              onInput={() => setRichDirty(true)}
+              onKeyDown={onRichKeyDown}
+              onPaste={onRichPaste}
+              onClick={(e) => { if (e.metaKey || e.ctrlKey) onRenderedClick(e); }}
+              dangerouslySetInnerHTML={{ __html: mdHtml }}
+            />
+            {slash && (
+              <div className="md-slash" style={{ left: slash.x, top: slash.y }} onMouseDown={(e) => e.preventDefault()}>
+                <div className="md-slash-head">插入块 / 过滤…</div>
+                {slashCommands.map((c) => (
+                  <button
+                    key={c.id}
+                    className="md-slash-item"
+                    onClick={() => {
+                      // 删掉触发用的 "/"
+                      const ctx = blockOfCaret();
+                      if (ctx?.block) clearBlockPrefix(ctx.block, (ctx.block.textContent || "").length);
+                      c.run();
+                      setSlash(null);
+                    }}
+                  >
+                    <span>{c.label}</span><em>{c.hint}</em>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
         )}
         {useWebview && (
           <div className="preview-surface-frame" style={{ display: showWebview ? "flex" : "none" }}>
