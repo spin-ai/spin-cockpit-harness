@@ -2383,3 +2383,8 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .guide-wiki{height:100%;min-height:0;display:flex;padding:16px 22px;box-sizing:border-box}
 .guide-wiki>.git-wiki{flex:1;min-height:0}
 @media (max-width:1100px){.guide-wiki{padding:12px}}
+
+/* Markdown 富文本编辑 */
+.md-render.editing{outline:2px dashed var(--brand-line,#bfdbfe);outline-offset:4px;cursor:text;background:var(--surface)}
+.md-render.editing:focus{outline-style:solid}
+.md-render.editing [contenteditable="false"]{outline:1px dashed var(--border)}
