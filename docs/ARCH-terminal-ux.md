@@ -35,7 +35,7 @@ harness 的 Terminal 是「Agent 干活 + 人直接敲命令」的同一个 pane
 | 拆分窗格 | `⌘D` 向右、`⇧⌘D` 向下（递归嵌套）；拖拽分隔条调比例；`⌘⌥←/→/↑/↓` 按几何方向移动焦点；右键菜单 / 命令面板同入口 | `Tab.root` 二叉树 + `SplitSurface` 绝对定位布局；新窗格继承当前窗格 cwd；预览标签可拖入 pane 边缘 |
 | 关闭窗格 | `⌘W` 关闭当前窗格，最后一个窗格时关闭整个标签 | `closeFocusedPane` 删除叶子并折叠空的 split |
 | 预览标签 | 预览与终端共用一条标签栏，且**只有唯一一个预览标签**：打开文件 = 文件模式（渲染/源码），地址栏「URL」或 `打开预览 :PORT` = 地址模式（dev server / 远程页）；可双击重命名、`⌘W`/中键关闭；命令面板「打开预览（文件 / dev server / URL）」；工具栏不再单列「＋ 预览」 | `Tab.kind = "preview"`（`rel` 有值即文件模式）+ `PreviewSurface`（同一 webview 生命周期）；切到后台标签会自动取消拾取，避免挂在隐藏 webview 上 |
-| 文件预览（Markdown） | 双击文件树即打开，默认**富文本**渲染（marked + DOMPurify）；头部「富文本 / 源码」切换；**目录**按钮（ListIcon）在左侧停靠，只收录真实标题（跳过代码围栏），点击跳转并高亮；源码模式可直接编辑，`⌘S` 或「保存」写盘，保存后富文本与目录立即更新 |
+| 文件预览（Markdown） | 双击文件树即打开，默认**富文本**渲染（marked + DOMPurify）；头部「富文本 / 源码」切换；**「编辑富文本」可直接在渲染结果上改**（contentEditable，⌘S 或「保存」用 turndown+gfm 转回 Markdown 写盘，列表/标题规范化，表格与嵌套结构可能重排）；**目录**按钮（ListIcon）在左侧停靠，只收录真实标题（跳过代码围栏），点击跳转并高亮；源码模式可直接编辑，`⌘S` 或「保存」写盘，保存后富文本与目录立即更新 |
 | 文件预览（HTML） | 三段「预览 / 可视化 / 源码」：① 预览=webview 只读；② **可视化=GrapesJS 画布**（懒加载，右/左面板可拖组件、改文字、调样式；保存时 `getHtml()/getCss()` 重新拼完整文档，`<head>` 里的 title/meta/script 原样保留，样式写进唯一的 `<style data-grapes>`，重复保存不会叠加）；③ 源码=textarea + ⌘S。离开可视化若有未保存修改会确认；其它文本/图片保持只读 |
 | 回到最新 | 向上滚动时右下角出现悬浮按钮 | `term.onScroll` → `scrolledUp` |
 | 退出态 | 进程退出后浮层显示退出码，可「重新启动」（纯 shell 标签）或关闭 | `terminal:exit` + `incarnation` 重建 xterm |
