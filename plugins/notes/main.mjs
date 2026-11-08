@@ -23,6 +23,7 @@ let data = {
   trash: [],
   pins: [],
   recents: [],
+  backlinks: {},
   layout: null,
   vaultPath: "",
 };
@@ -192,12 +193,14 @@ function hydrate(raw) {
     trash: Array.isArray(raw.trash) ? raw.trash : [],
     pins: Array.isArray(raw.pins) ? raw.pins : [],
     recents: Array.isArray(raw.recents) ? raw.recents : [],
+    backlinks: raw.backlinks && typeof raw.backlinks === "object" ? raw.backlinks : {},
     revisions: [],
   };
   data.pages = (data.pages || []).map(attachPage);
   data.sources = (data.sources || []).map(attachSource);
   seq = Number(raw.seq) || seq;
   searchDirty = Boolean(raw.searchDirty);
+  backlinkIndex = null;
 }
 
 function searchEntry(kind, item) {
@@ -222,6 +225,7 @@ function rebuildBacklinkIndex() {
     }
   }
   backlinkIndex = map;
+  data.backlinks = Object.fromEntries(map);
 }
 
 function buildSearchCacheFromShards() {
@@ -258,13 +262,18 @@ function updateSearchEntry(kind, item) {
   if (idx >= 0) searchCache[idx] = entry; else searchCache.unshift(entry);
   searchDirty = true;
   backlinkIndex = null;
+  if (searchCache) rebuildBacklinkIndex();
 }
 
 function removeSearchEntry(kind, id) {
+  if (!searchCache) {
+    try { loadSearchSync(); } catch { searchDirty = true; }
+  }
   if (!searchCache) { searchDirty = true; return; }
   searchCache = searchCache.filter((x) => !(x.kind === kind && x.id === id));
   searchDirty = true;
   backlinkIndex = null;
+  if (searchCache) rebuildBacklinkIndex();
 }
 
 function writeAtomic(file, value) {
@@ -309,6 +318,7 @@ async function migrateLegacy(raw) {
   }
   data.revisions = [];
   buildSearchCacheFromShards();
+  rebuildBacklinkIndex();
   await persist();
   try { fsSync.renameSync(dataFile(), `${dataFile()}.bak`); } catch { /* keep legacy if rename fails */ }
 }
@@ -327,6 +337,10 @@ async function load() {
     const trash = JSON.parse(await fs.readFile(trashFile(), "utf8"));
     if (Array.isArray(trash)) data.trash = trash;
   } catch { /* no trash */ }
+  // 旧的分片库可能还没有 backlinks 索引：一次性从搜索索引回填
+  if ((!data.backlinks || Object.keys(data.backlinks).length === 0) && data.pages.length) {
+    try { loadSearchSync(); await persist(); } catch { /* ignore */ }
+  }
 }
 
 async function persist() {
@@ -359,6 +373,7 @@ async function persist() {
     log: data.log,
     pins: data.pins,
     recents: data.recents,
+    backlinks: data.backlinks || {},
     layout: data.layout,
     vaultPath: data.vaultPath,
     searchDirty,
@@ -388,8 +403,7 @@ function citationsOf(pageId) {
 }
 
 function backlinksOf(page) {
-  loadSearchSync();
-  return (backlinkIndex?.get(page.title.toLowerCase()) || []).filter((b) => b.id !== page.id);
+  return (data.backlinks?.[page.title.toLowerCase()] || []).filter((b) => b.id !== page.id);
 }
 
 function unlinkedMentionsOf(page) {
