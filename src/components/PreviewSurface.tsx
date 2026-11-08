@@ -88,8 +88,7 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   const [tocOpen, setTocOpen] = useState(false);
   const visualApiRef = useRef<VisualEditorApi | null>(null);
   const [visualDirty, setVisualDirty] = useState(false);
-  // Markdown 富文本编辑：渲染结果直接 contentEditable，保存时用 turndown 转回 Markdown
-  const [richEdit, setRichEdit] = useState(false);
+  // Markdown 富文本：渲染结果直接 contentEditable（ORCA 风格），保存时用 turndown 转回 Markdown
   const [richDirty, setRichDirty] = useState(false);
   const mdRef = useRef<HTMLDivElement | null>(null);
   const editable = isFile && (isHtml || isMarkdown);
@@ -110,7 +109,6 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   useEffect(() => {
     setFileMode("render");
     setVisualDirty(false);
-    setRichEdit(false);
     setRichDirty(false);
   }, [file?.rel, file?.root]);
 
@@ -282,6 +280,27 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
     if (isHtml) refresh();
   };
 
+  /** 富文本工具栏：对当前选区执行简单格式（execCommand 在 contentEditable 里仍可用） */
+  const richCmd = (command: string, value?: string) => {
+    const root = mdRef.current;
+    if (!root) return;
+    root.focus();
+    if (command === "code") {
+      const sel = window.getSelection();
+      const text = sel?.toString();
+      if (text) document.execCommand("insertHTML", false, `<code>${text.replace(/</g, "&lt;")}</code>`);
+    } else if (command === "link") {
+      const url = window.prompt("链接地址（https://… 或相对路径）", "https://");
+      if (!url) return;
+      const sel = window.getSelection();
+      const text = sel?.toString() || url;
+      document.execCommand("insertHTML", false, `<a href="${url.replace(/"/g, "&quot;")}">${text}</a>`);
+    } else {
+      document.execCommand(command, false, value);
+    }
+    setRichDirty(true);
+  };
+
   /** 富文本 → Markdown：turndown + gfm（表格/任务列表/删除线） */
   const saveRich = async () => {
     if (!file || !mdRef.current || saving) return;
@@ -325,14 +344,19 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   // 编辑器里 ⌘S 保存（只在当前可见标签、且处在源码/编辑模式时生效）
   useEffect(() => {
     if (!active || !editable) return;
-    if (fileMode !== "source" && fileMode !== "visual" && !richEdit) return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+      const mod = e.metaKey || e.ctrlKey;
+      // ⌘⇧M：富文本 ⇄ 源码（与 ORCA 一致）
+      if (mod && e.shiftKey && e.key.toLowerCase() === "m" && isMarkdown) {
         e.preventDefault();
-        if (fileMode === "visual") void saveVisual();
-        else if (richEdit) void saveRich();
-        else void save();
+        setFileMode((mode) => (mode === "source" ? "render" : "source"));
+        return;
       }
+      if (!mod || e.key.toLowerCase() !== "s") return;
+      e.preventDefault();
+      if (fileMode === "visual") void saveVisual();
+      else if (isMarkdown && fileMode === "render") void saveRich();
+      else void save();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -420,15 +444,8 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
               {saving ? "保存中…" : "保存修改"}
             </button>
           )}
-          {isMarkdown && fileMode === "render" && (
-            <button
-              className={`btn tiny-btn ${richEdit ? "primary" : ""}`}
-              title={richEdit ? "完成富文本编辑（⌘S 保存）" : "直接在渲染结果上改文字（保存时转回 Markdown）"}
-              onClick={() => { setRichEdit((v) => !v); setRichDirty(false); }}
-            >{richEdit ? "完成编辑" : "编辑富文本"}</button>
-          )}
-          {isMarkdown && fileMode === "render" && richEdit && richDirty && (
-            <button className="btn tiny-btn primary" disabled={saving} onClick={() => void saveRich()}>{saving ? "保存中…" : "保存"}</button>
+          {isMarkdown && fileMode === "render" && richDirty && (
+            <button className="btn tiny-btn primary" disabled={saving} title="保存（⌘S）" onClick={() => void saveRich()}>{saving ? "保存中…" : "保存"}</button>
           )}
           {dirty && (
             <button className="btn tiny-btn primary" disabled={saving} title="保存（⌘S）" onClick={() => void save()}>
@@ -450,11 +467,6 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
           {onClose && <button className="icon-btn" title="关闭预览" aria-label="关闭预览" onClick={onClose}><XIcon size={13} /></button>}
         </div>
       </div>
-      {richEdit && fileMode === "render" && (
-        <div className="preview-hint visual">
-          富文本编辑中：直接改文字 / 标题 / 列表，⌘S 或「保存」写回 Markdown（表格与嵌套结构会被规范化）
-        </div>
-      )}
       {fileMode === "visual" && (
         <div className="preview-hint visual">
           GrapesJS 画布：点文字直接改、从右侧面板拖组件、选中后调样式；⌘S 或「保存修改」写回文件{visualDirty ? "（有未保存修改）" : ""}
@@ -466,6 +478,26 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
           已拾取 <span className="mono">{picked.selector}</span>
           {picked.source?.file && <span className="mono faint"> · {picked.source.file}{picked.source.line ? `:${picked.source.line}` : ""}</span>}
           <span className="faint"> · 已放入 Chat 输入框</span>
+        </div>
+      )}
+      {isMarkdown && fileMode === "render" && (
+        <div className="md-toolbar" onMouseDown={(e) => e.preventDefault()}>
+          {([["H1", "h1"], ["H2", "h2"], ["H3", "h3"]] as const).map(([label, tag]) => (
+            <button key={tag} className="md-tool" title={`标题 ${tag.toUpperCase()}`} onClick={() => richCmd("formatBlock", tag)}>{label}</button>
+          ))}
+          <i className="md-tool-sep" />
+          <button className="md-tool bold" title="加粗（⌘B）" onClick={() => richCmd("bold")}>B</button>
+          <button className="md-tool italic" title="斜体（⌘I）" onClick={() => richCmd("italic")}>I</button>
+          <button className="md-tool" title="行内代码" onClick={() => richCmd("code")}>{"</>"}</button>
+          <i className="md-tool-sep" />
+          <button className="md-tool" title="无序列表" onClick={() => richCmd("insertUnorderedList")}>•</button>
+          <button className="md-tool" title="有序列表" onClick={() => richCmd("insertOrderedList")}>1.</button>
+          <button className="md-tool" title="引用" onClick={() => richCmd("formatBlock", "blockquote")}>❝</button>
+          <i className="md-tool-sep" />
+          <button className="md-tool" title="链接" onClick={() => richCmd("link")}>🔗</button>
+          <button className="md-tool" title="清除格式" onClick={() => richCmd("removeFormat")}>⌫</button>
+          <span className="spacer" />
+          <span className="md-toolbar-hint">富文本 · ⌘⇧M 切源码{richDirty ? " · 未保存" : ""}</span>
         </div>
       )}
       {(error || pickError) && <div className="preview-error">{error || pickError}</div>}
@@ -511,12 +543,12 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
         {isFile && isMarkdown && fileMode === "render" && (
           <div
             ref={mdRef}
-            className={`md-render${richEdit ? " editing" : ""}`}
-            contentEditable={richEdit}
+            className="md-render editing"
+            contentEditable
             suppressContentEditableWarning
-            spellCheck={richEdit}
-            onInput={() => { if (richEdit) setRichDirty(true); }}
-            onClick={richEdit ? undefined : onRenderedClick}
+            spellCheck
+            onInput={() => setRichDirty(true)}
+            onClick={(e) => { if (e.metaKey || e.ctrlKey) onRenderedClick(e); }}
             dangerouslySetInnerHTML={{ __html: mdHtml }}
           />
         )}
