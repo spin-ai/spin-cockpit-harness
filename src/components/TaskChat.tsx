@@ -1035,13 +1035,55 @@ function RichText({ text }: { text: string }) {
         if (b.type === "code") {
           return <CodeBlock key={`c${i}`} lang={b.lang} text={b.text} />;
         }
+        if (b.type === "table") {
+          return (
+            <div className="md-table-wrap" key={`tbl${i}`}>
+              <table className="md-table">
+                <thead><tr>{b.header.map((cell, ci) => <th key={ci}>{inlineNodes(cell, `th${i}-${ci}`)}</th>)}</tr></thead>
+                <tbody>{b.rows.map((row, ri) => <tr key={ri}>{row.map((cell, ci) => <td key={ci}>{inlineNodes(cell, `td${i}-${ri}-${ci}`)}</td>)}</tr>)}</tbody>
+              </table>
+            </div>
+          );
+        }
         return <Fragment key={`t${i}`}>{inlineNodes(b.text, `t${i}`)}</Fragment>;
       })}
     </>
   );
 }
 
-type Block = { type: "text"; text: string } | { type: "code"; text: string; lang: string };
+type Block =
+  | { type: "text"; text: string }
+  | { type: "code"; text: string; lang: string }
+  | { type: "table"; header: string[]; rows: string[][] };
+
+function parseTableRow(line: string) {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+}
+
+function parseTextBlocks(text: string): Block[] {
+  const lines = text.split("\n");
+  const out: Block[] = [];
+  let buffer: string[] = [];
+  const flush = () => { if (buffer.length) { out.push({ type: "text", text: buffer.join("\n") }); buffer = []; } };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const next = lines[i + 1] || "";
+    const isTable = line.includes("|") && /^\s*\|?\s*:?-{3,}/.test(next);
+    if (!isTable) { buffer.push(line); continue; }
+    flush();
+    const header = parseTableRow(line);
+    const rows: string[][] = [];
+    i += 2;
+    while (i < lines.length && lines[i].includes("|") && lines[i].trim()) {
+      rows.push(parseTableRow(lines[i]));
+      i++;
+    }
+    i--;
+    out.push({ type: "table", header, rows });
+  }
+  flush();
+  return out;
+}
 
 function parseBlocks(text: string): Block[] {
   const blocks: Block[] = [];
@@ -1049,11 +1091,11 @@ function parseBlocks(text: string): Block[] {
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text))) {
-    if (m.index > last) blocks.push({ type: "text", text: text.slice(last, m.index) });
+    if (m.index > last) blocks.push(...parseTextBlocks(text.slice(last, m.index)));
     blocks.push({ type: "code", lang: m[1] || "", text: m[2].replace(/\n$/, "") });
     last = m.index + m[0].length;
   }
-  if (last < text.length) blocks.push({ type: "text", text: text.slice(last) });
+  if (last < text.length) blocks.push(...parseTextBlocks(text.slice(last)));
   if (blocks.length === 0) blocks.push({ type: "text", text });
   return blocks;
 }
