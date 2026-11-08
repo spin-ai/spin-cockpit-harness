@@ -211,6 +211,9 @@ npm run pack:system
 - [docs/REQ-original.md](docs/REQ-original.md)（纠正版需求）
 - [docs/REQ-multi-agent-workspace.md](docs/REQ-multi-agent-workspace.md)（43 条规格）
 - [docs/REQ-integrated-workbench.md](docs/REQ-integrated-workbench.md)（场景配置 / Mission / TODO / Terminal / Chat 融合需求）
+- [docs/REQ-modules-original.md](docs/REQ-modules-original.md)（原始需求 · 按模块：场景 / 项目 / TODO / Mission / Chat / Terminal / Wiki / 主机 / 设置 / 打包）
+- [docs/DESIGN-SYSTEM.md](docs/DESIGN-SYSTEM.md)（设计系统：Geist / 中性色 / token / 页面与组件规则）
+- [AGENTS.md](AGENTS.md)（Agent / contributor 的 UI 硬规则）
 - [docs/ARCH-multi-agent-workspace.md](docs/ARCH-multi-agent-workspace.md)（4+1 视图）
 - [docs/ARCH-super-agent.md](docs/ARCH-super-agent.md)（Super Agent：Mission / Delegation / MCP / 迁移与验证）
 - [docs/USAGE-super-agent.md](docs/USAGE-super-agent.md)（Super Agent 使用说明：准备 Agent / 审批计划 / 子任务 / 恢复）
