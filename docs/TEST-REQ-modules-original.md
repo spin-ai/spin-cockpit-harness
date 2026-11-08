@@ -406,7 +406,7 @@ npm run test:e2e:requirements -- --only=THEME,GIT
 npm run test:e2e:requirements -- --keep   # 保留隔离 userData 便于排查
 ```
 
-已代码化（16 条）：
+已代码化（17 条）：
 
 | 自动化 ID | 对应用例 |
 |---|---|
@@ -421,10 +421,11 @@ npm run test:e2e:requirements -- --keep   # 保留隔离 userData 便于排查
 | FILES-01 | 文件树 / 文本预览 |
 | WIKI-01 | Notes 打开 / 建页 / 编辑器 |
 | AGENT-01 | 执行适配器矩阵 / 不支持 CLI 报错 |
+| SC-01 | 场景总览 / 配置保存（fake 项目） |
 | TK-01 | TODO 4 组（fake ACP 造 4 个状态） |
 | CH-01 | Chat @别名分派 → TODO + user 消息 |
 | CH-02 | 纠偏回执 pending → injected |
 | CH-04 | 已确认任务消息只记录 |
 | WT-01 | git 项目 run 使用 harness worktree 并显示 |
 
-暂未代码化（保留手工或等优化完成）：SC-01、PV-06、WK-06、E2E-01、E2E-03、E2E-05。TASK / CHAT / WORKTREE 已接 fake ACP；E2E 仍需真实模型长流程或 Mission 夹具。
+暂未代码化（保留手工或等优化完成）：PV-06、WK-06、E2E-01、E2E-03、E2E-05。SCENE / TASK / CHAT / WORKTREE 已接 fake ACP 或临时项目；WK-06 已写代码但暂 skip，等 Wiki 插件并行优化稳定后启用；E2E 仍需真实模型长流程或 Mission 夹具。
