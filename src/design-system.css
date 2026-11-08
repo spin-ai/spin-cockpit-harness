@@ -174,3 +174,39 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
 .empty-state-mark,.notes-empty-mark,.chat-empty-mark,.notes-hub-mark{border-radius:var(--radius-card)}
 .explorer-tree .tree-row{position:relative}
 .file-ico{opacity:.88;filter:saturate(.78)}
+
+/* Chat：长会话的阅读节奏 */
+.chat-scroll{padding:16px 16px 22px;gap:16px;scroll-padding-bottom:20px}
+.msg{gap:10px}
+.msg-avatar{width:24px;height:24px;border-radius:8px;font-size:10.5px}
+.msg-meta{flex-wrap:wrap;row-gap:2px;font-size:11px;min-height:18px}
+.msg-meta b{font-size:11.5px}
+.msg-body{line-height:1.68;max-width:100%;overflow-wrap:anywhere}
+.msg.user .msg-body{max-width:86%;line-height:1.65}
+.thread-bar{padding:10px 12px 9px}
+.thread-meta{font-size:10.5px;overflow:hidden}
+.thread-meta .muted{white-space:nowrap}
+.chat-empty{padding:28px 14px}
+.tool-group-head{min-height:30px}
+.tool-group-summary{font-size:10.5px}
+
+/* Chat Markdown 表格 */
+.md-table-wrap{margin:8px 0;overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+.md-table{width:100%;border-collapse:collapse;font-size:12px;line-height:1.6}
+.md-table th,.md-table td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+.md-table th{position:sticky;top:0;background:var(--surface-hover);color:var(--fg);font-size:10.5px;letter-spacing:.03em;font-weight:600;white-space:nowrap}
+.md-table tr:last-child td{border-bottom:0}
+.md-table tbody tr:hover{background:var(--surface-hover)}
+
+/* 统计：图表更像数据产品 */
+.trend-chart{height:210px;padding-top:10px}
+.trend-grid i{border-color:color-mix(in srgb,var(--border) 70%,transparent)}
+.trend-yaxis{font-size:10px;color:var(--faint);font-variant-numeric:tabular-nums}
+.trend-col>span{font-size:9.5px;color:var(--faint)}
+.trend-value{font:10px var(--mono);color:var(--fg-2)}
+.trend-stack i{border-radius:3px 3px 0 0}
+.trend-legend{gap:10px}
+.trend-legend i{width:6px;height:6px}
+.kpi b,.stats-scope,.fail-row,.git-commit-row{font-variant-numeric:tabular-nums}
+.md-table{min-width:480px;width:max-content;max-width:none}
+.md-table th{white-space:nowrap}
