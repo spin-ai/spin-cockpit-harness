@@ -69,3 +69,48 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
   .pane-head,.right-tabs{height:38px}
   .settings-body>.page-header,.settings-body>*{max-width:100%}
 }
+
+/* ── Highlight / focus restraint ───────────────────────────────
+   选中、聚焦、跳转高亮都只用低对比层级，不做整块发光。 */
+:root{--ring:0 0 0 2px color-mix(in srgb,var(--fg) 12%,transparent)}
+:root[data-theme="dark"]{--ring:0 0 0 2px color-mix(in srgb,var(--fg) 16%,transparent)}
+
+::selection{background:color-mix(in srgb,var(--fg) 14%,transparent);color:inherit}
+.md-render ::selection,.md-render::selection{background:color-mix(in srgb,var(--fg) 14%,transparent);color:inherit}
+
+/* 富文本：聚焦只加一条 hairline，不再给整个文档套 3px 光圈 */
+.md-render.editing:focus,
+.md-render.editing:focus-within{outline:none;border-color:var(--border-strong);box-shadow:var(--shadow-1)}
+.md-render.editing [contenteditable="false"]{outline:1px solid color-mix(in srgb,var(--border) 70%,transparent)}
+
+/* 点击目录跳转：不再闪蓝光 */
+@keyframes md-flash-out{0%{background:color-mix(in srgb,var(--fg) 8%,transparent)}100%{background:transparent}}
+.md-flash{animation:md-flash-out .8s ease-out;border-radius:6px}
+
+/* 可视化 HTML：用低对比细线标记，不用蓝色虚线 */
+.preview-hint.visual{background:var(--surface-hover);border-color:var(--border);color:var(--fg-2)}
+.preview-surface[data-visual="1"] webview{outline:1px solid var(--border-strong);outline-offset:-1px}
+
+/* 输入类控件统一 2px ring；composer 不再整块发光 */
+.composer-shell:focus-within{border-color:var(--border-strong);box-shadow:var(--shadow-1)}
+.file-source-editor:focus,.preview-surface-address:focus,.notes-search:focus,.notes-title-input:focus,.git-commit-msg:focus,.git-mini-msg:focus{border-color:var(--border-strong);box-shadow:var(--ring)}
+.settings-control:focus,.explorer-search input:focus,.composer-select:focus,.dispatch-form select:focus{box-shadow:var(--ring)}
+
+/* 编辑器的选中/行/搜索高亮降一档 */
+.notes-codemirror .cm-selectionBackground,
+.notes-codemirror .cm-content ::selection{background:color-mix(in srgb,var(--fg) 14%,transparent)!important}
+.notes-codemirror .cm-activeLine{background:color-mix(in srgb,var(--fg) 4%,transparent)}
+.notes-codemirror .cm-activeLineGutter{background:color-mix(in srgb,var(--fg) 6%,transparent)}
+.notes-codemirror .cm-searchMatch{background:color-mix(in srgb,var(--amber) 18%,transparent)}
+.notes-codemirror .cm-searchMatch.cm-searchMatch-selected{background:color-mix(in srgb,var(--amber) 28%,transparent)}
+.notes-codemirror .cm-selectionMatch{background:color-mix(in srgb,var(--fg) 8%,transparent)}
+
+/* 富文本行内代码不要像一块高亮标签 */
+.md-render code{background:color-mix(in srgb,var(--fg) 5%,transparent);border-color:color-mix(in srgb,var(--border) 70%,transparent)}
+.md-render pre code{background:transparent;border:0}
+
+/* 第二轮：剩余整块高亮（设置搜索定位 / composer 文本域） */
+@keyframes set-hit-flash{0%{background:color-mix(in srgb,var(--fg) 7%,transparent)}100%{background:transparent}}
+.set-hit{animation:set-hit-flash 1.2s ease-out;border-radius:6px}
+.composer textarea:focus{outline:none;border-color:transparent;box-shadow:none}
+.preview-hint.picked{background:var(--surface-hover);border-color:var(--border);color:var(--fg-2)}
