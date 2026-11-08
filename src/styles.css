@@ -2398,3 +2398,14 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .md-toolbar-hint{margin-left:auto;font-size:10px;color:var(--faint);font-family:var(--mono)}
 .md-render.editing{outline:none;border-color:transparent;cursor:text}
 .md-render.editing:focus-within{box-shadow:var(--ring)}
+
+/* Markdown 斜杠菜单（ORCA 风格块插入） */
+.md-slash{position:fixed;z-index:520;min-width:180px;padding:4px;border:1px solid var(--border);border-radius:9px;background:var(--surface);box-shadow:var(--shadow-float);display:flex;flex-direction:column;gap:1px}
+.md-slash-head{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:4px 8px 6px}
+.md-slash-item{display:flex;justify-content:space-between;align-items:center;gap:12px;border:0;background:transparent;text-align:left;padding:5px 8px;border-radius:6px;font-size:12px;color:var(--fg-2);cursor:pointer}
+.md-slash-item:hover{background:var(--surface-hover);color:var(--fg)}
+.md-slash-item em{font-style:normal;font-family:var(--mono);font-size:10px;color:var(--faint)}
+.md-render.editing pre{background:var(--page-canvas);border:1px solid var(--border);border-radius:7px;padding:10px 12px;overflow:auto}
+.md-render.editing table{border-collapse:collapse;width:100%}
+.md-render.editing th,.md-render.editing td{border:1px solid var(--border);padding:5px 8px}
+.md-render.editing:empty::before{content:"开始写…（输入 # 标题 / - 列表 / ``` 代码块 / / 插入块）";color:var(--faint)}
