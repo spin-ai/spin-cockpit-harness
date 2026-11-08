@@ -39,6 +39,8 @@ npm run docs:dev            # 文档站（GitHub Pages 同款，http://localhost
 npm run build && npm start
 npm run dist                # macOS dmg → release/，并自动同步到 /Applications（SKIP_LOCAL_INSTALL=1 可跳过）
 npm run install:mac         # 只把最新构建装到本机（--open 装完顺手启动）
+npm run dist:mac:slim      # 瘦身版：不带内置 dsh（用系统 PATH 的 dsh）→ release-slim/
+npm run dist:slim          # 同上，只出未压缩 app
 npm run docs:build          # → dist-pages/（GitHub Pages）
 ```
 

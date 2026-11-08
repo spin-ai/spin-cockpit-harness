@@ -31,9 +31,23 @@
     "wiki:publish": "node scripts/publish-wiki.mjs",
     "docs:dev": "vite --config site/vite.config.ts",
     "docs:build": "vite build --config site/vite.config.ts",
-    "docs:preview": "vite preview --config site/vite.config.ts"
+    "docs:preview": "vite preview --config site/vite.config.ts",
+    "dist:mac:slim": "node scripts/dist-slim.mjs",
+    "dist:slim": "node scripts/dist-slim.mjs --dir"
   },
   "dependencies": {
+    "adm-zip": "^0.6.1",
+    "node-pty": "^1.1.0",
+    "sql.js": "^1.13.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "electron": "^45.2.2",
+    "electron-builder": "^26.0.12",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
     "@codemirror/autocomplete": "^6.20.4",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-markdown": "^6.5.2",
@@ -51,26 +65,14 @@
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
-    "adm-zip": "^0.6.1",
     "codemirror": "^6.0.2",
     "dompurify": "^3.4.17",
     "grapesjs": "^0.23.9",
     "marked": "^18.1.3",
-    "node-pty": "^1.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "sql.js": "^1.13.0",
     "turndown": "^7.2.5",
     "turndown-plugin-gfm": "^1.0.2"
-  },
-  "devDependencies": {
-    "@types/react": "^19.1.0",
-    "@types/react-dom": "^19.1.0",
-    "@vitejs/plugin-react": "^6.2.1",
-    "electron": "^45.2.2",
-    "electron-builder": "^26.0.12",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.5"
   },
   "build": {
     "appId": "ai.cockpit.harness",
@@ -81,7 +83,20 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "!**/*.map",
+      "!**/*.d.ts",
+      "!**/*.d.mts",
+      "!**/*.d.cts",
+      "!**/*.md",
+      "!**/*.markdown",
+      "!**/{test,tests,__tests__,__mocks__,spec,specs,example,examples,bench,benchmark,benchmarks,docs,doc}/**",
+      "!node_modules/sql.js/dist/*.zip",
+      "!node_modules/sql.js/dist/*-debug.*",
+      "!node_modules/sql.js/dist/sql-asm*",
+      "!node_modules/sql.js/dist/worker*",
+      "!node_modules/sql.js/dist/*-inline*",
+      "!node_modules/sql.js/dist/sql-wasm-browser*"
     ],
     "extraResources": [
       {
@@ -147,7 +162,12 @@
       "icon": "resources/icon.png"
     },
     "icon": "resources/icon.png",
-    "npmRebuild": false
+    "npmRebuild": false,
+    "compression": "maximum",
+    "electronLanguages": [
+      "en",
+      "zh_CN"
+    ]
   },
   "description": "Cockpit Harness — a local-first multi-agent cockpit: Chat → tasks, terminal panes, agent runs, review and confirmation.",
   "license": "MIT",
