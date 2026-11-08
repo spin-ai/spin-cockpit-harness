@@ -384,3 +384,42 @@
 2. **数据安全**：NF-04、NF-05、NF-06、NF-07、NF-09
 3. **本轮变更相关**：按改动模块选对应用例
 4. **失败用例**：保留隔离数据目录与截图，记录「预期 / 实际 / 现状标记」
+
+---
+
+## 23. 自动化代码
+
+已提供 P0 子集的自动化骨架，不依赖 Playwright/Puppeteer：
+
+```text
+scripts/e2e-requirements.mjs        # runner：启动隔离 Electron + CDP
+scripts/e2e/harness.mjs             # CDP / app 启停 / 截图 / 临时目录
+scripts/e2e/suites/requirements.mjs # 已代码化用例
+```
+
+运行（需要先 `npm run build`）：
+
+```sh
+npm run test:e2e:requirements -- --list
+npm run test:e2e:requirements
+npm run test:e2e:requirements -- --only=THEME,GIT
+npm run test:e2e:requirements -- --keep   # 保留隔离 userData 便于排查
+```
+
+已代码化（11 条）：
+
+| 自动化 ID | 对应用例 |
+|---|---|
+| APP-01 | 应用启动 / state / host |
+| LY-01 | 五列布局 Chat 收起 / 展开 |
+| THEME-01 | 13 套主题 / data-mode / 终端配色 |
+| SET-01 | 设置即时生效 / Chat 字号 |
+| PALETTE-01 | 命令面板主题搜索与切换 |
+| GIT-01 | Git → 项目 Wiki 页面 / 目录 / 图片 |
+| GIT-02 | Wiki 搜索 / 页间链接 |
+| PJ-01 | 项目添加 / 切换 / 别名 |
+| FILES-01 | 文件树 / 文本预览 |
+| WIKI-01 | Notes 打开 / 建页 / 编辑器 |
+| AGENT-01 | 执行适配器矩阵 / 不支持 CLI 报错 |
+
+暂未代码化（保留手工或等优化完成）：SC-01、TK-01、CH-02、PV-06、WK-06、WT-01、E2E-01、E2E-03、E2E-05。其中 TASK / CHAT / WORKTREE / E2E 需要 fake ACP 或真实模型长流程夹具，待并行优化完成后再接。

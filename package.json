@@ -28,6 +28,8 @@
     "verify:mission": "node scripts/verify-mission.mjs",
     "verify:plugins": "node scripts/verify-plugins.mjs",
     "verify:design": "node scripts/verify-design.mjs",
+    "test:e2e:requirements": "node scripts/e2e-requirements.mjs",
+    "test:e2e:requirements:list": "node scripts/e2e-requirements.mjs --list",
     "wiki:publish": "node scripts/publish-wiki.mjs",
     "docs:dev": "vite --config site/vite.config.ts",
     "docs:build": "vite build --config site/vite.config.ts",
