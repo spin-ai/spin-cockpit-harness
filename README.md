@@ -213,6 +213,7 @@ npm run pack:system
 - [docs/REQ-original.md](docs/REQ-original.md)（纠正版需求）
 - [docs/REQ-multi-agent-workspace.md](docs/REQ-multi-agent-workspace.md)（43 条规格）
 - [docs/REQ-modules-original.md](docs/REQ-modules-original.md)（原始需求 · 按模块：场景 / 项目 / TODO / Mission / Chat / Terminal / Wiki / 主机 / 设置 / 打包）
+- [docs/TEST-REQ-modules-original.md](docs/TEST-REQ-modules-original.md)（对应测试用例：按模块 / 优先级 / 现状 / 待确认项）
 - [docs/GAP-requirements.md](docs/GAP-requirements.md)（需求落地清单：P0/P1/P2 改造项）
 - [docs/DESIGN-SYSTEM.md](docs/DESIGN-SYSTEM.md)（设计系统：Geist / 中性色 / token / 页面与组件规则）
 - [AGENTS.md](AGENTS.md)（Agent / contributor 的 UI 硬规则）
