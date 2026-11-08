@@ -45,7 +45,7 @@ async function waitForPage(port, timeoutMs, logPath) {
   throw new Error(`等待调试页面超时（${timeoutMs}ms）\n${tail}`);
 }
 
-export async function launchApp({ root, port, dataDir }) {
+export async function launchApp({ root, port, dataDir, extraEnv = {} }) {
   const dist = path.join(root, "dist", "index.html");
   if (!fs.existsSync(dist)) throw new Error("dist/index.html 不存在；先运行 npm run build");
   const logPath = path.join(dataDir, "app.log");
@@ -61,7 +61,7 @@ export async function launchApp({ root, port, dataDir }) {
   }
   const child = spawn(command, argv, {
     cwd: root,
-    env: { ...process.env, COCKPIT_USER_DATA: dataDir },
+    env: { ...process.env, COCKPIT_USER_DATA: dataDir, ...extraEnv },
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout.pipe(log);

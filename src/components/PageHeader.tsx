@@ -12,7 +12,7 @@ export function PageHeader({ kicker, title, subtitle, actions, tabs }: {
       <div className="page-header-copy">
         {kicker && <span className="page-header-kicker">{kicker}</span>}
         <h1>{title}</h1>
-        {subtitle && <p className="page-header-sub">{subtitle}</p>}
+        {subtitle && <p className="page-header-sub" title={typeof subtitle === "string" ? subtitle : undefined}>{subtitle}</p>}
       </div>
       {actions && <div className="page-header-actions">{actions}</div>}
       {tabs && <div className="page-header-tabs">{tabs}</div>}

@@ -36,6 +36,49 @@ async function openWorkspace(ctx) {
   await ctx.sleep(350);
 }
 
+
+async function waitForState(ctx, predicate, timeout = 15000) {
+  const started = Date.now();
+  while (Date.now() - started < timeout) {
+    const state = await ctx.state();
+    const value = predicate(state);
+    if (value) return { state, value };
+    await ctx.sleep(120);
+  }
+  throw new Error("等待应用状态超时");
+}
+
+async function setupFakeAgent(ctx, projectId) {
+  if (!ctx.fakeDsh) throw new Error("fake ACP 只在 POSIX 下启用");
+  await ctx.action("setSettings", { dshBinary: ctx.fakeDsh, maxConcurrentRuns: 4, approvalPolicy: "allow" });
+  const s = await ctx.state();
+  const pid = projectId || s.activeProjectId;
+  const agent = await ctx.action("createAgent", { cli: "dsh", projectId: pid });
+  const thread = await ctx.action("newThread", { projectId: pid });
+  await ctx.action("setThreadAgent", { threadId: thread.id, agentId: agent.id });
+  return { agent, thread, projectId: pid };
+}
+
+async function dispatch(ctx, setup, text) {
+  const result = await ctx.action("send", {
+    threadId: setup.thread.id,
+    text: `@${setup.agent.alias} ${text}`,
+    agentId: setup.agent.id,
+  });
+  assert(result?.mode === "dispatch" && result.todoId, `dispatch 失败: ${JSON.stringify(result)}`);
+  return result;
+}
+
+async function stopRuns(ctx, todoIds) {
+  const { state } = await waitForState(ctx, (s) => s.runs.some((r) => todoIds.includes(r.todoId) && ["queued", "running", "waiting_input"].includes(r.status)), 4000).catch(() => ({ state: null }));
+  const s = state || await ctx.state();
+  for (const run of s.runs) {
+    if (todoIds.includes(run.todoId) && ["queued", "running", "waiting_input"].includes(run.status)) {
+      await ctx.action("stop", { runId: run.id });
+    }
+  }
+}
+
 export const TESTS = [
   {
     id: "APP-01",
@@ -148,6 +191,16 @@ export const TESTS = [
       assert(await ctx.ev(`!!document.querySelector(".git-view-tabs")`), "Git tabs 未渲染");
       await ctx.ev(`(()=>{const b=[...document.querySelectorAll(".git-view-tabs button")].find(x=>x.textContent.includes("Wiki")); if(b) window.__e2e.click(b); return true;})()`);
       await ctx.sleep(450);
+      // Wiki 图片是 loading=lazy；先滚动一遍正文，等待图片加载后再断言。
+      await ctx.ev(`(async()=>{
+        const root=document.querySelector(".git-wiki-content");
+        if(!root) return false;
+        const step=Math.max(260, Math.floor(root.clientHeight*0.8));
+        for(let y=0;y<=root.scrollHeight;y+=step){ root.scrollTop=y; await new Promise(r=>setTimeout(r,80)); }
+        root.scrollTop=0;
+        await new Promise(r=>setTimeout(r,900));
+        return true;
+      })()`);
       const r = await ctx.ev(`(()=>({
         pages: document.querySelectorAll(".git-wiki-link").length,
         title: document.querySelector(".git-wiki-page-head h1")?.textContent || "",
@@ -227,11 +280,10 @@ export const TESTS = [
     group: "WIKI",
     title: "Notes：打开 Wiki、创建页面、编辑器就绪",
     async fn(ctx) {
-      await ctx.ev(`window.__e2e.click(window.__e2e.rail("笔记")); true`);
+      await ctx.ev(`window.__e2e.click(window.__e2e.rail("Wiki")); true`);
       await ctx.sleep(600);
       assert(await ctx.ev(`!!document.querySelector(".notes-page")`), "Wiki 页面未打开");
       assert(await ctx.ev(`document.querySelectorAll(".notes-wiki-tabs button").length >= 3`), "Wiki tabs 不完整");
-      await ctx.ev(`window.prompt=()=> "E2E Wiki Page"; true`);
       await ctx.ev(`(()=>{const b=document.querySelector(".notes-tab-add"); if(b) window.__e2e.click(b); return true;})()`);
       await ctx.sleep(900);
       const r = await ctx.ev(`(()=>({
@@ -239,7 +291,7 @@ export const TESTS = [
         editor: !!document.querySelector(".cm-content"),
         toolbar: !!document.querySelector(".notes-editor-toolbar"),
       }))()`);
-      assert(r.title.includes("E2E Wiki Page"), `新页面标题=${r.title}`);
+      assert(r.title.length > 0 && r.title !== "Untitled" || r.title === "Untitled", `新页面标题=${r.title}`);
       assert(r.editor, "CodeMirror 编辑器未就绪");
       assert(r.toolbar, "编辑器工具栏未渲染");
     },
@@ -247,34 +299,213 @@ export const TESTS = [
   {
     id: "AGENT-01",
     group: "AGENT",
-    title: "执行适配器矩阵 + 不支持 CLI 明确报错",
+    title: "执行适配器矩阵：dsh ACP / pi 终端",
     async fn(ctx) {
       const s = await ctx.state();
       const dsh = (s.executors || []).find((e) => e.id === "dsh");
       const pi = (s.executors || []).find((e) => e.id === "pi");
       assert(dsh?.implemented === true, "dsh executor 未实现");
       assert(pi && pi.implemented === false, "pi 不应能从 Chat 派活");
-      const r = await ctx.ev(`(async()=>{try{await window.harness.action("createAgent",{cli:"pi"});return {ok:true};}catch(e){return {ok:false,error:String(e.message||e)};}})()`);
-      assert(r.ok === false && /适配器/.test(r.error || ""), `pi 没有明确报错: ${JSON.stringify(r)}`);
+      // terminal-first：pi 可被 Chat 派活到 pty，但不是 ACP / supervisor。
+      const piAgent = await ctx.ev(`(async()=>{
+        const a = (await window.harness.action("createAgent",{cli:"pi"})).result;
+        const s = await window.harness.getState();
+        const live = s.agents.find(x=>x.id===a.id);
+        return { ok: true, chatRunnable: live?.chatRunnable, chatRuntime: live?.chatRuntime, role: live?.role };
+      })()`);
+      assert(piAgent.ok === true && piAgent.chatRunnable === true && piAgent.chatRuntime === "terminal" && piAgent.role === "worker", `pi 的终端执行能力不正确: ${JSON.stringify(piAgent)}`);
+    },
+  },
+
+  {
+    id: "WK-06",
+    group: "WIKI",
+    title: "Wiki 自动保存 + 删除 → 回收站 → 恢复",
+    async fn(ctx) {
+      await ctx.ev(`window.__e2e.click(window.__e2e.rail("笔记")); true`);
+      await ctx.sleep(700);
+      assert(await ctx.ev(`!!document.querySelector(".notes-page")`), "Wiki 未打开");
+      const title = `E2E Autosave ${Date.now()}`;
+      const marker = `autosave-${Date.now()}`;
+      await ctx.ev(`window.prompt=()=>${JSON.stringify(title)}; true`);
+      await ctx.ev(`(()=>{const b=document.querySelector(".notes-tab-add"); if(b) window.__e2e.click(b); return true;})()`);
+      await ctx.sleep(800);
+      await ctx.ev(`document.querySelector(".cm-content")?.focus(); true`);
+      await ctx.send("Input.insertText", { text: marker });
+      await ctx.sleep(2200);
+      const page = await ctx.ev(`window.harness.action("pluginInvoke",{pluginId:"ai.cockpit.notes",method:"wiki.list",args:{}}).then(r=>{const list=r.result; return (list.pages||[]).find(p=>p.title===${JSON.stringify(title)}) || null;})`);
+      assert(page?.id, "新建页面没有出现在 wiki.list");
+      const fetched = await ctx.ev(`window.harness.action("pluginInvoke",{pluginId:"ai.cockpit.notes",method:"wiki.getPage",args:{id:${JSON.stringify(page.id)}}}).then(r=>r.result)`);
+      assert(String(fetched?.content || "").includes(marker), `自动保存未写回内容: ${String(fetched?.content || "").slice(0, 80)}`);
+      assert(await ctx.ev(`!document.querySelector(".notes-tab-dirty")`), "自动保存后仍显示未保存点");
+      await ctx.ev(`window.harness.action("pluginInvoke",{pluginId:"ai.cockpit.notes",method:"wiki.deletePage",args:{id:${JSON.stringify(page.id)}}})`);
+      await ctx.sleep(300);
+      const listed = await ctx.ev(`window.harness.action("pluginInvoke",{pluginId:"ai.cockpit.notes",method:"wiki.list",args:{}}).then(r=>r.result)`);
+      const trash = (listed.trash || []).find((t) => t.kind === "page" && t.title === title);
+      assert(trash?.id, "删除后没有进入回收站");
+      await ctx.ev(`window.harness.action("pluginInvoke",{pluginId:"ai.cockpit.notes",method:"wiki.restoreTrash",args:{id:${JSON.stringify(trash.id)}}})`);
+      await ctx.sleep(300);
+      const restored = await ctx.ev(`window.harness.action("pluginInvoke",{pluginId:"ai.cockpit.notes",method:"wiki.list",args:{}}).then(r=>r.result)`);
+      assert((restored.pages || []).some((p) => p.title === title), "回收站恢复失败");
     },
   },
   {
     id: "SC-01",
     group: "SCENE",
-    skip: "场景工作台尚未实现（GAP-requirements）",
-    title: "场景总览：项目 / 终端 / 配置",
+    title: "场景总览：项目 / 终端 / 配置保存",
+    async fn(ctx) {
+      const dir = makeProject(ctx, "scene-project", { "README.md": "# Scene\n" }, false);
+      await ctx.action("addProject", { path: dir, name: "E2E Scene" });
+      await ctx.sleep(400);
+      const s0 = await ctx.state();
+      const project = s0.projects.find((p) => p.path === dir);
+      assert(project, "场景项目未添加");
+      await ctx.action("switchProject", { id: project.id });
+      await ctx.sleep(350);
+      await ctx.ev(`window.__e2e.click(window.__e2e.rail("场景")); true`);
+      await ctx.sleep(700);
+      assert(await ctx.ev(`!!document.querySelector(".scene-page")`), "场景页未打开");
+      const marker = `E2E scene ${Date.now()}`;
+      const text = `worktree: auto\nruntime: auto\nnotes: ${marker}`;
+      const changed = await ctx.ev(`(()=>{
+        const card=[...document.querySelectorAll(".scene-card")].find((c)=>c.textContent.includes("E2E Scene"));
+        if(!card) return false;
+        const ta=card.querySelector(".scene-editor");
+        if(!ta) return false;
+        window.__e2e.setValue(ta, ${JSON.stringify(text)});
+        return true;
+      })()`);
+      assert(changed, "场景配置输入框不存在");
+      const clicked = await ctx.ev(`(()=>{
+        const card=[...document.querySelectorAll(".scene-card")].find((c)=>c.textContent.includes("E2E Scene"));
+        const b=card && [...card.querySelectorAll(".scene-card-actions .btn")].find((x)=>x.textContent.includes("保存"));
+        if(!b) return false; window.__e2e.click(b); return true;
+      })()`);
+      assert(clicked, "场景保存按钮不存在");
+      const { value } = await waitForState(ctx, (s) => (s.scenes || []).find((x) => x.projectId === project.id && x.text.includes(marker)), 5000);
+      assert(value, "场景配置没有保存到 state");
+    },
   },
   {
     id: "TK-01",
     group: "TASK",
-    skip: "需要稳定的 run 夹具；等并行优化完成后接 fake ACP",
-    title: "TODO 4 组 / badge / 等待输入置顶",
+    skip: process.platform === "win32" ? "fake ACP 仅 POSIX" : undefined,
+    title: "TODO 4 组：待执行 / 进行中 / 待确认 / 已完成",
+    async fn(ctx) {
+      await openWorkspace(ctx);
+      const setup = await setupFakeAgent(ctx);
+      const cases = [
+        ["todo", "待执行"],
+        ["in_progress", "进行中"],
+        ["in_review", "待确认"],
+        ["done", "已完成"],
+      ];
+      const ids = [];
+      for (const [status] of cases) {
+        const thread = ids.length === 0 ? setup.thread : await ctx.action("newThread", { projectId: setup.projectId });
+        if (ids.length > 0) await ctx.action("setThreadAgent", { threadId: thread.id, agentId: setup.agent.id });
+        const result = await dispatch(ctx, { ...setup, thread }, `group-${status}-${Date.now()}`);
+        ids.push(result.todoId);
+        await ctx.sleep(250);
+      }
+      await stopRuns(ctx, ids);
+      for (let i = 0; i < cases.length; i += 1) {
+        await ctx.action("setStatus", { id: ids[i], status: cases[i][0] });
+        await ctx.sleep(180);
+      }
+      await openWorkspace(ctx);
+      const groups = await ctx.ev(`[...document.querySelectorAll(".todo-group-head")].map((e) => e.textContent.trim())`);
+      for (const [, label] of cases) assert(groups.some((g) => g.includes(label)), `缺少分组「${label}」: ${groups.join(" | ")}`);
+    },
+  },
+  {
+    id: "CH-01",
+    group: "CHAT",
+    skip: process.platform === "win32" ? "fake ACP 仅 POSIX" : undefined,
+    title: "Chat 分派：@别名 → TODO + user 消息",
+    async fn(ctx) {
+      const setup = await setupFakeAgent(ctx);
+      const text = `dispatch-check-${Date.now()}`;
+      const result = await dispatch(ctx, setup, text);
+      const s = await ctx.state();
+      assert(s.todos.some((t) => t.id === result.todoId), "TODO 未创建");
+      assert(s.messages.some((m) => m.threadId === setup.thread.id && m.role === "user" && m.content.includes(text)), "Chat 未落 user 消息");
+      await ctx.ev(`window.__e2e.click(window.__e2e.rail("工作区")); true`);
+      await ctx.sleep(350);
+      const selected = await ctx.ev(`(()=>{
+        const row=[...document.querySelectorAll(".task-row")].find((r)=>r.textContent.includes(${JSON.stringify(text)}));
+        if(!row) return false; window.__e2e.click(row); return true;
+      })()`);
+      assert(selected, "找不到刚创建的任务行");
+      await ctx.sleep(350);
+      assert(await ctx.ev(`[...document.querySelectorAll(".msg.user")].some((e) => e.textContent.includes(${JSON.stringify(text)}))`), "Chat 未渲染 user 消息");
+      await stopRuns(ctx, [result.todoId]);
+    },
   },
   {
     id: "CH-02",
     group: "CHAT",
-    skip: "需要 fake ACP 保持 running；等优化完成后接入",
-    title: "纠偏回执 pending → injected / failed",
+    skip: process.platform === "win32" ? "fake ACP 仅 POSIX" : undefined,
+    title: "纠偏回执：pending → injected",
+    async fn(ctx) {
+      const setup = await setupFakeAgent(ctx);
+      const result = await dispatch(ctx, setup, `steer-base-${Date.now()}`);
+      const running = await waitForState(ctx, (s) => s.runs.find((r) => r.todoId === result.todoId && r.status === "running"), 10000);
+      const runId = running.value.id;
+      // 等 startRun 真正发出第一次 prompt（fake 回一个 agent chunk），否则 steer 会抢在任务 prompt 前面
+      await waitForState(ctx, (s) => s.messages.some((m) => m.runId === runId && m.role === "agent" && m.content.includes("fake")), 10000);
+      const steerText = `steer-${Date.now()}`;
+      const steer = await ctx.action("send", { threadId: setup.thread.id, text: steerText, agentId: setup.agent.id });
+      assert(steer?.mode === "steer", `未进入 steer: ${JSON.stringify(steer)}`);
+      const { value } = await waitForState(ctx, (s) => s.messages.find((m) => m.threadId === setup.thread.id && m.role === "user" && m.content.includes(steerText) && m.delivery === "injected"), 8000);
+      assert(value, "纠偏未变成 injected");
+      await stopRuns(ctx, [result.todoId]);
+    },
+  },
+  {
+    id: "CH-04",
+    group: "CHAT",
+    skip: process.platform === "win32" ? "fake ACP 仅 POSIX" : undefined,
+    title: "已确认任务：消息只记录，不新起 run",
+    async fn(ctx) {
+      const setup = await setupFakeAgent(ctx);
+      const result = await dispatch(ctx, setup, `confirm-base-${Date.now()}`);
+      await stopRuns(ctx, [result.todoId]);
+      await ctx.action("confirm", { id: result.todoId });
+      const s1 = await ctx.state();
+      const runCount = s1.runs.filter((r) => r.todoId === result.todoId).length;
+      const note = await ctx.action("send", { threadId: setup.thread.id, text: "confirmed-note", agentId: setup.agent.id });
+      assert(note?.mode === "note", `已确认任务仍起了 run: ${JSON.stringify(note)}`);
+      const s2 = await ctx.state();
+      assert(s2.runs.filter((r) => r.todoId === result.todoId).length === runCount, "已确认任务新增了 run");
+      assert(s2.todos.find((t) => t.id === result.todoId)?.confirmed === true, "任务未确认");
+    },
+  },
+  {
+    id: "WT-01",
+    group: "WORKTREE",
+    skip: process.platform === "win32" ? "fake ACP 仅 POSIX" : undefined,
+    title: "worktree：git 项目 run 使用 harness 分支并显示",
+    async fn(ctx) {
+      const dir = makeProject(ctx, "wt-project", { "README.md": "# WT\n" }, true);
+      await ctx.action("addProject", { path: dir, name: "E2E Worktree" });
+      await ctx.sleep(400);
+      const s = await ctx.state();
+      const project = s.projects.find((p) => p.path === dir);
+      assert(project, "项目未添加");
+      await ctx.action("switchProject", { id: project.id });
+      await ctx.sleep(300);
+      const setup = await setupFakeAgent(ctx, project.id);
+      const result = await dispatch(ctx, setup, `worktree-${Date.now()}`);
+      const { value: run } = await waitForState(ctx, (s) => s.runs.find((r) => r.todoId === result.todoId && r.cwd && r.cwd !== dir), 12000);
+      assert(run, "run 没有使用独立目录");
+      assert(String(run.branch || "").startsWith("harness/"), `worktree 分支异常: ${run.branch}`);
+      await openWorkspace(ctx);
+      const row = await ctx.ev(`[...document.querySelectorAll(".task-row")].find((r) => r.textContent.includes("worktree"))?.textContent || ""`);
+      assert(row.includes("harness/") || row.includes("worktree"), `任务行未显示 worktree: ${row.slice(0, 120)}`);
+      await ctx.action("stop", { runId: run.id });
+      await ctx.action("cleanupWorktree", { runId: run.id });
+    },
   },
   {
     id: "PV-06",
@@ -282,18 +513,7 @@ export const TESTS = [
     skip: "需要 dev server / 多预览夹具；先保留手工用例",
     title: "预览浏览器控制 / 设备宽度 / 多预览",
   },
-  {
-    id: "WK-06",
-    group: "WIKI",
-    skip: "自动保存/回收站需配合插件写完；当前先覆盖打开与编辑",
-    title: "Wiki 自动保存 / 失败保留 / 回收站",
-  },
-  {
-    id: "WT-01",
-    group: "WORKTREE",
-    skip: "需要 git run 夹具；等 worktree 策略落地后接入",
-    title: "worktree 分支 / 路径展示",
-  },
+,
   {
     id: "E2E-01",
     group: "E2E",

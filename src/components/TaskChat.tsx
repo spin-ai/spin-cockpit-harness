@@ -1232,7 +1232,17 @@ type Block =
   | { type: "table"; header: string[]; rows: string[][] };
 
 function parseTableRow(line: string) {
-  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+  const raw = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  const cells: string[] = [];
+  let cell = "";
+  for (let i = 0; i < raw.length; i++) {
+    const char = raw[i];
+    if (char === "\\" && raw[i + 1] === "|") { cell += "|"; i++; continue; }
+    if (char === "|") { cells.push(cell.trim()); cell = ""; continue; }
+    cell += char;
+  }
+  cells.push(cell.trim());
+  return cells;
 }
 
 function parseTextBlocks(text: string): Block[] {
@@ -1243,10 +1253,13 @@ function parseTextBlocks(text: string): Block[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const next = lines[i + 1] || "";
-    const isTable = line.includes("|") && /^\s*\|?\s*:?-{3,}/.test(next);
+    const header = line.includes("|") ? parseTableRow(line) : [];
+    const separator = next.includes("-") ? parseTableRow(next) : [];
+    const isTable = header.length > 1
+      && separator.length === header.length
+      && separator.every((cell) => /^:?-{3,}:?$/.test(cell));
     if (!isTable) { buffer.push(line); continue; }
     flush();
-    const header = parseTableRow(line);
     const rows: string[][] = [];
     i += 2;
     while (i < lines.length && lines[i].includes("|") && lines[i].trim()) {

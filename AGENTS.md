@@ -19,6 +19,8 @@ Cockpit Harness 的 agent / contributor 入口。
 7. 暗色边框使用 alpha 白；不要用实色灰画模块盒。
 8. 亮色和暗色都要检查；不能只修一边。
 9. 禁止整块高亮：编辑器聚焦只加 1px hairline，文本选中用 14% alpha，不要 3px ring / 蓝色闪屏。
+10. 行内低频操作使用 `RowMenu`；不要新增不会自动关闭、可能被滚动容器裁切的 `<details>` 菜单。
+11. 非当前 pane 只弱化 header/toolbar，不要整体降低内容透明度。
 
 ## 验证
 
