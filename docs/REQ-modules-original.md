@@ -467,7 +467,7 @@
 **待确认**
 
 - 是否需要更多 CLI 的 Chat 执行适配器？
-- 是否需要 Runtime = 主机 + CLI + caps 的独立对象？
+- 是否需要 Runtime = 主机 + CLI + caps 的独立对象？ - 需要概念，但先做 `hosts + executors + agent.cli` 的派生视图；出现共享并发 / 多账号 / 远程治理时，再建 `runtimes` 表。
 - 是否需要账号额度 / 用量治理？
 
 ---
