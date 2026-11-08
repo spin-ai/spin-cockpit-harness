@@ -2315,7 +2315,7 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .stats-scope{min-width:132px}
 
 /* 对比度：暗色主面更清晰，小字不再糊 */
-:root[data-mode="dark"]{
+:root[data-theme="dark"]{
   --page-canvas:#121318;--surface:#1d1e24;--surface-hover:#272930;--surface-selected:#30323b;
   --sidebar:#16171c;--sidebar-accent:#24262e;--border:#30323b;--border-strong:#42454f;--input:#3a3d47;
   --fg:#f0f1f4;--fg-2:#cdd0d8;--muted:#a5a8b2;--faint:#8b8e99;
