@@ -35,7 +35,7 @@ harness 的 Terminal 是「Agent 干活 + 人直接敲命令」的同一个 pane
 | 拆分窗格 | `⌘D` 向右、`⇧⌘D` 向下（递归嵌套）；拖拽分隔条调比例；`⌘⌥←/→/↑/↓` 按几何方向移动焦点；右键菜单 / 命令面板同入口 | `Tab.root` 二叉树 + `SplitSurface` 绝对定位布局；新窗格继承当前窗格 cwd；预览标签可拖入 pane 边缘 |
 | 关闭窗格 | `⌘W` 关闭当前窗格，最后一个窗格时关闭整个标签 | `closeFocusedPane` 删除叶子并折叠空的 split |
 | 预览标签 | 预览与终端共用一条标签栏，且**只有唯一一个预览标签**：打开文件 = 文件模式（渲染/源码），地址栏「URL」或 `打开预览 :PORT` = 地址模式（dev server / 远程页）；可双击重命名、`⌘W`/中键关闭；命令面板「打开预览（文件 / dev server / URL）」；工具栏不再单列「＋ 预览」 | `Tab.kind = "preview"`（`rel` 有值即文件模式）+ `PreviewSurface`（同一 webview 生命周期）；切到后台标签会自动取消拾取，避免挂在隐藏 webview 上 |
-| 文件预览（Markdown） | 双击即打开，**默认富文本编辑器**（ORCA 风格，无「编辑」开关）：工具栏 H1–H3 / B / I / 行内代码 / 无序·有序列表 / 引用 / 代码块 / 表格 / 分割线 / 链接 / 删除线 / 清除格式；**Markdown 输入规则**（`# ` `## ` `### ` → 标题、`- ` → 列表、`1. ` → 有序、`> ` → 引用、`​``` + Enter` → 代码块）；**输入 `/` 打开块插入菜单**；粘贴只取纯文本；`⌘S` 写回（turndown+gfm，表格转 pipe 表、列表归一 `- item`）；`⌘K` 链接、`⌘⇧X` 删除线、`⌘⇧M` 切源码；⌘/Ctrl+点击链接才跳转 |
+| 文件预览（Markdown） | 双击即打开，**TipTap / ProseMirror 富文本编辑器**（对齐 ORCA，不再用 contentEditable+execCommand）：工具栏 H1–H3 / B / I / S / 行内代码 / 列表 / 引用 / 代码块 / 表格 / 分割线 / 链接 / 撤销重做、选中态高亮；**Markdown 输入规则**由 StarterKit 提供（`# ` `## ` `### ` 标题、`- ` 列表、`1. ` 有序、`> ` 引用、``` 代码块）；空段落输入 `/` 打开块插入菜单；`⌘S` 保存 → `getHTML()` + turndown+gfm 转 Markdown（表格用自定义规则转 pipe 表）；`⌘K` 链接、`⌘⇧M` 切源码；TOC 跟随实时内容更新；空文档有 placeholder 提示 |
 | 文件预览（HTML） | 三段「预览 / 可视化 / 源码」：① 预览=webview 只读；② **可视化=GrapesJS 画布**（懒加载，右/左面板可拖组件、改文字、调样式；保存时 `getHtml()/getCss()` 重新拼完整文档，`<head>` 里的 title/meta/script 原样保留，样式写进唯一的 `<style data-grapes>`，重复保存不会叠加）；③ 源码=textarea + ⌘S。离开可视化若有未保存修改会确认；其它文本/图片保持只读 |
 | 回到最新 | 向上滚动时右下角出现悬浮按钮 | `term.onScroll` → `scrolledUp` |
 | 退出态 | 进程退出后浮层显示退出码，可「重新启动」（纯 shell 标签）或关闭 | `terminal:exit` + `incarnation` 重建 xterm |
