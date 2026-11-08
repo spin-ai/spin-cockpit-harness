@@ -210,3 +210,8 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
 .kpi b,.stats-scope,.fail-row,.git-commit-row{font-variant-numeric:tabular-nums}
 .md-table{min-width:480px;width:max-content;max-width:none}
 .md-table th{white-space:nowrap}
+
+/* 搜索命中 / 内联新建：不要黄底或蓝色光圈 */
+.notes-search-results mark,.notes-hit{background:color-mix(in srgb,var(--fg) 12%,transparent);color:var(--fg);border-radius:2px;padding:0 1px}
+.notes-hit.flash{background:color-mix(in srgb,var(--fg) 16%,transparent);box-shadow:0 0 0 2px color-mix(in srgb,var(--fg) 8%,transparent)}
+.task-create input:focus,.task-create textarea:focus,.settings-search:focus{border-color:var(--border-strong);box-shadow:var(--ring)}

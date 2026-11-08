@@ -711,7 +711,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                         <button onClick={() => updateText("审查这段改动：")}>审查改动</button>
                         <button onClick={() => updateText("运行测试并修复失败：")}>运行测试</button>
                       </>}
-                      <button className="link chat-guide-link" onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: "guide" }))}>Super Agent 怎么用？</button>
+                      <button className="link chat-guide-link" onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: { view: "guide", page: "super-agent" } }))}>Super Agent 怎么用？</button>
                     </div>
                   )}
                 </div>

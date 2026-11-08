@@ -32,6 +32,7 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingContext, setPendingContext] = useState<ElementContext | null>(null);
   const [notesOpenReq, setNotesOpenReq] = useState<{ path: string; n: number } | null>(null);
+  const [guidePage, setGuidePage] = useState("home");
   const [now, setNow] = useState(Date.now());
   const [todoW, setTodoW] = useStoredSize("cmh.layout.todoW", 220, 180, 520);
   const [chatW, setChatW] = useStoredSize("cmh.layout.chatW", 300, 220, 700);
@@ -268,8 +269,11 @@ export default function App() {
 
   useEffect(() => {
     const onView = (e: Event) => {
-      const next = (e as CustomEvent<string>).detail;
-      if (["workspace", "scene", "projects", "stats", "hosts", "settings", "guide", "notes"].includes(next)) setView(next as View);
+      const detail = (e as CustomEvent<string | { view?: string; page?: string }>).detail;
+      const next = typeof detail === "string" ? detail : detail?.view;
+      if (!next || !["workspace", "scene", "projects", "stats", "hosts", "settings", "guide", "notes"].includes(next)) return;
+      if (next === "guide" && typeof detail === "object" && detail?.page) setGuidePage(detail.page);
+      setView(next as View);
     };
     window.addEventListener("harness:view", onView);
     return () => window.removeEventListener("harness:view", onView);
@@ -532,7 +536,7 @@ export default function App() {
         {view === "hosts" && <div className="wide"><Hosts state={state} act={act} notify={notify} now={now} /></div>}
         {view === "git" && <div className="wide"><GitView state={state} notify={notify} /></div>}
         {view === "settings" && <div className="wide settings-wide"><Settings state={state} act={act} notify={notify} /></div>}
-        {view === "guide" && <div className="wide guide-wiki-wide"><Guide /></div>}
+        {view === "guide" && <div className="wide guide-wiki-wide"><Guide pageId={guidePage} /></div>}
         {view === "notes" && <div className="wide"><Notes state={state} act={act} onOpenTodo={selectTodo} openRequest={notesOpenReq} /></div>}
       </div>
 
