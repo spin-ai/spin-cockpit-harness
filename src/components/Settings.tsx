@@ -74,7 +74,6 @@ const SEARCH_INDEX: { section: Section; title: string; hint?: string; k?: string
   { section: "data", title: "数据库文件", hint: "harness.db 路径" },
   { section: "data", title: "数据目录", hint: "userData" },
   { section: "data", title: "导出备份", hint: "导出 .db" },
-  { section: "data", title: "清空收件箱" },
   { section: "data", title: "重置设置", hint: "恢复全部默认" },
   { section: "shortcuts", title: "快捷键", hint: "⌘K / ⌘N / ⌘E …" },
   { section: "about", title: "关于", hint: "版本 / 数据位置" },
@@ -493,9 +492,6 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
               </Row>
             </Card>
             <Card title="清理">
-              <Row title="清空收件箱">
-                <button className="btn tiny-btn" onClick={() => { if (window.confirm("清空收件箱？")) void act("clearInbox"); }}>清空</button>
-              </Row>
               <Row title="重置设置">
                 <button className="btn tiny-btn danger" onClick={() => { if (window.confirm("恢复默认设置？")) void act("resetSettings"); }}>重置</button>
               </Row>

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, clipboard, Menu } from "electron";
+import { app, BrowserWindow, ipcMain, shell, dialog, clipboard, Menu, globalShortcut } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { spawn, spawnSync, execFile } from "node:child_process";
@@ -600,6 +600,21 @@ async function startRun(run, todo, agent) {
     todo.lastRunFailed = true;
     store.addMessage(thread.id, run.id, "system", "error", `run 失败：${executorErr}`);
     store.addEvent("run.failed", `run.failed todo=${todo.key} ${executorErr}`);
+    broadcast();
+    tick();
+    return;
+  }
+  // 终端 Agent 只能走 pty：retry/broadcast/Mission child 不能把它误塞进 ACP
+  if (chatRuntimeOf(agent) === "terminal") {
+    const message = "终端 Agent 需要从 Chat 派活或在终端里运行，不能走 ACP 队列";
+    run.status = "failed";
+    run.endedAt = Date.now();
+    run.error = message;
+    run.errorClass = "terminal_required";
+    todo.status = "todo";
+    todo.lastRunFailed = true;
+    store.addMessage(thread.id, run.id, "system", "error", message);
+    store.addEvent("run.failed", `run.failed todo=${todo.key} ${message}`);
     broadcast();
     tick();
     return;
@@ -2188,6 +2203,11 @@ const actions = {
     store.addEvent("project.removed", `project.removed ${project.name}`);
     return { ok: true };
   },
+  revealWorktree: ({ runId }) => {
+    const run = store.state.runs.find((r) => r.id === runId);
+    if (!run?.cwd) throw new Error("run 没有工作目录");
+    return shell.openPath(run.cwd);
+  },
   revealProject: ({ id }) => {
     const project = store.state.projects.find((p) => p.id === id);
     if (!project) throw new Error("项目不存在");
@@ -2737,6 +2757,49 @@ const actions = {
     store.addMessage(threadForTodo(todo).id, null, "system", "system", `已确认 · ${todo.key}`);
     store.addEvent(todo.kind === "mission" ? "mission.confirmed" : "todo.confirmed", `${todo.kind === "mission" ? "mission" : "todo"}.confirmed ${todo.key}`);
     pluginHost?.emit("todo.confirmed", { todoId: todo.id, title: todo.title, mission: todo.kind === "mission" });
+  },
+  unconfirm: ({ id }) => {
+    const todo = store.state.todos.find((t) => t.id === id);
+    if (!todo) throw new Error("todo not found");
+    todo.confirmed = false;
+    if (todo.kind === "mission") {
+      todo.missionState = "in_review";
+      for (const child of store.state.todos.filter((t) => t.parentId === todo.id)) {
+        if (child.status === "done") { child.confirmed = false; child.status = "in_review"; }
+      }
+    } else {
+      todo.status = "in_review";
+    }
+    todo.updatedAt = now();
+    store.addMessage(threadForTodo(todo).id, null, "system", "system", `已撤销确认 · ${todo.key}`);
+    store.addEvent(todo.kind === "mission" ? "mission.unconfirmed" : "todo.unconfirmed", `${todo.kind === "mission" ? "mission" : "todo"}.unconfirmed ${todo.key}`);
+  },
+  attachTerminalToTask: ({ terminalId, todoId }) => {
+    const info = terminalUrls.get(terminalId);
+    if (!info) throw new Error("终端不存在或已关闭");
+    if (info.taskId) throw new Error("这个终端已经接入任务");
+    const todo = store.state.todos.find((t) => t.id === todoId);
+    if (!todo) throw new Error("todo not found");
+    const agent = info.agentId ? store.state.agents.find((a) => a.id === info.agentId) : null;
+    if (!agent) throw new Error("这个终端不是 Agent 终端；请先用「＋ Agent」启动");
+    const run = {
+      id: store.nextId("r"), todoId: todo.id, agentId: agent.id, status: "running",
+      trigger: "terminal", kind: "worker", delegationId: null,
+      startedAt: Date.now(), endedAt: null, cost: 0, tokens: null, error: null, parentRunId: null,
+      cwd: info.cwd, branch: info.branch || null, hostId: agent.hostId || null, createdAt: Date.now(),
+      tokensIn: null, tokensOut: null, usageSource: "unknown", errorClass: null, exitCode: null,
+      queueWaitMs: 0, durationMs: null, queueReason: null, terminalId,
+    };
+    store.state.runs.push(run);
+    info.runId = run.id;
+    info.taskId = todo.id;
+    todo.status = "in_progress";
+    todo.agentId = agent.id;
+    todo.lastRunFailed = false;
+    todo.updatedAt = Date.now();
+    store.addEvent("run.started", `run.started terminal-attach todo=${todo.key} agent=${agent.name}`);
+    broadcast();
+    return run;
   },
   run: ({ id, agentId }) => {
     const todo = store.state.todos.find((t) => t.id === id);
@@ -3409,7 +3472,11 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
   const send = (data) => { if (win && !win.isDestroyed()) win.webContents.send("terminal:data", { id, data }); };
   // attached=false 时先把输出攒起来：终端可能在渲染进程挂载前就已经打印了 banner
   // （例如从下拉框启动 Agent），挂载后通过 terminal:attach 一次性回放，避免首屏空白。
-  const info = { url: null, tail: "", attached: false, buffer: "", exited: false, exitCode: null, runId: run?.id || null, closedByUser: false };
+  const info = {
+    url: null, tail: "", attached: false, buffer: "", exited: false, exitCode: null,
+    runId: run?.id || null, closedByUser: false,
+    cwd: cwdResolved, branch: branch || null, agentId: agent?.id || null, taskId: run?.todoId || null,
+  };
   terminalUrls.set(id, info);
   term.onData((data) => {
     if (info.attached) send(data);
@@ -3662,6 +3729,16 @@ app.whenReady().then(async () => {
   startMissionMcpServer();
   startWikiMcpServer();
   await createWindow();
+  // 全局快速记录：不切主窗口，直接把剪贴板内容变成 Wiki draft
+  try {
+    globalShortcut.register("CommandOrControl+Shift+K", () => {
+      if (!win || win.isDestroyed()) return;
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+      win.webContents.send("harness:quick-capture");
+    });
+  } catch { /* 快捷键被占用时不影响启动 */ }
   try {
     const { PluginHost } = await import("./plugins/host.mjs");
     pluginHost = new PluginHost({
@@ -3678,6 +3755,7 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 app.on("before-quit", () => {
+  try { globalShortcut.unregisterAll(); } catch { /* ignore */ }
   try { grapeProc?.kill(); } catch { /* ignore */ }
   try { mcpServer?.close(); } catch { /* ignore */ }
   try { wikiMcpServer?.close(); } catch { /* ignore */ }

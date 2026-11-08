@@ -19,6 +19,7 @@ let data = {
   revisions: [],
   reviews: [],
   log: [],
+  trash: [],
   layout: null,
   vaultPath: "",
 };
@@ -117,7 +118,7 @@ async function pickVault() {
 async function load() {
   try {
     const raw = JSON.parse(await fs.readFile(dataFile(), "utf8"));
-    data = { ...data, ...raw };
+    data = { ...data, ...raw, trash: Array.isArray(raw.trash) ? raw.trash : [] };
     seq = Number(raw.seq) || seq;
   } catch { /* first run */ }
 }
@@ -185,24 +186,67 @@ function sourceText(source) {
   return `${source.title}\n${source.uri || ""}\n${source.content || ""}`;
 }
 
+/**
+ * 搜索评分：
+ * - 完整短语优先
+ * - 多词 / 中文按字匹配，避免「登录报错」搜不到「登录时……报错」
+ * - 英文再做一次子序列模糊匹配
+ * - 标题命中加权， reviewed 页面和引用多的页面略微靠前
+ */
+function searchScore(text, query) {
+  const body = String(text || "").toLowerCase();
+  const q = String(query || "").toLowerCase().trim();
+  if (!body || !q) return null;
+  const exact = body.indexOf(q);
+  if (exact >= 0) return { score: 20, at: exact };
+  const tokens = q.split(/\s+/).filter(Boolean);
+  if (tokens.length > 1 && tokens.every((t) => body.includes(t))) return { score: 12, at: Math.max(0, body.indexOf(tokens[0])) };
+  const chars = [...q.replace(/\s+/g, "")];
+  const hit = chars.filter((ch) => body.includes(ch));
+  if (chars.length > 1 && hit.length >= Math.max(2, Math.ceil(chars.length * 0.6))) {
+    return { score: 4 + (hit.length / chars.length) * 4, at: Math.max(0, body.indexOf(hit[0])) };
+  }
+  let cursor = 0;
+  for (const ch of q) {
+    const at = body.indexOf(ch, cursor);
+    if (at < 0) return null;
+    cursor = at + ch.length;
+  }
+  return { score: 2, at: 0 };
+}
+
 function searchAll(q, limit = 40) {
   const query = String(q || "").trim().toLowerCase();
   if (!query) return [];
   const out = [];
   for (const page of data.pages) {
-    const body = `${page.title}\n${page.summary}\n${page.content}`.toLowerCase();
-    const at = body.indexOf(query);
-    if (at >= 0) {
-      const titleHit = page.title.toLowerCase().includes(query) ? 3 : 0;
-      const rank = titleHit + (page.status === "reviewed" ? 2 : 0) + Math.min(3, citationsOf(page.id).length);
-      out.push({ kind: "page", id: page.id, title: page.title, snippet: page.content.slice(Math.max(0, at - 60), at + 180).replace(/\s+/g, " "), rank });
-    }
+    const titleHit = searchScore(page.title, query);
+    const bodyHit = searchScore(`${page.summary}\n${page.content}`, query);
+    const hit = titleHit && bodyHit ? (titleHit.score + 2 >= bodyHit.score ? titleHit : bodyHit) : (titleHit || bodyHit);
+    if (!hit) continue;
+    const total = hit.score + (titleHit ? 6 : 0) + (page.status === "reviewed" ? 2 : 0) + Math.min(3, citationsOf(page.id).length);
+    const at = Math.max(0, hit.at || 0);
+    out.push({ kind: "page", id: page.id, title: page.title, snippet: page.content.slice(Math.max(0, at - 60), at + 180).replace(/\s+/g, " "), rank: total });
   }
   for (const source of data.sources) {
-    const at = sourceText(source).toLowerCase().indexOf(query);
-    if (at >= 0) out.push({ kind: "source", id: source.id, title: source.title, snippet: source.content.slice(Math.max(0, at - 60), at + 180).replace(/\s+/g, " ") });
+    const hit = searchScore(sourceText(source), query);
+    if (!hit) continue;
+    out.push({ kind: "source", id: source.id, title: source.title, snippet: source.content.slice(Math.max(0, hit.at - 60), hit.at + 180).replace(/\s+/g, " "), rank: hit.score });
   }
   return out.sort((a, b) => (b.rank || 0) - (a.rank || 0)).slice(0, limit);
+}
+
+/** 所有页面里出现过的 #标签，供编辑器补全；附使用次数 */
+function allTags() {
+  const counts = new Map();
+  for (const page of data.pages) {
+    const text = `${page.title}\n${page.content}`;
+    for (const match of text.matchAll(/(^|[\s（(])#([\p{L}\p{N}_-]{1,40})/gu)) {
+      const tag = match[2];
+      counts.set(tag, (counts.get(tag) || 0) + 1);
+    }
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 200).map(([tag, count]) => ({ tag, count }));
 }
 
 function memoryMarkdown(maxChars = 12000) {
@@ -282,6 +326,7 @@ export async function activate(context) {
     pages: data.pages.map(pageSummary),
     sources: data.sources.map((s) => ({ id: s.id, title: s.title, kind: s.kind, uri: s.uri, createdAt: s.createdAt, citations: data.citations.filter((c) => c.sourceId === s.id).length })),
     reviews: data.pages.filter((p) => p.status === "draft").map(pageSummary),
+    trash: data.trash.map((t) => ({ id: t.id, kind: t.kind, title: t.title, deletedAt: t.deletedAt })),
     log: data.log.slice(0, 40),
     layout: data.layout,
     vaultPath: data.vaultPath,
@@ -316,9 +361,41 @@ export async function activate(context) {
     return pageView(page);
   });
   ctx.api.handle("wiki.deletePage", async ({ id: pageId } = {}) => {
-    data.pages = data.pages.filter((p) => p.id !== pageId);
-    data.citations = data.citations.filter((c) => c.pageId !== pageId);
-    addLog("page.delete", pageId);
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    data.trash.unshift({
+      id: id("trash"), kind: "page", title: page.title, deletedAt: now(),
+      page: clone(page), citations: data.citations.filter((c) => c.pageId === page.id),
+    });
+    data.trash = data.trash.slice(0, 500);
+    data.pages = data.pages.filter((p) => p.id !== page.id);
+    data.citations = data.citations.filter((c) => c.pageId !== page.id);
+    addLog("page.delete", page.title);
+    await persist();
+    return true;
+  });
+  ctx.api.handle("wiki.restoreTrash", async ({ id: trashId } = {}) => {
+    const entry = data.trash.find((t) => t.id === trashId);
+    if (!entry) throw new Error("回收站条目不存在");
+    if (entry.kind === "page" && entry.page) {
+      if (!data.pages.some((p) => p.id === entry.page.id)) data.pages.unshift(clone(entry.page));
+      for (const c of entry.citations || []) {
+        if (!data.citations.some((x) => x.id === c.id)) data.citations.push(clone(c));
+      }
+    } else if (entry.kind === "source" && entry.source) {
+      if (!data.sources.some((s) => s.id === entry.source.id)) data.sources.unshift(clone(entry.source));
+      for (const c of entry.citations || []) {
+        if (!data.citations.some((x) => x.id === c.id)) data.citations.push(clone(c));
+      }
+    }
+    data.trash = data.trash.filter((t) => t.id !== trashId);
+    addLog("trash.restore", entry.title);
+    await persist();
+    return true;
+  });
+  ctx.api.handle("wiki.purgeTrash", async ({ id: trashId } = {}) => {
+    data.trash = trashId ? data.trash.filter((t) => t.id !== trashId) : [];
+    addLog("trash.purge", trashId || "all");
     await persist();
     return true;
   });
@@ -363,6 +440,14 @@ export async function activate(context) {
     const targets = new Set([sourceId, ...(Array.isArray(ids) ? ids : [])].filter(Boolean));
     if (!targets.size) throw new Error("缺少 source id");
     const before = data.sources.length;
+    const removedSources = data.sources.filter((s) => targets.has(s.id));
+    for (const source of removedSources) {
+      data.trash.unshift({
+        id: id("trash"), kind: "source", title: source.title, deletedAt: now(),
+        source: clone(source), citations: data.citations.filter((c) => c.sourceId === source.id),
+      });
+    }
+    data.trash = data.trash.slice(0, 500);
     data.sources = data.sources.filter((s) => !targets.has(s.id));
     const removedCitations = data.citations.filter((c) => targets.has(c.sourceId)).length;
     data.citations = data.citations.filter((c) => !targets.has(c.sourceId));
@@ -447,6 +532,7 @@ export async function activate(context) {
   });
   ctx.api.handle("wiki.reviewQueue", async () => data.pages.filter((p) => p.status === "draft").map(pageSummary));
   ctx.api.handle("wiki.search", async ({ query, limit = 40 } = {}) => searchAll(query, limit));
+  ctx.api.handle("wiki.tags", async () => allTags());
   /**
    * 自动整理 Wiki：统一大纲 + 补「相关」链接 + 重建索引页（确定性，不需要模型）。
    * - 每个页面保证 `# 标题`、`## 要点`、`## 原文摘录`、`## 相关` 四段

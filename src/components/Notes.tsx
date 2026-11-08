@@ -20,9 +20,10 @@ type VaultInfo = { path: string; files: VaultFile[]; indexedAt?: number; error?:
 type GraphData = { nodes: { id: string; title: string; kind: "page" | "source" | "file"; links: number }[]; edges: { source: string; target: string; kind: string }[] };
 type Doc = Page & { dirty: boolean; local?: boolean; localPath?: string; mtime?: number };
 type Pane = { tabs: string[]; active: string | null };
-type Tab = "pages" | "sources" | "review" | "vault";
+type Tab = "pages" | "sources" | "review" | "vault" | "trash";
 type SourceDraft = { title: string; content: string; url: string; mode: "text" | "url" | "file" };
 type MemoryData = { markdown: string; pageCount: number; chars: number };
+type TrashItem = { id: string; kind: "page" | "source"; title: string; deletedAt: number };
 
 function emptyPane(): Pane { return { tabs: [], active: null }; }
 function statusLabel(status: string) { return status === "reviewed" ? "已审核" : status === "stale" ? "已过期" : "Draft"; }
@@ -42,6 +43,11 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const [pages, setPages] = useState<PageSummary[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [reviews, setReviews] = useState<PageSummary[]>([]);
+  const [trash, setTrash] = useState<TrashItem[]>([]);
+  const [tags, setTags] = useState<{ tag: string; count: number }[]>([]);
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [quickText, setQuickText] = useState("");
+  const [quickBusy, setQuickBusy] = useState(false);
   const [log, setLog] = useState<{ id: string; kind: string; text: string; at: number }[]>([]);
   const [vault, setVault] = useState<VaultInfo>({ path: "", files: [] });
   const [tab, setTab] = useState<Tab>("pages");
@@ -80,6 +86,18 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const activeDoc = pane.active ? docs[pane.active] ?? null : null;
   const linkedTodos = activeDoc ? (state.todoLinks || []).filter((l) => l.pluginId === PLUGIN_ID && l.ref === activeDoc.id) : [];
 
+  // 全局快捷键进来时：预填剪贴板；不覆盖用户正在写的草稿
+  useEffect(() => {
+    const onQuick = async () => {
+      let text = "";
+      try { text = await window.harness.clipboardRead(); } catch { /* 剪贴板不可用 */ }
+      setQuickText((cur) => cur || text);
+      setQuickOpen(true);
+    };
+    window.addEventListener("harness:quick-capture", onQuick);
+    return () => window.removeEventListener("harness:quick-capture", onQuick);
+  }, []);
+
   const refresh = useCallback(async () => {
     if (!enabled) return;
     try {
@@ -88,7 +106,9 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
       setPages(Array.isArray(res.pages) ? res.pages : []);
       setSources(Array.isArray(res.sources) ? res.sources : []);
       setReviews(Array.isArray(res.reviews) ? res.reviews : []);
+      setTrash(Array.isArray(res.trash) ? res.trash : []);
       setLog(Array.isArray(res.log) ? res.log : []);
+      try { setTags(await invoke("wiki.tags")); } catch { /* tags 可选 */ }
       try { setMemory(await invoke("wiki.memory", { maxChars: 12000 })); } catch { /* memory is optional */ }
       setError("");
     } catch (err) { fail(err); }
@@ -224,6 +244,34 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     } catch (err) { fail(err); } finally { setBusy(false); }
   }, [docs, invoke, refresh]);
 
+  // 停笔约 1s 自动保存；保存失败保留 dirty 并提示，不丢内容
+  useEffect(() => {
+    const pending = Object.values(docs).filter((d) => d.dirty);
+    if (!pending.length) return;
+    const timer = window.setTimeout(() => {
+      for (const doc of pending) void saveDoc(doc.id);
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [docs, saveDoc]);
+
+  const saveQuick = async () => {
+    const text = quickText.trim();
+    if (!text || quickBusy) return;
+    setQuickBusy(true);
+    try {
+      const title = text.split("\n")[0].replace(/^#+\s*/, "").trim().slice(0, 80) || "快速记录";
+      const page = await invoke("wiki.createPage", { title });
+      if (page) {
+        await invoke("wiki.savePage", { id: page.id, title, content: `# ${title}\n\n${text}` });
+        setQuickOpen(false);
+        setQuickText("");
+        await refresh();
+        await openPage(page.id);
+        setNotice("已存为 Wiki draft");
+      }
+    } catch (err) { fail(err); } finally { setQuickBusy(false); }
+  };
+
   const closeTab = (where: "left" | "right", pageId: string) => {
     const doc = docs[pageId];
     if (doc?.dirty && !window.confirm(`「${doc.title}」有未保存修改，关闭？`)) return;
@@ -341,28 +389,46 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
 
   /** 删除资料（连带其引用）；页面保留 */
   const deleteSource = async (source: { id: string; title: string }) => {
-    if (!window.confirm(`删除资料「${source.title}」？引用它的页面会失去这条引用。`)) return;
+    if (!window.confirm(`把资料「${source.title}」移入回收站？引用它的页面会失去这条引用。`)) return;
     setBusy(true);
     try {
       const res = await invoke("wiki.deleteSource", { id: source.id });
       if (sourceView?.id === source.id) setSourceView(null);
-      setNotice(`已删除资料${res?.removedCitations ? `，同时移除 ${res.removedCitations} 条引用` : ""}`);
+      setNotice(`资料已移入回收站${res?.removedCitations ? `，同时移除 ${res.removedCitations} 条引用` : ""}`);
       await refresh();
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
   /** 删除页面（关掉相关 tab） */
   const deletePage = async (page: { id: string; title: string }) => {
-    if (!window.confirm(`删除页面「${page.title}」？不可恢复。`)) return;
+    if (!window.confirm(`把页面「${page.title}」移入回收站？可在「回收站」恢复。`)) return;
     setBusy(true);
     try {
       await invoke("wiki.deletePage", { id: page.id });
       setDocs((cur) => { const next = { ...cur }; delete next[page.id]; return next; });
       const strip = (p: Pane) => ({ tabs: p.tabs.filter((x) => x !== page.id), active: p.active === page.id ? null : p.active });
       setLeft(strip); setRight(strip);
-      setNotice("页面已删除");
+      setNotice("页面已移入回收站");
       await refresh();
     } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const restoreTrash = async (item: TrashItem) => {
+    try {
+      await invoke("wiki.restoreTrash", { id: item.id });
+      setNotice(`已恢复「${item.title}」`);
+      await refresh();
+      setTab(item.kind === "page" ? "pages" : "sources");
+    } catch (err) { fail(err); }
+  };
+
+  const purgeTrash = async (item: TrashItem) => {
+    if (!window.confirm(`彻底删除「${item.title}」？此操作不可恢复。`)) return;
+    try {
+      await invoke("wiki.purgeTrash", { id: item.id });
+      setNotice("已彻底删除");
+      await refresh();
+    } catch (err) { fail(err); }
   };
 
   const createPage = async () => {
@@ -638,7 +704,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 }
               }} />
             ) : (
-              <NotesEditor key={doc.id} value={doc.content} pages={[...pages.map((p) => ({ path: p.id, title: p.title })), ...vault.files.map((f) => ({ path: `vault:${f.path}`, title: f.title }))]} tags={[]} dirty={doc.dirty} onChange={(value) => updateDoc(doc.id, value)} onSave={() => void saveDoc(doc.id)} />
+              <NotesEditor key={doc.id} value={doc.content} pages={[...pages.map((p) => ({ path: p.id, title: p.title })), ...vault.files.map((f) => ({ path: `vault:${f.path}`, title: f.title }))]} tags={tags.map((t) => t.tag)} dirty={doc.dirty} onChange={(value) => updateDoc(doc.id, value)} onSave={() => void saveDoc(doc.id)} />
             )}
           </>
         )}
@@ -648,6 +714,31 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
 
   return (
     <div className="notes-page">
+      {quickOpen && (
+        <div className="modal-mask" role="dialog" aria-modal="true" aria-label="快速记录">
+          <div className="modal quick-capture">
+            <h3>快速记录</h3>
+            <p className="tiny muted">⌘⇧K 随时打开 · 剪贴板已预填 · 存为 draft，稍后再整理</p>
+            <textarea
+              autoFocus
+              rows={7}
+              value={quickText}
+              onChange={(e) => setQuickText(e.target.value)}
+              placeholder="记下想法、链接或剪贴板内容…"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void saveQuick(); }
+                if (e.key === "Escape") { e.preventDefault(); setQuickOpen(false); }
+              }}
+            />
+            <div className="row gap6" style={{ justifyContent: "flex-end" }}>
+              <button className="btn tiny-btn" onClick={() => setQuickOpen(false)} disabled={quickBusy}>取消</button>
+              <button className="btn tiny-btn primary" onClick={() => void saveQuick()} disabled={quickBusy || !quickText.trim()}>
+                {quickBusy ? "保存中…" : "存为 Wiki draft"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <header className="notes-head">
         <div className="notes-head-main">
           <span className="notes-kicker">NATIVE · LLM WIKI</span>
@@ -696,6 +787,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
             <button className={tab === "sources" ? "on" : ""} onClick={() => setTab("sources")}>资料 <em>{sources.length}</em></button>
             <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>审核 <em>{reviews.length}</em></button>
             <button className={tab === "vault" ? "on" : ""} onClick={() => setTab("vault")}>本地 <em>{vault.files.length}</em></button>
+            <button className={tab === "trash" ? "on" : ""} onClick={() => setTab("trash")}>回收站 <em>{trash.length}</em></button>
           </div>
           <div className="notes-search-wrap">
             <SearchIcon size={12} className="notes-search-icon" />
@@ -774,6 +866,20 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 <button className="btn primary" onClick={() => void pickLocalFolder()} disabled={busy}>打开目录</button>
               </div>
             )}
+            {tab === "trash" && trash.filter((item) => !query || item.title.toLowerCase().includes(query.toLowerCase())).map((item) => (
+              <div key={item.id} className="notes-row">
+                <button className="notes-file" onClick={() => void restoreTrash(item)} title="点击恢复">
+                  <FileTextIcon size={12} className="notes-source-icon" />
+                  <span className="ellipsis">{item.title}</span>
+                  <em>{item.kind === "page" ? "页面" : "资料"}</em>
+                </button>
+                <span className="notes-row-actions">
+                  <button className="link tiny" title="恢复" onClick={(e) => { e.stopPropagation(); void restoreTrash(item); }}>恢复</button>
+                  <button className="link tiny" title="彻底删除" onClick={(e) => { e.stopPropagation(); void purgeTrash(item); }}>彻底删除</button>
+                </span>
+              </div>
+            ))}
+            {tab === "trash" && trash.length === 0 && <div className="notes-empty-list">回收站是空的。删除的页面和资料会在这里保留，可随时恢复。</div>}
             {tab === "pages" && filteredPages.length === 0 && (
               <div className="notes-empty-list">
                 还没有页面。

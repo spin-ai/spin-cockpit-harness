@@ -313,6 +313,12 @@ button{cursor:pointer}
 .task-row{position:relative;display:flex;flex-direction:column;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 9px;margin-bottom:5px;cursor:pointer;transition:border-color .12s,box-shadow .12s}
 .task-row:hover{border-color:#d4d4d8;box-shadow:0 1px 3px rgba(15,23,42,.05)}
 .task-row.on{border-color:var(--brand-line);box-shadow:0 0 0 1px var(--brand-line)}
+.task-row.task-waiting{background:#fffdf5;border-color:#f5e6bf}
+.task-row.task-waiting::before{background:#d97706}
+.task-worktree{display:block;max-width:100%;border:0;background:transparent;padding:0;text-align:left;color:var(--faint);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-worktree:hover{color:var(--brand)}
+.todo-group-head.active{color:#1d4ed8}
+.todo-group-head.done{color:#15803d}
 .task-row-title{font-size:12.5px;font-weight:500;line-height:1.45;color:var(--fg)}
 .confirm-btn{position:absolute;right:8px;bottom:7px;height:22px;padding:0 7px;font-size:10.5px}
 .task-tools{padding:8px 8px 6px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px;flex:none}
@@ -381,6 +387,8 @@ button{cursor:pointer}
 .term-host .xterm{height:100%}
 
 /* 终端易用性：字号 / 查找 / 右键菜单 / 退出态 */
+.term-agent-launch{height:24px;max-width:150px;border:1px solid var(--input);border-radius:5px;background:var(--surface);color:var(--muted);font-size:10.5px;padding:0 4px;outline:none}
+.term-agent-launch:hover{color:var(--fg);border-color:var(--border-strong)}
 .term-icon-btn{height:22px;border:1px solid #3f3f46;border-radius:5px;background:transparent;color:#a1a1aa;font-size:12px;line-height:1;padding:0 6px;cursor:pointer;display:grid;place-items:center}
 .term-icon-btn:hover:not(:disabled){background:#27272a;color:#e4e4e7}
 .term-icon-btn:disabled{opacity:.35;cursor:default}
@@ -739,6 +747,9 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 :root[data-mode="dark"] .session-row.open{background:var(--surface-hover)}
 :root[data-mode="dark"] .card:hover,
 :root[data-mode="dark"] .task-row:hover{border-color:#3f3f46;box-shadow:none}
+:root[data-mode="dark"] .task-row.task-waiting{background:#1d1a10;border-color:#4a3413}
+:root[data-mode="dark"] .todo-group-head.active{color:#93c5fd}
+:root[data-mode="dark"] .todo-group-head.done{color:#86efac}
 :root[data-mode="dark"] .card.warn{background:#1d1a10}
 :root[data-mode="dark"] .card.attn{background:#1d1a10;border-color:#a16207}
 :root[data-mode="dark"] .col.waiting_input{background:#1d1a10;border-color:#4a3413}
