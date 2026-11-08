@@ -114,6 +114,7 @@ command: pi                # terminal 模式使用
 cwdMode: worktree          # worktree | project
 maxConcurrent: 1
 worktree: true
+launchMode: chat           # chat | terminal-manual
 approval: ask              # ask | allow | deny（ACP）
 acceptance:
   - 页面可打开
@@ -158,12 +159,15 @@ notes: "前端任务优先走 pi 终端，不要动后端接口。"
 
 ## 5. Terminal 与 Run 的融合
 
-### 5.1 两种 Terminal
+### 5.1 三种 Terminal
 
 | 类型 | 说明 | 绑定 |
 |---|---|---|
-| 项目 shell | 用户自己开的终端 | 不绑定 WorkItem，只绑定 Project |
-| Agent 终端 | Chat / 场景派活后启动的 CLI | 必须绑定 Run + WorkItem |
+| 项目 shell | 用户自己开的终端 | 只绑定 Project |
+| 独立 Agent 终端 | 用户先在终端启动 pi / claude / codex，暂时没有任务 | 绑定 Project + Agent，可选绑定 WorkItem / Run |
+| 任务 Agent 终端 | Chat / Scene 派活后启动的 CLI | 必须绑定 Run + WorkItem |
+
+独立 Agent 终端是“我很懒，先起一个 pi 跑着”的场景，不强制先建任务。它出现在场景总览和 Chat 进展面板里；如果之后决定把它接到某个任务，再执行「接入任务」。
 
 ### 5.2 终端元数据持久化
 
@@ -178,7 +182,34 @@ terminals
 
 - 不持久化 scrollback；
 - 应用重启后，未退出终端标记 `interrupted`，Run 标记 `interrupted`，不假装还在跑；
-- 关闭 tab = 结束 run（agent 终端）或只关闭 shell（项目 shell）。
+- 关闭 tab = 结束 run（任务 Agent 终端）或只关闭 shell（项目 shell / 独立 Agent 终端）。
+
+### 5.4 终端优先与手工接入
+
+终端优先不是“Chat 偷偷开一个终端”，而是用户看得到、控制得到：
+
+```text
+打开项目 → 打开终端 → 启动 pi / claude（或点「＋ Agent」）
+  → 生成 terminals 记录（kind=agent，未绑 WorkItem）
+  → 场景总览 / Chat dock 显示：运行中、最近输出、退出码
+  → 如果决定接入某个任务：
+       选择 WorkItem / Scene
+       → 绑定 run / worktree
+       → 若当前 cwd 不是 run worktree，提示「重启到 worktree」或「保持当前目录」
+```
+
+`launchMode: terminal-manual` 的 Scene：
+
+- Chat 确认后只创建 WorkItem，状态为 `todo`，显示「等待终端启动」；
+- 用户在终端里启动 Agent，再「接入任务」；
+- 不自动弹终端，不自动起 CLI；
+- 适合“我要看着它跑、我还要在里面手动敲命令”的工作方式。
+
+边界：
+
+- 用户直接在 shell 里输入 `pi`，如果没有用「＋ Agent」，只能作为 shell 记录；harness 不解析 shell 命令来猜 Agent。
+- 想被纳入统一进展，必须显式启动 Agent（工具栏）或之后手动「标记为 Agent / 接入任务」。
+- 一个 Run 只对应一个终端标签；需要多个 Agent 就开多个标签，不在一个终端里复用多个 Agent。
 
 ### 5.3 TODO 行上的终端状态
 
@@ -264,6 +295,7 @@ Chat 顶部加范围切换：
 可收起的进展 dock：
 
 - 运行中 / 排队 / 等待输入 / 待确认 / 最近失败；
+- 独立 Agent 终端也要出现，不要求先有 WorkItem；
 - 每行：WorkItem key + title + Scene + Agent + Runtime + 终端；
 - 操作：停止 / 重试 / 打开终端 / 跳到任务；
 - 点击终端直接在右侧 Terminal 聚焦；
@@ -384,6 +416,10 @@ runs
 8. 关闭终端 / pty 退出后，TODO 和 Chat 状态同步；不出现“终端没了但 run 还在跑”。
 9. 应用重启后，所有终端 run 标 `interrupted`，不伪造完成。
 10. 没有匹配 Scene 时不自动开跑，显示候选和原因。
+11. 打开项目 → 终端 → 启动 pi，不建任务；场景总览和 Chat「所有项目」能看到该终端、Agent、运行时长、最近输出、退出码。
+12. 一个任务需要多个 Agent 同时跑：每个 Run 一个独立终端标签，全部出现在场景总览 / Chat dock；点击任一行能聚焦对应终端，不出现“看不见的 Agent 在跑”。
+13. 独立 Agent 终端可以「接入任务」；接入后 WorkItem / Run / 终端三者绑定，后续 Chat 纠偏写入同一个 pty。
+14. `launchMode: terminal-manual` 时，Chat 确认只创建 WorkItem，用户启动终端并接入后才开始计时/运行。
 
 ---
 
@@ -408,6 +444,9 @@ runs
 | Chat 进展过载 | dock 可收起，默认当前项目，所有项目是显式切换 |
 | 终端持久化变成第二个 pty 系统 | 只存元数据，不存 scrollback；pty 仍由主进程持有 |
 | 自动分配黑盒 | 返回匹配理由；无匹配时让人选 |
+| 用户直接在 shell 输入 CLI，harness 误判 | 不解析 shell；只认显式「＋ Agent」或「接入任务」 |
+| 手工终端不在 run worktree | 接入时提示重启到 worktree / 保持当前目录，并记录选择 |
+| 一个终端里跑多个 Agent | 明确禁止；一个 Run 一个终端标签，多个 Agent = 多个标签/窗格 |
 
 ---
 
@@ -418,3 +457,5 @@ runs
 3. terminal child 的默认结果合同是 `exit` 还是 `file`？（建议 `exit` + 可选文件）
 4. 自动分配是否允许“无确认直接开跑”？（建议不允许）
 5. 场景总览页放在左侧导航，还是并入「项目」页？（建议独立「场景」入口）
+6. 独立 Agent 终端默认是否创建 ad-hoc Run？还是只在「接入任务」时创建 Run？（建议后者，避免污染统计）
+7. 手工终端接入任务时，默认重启到 worktree 还是保持当前 cwd？（建议默认重启，需用户确认）
