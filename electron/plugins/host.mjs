@@ -379,6 +379,7 @@ export class PluginHost {
         const root = this.store.state.projectPath || process.cwd();
         const full = path.resolve(root, String(params.rel || ""));
         if (!full.startsWith(path.resolve(root) + path.sep)) throw new Error("path outside project");
+        fs.mkdirSync(path.dirname(full), { recursive: true });
         fs.writeFileSync(full, String(params.text || ""));
         return true;
       }

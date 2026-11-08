@@ -25,7 +25,7 @@ const DEFAULTS: Partial<Record<keyof SettingsModel, unknown>> = {
   maxConcurrentRuns: 0, approvalPolicy: "ask", dshBinary: "", dshHome: "", model: "", effort: "",
   superAgentEnabled: true, maxSupervisorRuns: 1, maxMissionChildren: 4, missionBudgetMinutes: 30,
   shellPath: "", terminalFontSize: 12, terminalScrollback: 5000, autoDetectDevServerUrl: true,
-  previewHomeUrl: "http://localhost:5173/", elementScreenshots: true, contextDetail: "standard",
+  previewHomeUrl: "http://localhost:5173/", elementScreenshots: true, contextDetail: "standard", worktreeMode: "auto",
   dshEnv: "",
 };
 
@@ -34,7 +34,7 @@ const SECTION_KEYS: Partial<Record<Section, (keyof SettingsModel)[]>> = {
   general: ["defaultView", "defaultAgentId", "enterToSend", "confirmStop"],
   appearance: ["theme", "chatFontSize"],
   execution: ["maxConcurrentRuns", "approvalPolicy", "dshBinary", "dshHome", "dshEnv", "model", "effort",
-    "superAgentEnabled", "maxSupervisorRuns", "maxMissionChildren", "missionBudgetMinutes"],
+    "superAgentEnabled", "maxSupervisorRuns", "maxMissionChildren", "missionBudgetMinutes", "worktreeMode"],
   terminal: ["shellPath", "terminalFontSize", "terminalScrollback", "autoDetectDevServerUrl"],
   preview: ["previewHomeUrl", "elementScreenshots", "contextDetail"],
 };
@@ -318,6 +318,27 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
                   <option value="deny">自动拒绝</option>
                 </select>
               </Row>
+              <Row k="worktreeMode" title="默认 worktree" hint="auto：git 才建；always：要求 git；never：原地。项目场景配置优先。">
+                <select className="settings-control" value={settings.worktreeMode || "auto"} onChange={(e) => void set({ worktreeMode: e.target.value as SettingsModel["worktreeMode"] })}>
+                  <option value="auto">auto · git 才建</option>
+                  <option value="always">always · 强制 git worktree</option>
+                  <option value="never">never · 原地目录</option>
+                </select>
+              </Row>
+            </Card>
+
+            <Card title="Runtime 派生视图">
+              <div className="settings-note">Host + CLI + caps 的只读视图；Agent 仍只存 hostId + cli。出现共享并发 / 多账号 / 远程治理时再建 runtimes 表。</div>
+              {(state.runtimes || []).map((runtime) => (
+                <Row key={runtime.id} title={`${runtime.hostName} · ${runtime.cli}`}>
+                  <span className="row gap6 tiny">
+                    <span className={`tag ${runtime.available ? "ok" : ""}`}>{runtime.available ? "可用" : "未安装"}</span>
+                    <span className="mono faint">{runtime.mode}</span>
+                    <span className="muted">{runtime.agents} Agent</span>
+                  </span>
+                </Row>
+              ))}
+              {(state.runtimes || []).length === 0 && <Row title="没有运行时"><span className="muted small">先探测主机。</span></Row>}
             </Card>
 
             <Card title="dsh">

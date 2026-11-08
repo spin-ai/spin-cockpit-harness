@@ -17,7 +17,8 @@
     "tasks:write",
     "ui:view",
     "agent:tools",
-    "fs:vault"
+    "fs:vault",
+    "fs:project"
   ],
   "contributes": {
     "views": [

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { State, Todo, TodoStatus } from "../types";
-import { STATUS, activeRun, agentOf, duration, lastRun } from "../ui";
+import { STATUS, activeRun, agentOf, duration, lastRun, timeAgo } from "../ui";
 import { Splitter, useStoredSize } from "./Splitter";
 import { ChevronDownIcon, PanelCollapseIcon } from "./Icons";
+import { requestTerminalAdopt } from "../terminal-events";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 type Filter = "all" | "needs" | "active" | "review" | "confirmed";
@@ -38,12 +39,14 @@ function TaskPlan({ items, expanded }: { items: Todo["subtasks"]; expanded: bool
   );
 }
 
-export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts, onAddProject, onManageProjects, onSwitchProject, onCollapse, confirmStop = false }: {
+export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts, onAddProject, onManageProjects, onSwitchProject, onCollapse, confirmStop = false, allProjects = false, onToggleScope }: {
   state: State; selectedId: string | null; now: number; act: Act; onSelect: (id: string) => void;
   projectCounts: Record<string, number>;
   onAddProject: () => void; onManageProjects: () => void; onSwitchProject: (id: string) => void;
   onCollapse?: () => void;
   confirmStop?: boolean;
+  allProjects?: boolean;
+  onToggleScope?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<{ id: string; title: string; desc: string; acceptance: string; priority: string; due: string; tags: string } | null>(null);
@@ -52,6 +55,13 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
   const createRef = useRef<HTMLTextAreaElement | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ done: true });
+  const [layout, setLayout] = useState<"list" | "board">(() => {
+    try { return localStorage.getItem("cmh.todo.layout") === "board" ? "board" : "list"; } catch { return "list"; }
+  });
+  const [broadcastFor, setBroadcastFor] = useState<Todo | null>(null);
+  const [broadcastPick, setBroadcastPick] = useState<string[]>([]);
+  const [broadcastBusy, setBroadcastBusy] = useState(false);
+  useEffect(() => { try { localStorage.setItem("cmh.todo.layout", layout); } catch { /* ignore */ } }, [layout]);
   const [projectH, setProjectH] = useStoredSize("cmh.layout.projectH", 150, 80, 420);
   const [projectCollapsed, setProjectCollapsed] = useState(() => {
     try { return localStorage.getItem("cmh.layout.projectCollapsed") === "1"; } catch { return false; }
@@ -78,7 +88,7 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
   }, [state.todos, selectedId]);
 
   useEffect(() => {
-    const onNew = () => { setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); };
+    const onNew = () => { setLayout("list"); setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); };
     window.addEventListener("harness:new-task", onNew);
     return () => window.removeEventListener("harness:new-task", onNew);
   }, []);
@@ -106,6 +116,7 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return state.todos.filter((t) => {
+      if (t.kind === "chat") return false;
       if (q && !t.title.toLowerCase().includes(q) && !t.key.toLowerCase().includes(q)
         && !(t.desc || "").toLowerCase().includes(q)
         && !(t.tags || []).some((tag) => tag.toLowerCase().includes(q))) return false;
@@ -154,13 +165,40 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
     window.setTimeout(() => window.dispatchEvent(new CustomEvent("harness:chat-draft", { detail: { todoId: todo.id, text } })), 90);
   };
 
+  const itemsFor = (g: (typeof GROUPS)[number]) => {
+    let items = visible.filter((t) => g.id === "done"
+      ? (t.confirmed || t.status === "done" || t.status === "cancelled")
+      : (!t.confirmed && g.statuses.includes(t.status)));
+    if (g.id === "active") {
+      const rank = (s: TodoStatus) => s === "waiting_input" ? 0 : s === "in_progress" ? 1 : 2;
+      items = [...items].sort((a, b) => rank(a.status) - rank(b.status) || b.updatedAt - a.updatedAt);
+    }
+    return items;
+  };
+  const acpWorkers = state.agents.filter((a) => (a.role || "worker") !== "supervisor" && a.chatRunnable !== false);
+
+  const openBroadcast = (todo: Todo) => {
+    setBroadcastFor(todo);
+    setBroadcastPick(acpWorkers.slice(0, 2).map((a) => a.id));
+  };
+
+  const startBroadcast = async () => {
+    if (!broadcastFor || broadcastPick.length < 2) return;
+    setBroadcastBusy(true);
+    try {
+      const res = await act("broadcast", { id: broadcastFor.id, agentIds: broadcastPick });
+      if (res !== null) { setBroadcastFor(null); setBroadcastPick([]); }
+    } finally { setBroadcastBusy(false); }
+  };
+
   return (
     <aside className="todo-pane" tabIndex={0} aria-label="TODO 列表">
       <div className="pane-head">
         <span>TODO</span>
         <div className="row gap6">
           <span className="muted">{state.todos.length}</span>
-          <button className="pane-add" title="收集想法 / 新建任务（一行一条，⌘⇧N）" onClick={() => { setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); }}>＋</button>
+          {onToggleScope && <button className="link tiny" title="切换 TODO 范围" onClick={onToggleScope}>{allProjects ? "全部项目" : "当前项目"}</button>}
+          <button className="pane-add" title="收集想法 / 新建任务（一行一条，⌘⇧N）" onClick={() => { setLayout("list"); setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); }}>＋</button>
           {onCollapse && (
             <button className="pane-collapse" title="收起 TODO" aria-label="收起 TODO" onClick={onCollapse}>
               <PanelCollapseIcon size={13} />
@@ -174,10 +212,35 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
           {([["all", "全部"], ["needs", "待处理"], ["active", "进行中"], ["review", "待确认"], ["confirmed", "已完成"]] as [Filter, string][]).map(([id, label]) => (
             <button key={id} className={filter === id ? "on" : ""} onClick={() => setFilter(id)}>{label}</button>
           ))}
+          <span className="spacer" />
+          <button className={layout === "list" ? "on" : ""} title="列表" onClick={() => setLayout("list")}>列表</button>
+          <button className={layout === "board" ? "on" : ""} title="横向看板" onClick={() => setLayout("board")}>看板</button>
         </div>
       </div>
       <div className="todo-scroll">
-        {creating && (
+        {layout === "board" && (
+          <div className="todo-board">
+            {GROUPS.map((g) => {
+              const items = itemsFor(g);
+              return (
+                <section key={g.id} className={`todo-board-col ${g.id}`}>
+                  <header><span>{g.label}</span><em>{items.length}</em></header>
+                  <div className="todo-board-cards">
+                    {items.map((t) => (
+                      <button key={t.id} className={`todo-board-card ${t.id === selectedId ? "on" : ""} ${t.status === "waiting_input" ? "waiting" : ""}`} onClick={() => onSelect(t.id)} title={t.desc || t.title}>
+                        <span className="row between gap4"><span className="mono tiny faint">{t.key}</span><span className={`pill status ${STATUS[t.status].cls}`}>{t.confirmed ? "已确认" : STATUS[t.status].label}</span></span>
+                        <b>{t.title}</b>
+                        <span className="tiny muted ellipsis">{projectName(t)} · {agentOf(state.agents, t.agentId)?.name || "未分配"}</span>
+                      </button>
+                    ))}
+                    {items.length === 0 && <div className="todo-board-empty">—</div>}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        )}
+        {layout === "list" && creating && (
           <div className="task-create">
             <textarea
               ref={createRef}
@@ -201,14 +264,8 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
             </div>
           </div>
         )}
-        {GROUPS.map((g) => {
-          let items = visible.filter((t) => g.id === "done"
-            ? (t.confirmed || t.status === "done" || t.status === "cancelled")
-            : (!t.confirmed && g.statuses.includes(t.status)));
-          if (g.id === "active") {
-            const rank = (s: TodoStatus) => s === "waiting_input" ? 0 : s === "in_progress" ? 1 : 2;
-            items = [...items].sort((a, b) => rank(a.status) - rank(b.status) || b.updatedAt - a.updatedAt);
-          }
+        {layout === "list" && GROUPS.map((g) => {
+          const items = itemsFor(g);
           const isCollapsed = collapsed[g.id] ?? (items.length === 0 || g.id === "done");
           return (
             <section className="todo-group" key={g.id}>
@@ -323,18 +380,30 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
                     <span className="mono">{elapsed(t, state, now)}</span>
                   </div>
                   <WorktreeLine todo={t} state={state} act={act} />
-                  <QuickActions todo={t} state={state} act={act} confirmStop={confirmStop} onEdit={() => startEdit(t)} onAsk={() => askInChat(t)} />
+                  <QuickActions todo={t} state={state} act={act} confirmStop={confirmStop} onEdit={() => startEdit(t)} onAsk={() => askInChat(t)} onBroadcast={() => openBroadcast(t)} />
                 </div>
               ))}
             </section>
           );
         })}
-        {visible.length === 0 && !creating && (
+        {layout === "list" && (state.terminals || []).some((t) => t.status === "running" && !t.todoId) && (
+          <section className="todo-group">
+            <div className="todo-group-head active"><span>终端 Agent（未绑任务）</span><span>{(state.terminals || []).filter((t) => t.status === "running" && !t.todoId).length}</span></div>
+            {(state.terminals || []).filter((t) => t.status === "running" && !t.todoId).map((term) => (
+              <button key={term.id} className="task-row task-terminal-live" onClick={() => requestTerminalAdopt({ terminalId: term.id, cwd: term.cwd, title: term.title })} title={term.cwd}>
+                <span className="row between gap6"><span className="mono tiny faint">{term.kind === "agent" ? "Agent" : "Shell"}</span><span className="pill status running">运行中</span></span>
+                <span className="task-row-title ellipsis">{term.title || term.cwd}</span>
+                <span className="tiny muted ellipsis">{agentOf(state.agents, term.agentId)?.name || "未绑定 Agent"} · {timeAgo(term.createdAt, now)}前</span>
+              </button>
+            ))}
+          </section>
+        )}
+        {layout === "list" && visible.length === 0 && !creating && (
           <div className="pane-empty">
             {query.trim() ? "没有匹配的任务" : (
               <>
                 <div>还没有任务</div>
-                <button className="link" onClick={() => { setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); }}>＋ 写下来，逐条变成任务</button>
+                <button className="link" onClick={() => { setLayout("list"); setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); }}>＋ 写下来，逐条变成任务</button>
               </>
             )}
           </div>
@@ -374,6 +443,33 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
           {state.projects.length === 0 && <div className="pane-empty">还没有项目</div>}
         </div>}
       </section>
+      {broadcastFor && (
+        <div className="modal-mask" role="dialog" aria-modal="true" aria-label="多 Agent 并行">
+          <div className="modal">
+            <h3>多 Agent 并行 · {broadcastFor.key}</h3>
+            <p className="tiny muted">每个 Agent 独立 run / worktree / 终端；ACP 在 Chat/TODO 里看流，原生 CLI 会自动开终端标签。</p>
+            <div className="broadcast-list">
+              {acpWorkers.map((agent) => (
+                <label key={agent.id} className="broadcast-item">
+                  <input
+                    type="checkbox"
+                    checked={broadcastPick.includes(agent.id)}
+                    onChange={(e) => setBroadcastPick((cur) => e.target.checked ? [...cur, agent.id] : cur.filter((id) => id !== agent.id))}
+                  />
+                  <span>{agent.name}</span>
+                  <span className="mono tiny faint">{agent.alias || agent.cli}</span>
+                </label>
+              ))}
+            </div>
+            <div className="row gap6" style={{ justifyContent: "flex-end" }}>
+              <button className="btn tiny-btn" onClick={() => setBroadcastFor(null)} disabled={broadcastBusy}>取消</button>
+              <button className="btn tiny-btn primary" disabled={broadcastBusy || broadcastPick.length < 2} onClick={() => void startBroadcast()}>
+                {broadcastBusy ? "启动中…" : `开始并行 (${broadcastPick.length})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
@@ -389,21 +485,38 @@ function elapsed(todo: Todo, state: State, now: number) {
 
 /** 当前/最近一次运行的 worktree：分支和目录都可点开，避免「跑完不知道改在哪」 */
 function WorktreeLine({ todo, state, act }: { todo: Todo; state: State; act: Act }) {
-  const run = activeRun(todo, state.runs) ?? lastRun(todo, state.runs);
-  if (!run?.cwd) return null;
+  const current = activeRun(todo, state.runs);
+  const run = current ?? lastRun(todo, state.runs);
+  if (!run?.cwd || run.worktreeCleaned) return null;
   const label = run.branch || run.cwd;
+  const canClean = Boolean(run.branch && !current);
   return (
-    <button
-      className="task-worktree mono tiny ellipsis"
-      title={`${run.cwd}${run.branch ? ` · ${run.branch}` : ""} · 点击在 Finder 打开`}
-      onClick={(e) => { e.stopPropagation(); void act("revealWorktree", { runId: run.id }); }}
-    >
-      {run.branch ? "⑂ " : "▸ "}{label}
-    </button>
+    <div className="task-worktree-row">
+      <button
+        className="task-worktree mono tiny ellipsis"
+        title={`${run.cwd}${run.branch ? ` · ${run.branch}` : ""} · 点击在 Finder 打开`}
+        onClick={(e) => { e.stopPropagation(); void act("revealWorktree", { runId: run.id }); }}
+      >
+        {run.branch ? "⑂ " : "▸ "}{label}
+      </button>
+      {canClean && (
+        <button
+          className="task-worktree-clean tiny"
+          title="清理这个 worktree（先确认没有未提交改动）"
+          onClick={async (e) => {
+            e.stopPropagation();
+            if (!window.confirm(`清理 worktree「${run.branch}」？\n${run.cwd}\n未提交的改动会丢失。`)) return;
+            const ok = await act("cleanupWorktree", { runId: run.id });
+            if (ok === null) return;
+            window.dispatchEvent(new CustomEvent("harness:toast", { detail: ok ? "worktree 已清理" : "worktree 清理失败" }));
+          }}
+        >清理</button>
+      )}
+    </div>
   );
 }
 
-function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk }: { todo: Todo; state: State; act: Act; confirmStop: boolean; onEdit: () => void; onAsk: () => void }) {
+function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk, onBroadcast }: { todo: Todo; state: State; act: Act; confirmStop: boolean; onEdit: () => void; onAsk: () => void; onBroadcast: () => void }) {
   const active = activeRun(todo, state.runs);
   const last = lastRun(todo, state.runs);
   if (todo.kind === "mission") {
@@ -418,6 +531,7 @@ function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk }: { todo: 
   }
   const runnable = state.agents.filter((a) => a.chatRunnable ?? state.executors?.find((e) => e.id === a.cli)?.implemented);
   const chatAgent = runnable.find((a) => a.id === todo.agentId) || runnable[0] || null;
+  const acpWorkers = state.agents.filter((a) => (a.role || "worker") !== "supervisor" && a.chatRunnable !== false);
   const stop = (runId: string) => {
     if (confirmStop && !window.confirm(`停止 ${todo.key} 的运行？`)) return;
     void act("stop", { runId });
@@ -436,6 +550,9 @@ function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk }: { todo: 
           title={chatAgent ? undefined : "没有可用的 Agent"}
           onClick={() => chatAgent && act("run", { id: todo.id, agentId: chatAgent.id })}
         >派活</button>
+      )}
+      {!active && !todo.confirmed && todo.status === "todo" && acpWorkers.length >= 2 && (
+        <button className="btn tiny-btn" title="选择多个 Agent，各自独立 worktree / 终端并行" onClick={onBroadcast}>并行</button>
       )}
       {!active && last && ["failed", "cancelled"].includes(last.status) && <button className="btn tiny-btn" onClick={() => act("retry", { id: todo.id })}>重试</button>}
     </div>

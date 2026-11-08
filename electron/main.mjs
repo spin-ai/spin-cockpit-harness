@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile);
 import { fileURLToPath } from "node:url";
 import { openDb, DEFAULT_SETTINGS } from "./db.mjs";
 import { AcpClient, dshPathEnv } from "./acp.mjs";
-import { prepareWorktree, removeWorktree } from "./worktree.mjs";
+import { prepareWorktree, removeWorktree, repoRoot } from "./worktree.mjs";
 import { pickElement, cancelPick, detachPreview } from "./preview.mjs";
 import { formatContext, detectDevUrl } from "./ui-context.mjs";
 
@@ -135,7 +135,22 @@ function pickChatAgent(...ids) {
   return null;
 }
 
-/** 草稿会话的默认 Agent：设置里的默认值 → 项目 Agent → 任意可用 Agent。 */
+/** 场景里配置的 Agent / runtime 优先，但必须真的可运行。 */
+function sceneAgentFor(projectId) {
+  const scene = sceneOf(projectId).config;
+  const candidates = store.state.agents.filter((a) => chatRunnable(a) && (a.role || "worker") !== "supervisor");
+  const matchName = (a) => scene.agents.some((name) => {
+    const key = String(name || "").toLowerCase();
+    return key && (String(a.alias || "").toLowerCase() === key || String(a.name || "").toLowerCase() === key || String(a.cli || "").toLowerCase() === key);
+  });
+  const named = candidates.find((a) => matchName(a) && (!a.projectId || a.projectId === projectId));
+  if (named) return named;
+  if (scene.runtime === "acp") return candidates.find((a) => chatRuntimeOf(a) === "acp" && (!a.projectId || a.projectId === projectId)) || candidates.find((a) => chatRuntimeOf(a) === "acp") || null;
+  if (scene.runtime === "terminal") return candidates.find((a) => chatRuntimeOf(a) === "terminal" && (!a.projectId || a.projectId === projectId)) || candidates.find((a) => chatRuntimeOf(a) === "terminal") || null;
+  return null;
+}
+
+/** 草稿会话的默认 Agent：设置里的默认值 → 项目 Agent → 任意可用 Agent。 *//** 草稿会话的默认 Agent：设置里的默认值 → 项目 Agent → 任意可用 Agent。 */
 function defaultChatAgent(projectId = store.state.activeProjectId) {
   const preferred = pickChatAgent(store.state.settings?.defaultAgentId);
   if (preferred && (preferred.role || "worker") !== "supervisor") return preferred;
@@ -151,6 +166,115 @@ function defaultSupervisorAgent(projectId = store.state.activeProjectId) {
   return store.state.agents.find((a) => a.role === "supervisor" && chatRunnable(a) && (!a.projectId || a.projectId === projectId))
     || store.state.agents.find((a) => a.role === "supervisor" && chatRunnable(a))
     || null;
+}
+
+// ── Scene：每个项目一份执行场景，文字配置就是唯一编辑入口 ─────────────
+const SCENE_DEFAULT = {
+  worktree: "auto", runtime: "auto", agents: [], concurrency: 0,
+  acceptance: "", notes: "",
+};
+
+function normalizeSceneConfig(raw = {}) {
+  const mode = ["auto", "always", "never"].includes(raw.worktree) ? raw.worktree : "auto";
+  const runtime = ["auto", "acp", "terminal"].includes(raw.runtime) ? raw.runtime : "auto";
+  return {
+    worktree: mode,
+    runtime,
+    agents: Array.isArray(raw.agents) ? raw.agents.map(String).filter(Boolean) : [],
+    concurrency: Math.max(0, Math.min(10, Number(raw.concurrency) || 0)),
+    acceptance: String(raw.acceptance || ""),
+    notes: String(raw.notes || ""),
+  };
+}
+
+function sceneOf(projectId) {
+  const found = (store.state.scenes || []).find((s) => s.projectId === projectId);
+  if (!found) {
+    const project = store.state.projects.find((p) => p.id === projectId);
+    const text = project ? `# ${project.name}\nworktree: ${store.state.settings?.worktreeMode || "auto"}\nruntime: auto\nagent:\nconcurrency: 1\nacceptance:\nnotes:\n` : "";
+    return { projectId: projectId || "", text, config: { ...SCENE_DEFAULT, worktree: store.state.settings?.worktreeMode || "auto" }, updatedAt: 0 };
+  }
+  return { ...found, config: normalizeSceneConfig(found.config) };
+}
+
+/** 只解析「key: value」行；未知键直接报错，避免配置看起来保存了其实没生效。 */
+function parseSceneText(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  const config = { ...SCENE_DEFAULT };
+  const errors = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim();
+    if (!line || line.startsWith("#") || line.startsWith("//")) continue;
+    const match = line.match(/^([a-zA-Z][a-zA-Z0-9_-]*)\s*[:=]\s*(.*)$/);
+    if (!match) { errors.push(`第 ${i + 1} 行：应为 key: value`); continue; }
+    const key = match[1].toLowerCase();
+    const value = match[2].trim();
+    if (key === "worktree") {
+      if (!["auto", "always", "never"].includes(value)) errors.push("worktree 只能是 auto / always / never");
+      else config.worktree = value;
+    } else if (key === "runtime") {
+      if (!["auto", "acp", "terminal"].includes(value)) errors.push("runtime 只能是 auto / acp / terminal");
+      else config.runtime = value;
+    } else if (key === "agent" || key === "agents") {
+      config.agents = value.split(/[,，]/).map((x) => x.trim()).filter(Boolean);
+    } else if (key === "concurrency") {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0 || n > 10) errors.push("concurrency 必须是 0–10");
+      else config.concurrency = Math.round(n);
+    } else if (key === "acceptance") {
+      config.acceptance = value;
+    } else if (key === "notes") {
+      config.notes = [value, ...lines.slice(i + 1)].join("\n").trim();
+      break;
+    } else {
+      errors.push(`第 ${i + 1} 行：未知配置项 ${key}`);
+    }
+  }
+  return { config: normalizeSceneConfig(config), errors };
+}
+
+function sceneSuggestion(projectId) {
+  const project = store.state.projects.find((p) => p.id === projectId);
+  const git = project?.path ? Boolean(repoRoot(project.path)) : false;
+  const agents = store.state.agents.filter((a) => (!projectId || !a.projectId || a.projectId === projectId) && chatRunnable(a) && (a.role || "worker") !== "supervisor");
+  const acp = agents.find((a) => chatRuntimeOf(a) === "acp");
+  const terminal = agents.find((a) => chatRuntimeOf(a) === "terminal");
+  const runtime = acp ? "auto" : terminal ? "terminal" : "auto";
+  const picked = acp || terminal;
+  return `# ${project?.name || "项目"} 场景建议（可手改）\nworktree: ${git ? "auto" : "never"}\nruntime: ${runtime}\nagent: ${picked?.alias || picked?.name || ""}\nconcurrency: 1\nacceptance: 改动可运行、验证通过\nnotes: ${git ? "git 项目默认每个 run 独立 worktree" : "非 git 项目原地执行，多 Agent 需要手动错开"}`;
+}
+
+function prepareRunWorktree(todo, cwd, runId) {
+  const projectId = todo?.projectId || store.state.activeProjectId;
+  const mode = sceneOf(projectId).config.worktree || store.state.settings?.worktreeMode || "auto";
+  return prepareWorktree({ cwd, todoKey: todo?.key || "todo", runId, mode });
+}
+
+/** Runtime 派生视图：host + CLI + caps + 执行方式 + 可用性；不建表。 */
+function runtimeViews() {
+  const caps = new Set(store.state.cliCapabilities || []);
+  if (store.state.settings?.dshBinary || bundledDshPath()) caps.add("dsh");
+  const out = [];
+  for (const host of store.state.hosts) {
+    const hostCaps = host.kind === "local"
+      ? caps
+      : new Set((host.caps || []).map((c) => String(typeof c === "string" ? c : c.cli || "").toLowerCase()));
+    for (const executor of EXECUTORS) {
+      const available = host.status === "online" && hostCaps.has(executor.id);
+      out.push({
+        id: `${host.id}:${executor.id}`,
+        hostId: host.id,
+        hostName: host.name,
+        cli: executor.id,
+        label: executor.label,
+        mode: executor.kind === "acp" ? "acp" : "terminal",
+        available,
+        caps: [...hostCaps],
+        agents: store.state.agents.filter((a) => a.hostId === host.id && String(a.cli).toLowerCase() === executor.id).length,
+      });
+    }
+  }
+  return out;
 }
 
 /** 探测到的 CLI + 内置 dsh，给渲染层展示「哪些能派活」。 */
@@ -174,6 +298,7 @@ const WIKI_MCP_BRIDGE_PATH = app.isPackaged
 /** 探测连续失败计数（内存级）：连续 2 次才标离线，防一次网络抖动把队列卡住 */
 const probeFails = new Map();
 let win = null;
+let captureWin = null;
 let store = null;
 const approvals = new Map();
 const terminals = new Map();
@@ -313,6 +438,7 @@ function queueRun(todo, agent, trigger = "assign", parentRunId = null, kind = "w
     // 统计口径：createdAt 用于排队时长，其余待 run 结束 / ACP 回包后回填（见 docs/ARCH-hosts-stats.md）
     hostId: agent.hostId || null, createdAt: Date.now(), tokensIn: null, tokensOut: null,
     usageSource: "unknown", errorClass: null, exitCode: null, queueWaitMs: null, durationMs: null, queueReason: null,
+    runtime: chatRuntimeOf(agent),
   };
   store.state.runs.push(run);
   todo.status = "queued";
@@ -338,8 +464,9 @@ function resolveThread({ threadId, projectId, agentId }) {
   return thread;
 }
 
-function activeRunOf(todoId) {
-  return store.state.runs.find((r) => r.todoId === todoId && ["running", "waiting_input", "waiting_plan", "waiting_children"].includes(r.status)) || null;
+function activeRunOf(todoId, runId = null) {
+  const running = store.state.runs.filter((r) => r.todoId === todoId && ["running", "waiting_input", "waiting_plan", "waiting_children"].includes(r.status));
+  return (runId ? running.find((r) => r.id === runId) : null) || running[0] || null;
 }
 function supervisorRunOf(todoId) {
   return store.state.runs.find((r) => r.todoId === todoId && r.kind === "supervisor" && ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"].includes(r.status)) || null;
@@ -416,6 +543,19 @@ function contextDetail() {
   return store.state.settings?.contextDetail === "compact" ? "compact" : "standard";
 }
 
+function terminalSnapshot() {
+  return (store.state.terminals || []).map((t) => {
+    const info = terminalUrls.get(t.id);
+    return {
+      ...t,
+      status: info ? (info.exited ? "exited" : "running") : (t.status === "running" ? "detached" : t.status),
+      exitCode: info?.exitCode ?? t.exitCode ?? null,
+      tail: info?.recent || t.tail || "",
+      endedAt: info?.exited ? (info.endedAt || Date.now()) : t.endedAt,
+    };
+  });
+}
+
 function snapshot() {
   const current = activeProject();
   return {
@@ -425,6 +565,7 @@ function snapshot() {
       cost: Number(store.state.runs.reduce((s, r) => s + (r.cost || 0), 0).toFixed(2)),
       tokens: store.state.runs.reduce((s, r) => s + (r.tokens || 0), 0),
       failures: store.state.runs.filter((r) => r.status === "failed").length,
+      activeTerminals: terminalSnapshot().filter((t) => t.status === "running").length,
     },
     activeProjectId: current?.id || null,
     approvals: [...approvals.values()],
@@ -432,6 +573,9 @@ function snapshot() {
     pluginCommands: pluginHost?.commands() || [],
     todoLinks: store.state.todoLinks || [],
     settings: store.state.settings || { ...DEFAULT_SETTINGS },
+    scenes: store.state.projects.map((p) => sceneOf(p.id)),
+    terminals: terminalSnapshot(),
+    runtimes: runtimeViews(),
     // 只给渲染层：哪些 Agent 真的能从 Chat 派活（executor 已接入）
     agents: store.state.agents.map((a) => ({ ...a, chatRunnable: chatRunnable(a), chatRuntime: chatRuntimeOf(a) })),
     executors: executorList(),
@@ -573,7 +717,7 @@ function tick() {
       if (pending.length) { run.queueReason = `等待依赖 · ${pending.length}`; continue; }
     }
     // Mission 子任务各有 worktree，可以并行；普通任务保持同 cwd 串行。
-    const sameCwd = !todo.parentId && state.runs.some((r) => {
+    const sameCwd = run.trigger !== "broadcast" && !todo.parentId && state.runs.some((r) => {
       if ((r.kind || "worker") === "supervisor" || !activeWorkerStatuses.includes(r.status)) return false;
       const t = state.todos.find((x) => x.id === r.todoId);
       return t && (t.cwd || agent.cwd) === (todo.cwd || agent.cwd);
@@ -604,21 +748,6 @@ async function startRun(run, todo, agent) {
     tick();
     return;
   }
-  // 终端 Agent 只能走 pty：retry/broadcast/Mission child 不能把它误塞进 ACP
-  if (chatRuntimeOf(agent) === "terminal") {
-    const message = "终端 Agent 需要从 Chat 派活或在终端里运行，不能走 ACP 队列";
-    run.status = "failed";
-    run.endedAt = Date.now();
-    run.error = message;
-    run.errorClass = "terminal_required";
-    todo.status = "todo";
-    todo.lastRunFailed = true;
-    store.addMessage(thread.id, run.id, "system", "error", message);
-    store.addEvent("run.failed", `run.failed todo=${todo.key} ${message}`);
-    broadcast();
-    tick();
-    return;
-  }
   let cwd = baseCwd;
   let branch = null;
   if (isRemote) {
@@ -627,17 +756,26 @@ async function startRun(run, todo, agent) {
     run.branch = null;
     store.addEvent("run.remote", `run.remote ${host.name} cwd=${cwd}`);
   } else {
-    const worktree = prepareWorktree({ cwd: baseCwd, todoKey: todo.key, runId: run.id });
+    const worktree = prepareRunWorktree(todo, baseCwd, run.id);
     cwd = worktree.cwd;
     branch = worktree.branch;
     run.cwd = cwd;
     run.branch = branch;
+    if (worktree.error && String(worktree.error).includes("always")) {
+      const message = `worktree 配置为 always，但当前目录不是 git 仓库：${baseCwd}`;
+      run.status = "failed"; run.endedAt = Date.now(); run.error = message; run.errorClass = "worktree";
+      todo.status = "todo"; todo.lastRunFailed = true;
+      store.addMessage(thread.id, run.id, "system", "error", message);
+      store.addEvent("run.failed", `run.failed todo=${todo.key} ${message}`);
+      broadcast(); tick(); return;
+    }
     fs.mkdirSync(cwd, { recursive: true });
     if (worktree.created) store.addEvent("run.worktree", `run.worktree ${cwd} @ ${worktree.branch}`);
     else if (worktree.error) store.addEvent("run.worktree", `worktree skipped: ${worktree.error}`);
   }
   run.status = "running";
   run.startedAt = Date.now();
+  run.runtime = chatRuntimeOf(agent);
   run.hostId = host?.id || run.hostId || null;
   run.queueReason = null;
   run.queueWaitMs = run.createdAt ? Math.max(0, run.startedAt - run.createdAt) : null;
@@ -647,6 +785,85 @@ async function startRun(run, todo, agent) {
   store.addEvent("run.started", `run.started todo=${todo.key} agent=${agent.name} cwd=${cwd}`);
   pluginHost?.emit("run.started", { runId: run.id, todoId: todo.id, title: todo.title, agentId: agent.id });
   broadcast();
+
+  // 终端 Agent 走 pty（普通多 Agent / Mission child 都适用），并把标签推给渲染层
+  if (chatRuntimeOf(agent) === "terminal") {
+    if (isRemote) {
+      const message = "终端 Agent 暂不支持远端主机；请使用本机 Agent 或 ACP";
+      run.status = "failed"; run.endedAt = Date.now(); run.error = message; run.errorClass = "terminal_required";
+      todo.status = "todo"; todo.lastRunFailed = true;
+      store.addMessage(thread.id, run.id, "system", "error", message);
+      store.addEvent("run.failed", `run.failed todo=${todo.key} ${message}`);
+      broadcast(); tick(); return;
+    }
+    const terminalId = `term-${Date.now().toString(36)}`;
+    let term;
+    try {
+      term = pty.spawn(agent.cli, [], {
+        name: "xterm-256color", cols: 120, rows: 32, cwd,
+        env: { ...process.env, TERM: "xterm-256color" },
+      });
+    } catch (err) {
+      const message = `终端 Agent 启动失败：${String(err?.message || err)}`;
+      run.status = "failed"; run.endedAt = Date.now(); run.error = message; run.errorClass = "terminal_required";
+      todo.status = "todo"; todo.lastRunFailed = true;
+      store.addMessage(thread.id, run.id, "system", "error", message);
+      store.addEvent("run.failed", `run.failed todo=${todo.key} ${message}`);
+      broadcast(); tick(); return;
+    }
+    const info = {
+      url: null, tail: "", attached: false, buffer: "", exited: false, exitCode: null,
+      runId: run.id, closedByUser: false, cwd, branch, agentId: agent.id, taskId: todo.id,
+      recent: "",
+    };
+    terminalUrls.set(terminalId, info);
+    run.terminalId = terminalId;
+    syncTerminalRecord(terminalId, {
+      projectId: todo.projectId || store.state.activeProjectId || null,
+      todoId: todo.id, runId: run.id, agentId: agent.id, cwd,
+      kind: "agent", title: `${todo.key} ${todo.title}`, status: "running",
+      exitCode: null, tail: "", createdAt: Date.now(), endedAt: null,
+    });
+    term.onData((data) => {
+      info.recent = stripAnsi((info.recent + data).slice(-8000));
+      if (info.attached) {
+        if (win && !win.isDestroyed()) win.webContents.send("terminal:data", { id: terminalId, data });
+      } else info.buffer = (info.buffer + data).slice(-512 * 1024);
+    });
+    term.onExit(({ exitCode, signal } = {}) => {
+      terminals.delete(terminalId);
+      info.exited = true;
+      info.exitCode = typeof exitCode === "number" ? exitCode : null;
+      info.exitSignal = signal ?? null;
+      if (win && !win.isDestroyed()) win.webContents.send("terminal:exit", { id: terminalId, exitCode: info.exitCode, signal: signal ?? null });
+      const status = info.closedByUser || info.exitSignal ? "cancelled" : info.exitCode === 0 ? "completed" : "failed";
+      syncTerminalRecord(terminalId, {
+        status: info.closedByUser ? "closed" : status === "completed" ? "exited" : "failed",
+        exitCode: info.exitCode, tail: info.recent || "", endedAt: Date.now(),
+      });
+      settleTerminalRun(info, status);
+      broadcast();
+    });
+    terminals.set(terminalId, term);
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("harness:terminal-adopt", { terminalId, cwd, title: `${todo.key} ${todo.title}`, taskId: todo.id, branch });
+    }
+    const delegation = delegationForChild(todo.id);
+    const prompt = [
+      `任务 ${todo.key}：${todo.title}`,
+      todo.desc ? `背景：${todo.desc}` : "",
+      (todo.acceptance || []).length ? `验收：${todo.acceptance.join("；")}` : "",
+      delegation?.brief ? `子任务说明：${delegation.brief}` : "",
+      "完成后请在终端里说明改动与验证结果。",
+    ].filter(Boolean).join("\n");
+    window.setTimeout(() => {
+      const live = terminals.get(terminalId);
+      if (!live) return;
+      try { live.write(`${prompt.replace(/\r?\n/g, "\r")}\r`); } catch { /* ignore */ }
+    }, 1200);
+    tick();
+    return;
+  }
 
   const extraEnv = parseEnvText(store.state.settings?.dshEnv || "");
   const client = new AcpClient({
@@ -734,7 +951,8 @@ async function startRun(run, todo, agent) {
     run.status = "completed";
     run.endedAt = Date.now();
     applyRunUsage(run, res);
-    todo.status = "in_review";
+    const otherActive = store.state.runs.some((r) => r.id !== run.id && r.todoId === todo.id && ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"].includes(r.status));
+    todo.status = otherActive ? "in_progress" : "in_review";
     todo.updatedAt = now();
     store.addMessage(thread.id, run.id, "system", "system", `run 结束 · ${res?.stopReason || "end_turn"}`);
     store.addEvent("run.finished", `run.finished todo=${todo.key}`);
@@ -1158,6 +1376,7 @@ const SETTINGS_SPEC = {
   maxSupervisorRuns: { kind: "number", min: 1, max: 4, fallback: 1 },
   maxMissionChildren: { kind: "number", min: 1, max: 12, fallback: 4 },
   missionBudgetMinutes: { kind: "number", min: 5, max: 240, fallback: 30 },
+  worktreeMode: { kind: "enum", values: ["auto", "always", "never"], fallback: "auto" },
 };
 
 function sanitizeSettings(patch = {}) {
@@ -2120,6 +2339,7 @@ const actions = {
     store.addEvent("settings.reset", "settings.reset");
     return store.state.settings;
   },
+  openQuickCapture: () => { openQuickCapture(); return true; },
   openDataDir: () => shell.openPath(app.getPath("userData")),
   exportData: async () => {
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
@@ -2171,6 +2391,41 @@ const actions = {
     ensureGlobalDraft();
     store.addEvent("project.switched", `project.switched ${project.name}`);
     return project;
+  },
+  saveScene: ({ projectId, text } = {}) => {
+    const project = store.state.projects.find((p) => p.id === projectId);
+    if (!project) throw new Error("项目不存在");
+    const parsed = parseSceneText(text);
+    if (parsed.errors.length) throw new Error(parsed.errors.slice(0, 3).join("；"));
+    let scene = (store.state.scenes || []).find((s) => s.projectId === projectId);
+    if (!scene) {
+      scene = { projectId, text: "", config: parsed.config, updatedAt: Date.now() };
+      store.state.scenes.push(scene);
+    }
+    scene.text = String(text || "");
+    scene.config = parsed.config;
+    scene.updatedAt = Date.now();
+    store.addEvent("scene.saved", `scene.saved ${project.name} worktree=${parsed.config.worktree} runtime=${parsed.config.runtime}`);
+    broadcast();
+    return scene;
+  },
+  sceneSuggestion: ({ projectId } = {}) => {
+    const project = store.state.projects.find((p) => p.id === projectId);
+    if (!project) throw new Error("项目不存在");
+    return sceneSuggestion(projectId);
+  },
+  cleanupWorktree: ({ runId } = {}) => {
+    const run = store.state.runs.find((r) => r.id === runId);
+    if (!run?.cwd || !run.branch) throw new Error("这个运行没有 worktree");
+    const ok = removeWorktree(run.cwd);
+    if (ok) {
+      run.worktreeCleaned = true;
+      const term = (store.state.terminals || []).find((t) => t.runId === run.id);
+      if (term) term.cwd = "";
+      store.addEvent("run.worktree", `worktree cleanup ok ${run.cwd}`);
+      broadcast();
+    }
+    return ok;
   },
   renameProject: ({ id, name }) => {
     const project = store.state.projects.find((p) => p.id === id);
@@ -2450,6 +2705,49 @@ const actions = {
     return thread;
   },
   /**
+   * Chat 派活前的分配预览：只算建议，不创建 todo / run / message。
+   * 人确认后再走 send（allocation 覆盖项目 / Agent）。
+   */
+  proposeDispatch: async ({ threadId, text, projectId, agentId } = {}) => {
+    const value = String(text || "").trim();
+    if (!value) throw new Error("内容不能为空");
+    const thread = threadId ? store.state.threads.find((t) => t.id === threadId) : null;
+    if (!thread) throw new Error("会话不存在");
+    if (thread.todoId) throw new Error("当前会话已绑定任务，不需要分配预览");
+    const mention = mentionOf(value);
+    const alias = mention ? mention.toLowerCase() : "";
+    const mentionProject = alias ? store.state.projects.find((p) => (p.alias || "").toLowerCase() === alias) || null : null;
+    const mentionAgent = alias
+      ? (mentionProject ? null : store.state.agents.find((a) => (a.alias || "").toLowerCase() === alias) || null)
+      : null;
+    const project = mentionProject
+      || store.state.projects.find((p) => p.id === (thread.projectId || projectId))
+      || store.state.projects.find((p) => p.id === (agentId ? store.state.agents.find((a) => a.id === agentId)?.projectId : null))
+      || activeProject();
+    const explicitAgent = store.state.agents.find((a) => a.id === agentId) || null;
+    const agent = explicitAgent || mentionAgent || sceneAgentFor(project?.id) || defaultChatAgent(project?.id) || null;
+    if (!agent) throw new Error("没有可用的 Agent");
+    const err = chatAgentError(agent);
+    if (err) throw new Error(err);
+    const scene = sceneOf(project?.id).config;
+    const runtime = chatRuntimeOf(agent);
+    const worktree = scene.worktree;
+    const git = project?.path ? Boolean(repoRoot(project.path)) : false;
+    const modeText = runtime === "terminal" ? `终端 · ${agent.cli}` : `ACP · ${agent.cli}`;
+    const wtText = worktree === "never" ? "原地目录" : git ? `独立 worktree（${worktree}）` : "非 git，原地目录";
+    const reason = [
+      mention ? `@${mention} 指定` : scene.agents.length ? "场景 Agent 优先" : "默认可用 Agent",
+      `场景 runtime=${scene.runtime}`,
+      `worktree=${worktree}`,
+    ].join(" · ");
+    return {
+      mode: "proposal", threadId: thread.id, text: value,
+      projectId: project?.id || null, projectName: project?.name || "全局",
+      agentId: agent.id, agentName: agent.name, agentAlias: agent.alias || agent.name,
+      runtime, worktree, git, reason, summary: `${project?.name || "全局"} / ${agent.name} / ${modeText} / ${wtText}`,
+    };
+  },
+  /**
    * 唯一发送入口。按会话当前状态决定行为，永远先落消息：
    *   draft thread       → 分派（建任务 + 排队）
    *   active run         → steer（pending → injected / failed）
@@ -2457,7 +2755,7 @@ const actions = {
    *   todo 已确认         → 仅记录
    *   /project /task /view → cockpit 命令，直接执行
    */
-  send: async ({ threadId, text, agentId, projectId, context }) => {
+  send: async ({ threadId, text, agentId, projectId, context, allocation, runId }) => {
     const value = String(text || "").trim();
     if (!value) throw new Error("内容不能为空");
     const thread = resolveThread({ threadId, projectId, agentId });
@@ -2471,8 +2769,11 @@ const actions = {
     }
     const boundTodo = thread.todoId ? store.state.todos.find((t) => t.id === thread.todoId) : null;
     // 显式选择的 Agent 优先（即使是终端专用，也要在下面明确报错，不能静默换成 dsh）
-    const requestedAgent = store.state.agents.find((a) => a.id === (agentId || thread.agentId || boundTodo?.agentId)) || null;
-    const agent = requestedAgent || defaultChatAgent(thread.projectId || projectId) || null;
+    const allocationAgentId = allocation?.agentId || null;
+    const allocationProjectId = allocation?.projectId || null;
+    const requestedAgent = store.state.agents.find((a) => a.id === (allocationAgentId || agentId || thread.agentId || boundTodo?.agentId)) || null;
+    const sceneProjectId = boundTodo?.projectId || allocationProjectId || thread.projectId || projectId || store.state.activeProjectId;
+    const agent = requestedAgent || sceneAgentFor(sceneProjectId) || defaultChatAgent(thread.projectId || projectId) || null;
 
     // 草稿会话选中主管：创建 Mission，而不是普通 Todo。
     if (!boundTodo && agent?.role === "supervisor") {
@@ -2515,7 +2816,7 @@ const actions = {
     }
 
     if (!boundTodo) {
-      const mention = mentionOf(value);
+      const mention = allocation ? null : mentionOf(value);
       const userMsg = store.addMessage(thread.id, null, "user", "text", value, extra);
       // 草稿会话默认派活：没有 @别名 / 元素上下文也直接交给当前 Agent
       if (!mention && !agent) {
@@ -2539,13 +2840,14 @@ const actions = {
         return { mode: "error", threadId: thread.id };
       }
       const project = mentionProject
-        || store.state.projects.find((p) => p.id === (thread.projectId || projectId))
+        || store.state.projects.find((p) => p.id === (allocationProjectId || thread.projectId || projectId))
         || store.state.projects.find((p) => p.id === mentionAgent.projectId)
         || activeProject();
       const cwd = project?.path || thread.project || workspaceRoot;
       const title = mention ? (value.replace(/@[a-zA-Z0-9_.-]+/, "").trim() || value) : value;
+      const sceneAcceptance = sceneOf(project?.id).config.acceptance;
       const todo = {
-        id: store.nextId("t"), key: `#${store.state.seq}`, title: title.slice(0, 120), desc: "", acceptance: [], status: "todo",
+        id: store.nextId("t"), key: `#${store.state.seq}`, title: title.slice(0, 120), desc: "", acceptance: sceneAcceptance ? [sceneAcceptance] : [], status: "todo",
         agentId: mentionAgent.id, priority: "P1", due: "今天", parentId: null, tags: ["chat"], subtasks: [], blockedBy: [],
         missingWriteback: false, lastRunFailed: false, confirmed: false, projectId: project?.id || null,
         cwd, createdAt: now(), updatedAt: now(),
@@ -2560,7 +2862,7 @@ const actions = {
       store.addEvent("todo.created", `todo.created ${todo.key} ${mention ? `via @${mention}` : "via element"}`);
       // 终端 Agent：Chat 只负责派活，真正的工作发生在 pty 里；renderer 拿到参数后创建终端标签。
       if (chatRuntimeOf(mentionAgent) === "terminal") {
-        const worktree = prepareWorktree({ cwd, todoKey: todo.key, runId: `chat-${Date.now().toString(36)}` });
+        const worktree = prepareRunWorktree(todo, cwd, `chat-${Date.now().toString(36)}`);
         const terminalCwd = worktree.cwd || cwd;
         if (worktree.created) store.addEvent("run.worktree", `run.worktree ${terminalCwd} @ ${worktree.branch}`);
         else if (worktree.error) store.addEvent("run.worktree", `worktree skipped: ${worktree.error}`);
@@ -2580,7 +2882,7 @@ const actions = {
       return { mode: "dispatch", threadId: thread.id, todoId: todo.id };
     }
 
-    const activeRun = activeRunOf(boundTodo.id);
+    const activeRun = activeRunOf(boundTodo.id, runId);
     if (activeRun) {
       const userMsg = store.addMessage(thread.id, activeRun.id, "user", "text", value, { delivery: "pending", ...extra });
       const delivered = context ? `${value}\n\n${formatContext(context, contextDetail())}` : value;
@@ -2618,7 +2920,7 @@ const actions = {
     thread.agentId = agent.id;
     thread.updatedAt = now();
     if (chatRuntimeOf(agent) === "terminal") {
-      const worktree = prepareWorktree({ cwd: boundTodo.cwd || agent.cwd || workspaceRoot, todoKey: boundTodo.key, runId: `chat-${Date.now().toString(36)}` });
+      const worktree = prepareRunWorktree(boundTodo, boundTodo.cwd || agent.cwd || workspaceRoot, `chat-${Date.now().toString(36)}`);
       const terminalCwd = worktree.cwd || boundTodo.cwd || agent.cwd || workspaceRoot;
       if (worktree.created) store.addEvent("run.worktree", `run.worktree ${terminalCwd} @ ${worktree.branch}`);
       else if (worktree.error) store.addEvent("run.worktree", `worktree skipped: ${worktree.error}`);
@@ -2635,6 +2937,49 @@ const actions = {
     store.updateMessage(userMsg.id, { runId: run.id });
     tick();
     return { mode: "run", threadId: thread.id, todoId: boundTodo.id, runId: run.id };
+  },
+  /** 纯聊天：不显示在 TODO 的隐藏任务承载 ACP 会话；随时可转为正式任务。 */
+  chat: async ({ threadId, text, agentId, projectId }) => {
+    const value = String(text || "").trim();
+    if (!value) throw new Error("内容不能为空");
+    const thread = resolveThread({ threadId, projectId, agentId });
+    if (thread.todoId) return actions.send({ threadId: thread.id, text: value, agentId, projectId });
+    const agent = store.state.agents.find((a) => a.id === (agentId || thread.agentId)) || sceneAgentFor(projectId) || defaultChatAgent(projectId);
+    if (!agent) throw new Error("没有可用的 Agent");
+    if (chatRuntimeOf(agent) === "terminal") throw new Error("纯聊天目前只支持 ACP Agent；终端 Agent 请直接用 Chat 派活");
+    const err = chatAgentError(agent);
+    if (err) throw new Error(err);
+    const project = store.state.projects.find((p) => p.id === (projectId || thread.projectId)) || activeProject();
+    const userMsg = store.addMessage(thread.id, null, "user", "text", value);
+    const todo = {
+      id: store.nextId("t"), key: `#${store.state.seq}`, title: value.slice(0, 80), desc: "", acceptance: [], status: "in_progress",
+      agentId: agent.id, priority: "P2", due: "", parentId: null, tags: ["chat-only", "chat"], subtasks: [], blockedBy: [],
+      missingWriteback: false, lastRunFailed: false, confirmed: false, projectId: project?.id || null,
+      cwd: project?.path || thread.project || workspaceRoot, kind: "chat", createdAt: now(), updatedAt: now(),
+    };
+    store.state.todos.unshift(todo);
+    thread.todoId = todo.id;
+    thread.kind = "chat";
+    thread.agentId = agent.id;
+    thread.projectId = project?.id || null;
+    thread.project = todo.cwd;
+    thread.updatedAt = now();
+    const run = queueRun(todo, agent, "chat");
+    store.updateMessage(userMsg.id, { runId: run.id });
+    store.addEvent("chat.started", `chat.started ${todo.key} agent=${agent.name}`);
+    tick();
+    return { mode: "chat-run", threadId: thread.id, todoId: todo.id, runId: run.id };
+  },
+  promoteChat: ({ id } = {}) => {
+    const todo = store.state.todos.find((t) => t.id === id && t.kind === "chat");
+    if (!todo) throw new Error("聊天任务不存在");
+    todo.kind = "task";
+    todo.status = ["running", "queued"].includes(store.state.runs.find((r) => r.todoId === todo.id)?.status) ? "in_progress" : "in_review";
+    todo.tags = (todo.tags || []).filter((tag) => tag !== "chat-only");
+    todo.updatedAt = now();
+    store.addEvent("chat.promoted", `chat.promoted ${todo.key}`);
+    broadcast();
+    return todo;
   },
   resumeMission: ({ id }) => {
     const mission = store.state.todos.find((t) => t.id === id && t.kind === "mission");
@@ -2788,11 +3133,12 @@ const actions = {
       startedAt: Date.now(), endedAt: null, cost: 0, tokens: null, error: null, parentRunId: null,
       cwd: info.cwd, branch: info.branch || null, hostId: agent.hostId || null, createdAt: Date.now(),
       tokensIn: null, tokensOut: null, usageSource: "unknown", errorClass: null, exitCode: null,
-      queueWaitMs: 0, durationMs: null, queueReason: null, terminalId,
+      queueWaitMs: 0, durationMs: null, queueReason: null, terminalId, runtime: "terminal",
     };
     store.state.runs.push(run);
     info.runId = run.id;
     info.taskId = todo.id;
+    syncTerminalRecord(terminalId, { todoId: todo.id, runId: run.id, status: "running", endedAt: null });
     todo.status = "in_progress";
     todo.agentId = agent.id;
     todo.lastRunFailed = false;
@@ -2806,7 +3152,9 @@ const actions = {
     if (!todo) throw new Error("todo not found");
     const mission = isMission(todo);
     if (mission) throw new Error("Mission 请通过计划审批或恢复 Mission 启动，不要直接派活");
-    const agent = store.state.agents.find((a) => a.id === (agentId || todo.agentId));
+    const agent = store.state.agents.find((a) => a.id === (agentId || todo.agentId))
+      || sceneAgentFor(todo.projectId)
+      || defaultChatAgent(todo.projectId);
     if (!agent) throw new Error("no agent: 先在左侧选择/创建一个 Agent");
     if ((agent.role || "worker") === "supervisor") throw new Error("Supervisor 不能执行普通任务");
     const agentErr = chatAgentError(agent);
@@ -2821,6 +3169,10 @@ const actions = {
   broadcast: ({ id, agentIds }) => {
     const todo = store.state.todos.find((t) => t.id === id);
     if (!todo) throw new Error("todo not found");
+    if ((todo.kind || "task") !== "mission" && !todo.parentId) {
+      const mode = sceneOf(todo.projectId).config.worktree;
+      if (mode === "never" || !repoRoot(todo.cwd)) throw new Error("当前场景/目录不创建独立 worktree，不能并行写；请把 worktree 设为 auto/always 或使用 git 项目。");
+    }
     const workers = store.state.agents.filter((a) => (a.role || "worker") !== "supervisor" && chatRunnable(a));
     const ids = (agentIds && agentIds.length ? agentIds : workers.slice(0, 2).map((a) => a.id));
     if (ids.length < 2) throw new Error("广播至少需要 2 个 worker Agent");
@@ -3382,6 +3734,26 @@ ipcMain.handle("files:reveal", (_e, { rel, root } = {}) => {
  * 终端里启动的 Agent 也会登记成一条 run：TODO 列表 / 项目面板靠 runs 推导「运行中 / 用时」，
  * 不登记的话终端里明明在干活，侧边栏却毫无动静。
  */
+function syncTerminalRecord(id, patch = {}) {
+  if (!store?.state) return null;
+  let record = (store.state.terminals || []).find((t) => t.id === id);
+  if (!record) {
+    record = {
+      id, projectId: null, todoId: null, runId: null, agentId: null, cwd: "",
+      kind: "shell", title: "终端", status: "running", exitCode: null, tail: "",
+      createdAt: Date.now(), endedAt: null,
+    };
+    store.state.terminals.push(record);
+  }
+  Object.assign(record, patch);
+  store.persist();
+  return record;
+}
+
+function stripAnsi(text) {
+  return String(text || "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "");
+}
+
 function settleTerminalRun(info, status) {
   if (!info?.runId) return;
   const run = store.state.runs.find((r) => r.id === info.runId);
@@ -3391,9 +3763,25 @@ function settleTerminalRun(info, status) {
   run.endedAt = now();
   if (run.startedAt) run.durationMs = Math.max(0, run.endedAt - run.startedAt);
   run.exitCode = typeof info.exitCode === "number" ? info.exitCode : null;
+  const delegation = run.delegationId ? store.state.delegations.find((d) => d.id === run.delegationId) : null;
+  if (delegation) {
+    if (status === "completed") {
+      delegation.status = "completed";
+      delegation.resultSummary = `终端 Agent 完成 · exit ${info.exitCode}`;
+      delegation.completedAt = now();
+    } else if (status === "failed") {
+      delegation.status = "failed";
+      delegation.resultSummary = `终端 Agent 失败 · exit ${info.exitCode ?? "signal"}`;
+    } else {
+      delegation.status = "cancelled";
+    }
+    delegation.updatedAt = now();
+  }
   if (todo) {
     todo.updatedAt = now();
-    if (status === "completed") todo.status = "in_review";
+    const otherActive = store.state.runs.some((r) => r.id !== run.id && r.todoId === todo.id && ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"].includes(r.status));
+    if (otherActive) todo.status = "in_progress";
+    else if (status === "completed") todo.status = "in_review";
     else if (status === "failed") { todo.status = "todo"; todo.lastRunFailed = true; }
     else todo.status = "todo";
     if (status === "failed") run.error = `终端 agent 退出码 ${info.exitCode ?? "signal"}`;
@@ -3458,7 +3846,7 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
         startedAt: Date.now(), endedAt: null, cost: 0, tokens: null, error: null, parentRunId: null,
         cwd: cwdResolved, branch: branch || null, hostId: agent.hostId || null, createdAt: Date.now(),
         tokensIn: null, tokensOut: null, usageSource: "unknown", errorClass: null, exitCode: null,
-        queueWaitMs: 0, durationMs: null, queueReason: null, terminalId: id,
+        queueWaitMs: 0, durationMs: null, queueReason: null, terminalId: id, runtime: "terminal",
       };
       store.state.runs.push(run);
       todo.status = "in_progress";
@@ -3476,9 +3864,25 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
     url: null, tail: "", attached: false, buffer: "", exited: false, exitCode: null,
     runId: run?.id || null, closedByUser: false,
     cwd: cwdResolved, branch: branch || null, agentId: agent?.id || null, taskId: run?.todoId || null,
+    recent: "",
   };
   terminalUrls.set(id, info);
+  syncTerminalRecord(id, {
+    projectId: projectId || store.state.activeProjectId || null,
+    todoId: run?.todoId || null,
+    runId: run?.id || null,
+    agentId: agent?.id || null,
+    cwd: cwdResolved,
+    kind: commandToRun ? "agent" : "shell",
+    title: commandToRun ? `${agent?.name || commandToRun}` : path.basename(cwdResolved) || "shell",
+    status: "running",
+    exitCode: null,
+    tail: "",
+    createdAt: Date.now(),
+    endedAt: null,
+  });
   term.onData((data) => {
+    info.recent = stripAnsi((info.recent + data).slice(-8000));
     if (info.attached) send(data);
     else info.buffer = (info.buffer + data).slice(-512 * 1024);
     if (settings.autoDetectDevServerUrl === false) return;
@@ -3499,7 +3903,14 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
     if (win && !win.isDestroyed()) win.webContents.send("terminal:exit", { id, exitCode: info.exitCode, signal: signal ?? null });
     // Ctrl-C / kill 视作主动停止，不算失败；只有非 0 且无信号才标 failed。
     const status = info.closedByUser || info.exitSignal ? "cancelled" : info.exitCode === 0 ? "completed" : "failed";
+    syncTerminalRecord(id, {
+      status: info.closedByUser ? "closed" : status === "completed" ? "exited" : "failed",
+      exitCode: info.exitCode,
+      tail: info.recent || "",
+      endedAt: Date.now(),
+    });
     settleTerminalRun(info, status);
+    broadcast();
   });
   terminals.set(id, term);
   if (initialInput) {
@@ -3510,7 +3921,7 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
       try { live.write(payload.endsWith("\r") ? payload : `${payload}\r`); } catch { /* ignore */ }
     }, 1500);
   }
-  return { id, cwd: cwdResolved, agent, run };
+  return { id, cwd: cwdResolved, agent, run, branch: branch || null };
 });
 
 // 渲染进程挂载后调用：返回挂载前的输出，并切换为实时推送（之后的输出只走 terminal:data）
@@ -3541,7 +3952,49 @@ ipcMain.handle("terminal:close", (_e, { id }) => {
   const term = terminals.get(id);
   if (term) { try { term.kill(); } catch { /* ignore */ } terminals.delete(id); }
   terminalUrls.delete(id);
+  if (info) {
+    syncTerminalRecord(id, { status: "closed", tail: info.recent || info.tail || "", endedAt: Date.now() });
+    broadcast();
+  }
 });
+
+ipcMain.handle("wiki:exportPdf", async (_e, { html, title } = {}) => {
+  const stamp = new Date().toISOString().slice(0, 10);
+  const safe = String(title || "wiki-page").replace(/[^\p{L}\p{N}_-]+/gu, "-").slice(0, 60) || "wiki-page";
+  const res = await dialog.showSaveDialog(win, {
+    title: "导出 Wiki 页面为 PDF",
+    defaultPath: path.join(app.getPath("desktop"), `${safe}-${stamp}.pdf`),
+    filters: [{ name: "PDF", extensions: ["pdf"] }],
+  });
+  if (res.canceled || !res.filePath) return null;
+  const pdfWin = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
+  try {
+    await pdfWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(String(html || "<h1>Wiki</h1>"))}`);
+    const pdf = await pdfWin.webContents.printToPDF({ printBackground: true, pageSize: "A4" });
+    fs.writeFileSync(res.filePath, pdf);
+    return res.filePath;
+  } finally {
+    try { pdfWin.destroy(); } catch { /* ignore */ }
+  }
+});
+
+ipcMain.handle("quick-capture:save", async (_e, { text } = {}) => {
+  const value = String(text || "").trim();
+  if (!value) return { ok: false, error: "内容不能为空" };
+  if (!pluginHost) return { ok: false, error: "插件宿主未启动" };
+  try {
+    const title = value.split("\n")[0].replace(/^#+\s*/, "").trim().slice(0, 80) || "快速记录";
+    const page = await pluginHost.invoke("ai.cockpit.notes", "wiki.upsertDraft", {
+      title, content: `# ${title}\n\n${value}\n`, summary: "快速记录",
+    });
+    if (win && !win.isDestroyed()) win.webContents.send("harness:toast", { message: `已存为 Wiki draft · ${title}` });
+    broadcast();
+    return { ok: true, page: page?.id || null };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+});
+ipcMain.handle("quick-capture:close", () => { try { captureWin?.close(); } catch { /* ignore */ } });
 
 ipcMain.handle("clipboard:read", () => clipboard.readText());
 
@@ -3678,6 +4131,66 @@ function installMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+/** 独立的快速记录小窗：不抢主窗口焦点，不打断当前任务。 */
+function openQuickCapture() {
+  if (captureWin && !captureWin.isDestroyed()) {
+    captureWin.show();
+    captureWin.focus();
+    return;
+  }
+  captureWin = new BrowserWindow({
+    width: 460, height: 330, minWidth: 360, minHeight: 260,
+    title: "快速记录 · Wiki", alwaysOnTop: true, resizable: true,
+    frame: false, show: false, skipTaskbar: true, backgroundColor: "#fbfaf7",
+    webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
+  });
+  captureWin.once("ready-to-show", () => { captureWin?.show(); captureWin?.focus(); });
+  captureWin.on("closed", () => { captureWin = null; });
+  captureWin.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") return;
+    if (input.key === "Escape") { event.preventDefault(); captureWin?.close(); }
+    if ((input.meta || input.control) && input.key === "Enter") {
+      event.preventDefault();
+      captureWin?.webContents.send("quick-capture:submit");
+    }
+  });
+  const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+    :root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#fbfaf7;color:#1c1917;font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;height:100vh;display:flex;flex-direction:column;padding:22px 24px 16px;-webkit-app-region:drag}
+    h1,p{-webkit-app-region:drag}textarea,button{-webkit-app-region:no-drag}
+    h1{font:600 15px/1.3 Georgia,serif;margin:0 0 2px}p{margin:0 0 12px;color:#8a8178;font-size:10.5px}
+    textarea{flex:1;width:100%;resize:none;border:1px solid #e3ddd3;border-radius:9px;background:#fffdf9;color:#1c1917;padding:10px 11px;font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;outline:none}
+    textarea:focus{border-color:#c7b9a4;box-shadow:0 0 0 3px rgba(180,160,130,.12)}
+    .row{display:flex;align-items:center;gap:8px;margin-top:10px}.hint{font-size:9.5px;color:#a8a095;flex:1}
+    button{border:0;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer}button.primary{background:#1c1917;color:#fff}button.ghost{background:transparent;color:#6b6259}
+    .err{color:#b91c1c;font-size:10px;min-height:13px;margin-top:5px}
+  </style></head><body>
+    <h1>快速记录</h1><p>⌘⇧K 随时打开 · 剪贴板已预填 · 存为 Wiki draft</p>
+    <textarea id="text" placeholder="记下想法、链接或剪贴板内容…" autofocus></textarea>
+    <div class="err" id="err"></div>
+    <div class="row"><span class="hint">⌘Enter 保存 · Esc 关闭</span><button class="ghost" id="cancel">取消</button><button class="primary" id="save">存为 draft</button></div>
+    <script>
+      const text = document.getElementById("text");
+      const err = document.getElementById("err");
+      const save = document.getElementById("save");
+      window.harness.clipboardRead().then((v) => { if (v) text.value = v; }).catch(()=>{});
+      async function submit() {
+        const value = text.value.trim();
+        if (!value) { text.focus(); return; }
+        save.disabled = true; err.textContent = "";
+        try {
+          const res = await window.harness.quickCaptureSave(value);
+          if (res && res.ok === false) { err.textContent = res.error || "保存失败"; save.disabled = false; return; }
+          window.harness.quickCaptureClose();
+        } catch (e) { err.textContent = String(e && e.message || e); save.disabled = false; }
+      }
+      save.onclick = submit;
+      document.getElementById("cancel").onclick = () => window.harness.quickCaptureClose();
+      window.harness.onQuickCaptureSubmit(() => submit());
+    </script>
+  </body></html>`;
+  captureWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+}
+
 async function createWindow() {
   win = new BrowserWindow({
     width: 1500, height: 980, minWidth: 1180, minHeight: 760,
@@ -3731,13 +4244,7 @@ app.whenReady().then(async () => {
   await createWindow();
   // 全局快速记录：不切主窗口，直接把剪贴板内容变成 Wiki draft
   try {
-    globalShortcut.register("CommandOrControl+Shift+K", () => {
-      if (!win || win.isDestroyed()) return;
-      if (win.isMinimized()) win.restore();
-      win.show();
-      win.focus();
-      win.webContents.send("harness:quick-capture");
-    });
+    globalShortcut.register("CommandOrControl+Shift+K", () => openQuickCapture());
   } catch { /* 快捷键被占用时不影响启动 */ }
   try {
     const { PluginHost } = await import("./plugins/host.mjs");
@@ -3756,6 +4263,7 @@ app.whenReady().then(async () => {
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 app.on("before-quit", () => {
   try { globalShortcut.unregisterAll(); } catch { /* ignore */ }
+  try { captureWin?.close(); } catch { /* ignore */ }
   try { grapeProc?.kill(); } catch { /* ignore */ }
   try { mcpServer?.close(); } catch { /* ignore */ }
   try { wikiMcpServer?.close(); } catch { /* ignore */ }
@@ -3764,6 +4272,7 @@ app.on("before-quit", () => {
   // 终端 pty 会随应用消失：先按「用户关闭」结算，否则重启后 TODO 会卡在运行中
   for (const [id, info] of terminalUrls) {
     info.closedByUser = true;
+    if (store) syncTerminalRecord(id, { status: "detached", tail: info.recent || info.tail || "", endedAt: Date.now() });
     settleTerminalRun(info, "cancelled");
     const term = terminals.get(id);
     if (term) { try { term.kill(); } catch { /* ignore */ } }

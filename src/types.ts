@@ -34,7 +34,7 @@ export interface Todo {
   agentId: string | null; priority: string; due: string; parentId: string | null; tags: string[];
   subtasks: Subtask[]; blockedBy: string[]; missingWriteback: boolean; lastRunFailed: boolean; confirmed: boolean; projectId?: string;
   cwd: string; createdAt: number; updatedAt: number;
-  kind?: "task" | "mission";
+  kind?: "task" | "mission" | "chat";
   missionState?: MissionState | null;
 }
 export type MissionState = "planning" | "plan_review" | "running" | "waiting_children" | "in_review" | "done" | "failed" | "cancelled" | "interrupted";
@@ -56,6 +56,26 @@ export interface Delegation {
   status: DelegationStatus; resultSummary: string; artifacts: string[]; branch: string | null;
   createdAt: number; updatedAt: number; completedAt: number | null;
 }
+export type WorktreeMode = "auto" | "always" | "never";
+export interface SceneConfig {
+  worktree: WorktreeMode;
+  runtime: "auto" | "acp" | "terminal";
+  agents: string[];
+  concurrency: number;
+  acceptance: string;
+  notes: string;
+}
+export interface Scene { projectId: string; text: string; config: SceneConfig; updatedAt: number; }
+export interface TerminalRecord {
+  id: string; projectId: string | null; todoId: string | null; runId: string | null; agentId: string | null;
+  cwd: string; kind: "agent" | "shell"; title: string;
+  status: "running" | "exited" | "closed" | "detached" | "failed";
+  exitCode: number | null; tail: string; createdAt: number; endedAt: number | null;
+}
+export interface RuntimeView {
+  id: string; hostId: string; hostName: string; cli: string; label: string;
+  mode: "acp" | "terminal"; available: boolean; caps: string[]; agents: number;
+}
 export interface Run {
   id: string; todoId: string; agentId: string; status: string; trigger: string;
   startedAt: number | null; endedAt: number | null; cost: number;
@@ -67,6 +87,8 @@ export interface Run {
   errorClass?: ErrorClass | null; exitCode?: number | null;
   /** 缺密钥等可操作错误的结构化信息（envVars / provider） */
   errorMeta?: { envVars: string[]; provider: string | null } | null;
+  runtime?: "acp" | "terminal" | null;
+  worktreeCleaned?: boolean;
   queueWaitMs?: number | null; durationMs?: number | null; queueReason?: string | null;
   kind?: "worker" | "supervisor";
   delegationId?: string | null;
@@ -143,6 +165,7 @@ export interface Settings {
   maxSupervisorRuns?: number;
   maxMissionChildren?: number;
   missionBudgetMinutes?: number;
+  worktreeMode?: WorktreeMode;
 }
 export interface State {
   hosts: Host[]; agents: Agent[]; todos: Todo[]; runs: Run[]; threads: Thread[]; messages: Message[];
@@ -156,6 +179,9 @@ export interface State {
   projectId: string;
   activeProjectId: string | null;
   projects: Project[];
+  scenes?: Scene[];
+  terminals?: TerminalRecord[];
+  runtimes?: RuntimeView[];
   cliCapabilities: string[];
   executors?: Executor[];
   /** 当前 Chat run 会使用的 dsh 来源（内置 / 自定义 / 系统 PATH） */

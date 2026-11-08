@@ -16,6 +16,18 @@
 - 插件宿主：utilityProcess 插件、manifest、命令、事件、storage、设置页、目录安装/启停
 - Wiki 内置 first-party 插件：原生 Source / Page / Citation / Review、Memory 顶层索引 + run prompt 注入、Dream 维护检查、CodeMirror 编辑、多 tab、可拖拽左右分屏、布局恢复、搜索、Graph、Wiki MCP tools、任务 / Chat 联动；恢复「打开本地目录」，可浏览 / 编辑 Markdown 并导入为 Source
 
+### Added
+
+- **场景工作台**：每个项目一份文字场景配置（worktree / runtime / agent / concurrency / acceptance / notes），支持校验、AI 建议、项目进展与终端总览
+- **运行时与终端元数据**：`runtimes` 派生视图（host + CLI + caps + 模式 + 可用性）、`terminals` 持久化（项目 / 任务 / run / agent / cwd / 状态 / exitCode / 最近输出）
+- **多 Agent 并行**：普通 TODO 可选多个 Agent，每个独立 run / worktree；终端 Agent 自动开标签；Chat 可选择纠偏目标 run
+- **分配预览 / 纯聊天 / 全局进展**：Chat 派活前建议、只聊会话、可选范围的进展 dock
+- **场景与 worktree 策略**：`worktree: auto | always | never`，项目 Scene 覆盖全局；任务行可打开 / 清理 worktree
+- **Mission terminal child**：Mission 子任务可使用终端 Agent，退出后结算 delegation
+- **Wiki 增强**：问 Wiki（本地检索抽句 + 引用）、收藏 / 最近、标签筛选、`#tag` 点击、双链 hover / 红链创建 / 反链上下文 / unlinked mentions / 图谱筛选、Markdown/PDF 导出、全量本地导入
+- **快速记录独立小窗**：`⌘⇧K` 不切主窗口，剪贴板预填，直接存为 draft
+- **统计 / 设置 / 数据迁移**：统计按 runtime 分组；设置增加 worktree 默认与 Runtime 视图；新增 `scenes` / `terminals` 表与 run 的 runtime / worktree_cleaned 迁移
+
 ### Changed
 
 - TODO 收敛为 4 组（待执行 / 进行中 / 待确认 / 已完成），新增「待处理」筛选；等待输入置顶高亮，已完成组可撤销确认

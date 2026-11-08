@@ -373,7 +373,7 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
   const [range, setRange] = useState("7d");
   const [scope, setScope] = useState("all");
   const [errFilter, setErrFilter] = useState<string | null>(null);
-  const [groupBy, setGroupBy] = useState<"agent" | "project" | "host">("agent");
+  const [groupBy, setGroupBy] = useState<"agent" | "project" | "host" | "runtime">("agent");
 
   const rangeMs = RANGES.find((r) => r.id === range)?.ms ?? 0;
   const cutoff = rangeMs ? Date.now() - rangeMs : 0;
@@ -432,6 +432,10 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
       } else if (groupBy === "host") {
         const h = state.hosts.find((x) => x.id === r.hostId);
         if (h) { key = h.id; label = h.name; color = h.status === "online" ? "green" : "red"; }
+      } else if (groupBy === "runtime") {
+        key = r.runtime || (r.terminalId || r.trigger === "terminal" ? "terminal" : "acp");
+        label = key === "terminal" ? "终端 pty" : "ACP";
+        color = key === "terminal" ? "amber" : "blue";
       } else {
         const t = state.todos.find((x) => x.id === r.todoId);
         const p = state.projects.find((x) => x.id === t?.projectId);
@@ -456,12 +460,12 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
     .slice(0, 8);
 
   const exportCsv = () => {
-    const head = ["run", "task", "agent", "host", "status", "error_class", "duration_ms", "queue_wait_ms", "tokens_in", "tokens_out", "usage_source", "created_at", "error"];
+    const head = ["run", "task", "agent", "host", "runtime", "status", "error_class", "duration_ms", "queue_wait_ms", "tokens_in", "tokens_out", "usage_source", "created_at", "error"];
     const rows = runs.map((r) => {
       const t = state.todos.find((x) => x.id === r.todoId);
       const a = state.agents.find((x) => x.id === r.agentId);
       const h = state.hosts.find((x) => x.id === r.hostId);
-      return [r.id, t?.title || "", a?.name || "", h?.name || "", r.status, r.errorClass || "", r.durationMs ?? "", r.queueWaitMs ?? "", r.tokensIn ?? "", r.tokensOut ?? "", r.usageSource || "unknown", r.createdAt || r.startedAt || "", (r.error || "").replace(/\s+/g, " ")];
+      return [r.id, t?.title || "", a?.name || "", h?.name || "", r.runtime || "", r.status, r.errorClass || "", r.durationMs ?? "", r.queueWaitMs ?? "", r.tokensIn ?? "", r.tokensOut ?? "", r.usageSource || "unknown", r.createdAt || r.startedAt || "", (r.error || "").replace(/\s+/g, " ")];
     });
     const csv = [head, ...rows].map((cols) => cols.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }));
@@ -559,7 +563,7 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
         <div className="panel-head">
           分组
           <div className="seg">
-            {([["agent", "按 Agent"], ["project", "按项目"], ["host", "按主机"]] as const).map(([id, label]) => (
+            {([["agent", "按 Agent"], ["project", "按项目"], ["host", "按主机"], ["runtime", "按执行方式"]] as const).map(([id, label]) => (
               <button key={id} className={`seg-btn ${groupBy === id ? "on" : ""}`} onClick={() => setGroupBy(id)}>{label}</button>
             ))}
           </div>

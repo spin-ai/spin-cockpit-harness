@@ -315,7 +315,10 @@ button{cursor:pointer}
 .task-row.on{border-color:var(--brand-line);box-shadow:0 0 0 1px var(--brand-line)}
 .task-row.task-waiting{background:#fffdf5;border-color:#f5e6bf}
 .task-row.task-waiting::before{background:#d97706}
-.task-worktree{display:block;max-width:100%;border:0;background:transparent;padding:0;text-align:left;color:var(--faint);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-worktree-row{display:flex;align-items:center;gap:4px;min-width:0}
+.task-worktree{display:block;max-width:100%;border:0;background:transparent;padding:0;text-align:left;color:var(--faint);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.task-worktree-clean{flex:none;border:0;background:transparent;color:var(--faint);cursor:pointer;padding:0 2px;font-size:9.5px}
+.task-worktree-clean:hover{color:var(--red)}
 .task-worktree:hover{color:var(--brand)}
 .todo-group-head.active{color:#1d4ed8}
 .todo-group-head.done{color:#15803d}
@@ -2442,3 +2445,100 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .md-editor-surface .ProseMirror a{color:var(--brand);text-decoration:underline}
 .md-editor-surface .ProseMirror p.is-editor-empty:first-child::before{content:attr(data-placeholder);float:left;color:var(--faint);pointer-events:none;height:0}
 .md-tool.on{background:var(--brand-soft);color:var(--brand)}
+
+/* 场景工作台 */
+.scene-page{overflow:auto}
+.scene-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px;align-items:start}
+.scene-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;display:flex;flex-direction:column;gap:11px;box-shadow:var(--shadow-1)}
+.scene-card.on{border-color:var(--brand-line);box-shadow:0 0 0 1px var(--brand-line)}
+.scene-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.scene-card-title{display:flex;gap:9px;align-items:center;min-width:0}
+.scene-card-title b{display:block;font-size:13.5px;line-height:1.3}
+.scene-card-title .project-mark{flex:none}
+.scene-progress{display:flex;flex-wrap:wrap;gap:10px;font-size:10.5px;color:var(--muted);background:var(--page-canvas);border:1px solid var(--border);border-radius:8px;padding:7px 9px}
+.scene-progress b{color:var(--fg);font-variant-numeric:tabular-nums;margin-right:2px}
+.scene-progress .on b{color:#15803d}.scene-progress .warn b{color:#b45309}.scene-progress .bad b{color:var(--red)}
+.scene-editor-label{display:flex;flex-direction:column;gap:4px}
+.scene-editor{width:100%;box-sizing:border-box;resize:vertical;min-height:110px;border:1px solid var(--input);border-radius:8px;background:var(--page-canvas);color:var(--fg);padding:8px 10px;font:11px/1.6 var(--mono);outline:none}
+.scene-editor:focus{border-color:var(--brand-line);box-shadow:var(--ring)}
+.scene-card-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.scene-subhead{font-size:10px;letter-spacing:.05em;color:var(--faint);font-weight:600;text-transform:uppercase;margin-bottom:3px}
+.scene-terminal-list{border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column;gap:2px}
+.scene-terminal{display:grid;grid-template-columns:8px minmax(0,1fr) auto auto;gap:7px;align-items:center;padding:3px 2px;font-size:10.5px;color:var(--muted);border-radius:5px}
+.scene-terminal:hover{background:var(--surface-hover)}
+.scene-terminal .dot{width:6px;height:6px;border-radius:50%;background:var(--faint)}
+.scene-terminal.running .dot{background:#22c55e}.scene-terminal.failed .dot{background:var(--red)}
+.scene-empty-line{padding:4px 2px}
+.scene-foot{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:7px;font-size:10px;color:var(--faint)}
+.scene-foot .bad{color:var(--red)}
+@media(max-width:1100px){.scene-grid{grid-template-columns:1fr}}
+
+/* TODO 横向看板 */
+.todo-board{display:flex;gap:8px;align-items:flex-start;min-width:max-content;padding:2px 2px 8px}
+.todo-board-col{width:188px;flex:none;background:var(--page-canvas);border:1px solid var(--border);border-radius:9px;padding:7px;display:flex;flex-direction:column;gap:6px}
+.todo-board-col header{display:flex;justify-content:space-between;align-items:center;font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--muted);padding:1px 3px}
+.todo-board-col header em{font-style:normal;color:var(--faint);font-weight:500}
+.todo-board-cards{display:flex;flex-direction:column;gap:5px}
+.todo-board-card{display:flex;flex-direction:column;gap:4px;text-align:left;border:1px solid var(--border);background:var(--surface);border-radius:7px;padding:7px;cursor:pointer;min-width:0}
+.todo-board-card:hover{border-color:var(--border-strong)}
+.todo-board-card.on{border-color:var(--brand-line);box-shadow:0 0 0 1px var(--brand-line)}
+.todo-board-card.waiting{background:#fffdf5;border-color:#f5e6bf}
+.todo-board-card b{font-size:11.5px;line-height:1.4;font-weight:550;color:var(--fg);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.todo-board-empty{font-size:10px;color:var(--faint);text-align:center;padding:8px 0}
+.broadcast-list{display:flex;flex-direction:column;gap:5px;max-height:240px;overflow:auto}
+.broadcast-item{display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:7px;padding:7px 9px;font-size:12px;cursor:pointer}
+.broadcast-item:hover{background:var(--surface-hover)}
+.broadcast-item input{accent-color:var(--brand)}
+.broadcast-item span:last-child{margin-left:auto}
+
+/* Chat 全局进展 / 分配预览 / 纯聊天 */
+.chat-progress{flex:none;border-bottom:1px solid var(--border);background:var(--page-canvas);padding:7px 9px;display:flex;flex-direction:column;gap:6px;max-height:230px}
+.chat-progress-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10px;letter-spacing:.05em;color:var(--faint);font-weight:600}
+.chat-progress-list{display:flex;flex-direction:column;gap:2px;overflow:auto}
+.chat-progress-row{display:flex;align-items:center;gap:6px;border-radius:6px;padding:3px 4px;font-size:11px}
+.chat-progress-row:hover{background:var(--surface-hover)}
+.progress-main{display:flex;align-items:center;gap:6px;min-width:0;flex:1;border:0;background:transparent;padding:0;text-align:left;color:var(--fg);cursor:pointer}
+.progress-main .dot{width:6px;height:6px;border-radius:50%;background:var(--faint);flex:none}
+.progress-main .dot.green{background:#22c55e}.progress-main .dot.amber{background:#f59e0b}
+.progress-main em{font-style:normal;color:var(--faint);font-size:9.5px;white-space:nowrap}
+.chat-progress-empty{font-size:10px;color:var(--faint);padding:3px}
+.dispatch-preview{flex:none;border-top:1px solid var(--border);background:color-mix(in srgb,var(--brand-soft) 45%,var(--surface));padding:9px 10px;display:flex;flex-direction:column;gap:7px}
+.dispatch-preview-head{display:flex;justify-content:space-between;gap:8px;font-size:10.5px;font-weight:600;letter-spacing:.03em;color:var(--brand)}
+.dispatch-preview-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 8px}
+.dispatch-preview-grid label{display:flex;flex-direction:column;gap:2px;font-size:9.5px;color:var(--faint)}
+.dispatch-preview-grid select{height:24px;border:1px solid var(--input);border-radius:5px;background:var(--surface);font-size:10.5px;padding:0 4px;color:var(--fg)}
+.dispatch-preview-grid>div{display:flex;flex-direction:column;gap:2px;font-size:9.5px;color:var(--faint)}
+.dispatch-preview-grid b{font-size:10.5px;color:var(--fg);font-weight:550}
+.dispatch-preview-reason{font-size:9.5px;color:var(--muted);line-height:1.5}
+
+/* Wiki 搜索筛选 / 历史 / 标签 */
+.notes-search-filters{display:flex;gap:4px;padding:0 8px 6px}
+.notes-search-filters select{height:22px;border:1px solid var(--input);border-radius:5px;background:var(--surface);color:var(--muted);font-size:10px;padding:0 3px;min-width:0;flex:1}
+.notes-search-history{display:flex;flex-wrap:wrap;gap:3px;padding:0 8px 6px}
+.notes-search-history button{border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--muted);font-size:10px;padding:2px 7px;cursor:pointer}
+.notes-search-history button:hover{color:var(--fg);border-color:var(--border-strong)}
+.notes-search-results mark{background:#fef08a;color:inherit;border-radius:2px;padding:0 1px}
+
+/* Wiki 双链 / 反链 / 图谱筛选 */
+.notes-preview a.wiki-link-missing{color:var(--red);text-decoration:underline dashed;text-underline-offset:2px}
+.notes-preview a.wiki-link-ok{text-decoration-color:var(--border-strong)}
+.notes-link em{display:block;font-style:normal;color:var(--faint);font-size:9.5px;line-height:1.4;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notes-hit{background:#fde68a;color:inherit;border-radius:2px;padding:0 1px;transition:background .2s}
+.notes-hit.flash{background:#fbbf24;box-shadow:0 0 0 2px rgba(251,191,36,.35)}
+.notes-graph-filter{position:absolute;top:8px;left:8px;z-index:2;display:flex;gap:2px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:2px}
+.notes-graph-filter button{border:0;background:transparent;color:var(--muted);font-size:9.5px;padding:2px 6px;border-radius:4px;cursor:pointer}
+.notes-graph-filter button.on{background:var(--brand-soft);color:var(--brand)}
+.notes-graph{position:relative}
+
+/* Wiki 问答 */
+.wiki-ask{width:min(620px,92vw);max-height:82vh;overflow:auto}
+.wiki-ask-result{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border);padding-top:8px}
+.wiki-ask-result .notes-preview{max-height:300px;overflow:auto;font-size:12px}
+.wiki-ask-cites{display:flex;flex-wrap:wrap;gap:4px}
+.wiki-ask-cites button{border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--muted);font-size:9.5px;padding:2px 7px;cursor:pointer}
+
+/* Wiki 双链 hover 摘要 */
+.wiki-hover-card{position:fixed;z-index:700;width:280px;background:var(--surface);border:1px solid var(--border-strong);border-radius:9px;padding:9px 11px;box-shadow:var(--shadow-float);pointer-events:none}
+.wiki-hover-card b{font-size:11.5px;color:var(--fg);display:inline-block;margin-right:5px}
+.wiki-hover-card p{margin:4px 0 0;font-size:10.5px;line-height:1.5;color:var(--muted);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.wiki-hover-card .notes-status-dot{display:inline-block;vertical-align:middle}

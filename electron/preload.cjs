@@ -15,6 +15,14 @@ contextBridge.exposeInMainWorld("harness", {
   closeTerminal: (id) => ipcRenderer.invoke("terminal:close", { id }),
   terminalResize: (id, cols, rows) => ipcRenderer.invoke("terminal:resize", { id, cols, rows }),
   clipboardRead: () => ipcRenderer.invoke("clipboard:read"),
+  quickCaptureSave: (text) => ipcRenderer.invoke("quick-capture:save", { text }),
+  quickCaptureClose: () => ipcRenderer.invoke("quick-capture:close"),
+  exportPdf: (html, title) => ipcRenderer.invoke("wiki:exportPdf", { html, title }),
+  onQuickCaptureSubmit: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on("quick-capture:submit", handler);
+    return () => ipcRenderer.removeListener("quick-capture:submit", handler);
+  },
   clipboardWrite: (text) => ipcRenderer.invoke("clipboard:write", { text }),
   openExternal: (url) => ipcRenderer.invoke("shell:openExternal", { url }),
   filesList: (rel, root) => ipcRenderer.invoke("files:list", { rel, root }),
@@ -78,5 +86,10 @@ contextBridge.exposeInMainWorld("harness", {
     const handler = () => cb();
     ipcRenderer.on("harness:quick-capture", handler);
     return () => ipcRenderer.removeListener("harness:quick-capture", handler);
+  },
+  onTerminalAdopt: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("harness:terminal-adopt", handler);
+    return () => ipcRenderer.removeListener("harness:terminal-adopt", handler);
   },
 });

@@ -48,7 +48,7 @@ let r = await ev(`
   await window.harness.action("pluginEnable", { id: "ai.cockpit.notes" });
   await new Promise((r) => setTimeout(r, 800));
   await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.vault.open", args: { path: "${VAULT}" } });
-  const rail = await window.__wait(() => [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.includes("笔记")));
+  const rail = await window.__wait(() => [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.includes("Wiki")));
   if (!rail) return { error: "no notes rail" };
   rail.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 1600));
@@ -66,7 +66,7 @@ r = await ev(`
   srcTab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 500));
   const row = await window.__wait(() => document.querySelector(".notes-row"));
-  const del = row?.querySelector('.notes-row-actions .link');
+  const del = [...(row?.querySelectorAll('.notes-row-actions .link') || [])].find((b) => b.textContent.trim() === "删除");
   if (!del) return { error: "no delete action" };
   del.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 1500));
@@ -82,7 +82,7 @@ r = await ev(`
   await new Promise((r) => setTimeout(r, 400));
   const before = document.querySelectorAll(".notes-row").length;
   const row = await window.__wait(() => document.querySelector(".notes-row"));
-  const del = row?.querySelector('.notes-row-actions .link');
+  const del = [...(row?.querySelectorAll('.notes-row-actions .link') || [])].find((b) => b.textContent.trim() === "删除");
   del.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 1500));
   const list = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" });

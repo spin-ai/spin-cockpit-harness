@@ -171,7 +171,7 @@ r = await run(`
   __t.click(go);
   const ta = await __t.until(() => document.querySelector('textarea[data-set-key="dshEnv"]'), 5000);
   const focused = ta ? await __t.until(() => document.activeElement === ta, 2500) : null;
-  return { buttons, section: document.querySelector(".settings-head h2")?.textContent, ta: !!ta, focused: !!focused };`);
+  return { buttons, section: [...document.querySelectorAll(".settings-nav-item.on")].map((b) => b.textContent.trim()).join("/"), ta: !!ta, focused: !!focused };`);
 check("缺密钥错误卡片 + 跳设置并聚焦", r.buttons?.length >= 2 && r.section === "执行" && r.focused === true, JSON.stringify(r));
 
 // ── 1.5 视图切换不丢终端（工作区常驻挂载，只切显隐） ──────────
@@ -179,13 +179,13 @@ r = await run(`
   __t.click(__t.rail("工作区"));
   await __t.wait(1000);
   const before = [...document.querySelectorAll(".term-tab:not(.add)")].map((t) => t.textContent.replace("×", "").trim());
-  __t.click(__t.rail("收件箱"));
+  __t.click(__t.rail("项目"));
   await __t.wait(500);
   __t.click(__t.rail("工作区"));
   await __t.wait(1000);
   const after = [...document.querySelectorAll(".term-tab:not(.add)")].map((t) => t.textContent.replace("×", "").trim());
   return { before, after, xterm: !!document.querySelector(".term-instance .xterm") };`);
-check("切收件箱再回工作区，终端不丢", r.before.length >= 1 && JSON.stringify(r.before) === JSON.stringify(r.after) && r.xterm, JSON.stringify(r));
+check("切项目页再回工作区，终端不丢", r.before.length >= 1 && JSON.stringify(r.before) === JSON.stringify(r.after) && r.xterm, JSON.stringify(r));
 
 // ── 10. 设置：搜索跳转 / 行内恢复默认 / 本页恢复默认 ─────────
 r = await run(`
@@ -202,7 +202,7 @@ r = await run(`
   __t.click(hit);
   await __t.wait(500);
   const row = document.querySelector('[data-set-key="maxConcurrentRuns"]');
-  return { hits: hits.length, section: document.querySelector(".settings-head h2")?.textContent, flashed: !!row?.classList.contains("set-hit") };`);
+  return { hits: hits.length, section: [...document.querySelectorAll(".settings-nav-item.on")].map((b) => b.textContent.trim()).join("/"), flashed: !!row?.classList.contains("set-hit") };`);
 check("设置搜索跳转 + 行高亮", r.hits >= 1 && r.section === "执行" && r.flashed, JSON.stringify(r));
 
 r = await run(`
