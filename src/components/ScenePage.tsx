@@ -38,7 +38,15 @@ export function ScenePage({ state, act, notify, onOpenProject, onOpenTerminal }:
       if (!count) continue;
       if (todo.status === "in_review") count.review += 1;
     }
+    // 每个 todo 只看最新一次 run，避免重试后失败数无限累加。
+    const latestByTodo = new Map<string, (typeof state.runs)[number]>();
     for (const run of state.runs) {
+      const prev = latestByTodo.get(run.todoId);
+      const at = run.endedAt || run.startedAt || run.createdAt || 0;
+      const prevAt = prev?.endedAt || prev?.startedAt || prev?.createdAt || 0;
+      if (!prev || at >= prevAt) latestByTodo.set(run.todoId, run);
+    }
+    for (const run of latestByTodo.values()) {
       const todo = state.todos.find((t) => t.id === run.todoId);
       const count = todo?.projectId ? map.get(todo.projectId) : null;
       if (!count) continue;

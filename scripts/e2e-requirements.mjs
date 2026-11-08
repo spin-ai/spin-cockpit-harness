@@ -43,6 +43,15 @@ const artifacts = path.join(root, "release", "e2e", stamp);
 fs.mkdirSync(artifacts, { recursive: true });
 const dataDir = tempDataDir();
 fs.mkdirSync(path.join(dataDir, "projects"), { recursive: true });
+// Fake ACP：不依赖真实模型；POSIX 下用 shim 启动 Node 脚本
+const fakeScript = path.join(root, "scripts", "e2e", "fixtures", "fake-dsh.mjs");
+const fakeShim = path.join(dataDir, "fake-dsh");
+let fakeDsh = null;
+if (process.platform !== "win32") {
+  fs.writeFileSync(fakeShim, `#!/bin/sh\nexec "${process.execPath}" "${fakeScript}" "$@"\n`);
+  fs.chmodSync(fakeShim, 0o755);
+  fakeDsh = fakeShim;
+}
 
 let app;
 let cdp;
@@ -53,7 +62,7 @@ const results = [];
 
 try {
   console.log(`[e2e] app data: ${dataDir}`);
-  app = await launchApp({ root, port, dataDir });
+  app = await launchApp({ root, port, dataDir, extraEnv: { FAKE_DSH_HOLD_MS: "10000", FAKE_DSH_LOG: path.join(dataDir, "fake-dsh.log") } });
   cdp = await (await import("./e2e/harness.mjs")).connect(port);
   await installHelpers(cdp);
 
@@ -64,7 +73,8 @@ try {
     const result = await ev(`(async()=>await window.harness.action(${JSON.stringify(type)}, ${JSON.stringify(payload)}))()`);
     return result && Object.prototype.hasOwnProperty.call(result, "result") ? result.result : result;
   };
-  const ctx = { root, dataDir, tmp: dataDir, artifacts, ev, sleep, state, action };
+  const send = (method, params = {}) => cdp.send(method, params);
+  const ctx = { root, dataDir, tmp: dataDir, artifacts, ev, send, sleep, state, action, fakeDsh };
 
   // 等 renderer 首屏
   const ready = await ev(`(async()=>{const t=Date.now(); while(Date.now()-t<20000){ if(document.querySelector(".app") && window.harness) return true; await new Promise(r=>setTimeout(r,100)); } return false;})()`);

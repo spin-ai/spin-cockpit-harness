@@ -215,3 +215,21 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
 .notes-search-results mark,.notes-hit{background:color-mix(in srgb,var(--fg) 12%,transparent);color:var(--fg);border-radius:2px;padding:0 1px}
 .notes-hit.flash{background:color-mix(in srgb,var(--fg) 16%,transparent);box-shadow:0 0 0 2px color-mix(in srgb,var(--fg) 8%,transparent)}
 .task-create input:focus,.task-create textarea:focus,.settings-search:focus{border-color:var(--border-strong);box-shadow:var(--ring)}
+
+/* RowMenu：fixed portal，避免滚动容器裁切 */
+.row-menu-trigger{width:28px;padding:0;justify-content:center;font-size:14px}
+.row-menu-pop.fixed{position:fixed;right:auto;top:auto;z-index:300;max-height:min(360px,calc(100vh - 24px));overflow:auto}
+.row-menu-pop.fixed.up{transform:translateY(-100%)}
+
+/* 页头副标题：允许两行，且保留 tooltip */
+.page-header-sub{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.5;max-width:780px}
+
+/* 非焦点 pane：只降低 header 存在感，不降低内容可读性 */
+.main.pane-focus-todo .chat-pane,.main.pane-focus-todo .terminal-pane,.main.pane-focus-todo .files-pane,
+.main.pane-focus-chat .todo-pane,.main.pane-focus-chat .terminal-pane,.main.pane-focus-chat .files-pane,
+.main.pane-focus-terminal .todo-pane,.main.pane-focus-terminal .chat-pane,.main.pane-focus-terminal .files-pane,
+.main.pane-focus-files .todo-pane,.main.pane-focus-files .chat-pane,.main.pane-focus-files .terminal-pane{opacity:1}
+.main.pane-focus-todo .chat-pane .pane-head,.main.pane-focus-todo .terminal-pane .terminal-bar,.main.pane-focus-todo .files-pane .right-tabs,
+.main.pane-focus-chat .todo-pane .pane-head,.main.pane-focus-chat .terminal-pane .terminal-bar,.main.pane-focus-chat .files-pane .right-tabs,
+.main.pane-focus-terminal .todo-pane .pane-head,.main.pane-focus-terminal .chat-pane .pane-head,.main.pane-focus-terminal .files-pane .right-tabs,
+.main.pane-focus-files .todo-pane .pane-head,.main.pane-focus-files .chat-pane .pane-head,.main.pane-focus-files .terminal-pane .terminal-bar{opacity:.62}
