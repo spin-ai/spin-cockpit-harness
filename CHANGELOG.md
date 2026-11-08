@@ -16,6 +16,15 @@
 - 插件宿主：utilityProcess 插件、manifest、命令、事件、storage、设置页、目录安装/启停
 - Wiki 内置 first-party 插件：原生 Source / Page / Citation / Review、Memory 顶层索引 + run prompt 注入、Dream 维护检查、CodeMirror 编辑、多 tab、可拖拽左右分屏、布局恢复、搜索、Graph、Wiki MCP tools、任务 / Chat 联动；恢复「打开本地目录」，可浏览 / 编辑 Markdown 并导入为 Source
 
+### Changed
+
+- TODO 收敛为 4 组（待执行 / 进行中 / 待确认 / 已完成），新增「待处理」筛选；等待输入置顶高亮，已完成组可撤销确认
+- 移除独立收件箱页，待确认 / 失败 / 等待输入统一进 TODO「待处理」；导航与设置里的收件箱入口同步移除
+- 终端新增「＋ Agent」：不先建任务即可起原生 CLI Agent；终端可「接入」当前选中任务，运行进入 TODO
+- 任务行显示当前 / 最近 run 的 worktree 分支与路径，点击在 Finder 打开
+- 预览 Surface 补齐后退 / 前进 / 停止 / 硬刷新 / 缩放 / 页内查找 / DevTools / 外部打开 / 设备宽度
+- LLM Wiki：停笔 1s 自动保存；删除页面 / 资料进回收站，可恢复或彻底删除；`⌘⇧K` 全局快速记录；中文按字模糊搜索；`#标签` 补全
+
 ## [0.2.0-alpha.2] - 2026-11-07
 
 ### Added

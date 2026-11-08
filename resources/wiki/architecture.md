@@ -59,7 +59,7 @@ send(threadId, text)
       → new AcpClient({ cwd, bin })
       → initialize → session/new → configure → prompt
       → session/update → handleUpdate → messages
-  → run completed → todo in_review → inbox
+  → run completed → todo in_review → 待处理
 ```
 
 ![调度器](./wiki/scheduler.png)

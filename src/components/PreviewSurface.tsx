@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ElementContext } from "../types";
-import { CopyIcon, ListIcon, RefreshIcon, RevealIcon, XIcon } from "./Icons";
+import { ChevronRightIcon, CopyIcon, DevtoolsIcon, ExternalIcon, ListIcon, RefreshIcon, RevealIcon, SearchIcon, XIcon } from "./Icons";
 import { FileVisual, extOf } from "./FileVisual";
 import { renderMarkdown, slugifyHeading } from "../markdown";
 import { MarkdownEditor, type MarkdownEditorHandle } from "./MarkdownEditor";
@@ -16,6 +16,8 @@ const Webview: any = "webview";
 
 type FileInfo = { name: string; rel: string; root?: string };
 type Loaded = { text?: string; error?: string; size?: number };
+type Device = "auto" | "tablet" | "mobile";
+const VIEWPORT: Record<Device, number | null> = { auto: null, tablet: 834, mobile: 390 };
 
 function normalizeUrl(raw: string) {
   const value = String(raw || "").trim();
@@ -76,6 +78,15 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   const [picking, setPicking] = useState(false);
   const [picked, setPicked] = useState<ElementContext | null>(null);
   const [pickError, setPickError] = useState("");
+  const [canBack, setCanBack] = useState(false);
+  const [canForward, setCanForward] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [device, setDevice] = useState<Device>("auto");
+  const [findOpen, setFindOpen] = useState(false);
+  const [findText, setFindText] = useState("");
+  const [findResult, setFindResult] = useState<{ active: number; total: number } | null>(null);
+  const findInputRef = useRef<HTMLInputElement | null>(null);
   const viewRef = useRef<any>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const wcIdRef = useRef<number | null>(null);
@@ -138,30 +149,74 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   useEffect(() => {
     const el = viewRef.current;
     if (!el || !src) { setReady(false); wcIdRef.current = null; return; }
-    const readyNow = () => {
-      try { wcIdRef.current = el.getWebContentsId(); setReady(true); return true; } catch { return false; }
+    const syncNav = () => {
+      try {
+        setCanBack(Boolean(el.canGoBack?.()));
+        setCanForward(Boolean(el.canGoForward?.()));
+      } catch { /* webview 还没 ready */ }
     };
-    const onReady = () => { readyNow(); };
-    const onFail = () => { setReady(false); setError("页面加载失败"); };
+    const readyNow = () => {
+      try {
+        wcIdRef.current = el.getWebContentsId();
+        setReady(true);
+        try { el.setZoomFactor?.(zoom); } catch { /* ignore */ }
+        return true;
+      } catch { return false; }
+    };
+    const onReady = () => { readyNow(); setLoading(false); syncNav(); };
+    const onStart = () => setLoading(true);
+    const onStop = () => { setLoading(false); syncNav(); };
+    const onFail = (event: any) => {
+      if (event?.isMainFrame === false) return;
+      setReady(false);
+      setLoading(false);
+      setError(`页面加载失败${event?.errorDescription ? `：${event.errorDescription}` : ""}`);
+    };
+    const onNav = (event: any) => {
+      const next = event?.url || (() => { try { return el.getURL?.(); } catch { return ""; } })();
+      if (next && !isFile) setInput(next);
+      syncNav();
+      setFindResult(null);
+    };
+    const onFound = (event: any) => {
+      const r = event?.result;
+      setFindResult({ active: Number(r?.activeMatchOrdinal) || 0, total: Number(r?.matches) || 0 });
+    };
     el.addEventListener("dom-ready", onReady);
+    el.addEventListener("did-start-loading", onStart);
+    el.addEventListener("did-stop-loading", onStop);
     el.addEventListener("did-fail-load", onFail);
+    el.addEventListener("did-navigate", onNav);
+    el.addEventListener("did-navigate-in-page", onNav);
+    el.addEventListener("found-in-page", onFound);
     let tries = 0;
     const timer = window.setInterval(() => {
       tries += 1;
       if (readyNow() || tries > 50) window.clearInterval(timer);
     }, 200);
+    const initialSync = window.setTimeout(syncNav, 80);
     readyNow();
     return () => {
       window.clearInterval(timer);
+      window.clearTimeout(initialSync);
       el.removeEventListener("dom-ready", onReady);
+      el.removeEventListener("did-start-loading", onStart);
+      el.removeEventListener("did-stop-loading", onStop);
       el.removeEventListener("did-fail-load", onFail);
+      el.removeEventListener("did-navigate", onNav);
+      el.removeEventListener("did-navigate-in-page", onNav);
+      el.removeEventListener("found-in-page", onFound);
       wcIdRef.current = null;
       setReady(false);
+      setLoading(false);
+      setCanBack(false);
+      setCanForward(false);
       setPicking(false);
       setPicked(null);
       setPickError("");
+      setFindResult(null);
     };
-  }, [src]);
+  }, [src, isFile]);
 
   // 切到别的标签时取消拾取：否则拾取器还挂在隐藏的 webview 上，点了没反应
   useEffect(() => {
@@ -179,6 +234,68 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
       setPicking(false);
     }
   }, [isFile, fileMode, picking]);
+
+  useEffect(() => {
+    try { viewRef.current?.setZoomFactor?.(zoom); } catch { /* ignore */ }
+  }, [zoom]);
+
+  useEffect(() => {
+    if (!findOpen) return;
+    findInputRef.current?.focus();
+    findInputRef.current?.select();
+  }, [findOpen]);
+
+  useEffect(() => {
+    if (!findOpen) return;
+    const text = findText.trim();
+    const timer = window.setTimeout(() => {
+      if (!text) {
+        try { viewRef.current?.stopFindInPage?.("clearSelection"); } catch { /* ignore */ }
+        setFindResult(null);
+        return;
+      }
+      try { viewRef.current?.findInPage?.(text, { forward: true, findNext: false }); } catch { /* ignore */ }
+    }, 140);
+    return () => window.clearTimeout(timer);
+  }, [findText, findOpen]);
+
+  const reload = (hard = false) => {
+    setError("");
+    try {
+      if (hard) viewRef.current?.reloadIgnoringCache?.();
+      else viewRef.current?.reload?.();
+    } catch { /* ignore */ }
+  };
+
+  const stop = () => { try { viewRef.current?.stop?.(); } catch { /* ignore */ } };
+  const go = (dir: "goBack" | "goForward") => { try { viewRef.current?.[dir]?.(); } catch { /* ignore */ } };
+
+  const find = (forward: boolean) => {
+    const text = findText.trim();
+    if (!text) return;
+    try { viewRef.current?.findInPage?.(text, { forward, findNext: true }); } catch { /* ignore */ }
+  };
+
+  const closeFind = () => {
+    setFindOpen(false);
+    setFindText("");
+    setFindResult(null);
+    try { viewRef.current?.stopFindInPage?.("clearSelection"); } catch { /* ignore */ }
+  };
+
+  const openExternal = () => {
+    const target = isFile ? fileUrl : (() => { try { return viewRef.current?.getURL?.() || src; } catch { return src; } })();
+    if (target) void window.harness.openExternal(target);
+  };
+
+  const toggleDevtools = () => {
+    const el = viewRef.current;
+    if (!el) return;
+    try {
+      if (el.isDevToolsOpened?.()) el.closeDevTools?.();
+      else el.openDevTools?.();
+    } catch { /* ignore */ }
+  };
 
   const open = () => {
     if (isFile) return;
@@ -378,6 +495,23 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
     <div className="preview-surface">
       <div className="preview-surface-bar">
         <div className="preview-surface-address-row">
+          {!isFile && (
+            <>
+              <button className="preview-icon" title="后退" disabled={!canBack} onClick={() => go("goBack")}>
+                <ChevronRightIcon size={13} className="rot-180" />
+              </button>
+              <button className="preview-icon" title="前进" disabled={!canForward} onClick={() => go("goForward")}>
+                <ChevronRightIcon size={13} />
+              </button>
+              <button
+                className="preview-icon"
+                title={loading ? "停止加载" : "刷新（按住 Shift 硬刷新）"}
+                onClick={(e) => (loading ? stop() : reload(e.shiftKey))}
+              >
+                {loading ? <XIcon size={13} /> : <RefreshIcon size={13} />}
+              </button>
+            </>
+          )}
           {isFile && file && <FileVisual name={file.name} size={14} />}
           <input
             className="preview-surface-address"
@@ -435,7 +569,24 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
             ? <button className="btn tiny-btn danger" onClick={() => void cancelPick()}>取消拾取</button>
             : <button className="btn tiny-btn primary" disabled={!ready} title="在页面里点选元素，注入 Chat" onClick={() => void pickElement()}>拾取元素</button>
           )}
-          <button className="icon-btn" title="刷新" aria-label="刷新" onClick={refresh}><RefreshIcon size={13} /></button>
+          {!isFile && (
+            <>
+              <select className="preview-device" value={device} onChange={(e) => setDevice(e.target.value as Device)} title="设备宽度">
+                <option value="auto">自适应</option>
+                <option value="tablet">平板 834</option>
+                <option value="mobile">手机 390</option>
+              </select>
+              <div className="preview-zoom">
+                <button title="缩小" onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 10) / 10))}>−</button>
+                <button className="preview-zoom-value" title="重置缩放" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
+                <button title="放大" onClick={() => setZoom((z) => Math.min(2, Math.round((z + 0.1) * 10) / 10))}>＋</button>
+              </div>
+              <button className={`icon-btn ${findOpen ? "on" : ""}`} title="页内查找" disabled={!ready} onClick={() => setFindOpen((v) => !v)}><SearchIcon size={13} /></button>
+              <button className="icon-btn" title="开发者工具" disabled={!ready} onClick={toggleDevtools}><DevtoolsIcon size={13} /></button>
+              <button className="icon-btn" title="在系统浏览器打开" onClick={openExternal}><ExternalIcon size={13} /></button>
+            </>
+          )}
+          {isFile && <button className="icon-btn" title="刷新" aria-label="刷新" onClick={refresh}><RefreshIcon size={13} /></button>}
           {isFile && (
             <>
               <button className="icon-btn" title="在 Finder 中显示" aria-label="在 Finder 中显示" onClick={() => void reveal()}><RevealIcon size={13} /></button>
@@ -445,6 +596,26 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
           {onClose && <button className="icon-btn" title="关闭预览" aria-label="关闭预览" onClick={onClose}><XIcon size={13} /></button>}
         </div>
       </div>
+      {findOpen && (
+        <div className="preview-find">
+          <SearchIcon size={12} />
+          <input
+            ref={findInputRef}
+            value={findText}
+            spellCheck={false}
+            placeholder="在页面中查找"
+            onChange={(e) => setFindText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); find(!e.shiftKey); }
+              if (e.key === "Escape") { e.preventDefault(); closeFind(); }
+            }}
+          />
+          <span className="preview-find-count">{findResult ? `${findResult.active}/${findResult.total}` : "0/0"}</span>
+          <button className="preview-icon" title="上一个（Shift+Enter）" onClick={() => find(false)}>↑</button>
+          <button className="preview-icon" title="下一个（Enter）" onClick={() => find(true)}>↓</button>
+          <button className="preview-icon" title="关闭" onClick={closeFind}><XIcon size={12} /></button>
+        </div>
+      )}
       {fileMode === "visual" && (
         <div className="preview-hint visual">
           GrapesJS 画布：点文字直接改、从右侧面板拖组件、选中后调样式；⌘S 或「保存修改」写回文件{visualDirty ? "（有未保存修改）" : ""}
@@ -507,7 +678,10 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
           />
         )}
         {useWebview && (
-          <div className="preview-surface-frame" style={{ display: showWebview ? "flex" : "none" }}>
+          <div
+            className="preview-surface-frame"
+            style={{ display: showWebview ? "flex" : "none", width: VIEWPORT[device] ?? undefined, maxWidth: "100%", margin: VIEWPORT[device] ? "0 auto" : undefined }}
+          >
             <Webview
               ref={viewRef}
               key={src}

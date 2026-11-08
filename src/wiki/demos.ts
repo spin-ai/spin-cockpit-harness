@@ -14,7 +14,7 @@ export const WIKI_DEMOS: Record<string, WikiDemo> = {
       { key: "acp", label: "执行", title: "dsh --profile acp", detail: "initialize → session/new → configure → prompt；每个 run 一个 ACP client。", tone: "running" },
       { key: "stream", label: "流式", title: "session/update 写回 Chat", detail: "agent_message / thought / tool_call 逐条落库，按 run 分组展示。", tone: "running" },
       { key: "steer", label: "纠偏", title: "运行中继续说话", detail: "先落 pending，送达后变 injected；失败显示「投递失败 · 重发」。", tone: "steer" },
-      { key: "review", label: "待确认", title: "run 结束 → in_review", detail: "完成只代表 Agent 停下来了；任务进入待确认，并写入收件箱。", tone: "review" },
+      { key: "review", label: "待确认", title: "run 结束 → in_review", detail: "完成只代表 Agent 停下来了；任务进入待确认，并出现在「待处理」筛选里。", tone: "review" },
       { key: "done", label: "已确认", title: "人点确认后才 done", detail: "确认是状态，不是另一份数据；之后的消息只记录，不再起 run。", tone: "done" },
     ],
   },

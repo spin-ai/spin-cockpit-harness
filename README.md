@@ -56,10 +56,10 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 
 ```
 导航 | TODO LIST | Chat | Terminal | 资源管理器 / 会话历史
-工作区 / 项目 / 收件箱 / 统计 / 主机 / 设置
+工作区 / 项目 / 统计 / 主机 / 设置
 ```
 
-- **导航**：工作区 / 项目 / 收件箱 / 统计 / 主机 / Git / 设置（`⌘,`，左分区导航 + 右行式表单；收件箱带未读徽标）
+- **导航**：工作区 / 项目 / 统计 / 主机 / Git / 设置（`⌘,`，左分区导航 + 右行式表单）
 - **TODO LIST**：一条任务列表，按状态分组；支持搜索（标题/编号/描述/标签）、筛选（全部/进行中/待确认/已确认）、分组折叠、悬停或键盘聚焦显示快捷操作
 - **项目**：在 TODO LIST 下方的常驻项目区，本地目录即项目；支持添加 / 切换 / 管理 / 在 Finder 中显示，任务、终端、文件树跟随当前项目
 - **Chat**：单一输入路径。会话（thread）永远存在：说一句话即派活，运行中发消息即纠偏（带投递回执），已确认任务的消息仅记录；**未派活的对话是全局的**（切项目不消失），composer 里用 `◎ 全局 / 项目 · xxx` 选择这次对话的作用域；**模型可按会话选择**（选项来自 dsh ACP `session/new` 的 configOptions，下一次运行生效）；草稿会话发送 = 派活并创建任务
@@ -93,7 +93,7 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 - Chat 内按 run 分组展示；agent 可切换，项目在派活前选择（派活后锁定）
 - Chat 的 Agent 有两种执行方式：`dsh` 走 ACP（结构化流 / 审批 / 纠偏回执）；`pi / claude / codex / opencode` 走真实 pty（Chat 派活后自动开终端标签、在 worktree 里启动 CLI；后续消息直接写入同一个 pty）
 - Chat 里可以无终端纳管 dsh，也可以用「＋ Agent」创建 pi 等终端 Agent
-- Mission 模式：`agents.role=supervisor`、计划审批、child Todo/Run/Delegation、worktree 并行、取消级联、重启恢复、Mission 级收件箱/统计；supervisor 会话禁用 dsh 原生 subagent/team/workflow，避免双调度
+- Mission 模式：`agents.role=supervisor`、计划审批、child Todo/Run/Delegation、worktree 并行、取消级联、重启恢复、Mission 级待处理/统计；supervisor 会话禁用 dsh 原生 subagent/team/workflow，避免双调度
 - dsh ACP 真实执行：`session/new → prompt → session/update` 流式落库
 - dsh 来源可见：设置页显示当前走 内置 / 自定义 / 系统 PATH，默认不把执行引擎塞进仓库
 - worktree 隔离（cwd 是 git 仓库时自动创建）

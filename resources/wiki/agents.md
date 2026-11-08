@@ -46,7 +46,7 @@ Mission / supervisor 强制使用 ACP，不能混用两种调度。
 - 握手：`initialize` → `session/new` → `session/set_config_option`（model / effort）→ `prompt`。
 - 流式事件：`agent_message_chunk` / `agent_thought_chunk` / `tool_call` / `plan`。
 - 权限：`session/request_permission` 进入审批队列；可自动批准 / 拒绝。
-- 完成：`prompt` resolve 即 run 结束；失败写错误分类与 inbox。
+- 完成：`prompt` resolve 即 run 结束；失败写错误分类，并进入「待处理」。
 
 ## 模型与审批
 

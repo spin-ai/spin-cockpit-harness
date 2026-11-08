@@ -6,7 +6,7 @@ import { TaskChat } from "./components/TaskChat";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { FilePanel } from "./components/FilePanel";
 import { GitView } from "./components/GitView";
-import { Hosts, Inbox, Projects, Stats } from "./components/Views";
+import { Hosts, Projects, Stats } from "./components/Views";
 import { ApprovalModal } from "./components/ApprovalModal";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { Splitter, useStoredSize } from "./components/Splitter";
@@ -17,7 +17,7 @@ import { Guide } from "./components/Guide";
 import { Notes } from "./components/Notes";
 import { THEMES, isDarkTheme, resolveTheme } from "./themes";
 
-type View = "workspace" | "projects" | "inbox" | "stats" | "hosts" | "git" | "settings" | "guide" | "notes";
+type View = "workspace" | "projects" | "stats" | "hosts" | "git" | "settings" | "guide" | "notes";
 type PaneId = "todo" | "chat" | "terminal" | "files";
 const COLLAPSED_PANE_W = 34;
 
@@ -193,7 +193,6 @@ export default function App() {
       todos, runs, threads, agents, delegations, missionPlans,
       messages: state.messages.filter((m) => tids.has(m.threadId)),
       artifacts: state.artifacts.filter((a) => ids.has(a.todoId)),
-      inbox: state.inbox.filter((i) => ids.has(i.todoId)),
       approvals: state.approvals.filter((a) => ids.has(a.todoId)),
       summary: {
         activeRuns: runs.filter((r) => ["queued", "running", "waiting_input"].includes(r.status)).length,
@@ -220,7 +219,6 @@ export default function App() {
     for (const t of state?.todos ?? []) if (t.projectId) counts[t.projectId] = (counts[t.projectId] ?? 0) + 1;
     return counts;
   }, [state?.todos]);
-  const unread = state?.inbox.filter((i) => !i.read).length ?? 0;
   const notesEnabled = Boolean(state?.plugins?.find((p) => p.id === "ai.cockpit.notes")?.enabled);
 
   const selectTodo = useCallback((todoId: string) => {
@@ -237,6 +235,15 @@ export default function App() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.activeProjectId]);
+
+  // 全局快速记录（⌘⇧K）：先切到 Wiki，再让 Notes 弹输入框
+  useEffect(() => {
+    return window.harness.onQuickCapture(() => {
+      if (!notesEnabled) { notify("先在设置 → 插件里启用 Notes"); return; }
+      setView("notes");
+      window.setTimeout(() => window.dispatchEvent(new Event("harness:quick-capture")), 120);
+    });
+  }, [notesEnabled, notify]);
 
   useEffect(() => {
     const onToast = (e: Event) => {
@@ -322,7 +329,6 @@ export default function App() {
     const list: Command[] = [
       { id: "view-workspace", label: "工作区", hint: "⌘1", group: "导航", run: () => setView("workspace") },
       { id: "view-projects", label: "项目", group: "导航", run: () => setView("projects") },
-      { id: "view-inbox", label: "收件箱", group: "导航", run: () => setView("inbox") },
       { id: "view-stats", label: "统计", group: "导航", run: () => setView("stats") },
       { id: "view-hosts", label: "主机", group: "导航", run: () => setView("hosts") },
       { id: "view-git", label: "Git / 源码管理", group: "导航", run: () => setView("git") },
@@ -450,8 +456,8 @@ export default function App() {
   return (
     <div className="app">
       <div className={`main pane-focus-${focusedPane ?? "none"}`} style={{ gridTemplateColumns: gridCols }} onPointerDownCapture={markFocusedPane} onFocusCapture={markFocusedPane}>
-        <Rail view={view} inboxUnread={unread} notesEnabled={notesEnabled} onChange={(v) => setView(v)} />
-        {/* 工作区始终挂载、只切显隐：切到收件箱/统计再回来时，终端 pty、标签、滚动位置都不能丢 */}
+        <Rail view={view} notesEnabled={notesEnabled} onChange={(v) => setView(v)} />
+        {/* 工作区始终挂载、只切显隐：切到项目/统计再回来时，终端 pty、标签、滚动位置都不能丢 */}
         {scoped && (
           <div className="workspace-view" style={{ display: view === "workspace" ? "contents" : "none" }}>
           <>
@@ -505,7 +511,6 @@ export default function App() {
           </div>
         )}
         {view === "projects" && <div className="wide"><Projects state={state} now={now} act={act} notify={notify} onAdd={() => void addProject()} onSwitch={(id) => void switchProject(id)} /></div>}
-        {view === "inbox" && <div className="wide"><Inbox state={state} now={now} act={act} onOpen={(id) => void openTodoFromPalette(id)} /></div>}
         {view === "stats" && scoped && <div className="wide"><Stats state={state} onOpen={(id) => void openTodoFromPalette(id)} /></div>}
         {view === "hosts" && <div className="wide"><Hosts state={state} act={act} notify={notify} now={now} /></div>}
         {view === "git" && <div className="wide"><GitView state={state} notify={notify} /></div>}

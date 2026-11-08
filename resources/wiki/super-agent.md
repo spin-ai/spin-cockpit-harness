@@ -158,7 +158,7 @@ Plan JSON 的核心是 `steps[]`：每步有 `key` / `title` / `brief` / `accept
   → 调用原生 subagent（因为更顺手）
   → dsh 内部起 child session
   → Harness 看到的是：主管跑完了，但没有 child Todo
-  → 看板空着，统计少一半，收件箱没有子任务
+  → 看板空着，统计少一半，「待处理」里没有子任务
 ```
 
 这种错误不会报错，只会“看起来跑完了”。所以 Mission 模式必须与 dsh 原生 subagent / Agent Teams / workflow **二选一**，并把 supervisor sandbox 设为 `read-only`。

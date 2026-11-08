@@ -74,4 +74,9 @@ contextBridge.exposeInMainWorld("harness", {
     ipcRenderer.on("harness:plugin-open-view", handler);
     return () => ipcRenderer.removeListener("harness:plugin-open-view", handler);
   },
+  onQuickCapture: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on("harness:quick-capture", handler);
+    return () => ipcRenderer.removeListener("harness:quick-capture", handler);
+  },
 });

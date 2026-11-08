@@ -296,6 +296,38 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
     addTab({ cwd, title: basename(cwd) });
   }, [activePane?.cwd, state.projectPath, addTab]);
 
+  // 终端优先：不先建任务，直接在当前 cwd 起一个原生 CLI Agent（dsh 走 ACP，不在这里）
+  const launchAgent = useCallback(async (agentId: string) => {
+    const agent = state.agents.find((a) => a.id === agentId);
+    if (!agent) return;
+    const cwd = activePane?.cwd || todo?.cwd || state.projectPath;
+    try {
+      const res = await window.harness.createTerminal(cwd, {
+        agentId: agent.id,
+        projectId: agent.projectId || state.activeProjectId || undefined,
+        cols: 120,
+        rows: 32,
+      });
+      if (res?.id) {
+        addTab({ cwd: res.cwd || cwd, title: agent.name, terminalId: res.id });
+        window.dispatchEvent(new CustomEvent("harness:toast", { detail: `已启动 ${agent.name}（未绑任务）` }));
+      }
+    } catch (err) {
+      window.dispatchEvent(new CustomEvent("harness:toast", { detail: `启动 Agent 失败：${String((err as Error)?.message || err)}` }));
+    }
+  }, [state.agents, state.activeProjectId, state.projectPath, activePane?.cwd, todo?.cwd, addTab]);
+
+  const attachToTask = useCallback(async () => {
+    if (!activeTab || !activePane?.terminalId || !todo) return;
+    try {
+      await window.harness.action("attachTerminalToTask", { terminalId: activePane.terminalId, todoId: todo.id });
+      patchTab(activeTab.id, { taskId: todo.id, title: `${todo.key} ${todo.title}` });
+      window.dispatchEvent(new CustomEvent("harness:toast", { detail: `终端已接入 ${todo.key}` }));
+    } catch (err) {
+      window.dispatchEvent(new CustomEvent("harness:toast", { detail: String((err as Error)?.message || err) }));
+    }
+  }, [activeTab, activePane?.terminalId, todo, patchTab]);
+
   // 预览是终端的一个标签页：已存在就导航 + 激活，否则新建
   const openPreview = useCallback((url: string) => {
     if (!url) return;
@@ -617,6 +649,20 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
           >
             <SearchIcon size={14} />
           </button>
+          <select
+            className="term-agent-launch"
+            value=""
+            title="终端优先：直接起一个原生 CLI Agent（不先建任务）"
+            onChange={(e) => { const id = e.target.value; e.currentTarget.value = ""; if (id) void launchAgent(id); }}
+          >
+            <option value="">＋ Agent</option>
+            {state.agents.filter((a) => a.chatRuntime === "terminal" && a.chatRunnable !== false).map((a) => (
+              <option key={a.id} value={a.id}>{a.name} · {a.cli}</option>
+            ))}
+          </select>
+          {activeTab?.kind === "terminal" && activePane?.terminalId && todo && activeTab.taskId !== todo.id && (
+            <button className="link" title="把当前终端接到选中的任务，接管后的运行会显示在 TODO" onClick={() => void attachToTask()}>接入 {todo.key}</button>
+          )}
           <button className="btn tiny-btn" onClick={newTerminal}>＋ 终端</button>
           {onCollapse && (
             <button className="pane-collapse dark" title="收起终端" aria-label="收起终端" onClick={onCollapse}>

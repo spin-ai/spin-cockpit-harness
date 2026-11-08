@@ -5,14 +5,13 @@ import { Splitter, useStoredSize } from "./Splitter";
 import { ChevronDownIcon, PanelCollapseIcon } from "./Icons";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
-type Filter = "all" | "active" | "review" | "confirmed";
+type Filter = "all" | "needs" | "active" | "review" | "confirmed";
 
-const GROUPS: { id: string; label: string; statuses: TodoStatus[]; confirmed?: boolean }[] = [
-  { id: "waiting", label: "等待输入", statuses: ["waiting_input"] },
-  { id: "review", label: "待确认", statuses: ["in_review"] },
-  { id: "running", label: "运行中", statuses: ["queued", "in_progress"] },
+const GROUPS: { id: string; label: string; statuses: TodoStatus[] }[] = [
   { id: "todo", label: "待执行", statuses: ["todo"] },
-  { id: "confirmed", label: "已确认", statuses: ["done"], confirmed: true },
+  { id: "active", label: "进行中", statuses: ["queued", "in_progress", "waiting_input"] },
+  { id: "review", label: "待确认", statuses: ["in_review"] },
+  { id: "done", label: "已完成", statuses: ["done"] },
 ];
 
 function TaskPlan({ items, expanded }: { items: Todo["subtasks"]; expanded: boolean }) {
@@ -52,7 +51,7 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
   const [captureText, setCaptureText] = useState("");
   const createRef = useRef<HTMLTextAreaElement | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ confirmed: true });
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ done: true });
   const [projectH, setProjectH] = useStoredSize("cmh.layout.projectH", 150, 80, 420);
   const [projectCollapsed, setProjectCollapsed] = useState(() => {
     try { return localStorage.getItem("cmh.layout.projectCollapsed") === "1"; } catch { return false; }
@@ -110,9 +109,12 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
       if (q && !t.title.toLowerCase().includes(q) && !t.key.toLowerCase().includes(q)
         && !(t.desc || "").toLowerCase().includes(q)
         && !(t.tags || []).some((tag) => tag.toLowerCase().includes(q))) return false;
-      if (filter === "active") return !t.confirmed;
+      const run = lastRun(t, state.runs);
+      const failed = t.lastRunFailed || run?.status === "failed";
+      if (filter === "needs") return !t.confirmed && (t.status === "in_review" || t.status === "waiting_input" || failed || t.missingWriteback);
+      if (filter === "active") return !t.confirmed && ["queued", "in_progress", "waiting_input"].includes(t.status);
       if (filter === "review") return t.status === "in_review" && !t.confirmed;
-      if (filter === "confirmed") return t.confirmed;
+      if (filter === "confirmed") return t.confirmed || t.status === "done" || t.status === "cancelled";
       return true;
     });
   }, [state.todos, query, filter]);
@@ -169,7 +171,7 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
       <div className="task-tools">
         <input className="task-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索标题 / 编号" />
         <div className="task-filters">
-          {([["all", "全部"], ["active", "进行中"], ["review", "待确认"], ["confirmed", "已确认"]] as [Filter, string][]).map(([id, label]) => (
+          {([["all", "全部"], ["needs", "待处理"], ["active", "进行中"], ["review", "待确认"], ["confirmed", "已完成"]] as [Filter, string][]).map(([id, label]) => (
             <button key={id} className={filter === id ? "on" : ""} onClick={() => setFilter(id)}>{label}</button>
           ))}
         </div>
@@ -200,8 +202,14 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
           </div>
         )}
         {GROUPS.map((g) => {
-          const items = visible.filter((t) => (g.confirmed ? t.confirmed : !t.confirmed && g.statuses.includes(t.status)));
-          const isCollapsed = collapsed[g.id] ?? items.length === 0;
+          let items = visible.filter((t) => g.id === "done"
+            ? (t.confirmed || t.status === "done" || t.status === "cancelled")
+            : (!t.confirmed && g.statuses.includes(t.status)));
+          if (g.id === "active") {
+            const rank = (s: TodoStatus) => s === "waiting_input" ? 0 : s === "in_progress" ? 1 : 2;
+            items = [...items].sort((a, b) => rank(a.status) - rank(b.status) || b.updatedAt - a.updatedAt);
+          }
+          const isCollapsed = collapsed[g.id] ?? (items.length === 0 || g.id === "done");
           return (
             <section className="todo-group" key={g.id}>
               <button className={`todo-group-head ${g.id}`} onClick={() => toggle(g.id)}>
@@ -212,7 +220,7 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
                 <div
                   key={t.id}
                   ref={(el) => { rowRefs.current[t.id] = el; }}
-                  className={`task-row ${t.id === selectedId ? "on" : ""} ${t.parentId ? "task-child" : ""} ${t.kind === "mission" ? "task-mission" : ""}`}
+                  className={`task-row ${t.id === selectedId ? "on" : ""} ${t.status === "waiting_input" ? "task-waiting" : ""} ${t.parentId ? "task-child" : ""} ${t.kind === "mission" ? "task-mission" : ""}`}
                   role="button"
                   tabIndex={0}
                   aria-current={t.id === selectedId ? "true" : undefined}
@@ -314,6 +322,7 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
                     <span className="ellipsis">{projectName(t)}{agentOf(state.agents, t.agentId) ? ` · ${agentOf(state.agents, t.agentId)!.name}` : ""}</span>
                     <span className="mono">{elapsed(t, state, now)}</span>
                   </div>
+                  <WorktreeLine todo={t} state={state} act={act} />
                   <QuickActions todo={t} state={state} act={act} confirmStop={confirmStop} onEdit={() => startEdit(t)} onAsk={() => askInChat(t)} />
                 </div>
               ))}
@@ -378,6 +387,22 @@ function elapsed(todo: Todo, state: State, now: number) {
   return duration(run, now);
 }
 
+/** 当前/最近一次运行的 worktree：分支和目录都可点开，避免「跑完不知道改在哪」 */
+function WorktreeLine({ todo, state, act }: { todo: Todo; state: State; act: Act }) {
+  const run = activeRun(todo, state.runs) ?? lastRun(todo, state.runs);
+  if (!run?.cwd) return null;
+  const label = run.branch || run.cwd;
+  return (
+    <button
+      className="task-worktree mono tiny ellipsis"
+      title={`${run.cwd}${run.branch ? ` · ${run.branch}` : ""} · 点击在 Finder 打开`}
+      onClick={(e) => { e.stopPropagation(); void act("revealWorktree", { runId: run.id }); }}
+    >
+      {run.branch ? "⑂ " : "▸ "}{label}
+    </button>
+  );
+}
+
 function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk }: { todo: Todo; state: State; act: Act; confirmStop: boolean; onEdit: () => void; onAsk: () => void }) {
   const active = activeRun(todo, state.runs);
   const last = lastRun(todo, state.runs);
@@ -385,6 +410,7 @@ function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk }: { todo: 
     return (
       <div className="task-quick" onClick={(e) => e.stopPropagation()}>
         {todo.missionState === "in_review" && <button className="btn tiny-btn primary" onClick={() => act("confirm", { id: todo.id })}>确认 Mission</button>}
+        {todo.missionState === "done" && <button className="btn tiny-btn" onClick={() => act("unconfirm", { id: todo.id })}>撤销确认</button>}
         {active && <button className="btn tiny-btn" onClick={() => { if (!confirmStop || window.confirm("停止主管运行？")) void act("stop", { runId: active.id }); }}>停止主管</button>}
         {!["done", "cancelled"].includes(todo.missionState || "") && <button className="btn tiny-btn" onClick={() => { if (window.confirm("取消整个 Mission？")) void act("cancelMission", { id: todo.id }); }}>取消</button>}
       </div>
@@ -402,6 +428,7 @@ function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk }: { todo: 
       <button className="btn tiny-btn" onClick={onAsk} title="带着预填问题跳到 Chat，先理清再动手">问清楚</button>
       {active && <button className="btn tiny-btn" onClick={() => stop(active.id)}>停止</button>}
       {!active && !todo.confirmed && todo.status === "in_review" && <button className="btn tiny-btn primary" onClick={() => act("confirm", { id: todo.id })}>确认</button>}
+      {!active && todo.confirmed && <button className="btn tiny-btn" onClick={() => act("unconfirm", { id: todo.id })}>撤销确认</button>}
       {!active && !todo.confirmed && todo.status === "todo" && (
         <button
           className="btn tiny-btn"
