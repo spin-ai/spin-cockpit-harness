@@ -46,7 +46,9 @@ npm run smoke:dsh
 - 渲染层：React 19 + TypeScript；避免引入新的状态库，优先沿用 `App` 的 state + action 模式。
 - 主进程：`electron/main.mjs` 负责 IPC 与状态机；数据库 schema 变更必须同时更新 `electron/db.mjs` 的迁移。
 - 终端/xterm、文件操作、预览 webview 的改动请说明安全边界（路径必须在项目根目录内）。
-- UI 沿用现有的 token / CSS 变量，深浅色主题都要验证；窄宽度（1180px）下不能横向溢出。
+- UI / 视觉改动先读 [`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md)；颜色、圆角、字体从 `src/design-system.css` 取，不在组件里新增一次性值。
+- 一级页面使用 `PageHeader`，空态使用 `EmptyState`；一个区域最多一个 primary，低频操作收进 `⋯`。
+- 深浅色主题都要验证；窄宽度（1180px）下不能横向溢出；中文正文不小于 11.5px。
 - 不要提交 `release/`、`dist/`、`node_modules/`、`resources/dsh/` 二进制或任何密钥。
 
 ## PR 流程
