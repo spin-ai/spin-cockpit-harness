@@ -6,13 +6,14 @@
  * reviewed knowledge. No external Obsidian vault is required.
  */
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
 let ctx;
 let seq = 0;
 let data = {
-  version: 1,
+  version: 2,
   sources: [],
   pages: [],
   citations: [],
@@ -40,6 +41,20 @@ function slugify(text) {
   return String(text || "page").toLowerCase().trim().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "page";
 }
 function dataFile() { return path.join(ctx.dataDir, "wiki.json"); }
+function indexPath() { return path.join(ctx.dataDir, "wiki-index.json"); }
+function searchFile() { return path.join(ctx.dataDir, "wiki-search.json"); }
+function trashFile() { return path.join(ctx.dataDir, "wiki-trash.json"); }
+function pageDir() { return path.join(ctx.dataDir, "pages"); }
+function sourceDir() { return path.join(ctx.dataDir, "sources"); }
+function revisionDir() { return path.join(ctx.dataDir, "revisions"); }
+function safeFile(id) { return String(id || "item").replace(/[^a-zA-Z0-9_-]/g, "_"); }
+function pageFile(id) { return path.join(pageDir(), `${safeFile(id)}.md`); }
+function sourceFile(id) { return path.join(sourceDir(), `${safeFile(id)}.txt`); }
+const dirtyPages = new Set();
+const dirtySources = new Set();
+let searchCache = null;
+let searchDirty = false;
+let backlinkIndex = null;
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 const VAULT_IGNORE = new Set([".obsidian", ".git", ".trash", "node_modules"]);
 const VAULT_MAX_BYTES = 5 * 1024 * 1024;
@@ -117,19 +132,236 @@ async function pickVault() {
   return vaultIndex(true);
 }
 
+/** 页面正文按 ID 分片；列表/索引只拿 metadata，打开单页时才读这一份。 */
+function attachPage(page) {
+  let cached;
+  if (Object.prototype.hasOwnProperty.call(page, "content")) {
+    cached = String(page.content ?? "");
+    delete page.content;
+    dirtyPages.add(page.id);
+  }
+  Object.defineProperty(page, "content", {
+    configurable: true, enumerable: false,
+    get() {
+      if (cached === undefined) {
+        try { cached = fsSync.readFileSync(pageFile(page.id), "utf8"); } catch { cached = ""; }
+      }
+      return cached;
+    },
+    set(value) {
+      cached = String(value ?? "");
+      dirtyPages.add(page.id);
+      searchDirty = true;
+      backlinkIndex = null;
+    },
+  });
+  return page;
+}
+
+function attachSource(source) {
+  let cached;
+  if (Object.prototype.hasOwnProperty.call(source, "content")) {
+    cached = String(source.content ?? "");
+    delete source.content;
+    dirtySources.add(source.id);
+  }
+  Object.defineProperty(source, "content", {
+    configurable: true, enumerable: false,
+    get() {
+      if (cached === undefined) {
+        try { cached = fsSync.readFileSync(sourceFile(source.id), "utf8"); } catch { cached = ""; }
+      }
+      return cached;
+    },
+    set(value) {
+      cached = String(value ?? "");
+      dirtySources.add(source.id);
+      searchDirty = true;
+      backlinkIndex = null;
+    },
+  });
+  return source;
+}
+
+function pageMeta(page) { return { ...page }; }
+function sourceMeta(source) { return { ...source }; }
+
+function hydrate(raw) {
+  data = {
+    ...data, ...raw,
+    trash: Array.isArray(raw.trash) ? raw.trash : [],
+    pins: Array.isArray(raw.pins) ? raw.pins : [],
+    recents: Array.isArray(raw.recents) ? raw.recents : [],
+    revisions: [],
+  };
+  data.pages = (data.pages || []).map(attachPage);
+  data.sources = (data.sources || []).map(attachSource);
+  seq = Number(raw.seq) || seq;
+  searchDirty = Boolean(raw.searchDirty);
+}
+
+function searchEntry(kind, item) {
+  if (kind === "page") {
+    return { kind: "page", id: item.id, title: item.title, status: item.status, at: item.updatedAt, text: `${item.title}\n${item.summary || ""}\n${item.content || ""}` };
+  }
+  return { kind: "source", id: item.id, title: item.title, status: "source", at: item.createdAt, text: `${item.title}\n${item.uri || ""}\n${item.content || ""}` };
+}
+
+function rebuildBacklinkIndex() {
+  const map = new Map();
+  for (const entry of searchCache || []) {
+    if (entry.kind !== "page") continue;
+    for (const match of String(entry.text || "").matchAll(/\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]/g)) {
+      const key = match[1].trim().toLowerCase();
+      if (!key) continue;
+      const list = map.get(key) || [];
+      const at = String(entry.text).indexOf(`[[${match[1]}`);
+      const snippet = at >= 0 ? String(entry.text).slice(Math.max(0, at - 45), at + 120).replace(/\s+/g, " ").trim() : "";
+      list.push({ id: entry.id, title: entry.title, status: entry.status, snippet });
+      map.set(key, list);
+    }
+  }
+  backlinkIndex = map;
+}
+
+function buildSearchCacheFromShards() {
+  const pages = data.pages.map((page) => searchEntry("page", page));
+  const sources = data.sources.map((source) => searchEntry("source", source));
+  searchCache = [...pages, ...sources];
+  searchDirty = true;
+  backlinkIndex = null;
+  return searchCache;
+}
+
+/** 搜索索引单独一个文件；单页/列表不读它。 */
+function loadSearchSync() {
+  if (searchCache && !searchDirty) return searchCache;
+  try {
+    const raw = JSON.parse(fsSync.readFileSync(searchFile(), "utf8"));
+    if (Array.isArray(raw) && !searchDirty) searchCache = raw;
+  } catch { /* missing */ }
+  if (!searchCache || searchDirty) buildSearchCacheFromShards();
+  if (!backlinkIndex) rebuildBacklinkIndex();
+  return searchCache;
+}
+
+function updateSearchEntry(kind, item) {
+  if (!searchCache) { searchDirty = true; return; }
+  const entry = searchEntry(kind, item);
+  const idx = searchCache.findIndex((x) => x.kind === kind && x.id === item.id);
+  if (idx >= 0) searchCache[idx] = entry; else searchCache.unshift(entry);
+  searchDirty = true;
+  backlinkIndex = null;
+}
+
+function removeSearchEntry(kind, id) {
+  if (!searchCache) { searchDirty = true; return; }
+  searchCache = searchCache.filter((x) => !(x.kind === kind && x.id === id));
+  searchDirty = true;
+  backlinkIndex = null;
+}
+
+function writeAtomic(file, value) {
+  const tmp = `${file}.tmp`;
+  fsSync.writeFileSync(tmp, value, "utf8");
+  fsSync.renameSync(tmp, file);
+}
+
+async function migrateLegacy(raw) {
+  fsSync.mkdirSync(pageDir(), { recursive: true });
+  fsSync.mkdirSync(sourceDir(), { recursive: true });
+  fsSync.mkdirSync(revisionDir(), { recursive: true });
+  hydrate(raw);
+  for (const page of data.pages) {
+    fsSync.writeFileSync(pageFile(page.id), page.content, "utf8");
+    dirtyPages.add(page.id);
+  }
+  for (const source of data.sources) {
+    fsSync.writeFileSync(sourceFile(source.id), source.content, "utf8");
+    dirtySources.add(source.id);
+  }
+  for (const entry of data.trash || []) {
+    const obj = entry.page || entry.source;
+    if (!obj) continue;
+    const kind = entry.page ? "page" : "source";
+    if (kind === "page") {
+      const content = obj.content ?? "";
+      delete obj.content;
+      attachPage(obj);
+      fsSync.writeFileSync(pageFile(obj.id), content, "utf8");
+    } else {
+      const content = obj.content ?? "";
+      delete obj.content;
+      attachSource(obj);
+      fsSync.writeFileSync(sourceFile(obj.id), content, "utf8");
+    }
+  }
+  // 旧 revisions 是全局数组；按页面拆成 NDJSON
+  const revisions = Array.isArray(raw.revisions) ? raw.revisions : [];
+  for (const rev of revisions) {
+    try { fsSync.appendFileSync(path.join(revisionDir(), `${safeFile(rev.pageId)}.ndjson`), `${JSON.stringify(rev)}\n`, "utf8"); } catch { /* ignore */ }
+  }
+  data.revisions = [];
+  buildSearchCacheFromShards();
+  await persist();
+  try { fsSync.renameSync(dataFile(), `${dataFile()}.bak`); } catch { /* keep legacy if rename fails */ }
+}
+
 async function load() {
   try {
-    const raw = JSON.parse(await fs.readFile(dataFile(), "utf8"));
-    data = { ...data, ...raw, trash: Array.isArray(raw.trash) ? raw.trash : [], pins: Array.isArray(raw.pins) ? raw.pins : [], recents: Array.isArray(raw.recents) ? raw.recents : [] };
-    seq = Number(raw.seq) || seq;
-  } catch { /* first run */ }
+    const raw = JSON.parse(await fs.readFile(indexPath(), "utf8"));
+    hydrate(raw);
+  } catch {
+    try {
+      const legacy = JSON.parse(await fs.readFile(dataFile(), "utf8"));
+      await migrateLegacy(legacy);
+    } catch { /* first run */ }
+  }
+  try {
+    const trash = JSON.parse(await fs.readFile(trashFile(), "utf8"));
+    if (Array.isArray(trash)) data.trash = trash;
+  } catch { /* no trash */ }
 }
 
 async function persist() {
-  await fs.mkdir(ctx.dataDir, { recursive: true });
-  const tmp = `${dataFile()}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify({ ...data, seq }, null, 2), "utf8");
-  await fs.rename(tmp, dataFile());
+  await fs.mkdir(pageDir(), { recursive: true });
+  await fs.mkdir(sourceDir(), { recursive: true });
+  for (const id of dirtyPages) {
+    const page = data.pages.find((p) => p.id === id);
+    if (page) await fs.writeFile(pageFile(id), page.content, "utf8");
+  }
+  for (const id of dirtySources) {
+    const source = data.sources.find((s) => s.id === id);
+    if (source) await fs.writeFile(sourceFile(id), source.content, "utf8");
+  }
+  if (searchCache && searchDirty) {
+    const tmpSearch = `${searchFile()}.tmp`;
+    await fs.writeFile(tmpSearch, JSON.stringify(searchCache), "utf8");
+    await fs.rename(tmpSearch, searchFile());
+    searchDirty = false;
+    if (backlinkIndex === null) rebuildBacklinkIndex();
+  }
+  const tmpTrash = `${trashFile()}.tmp`;
+  await fs.writeFile(tmpTrash, JSON.stringify(data.trash || []), "utf8");
+  await fs.rename(tmpTrash, trashFile());
+  const index = {
+    version: 2, seq,
+    pages: data.pages.map(pageMeta),
+    sources: data.sources.map(sourceMeta),
+    citations: data.citations,
+    reviews: data.reviews,
+    log: data.log,
+    pins: data.pins,
+    recents: data.recents,
+    layout: data.layout,
+    vaultPath: data.vaultPath,
+    searchDirty,
+  };
+  const tmpIndex = `${indexPath()}.tmp`;
+  await fs.writeFile(tmpIndex, JSON.stringify(index), "utf8");
+  await fs.rename(tmpIndex, indexPath());
+  dirtyPages.clear();
+  dirtySources.clear();
 }
 
 function addLog(kind, text) {
@@ -138,14 +370,32 @@ function addLog(kind, text) {
 }
 
 function pageBySlug(slug) { return data.pages.find((p) => p.slug === slug) || data.pages.find((p) => p.id === slug) || null; }
-function sourceView(source) { return source ? clone(source) : null; }
+function sourceView(source, includeContent = false) {
+  if (!source) return null;
+  const view = clone({ ...source });
+  if (includeContent) view.content = source.content;
+  return view;
+}
 
 function citationsOf(pageId) {
   return data.citations.filter((c) => c.pageId === pageId).map((c) => ({ ...c, source: sourceView(data.sources.find((s) => s.id === c.sourceId)) }));
 }
 
 function backlinksOf(page) {
-  return data.pages.filter((p) => p.id !== page.id && new RegExp(`\\[\\[${page.title.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}(?:\\|[^\\]]+)?\\]\\]`).test(p.content)).map((p) => ({ id: p.id, title: p.title, status: p.status }));
+  loadSearchSync();
+  return (backlinkIndex?.get(page.title.toLowerCase()) || []).filter((b) => b.id !== page.id);
+}
+
+function unlinkedMentionsOf(page) {
+  loadSearchSync();
+  const linked = new Set((backlinkIndex?.get(page.title.toLowerCase()) || []).map((b) => b.id));
+  return (searchCache || [])
+    .filter((entry) => entry.kind === "page" && entry.id !== page.id && !linked.has(entry.id) && String(entry.text).includes(page.title))
+    .map((entry) => {
+      const at = String(entry.text).indexOf(page.title);
+      return { id: entry.id, title: entry.title, status: entry.status, snippet: String(entry.text).slice(Math.max(0, at - 45), at + 120).replace(/\s+/g, " ").trim() };
+    })
+    .slice(0, 20);
 }
 
 function pageView(page, includeContent = true) {
@@ -163,8 +413,11 @@ function pageSummary(page) {
 }
 
 function pageRevision(page, reason) {
-  data.revisions.unshift({ id: id("rev"), pageId: page.id, content: page.content, status: page.status, reason, createdAt: now() });
-  data.revisions = data.revisions.slice(0, 300);
+  const rev = { id: id("rev"), pageId: page.id, content: page.content, status: page.status, reason, createdAt: now() };
+  try {
+    fsSync.mkdirSync(revisionDir(), { recursive: true });
+    fsSync.appendFileSync(path.join(revisionDir(), `${safeFile(page.id)}.ndjson`), `${JSON.stringify(rev)}\n`, "utf8");
+  } catch { /* 历史记录失败不影响页面保存 */ }
 }
 
 function ensurePage({ title, summary = "", content = "", sourceIds = [] }) {
@@ -177,7 +430,9 @@ function ensurePage({ title, summary = "", content = "", sourceIds = [] }) {
     content: String(content || `# ${safeTitle}\n\n`),
     status: "draft", confidence: "medium", createdAt: now(), updatedAt: now(), reviewedAt: null,
   };
+  attachPage(page);
   data.pages.unshift(page);
+  updateSearchEntry("page", page);
   for (const sourceId of sourceIds) if (data.sources.some((s) => s.id === sourceId)) data.citations.push({ id: id("cite"), pageId: page.id, sourceId, quote: "", locator: "", createdAt: now() });
   pageRevision(page, "create");
   addLog("page.create", page.title);
@@ -220,20 +475,19 @@ function searchScore(text, query) {
 function searchAll(q, limit = 40) {
   const query = String(q || "").trim().toLowerCase();
   if (!query) return [];
+  loadSearchSync();
   const out = [];
-  for (const page of data.pages) {
-    const titleHit = searchScore(page.title, query);
-    const bodyHit = searchScore(`${page.summary}\n${page.content}`, query);
+  for (const entry of searchCache || []) {
+    const titleHit = searchScore(entry.title, query);
+    const bodyHit = searchScore(entry.text, query);
     const hit = titleHit && bodyHit ? (titleHit.score + 2 >= bodyHit.score ? titleHit : bodyHit) : (titleHit || bodyHit);
     if (!hit) continue;
-    const total = hit.score + (titleHit ? 6 : 0) + (page.status === "reviewed" ? 2 : 0) + Math.min(3, citationsOf(page.id).length);
+    const total = hit.score + (titleHit ? 6 : 0) + (entry.kind === "page" && entry.status === "reviewed" ? 2 : 0) + (entry.kind === "page" ? Math.min(3, citationsOf(entry.id).length) : 0);
     const at = Math.max(0, hit.at || 0);
-    out.push({ kind: "page", id: page.id, title: page.title, status: page.status, at: page.updatedAt, snippet: page.content.slice(Math.max(0, at - 60), at + 180).replace(/\s+/g, " "), rank: total });
-  }
-  for (const source of data.sources) {
-    const hit = searchScore(sourceText(source), query);
-    if (!hit) continue;
-    out.push({ kind: "source", id: source.id, title: source.title, status: "source", at: source.createdAt, snippet: source.content.slice(Math.max(0, hit.at - 60), hit.at + 180).replace(/\s+/g, " "), rank: hit.score });
+    out.push({
+      kind: entry.kind, id: entry.id, title: entry.title, status: entry.status, at: entry.at,
+      snippet: String(entry.text).slice(Math.max(0, at - 60), at + 180).replace(/\s+/g, " "), rank: total,
+    });
   }
   return out.sort((a, b) => (b.rank || 0) - (a.rank || 0)).slice(0, limit);
 }
@@ -241,8 +495,9 @@ function searchAll(q, limit = 40) {
 /** 所有页面里出现过的 #标签，供编辑器补全；附使用次数 */
 function allTags() {
   const counts = new Map();
-  for (const page of data.pages) {
-    const text = `${page.title}\n${page.content}`;
+  loadSearchSync();
+  for (const entry of (searchCache || []).filter((x) => x.kind === "page")) {
+    const text = entry.text || entry.title;
     for (const match of text.matchAll(/(^|[\s（(])#([\p{L}\p{N}_-]{1,40})/gu)) {
       const tag = match[2];
       counts.set(tag, (counts.get(tag) || 0) + 1);
@@ -267,8 +522,10 @@ function memoryMarkdown(maxChars = 12000) {
     `- stale: ${data.pages.filter((p) => p.status === "stale").length}`,
     "",
   ];
+  loadSearchSync();
+  const textById = new Map((searchCache || []).filter((x) => x.kind === "page").map((x) => [x.id, x.text]));
   for (const page of ranked) {
-    const summary = (page.summary || page.content.replace(/^#.*$/gm, "").replace(/\s+/g, " ").trim()).slice(0, 220);
+    const summary = (page.summary || String(textById.get(page.id) || "").replace(/^#.*$/gm, "").replace(/\s+/g, " ").trim()).slice(0, 220);
     lines.push(`## ${page.title}`);
     lines.push(`status: ${page.status} · citations: ${citationsOf(page.id).length}`);
     if (summary) lines.push(summary);
@@ -294,8 +551,10 @@ function graphView() {
       byId.get(c.pageId).links += 1; byId.get(c.sourceId).links += 1;
     }
   }
+  loadSearchSync();
+  const pageText = new Map((searchCache || []).filter((x) => x.kind === "page").map((x) => [x.id, x.text]));
   for (const page of data.pages) {
-    for (const m of page.content.matchAll(/\[\[([^\]|#]+)(?:\|[^\]]+)?\]\]/g)) {
+    for (const m of String(pageText.get(page.id) || "").matchAll(/\[\[([^\]|#]+)(?:\|[^\]]+)?\]\]/g)) {
       const target = pageBySlug(slugify(m[1])) || data.pages.find((p) => p.title.toLowerCase() === m[1].trim().toLowerCase());
       if (target && target.id !== page.id) {
         edges.push({ source: page.id, target: target.id, kind: "link" });
@@ -381,9 +640,11 @@ export async function activate(context) {
       for (const ch of chars) if (text.includes(ch.toLowerCase())) hit += 1;
       return chars.length ? hit / chars.length : 0;
     };
+    loadSearchSync();
+    const textById = new Map((searchCache || []).filter((x) => x.kind === "page").map((x) => [x.id, x.text]));
     const ranked = data.pages.map((page) => {
-      const search = searchScore(`${page.title}\n${page.summary}\n${page.content}`, q);
-      const sentences = String(page.content || "")
+      const search = searchScore(textById.get(page.id) || `${page.title}\n${page.summary}`, q);
+      const sentences = String(textById.get(page.id) || "")
         .replace(/```[\s\S]*?```/g, " ")
         .split(/(?<=[。！？.!?])\s+|\n+/)
         .map((x) => x.replace(/^#+\s*/, "").trim())
@@ -408,10 +669,13 @@ export async function activate(context) {
   ctx.api.handle("wiki.byTag", async ({ tag } = {}) => {
     const key = String(tag || "").replace(/^#/, "").toLowerCase();
     if (!key) return [];
+    loadSearchSync();
     const out = [];
-    for (const page of data.pages) {
-      const hit = String(page.content || "").match(new RegExp(`(^|[\\s（(])#${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=[\\s，。；,.;)]|$)`, "iu"));
-      if (hit) out.push(pageSummary(page));
+    for (const entry of (searchCache || []).filter((x) => x.kind === "page")) {
+      const hit = String(entry.text || "").match(new RegExp(`(^|[\\s（(])#${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=[\\s，。；,.;)]|$)`, "iu"));
+      if (!hit) continue;
+      const page = data.pages.find((p) => p.id === entry.id);
+      if (page) out.push(pageSummary(page));
     }
     return out;
   });
@@ -426,6 +690,7 @@ export async function activate(context) {
     page.updatedAt = now();
     if (page.status === "reviewed") page.reviewedAt = now();
     pageRevision(page, "edit");
+    updateSearchEntry("page", page);
     addLog("page.save", page.title);
     await persist();
     return pageView(page);
@@ -439,6 +704,7 @@ export async function activate(context) {
     page.updatedAt = now();
     data.reviews.unshift({ id: id("review"), pageId: page.id, status, feedback: String(feedback).slice(0, 4000), createdAt: now() });
     pageRevision(page, `review:${status}`);
+    updateSearchEntry("page", page);
     addLog("page.review", `${page.title} → ${status}`);
     await persist();
     return pageView(page);
@@ -453,6 +719,7 @@ export async function activate(context) {
     data.trash = data.trash.slice(0, 500);
     data.pages = data.pages.filter((p) => p.id !== page.id);
     data.citations = data.citations.filter((c) => c.pageId !== page.id);
+    removeSearchEntry("page", page.id);
     addLog("page.delete", page.title);
     await persist();
     return true;
@@ -461,12 +728,20 @@ export async function activate(context) {
     const entry = data.trash.find((t) => t.id === trashId);
     if (!entry) throw new Error("回收站条目不存在");
     if (entry.kind === "page" && entry.page) {
-      if (!data.pages.some((p) => p.id === entry.page.id)) data.pages.unshift(clone(entry.page));
+      if (!data.pages.some((p) => p.id === entry.page.id)) {
+        const restored = attachPage(clone(entry.page));
+        data.pages.unshift(restored);
+        updateSearchEntry("page", restored);
+      }
       for (const c of entry.citations || []) {
         if (!data.citations.some((x) => x.id === c.id)) data.citations.push(clone(c));
       }
     } else if (entry.kind === "source" && entry.source) {
-      if (!data.sources.some((s) => s.id === entry.source.id)) data.sources.unshift(clone(entry.source));
+      if (!data.sources.some((s) => s.id === entry.source.id)) {
+        const restored = attachSource(clone(entry.source));
+        data.sources.unshift(restored);
+        updateSearchEntry("source", restored);
+      }
       for (const c of entry.citations || []) {
         if (!data.citations.some((x) => x.id === c.id)) data.citations.push(clone(c));
       }
@@ -477,6 +752,13 @@ export async function activate(context) {
     return true;
   });
   ctx.api.handle("wiki.purgeTrash", async ({ id: trashId } = {}) => {
+    const entries = trashId ? data.trash.filter((t) => t.id === trashId) : data.trash;
+    for (const entry of entries) {
+      try {
+        if (entry.kind === "page" && entry.page) await fs.rm(pageFile(entry.page.id), { force: true });
+        if (entry.kind === "source" && entry.source) await fs.rm(sourceFile(entry.source.id), { force: true });
+      } catch { /* ignore */ }
+    }
     data.trash = trashId ? data.trash.filter((t) => t.id !== trashId) : [];
     addLog("trash.purge", trashId || "all");
     await persist();
@@ -499,10 +781,12 @@ export async function activate(context) {
       kind: String(kind || "text"), uri: String(uri || ""), content: text,
       hash: hash(text), createdAt: now(),
     };
+    attachSource(source);
     data.sources.unshift(source);
+    updateSearchEntry("source", source);
     addLog("source.import", source.title);
     await persist();
-    return source;
+    return sourceView(source, true);
   });
   ctx.api.handle("wiki.importUrl", async ({ url, title = "" } = {}) => {
     const target = String(url || "").trim();
@@ -512,12 +796,14 @@ export async function activate(context) {
     const html = await res.text();
     const text = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
     const source = { id: id("src"), title: String(title || target).slice(0, 200), kind: "url", uri: target, content: text, hash: hash(text), createdAt: now() };
+    attachSource(source);
     data.sources.unshift(source);
+    updateSearchEntry("source", source);
     addLog("source.import", source.title);
     await persist();
-    return source;
+    return sourceView(source, true);
   });
-  ctx.api.handle("wiki.sources", async () => data.sources.map((s) => ({ id: s.id, title: s.title, kind: s.kind, uri: s.uri, createdAt: s.createdAt, content: s.content })));
+  ctx.api.handle("wiki.sources", async () => data.sources.map((s) => sourceView(s, true)));
   /** 删除资料：连带清掉它产生的 citation（页面保留，只是少了引用） */
   ctx.api.handle("wiki.deleteSource", async ({ id: sourceId, ids = [] } = {}) => {
     const targets = new Set([sourceId, ...(Array.isArray(ids) ? ids : [])].filter(Boolean));
@@ -531,6 +817,7 @@ export async function activate(context) {
       });
     }
     data.trash = data.trash.slice(0, 500);
+    for (const id of targets) removeSearchEntry("source", id);
     data.sources = data.sources.filter((s) => !targets.has(s.id));
     const removedCitations = data.citations.filter((c) => targets.has(c.sourceId)).length;
     data.citations = data.citations.filter((c) => !targets.has(c.sourceId));
@@ -580,10 +867,12 @@ export async function activate(context) {
       id: id("src"), title: file.title, kind: "local", uri: file.path,
       content: file.content, hash: hash(file.content), createdAt: now(),
     };
+    attachSource(source);
     data.sources.unshift(source);
+    updateSearchEntry("source", source);
     addLog("source.import", `${file.title} · ${file.path}`);
     await persist();
-    return source;
+    return sourceView(source, true);
   });
   ctx.api.handle("wiki.upsertDraft", async ({ title, content = "", summary = "", sourceIds = [] } = {}) => {
     const safeTitle = String(title || "").trim().slice(0, 180);
@@ -599,6 +888,7 @@ export async function activate(context) {
       if (!data.citations.some((c) => c.pageId === page.id && c.sourceId === sourceId)) data.citations.push({ id: id("cite"), pageId: page.id, sourceId, quote: "", locator: "", createdAt: now() });
     }
     pageRevision(page, "agent.draft");
+    updateSearchEntry("page", page);
     addLog("page.draft", page.title);
     await persist();
     return pageView(page);
@@ -782,7 +1072,8 @@ export async function activate(context) {
       return { dryRun: true, wouldUpdate: updated.length, renames: [...renameMap.entries()].map(([from, to]) => ({ from, to })), pages: realPages.length, sources: data.sources.length, hasIndex: Boolean(indexPage) };
     }
     if (!indexPage) { ensurePage({ title: INDEX_TITLE, summary: "Wiki 索引（自动维护）", content: indexBody }); createdIndex = true; }
-    else if (indexPage.content !== indexBody) { indexPage.content = indexBody; indexPage.updatedAt = now(); }
+    else if (indexPage.content !== indexBody) { indexPage.content = indexBody; indexPage.updatedAt = now(); updateSearchEntry("page", indexPage); }
+    for (const page of realPages) updateSearchEntry("page", page);
     addLog("wiki.curate", `updated ${updated.length} pages${createdIndex ? " + index" : ""}`);
     await persist();
     return {
@@ -861,7 +1152,7 @@ export async function activate(context) {
   ctx.api.handle("wiki.layout.set", async ({ layout } = {}) => { data.layout = layout || null; await persist(); return true; });
   ctx.api.handle("wiki.layout.get", async () => data.layout);
   ctx.api.handle("wiki.log", async () => data.log.slice(0, 100));
-  ctx.api.handle("wiki.source", async ({ id: sourceId } = {}) => sourceView(data.sources.find((s) => s.id === sourceId)));
+  ctx.api.handle("wiki.source", async ({ id: sourceId } = {}) => sourceView(data.sources.find((s) => s.id === sourceId), true));
   ctx.api.handle("wiki.createTask", async ({ id: pageId, title = "" } = {}) => {
     const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
     if (!page) throw new Error("page not found");
