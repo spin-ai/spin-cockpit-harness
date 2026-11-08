@@ -587,7 +587,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
   }, [active, tabs.length]);
 
   return (
-    <section className="terminal-pane">
+    <section className="terminal-pane" tabIndex={0} aria-label="终端">
       <div className="terminal-bar">
         <div className="row gap6" style={{ minWidth: 0 }}>
           <span className="term-brand">Terminal</span>

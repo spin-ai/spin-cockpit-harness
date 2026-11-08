@@ -153,7 +153,7 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
   };
 
   return (
-    <aside className="todo-pane">
+    <aside className="todo-pane" tabIndex={0} aria-label="TODO 列表">
       <div className="pane-head">
         <span>TODO</span>
         <div className="row gap6">

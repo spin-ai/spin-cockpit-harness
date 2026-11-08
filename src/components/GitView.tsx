@@ -3,6 +3,7 @@ import type { State } from "../types";
 import { GitWiki } from "./GitWiki";
 import { EmptyState } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
+import { EllipsisIcon } from "./Icons";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 type Commit = { hash: string; subject: string; author: string; when: string };
@@ -211,7 +212,7 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
           </select>
           <button className="btn tiny-btn" disabled={Boolean(busy)} onClick={refresh}>{loading ? "刷新中…" : "刷新"}</button>
           <details className="row-menu">
-            <summary className="btn tiny-btn row-menu-trigger" title="更多 Git 操作" aria-label="更多 Git 操作">⋯</summary>
+            <summary className="btn tiny-btn row-menu-trigger" title="更多 Git 操作" aria-label="更多 Git 操作"><EllipsisIcon size={14} /></summary>
             <div className="row-menu-pop">
               <button onClick={createBranch}>新建分支</button>
               <button disabled={Boolean(busy)} onClick={() => void pull()}>拉取{status.behind ? ` ↓${status.behind}` : ""}</button>

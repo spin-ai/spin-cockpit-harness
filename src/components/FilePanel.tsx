@@ -573,7 +573,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
   };
 
   return (
-    <aside className="files-pane right-panel">
+    <aside className="files-pane right-panel" tabIndex={0} aria-label="资源管理器">
       <div className="right-tabs">
         <button
           className={`icon-tab ${tab === "explorer" ? "on" : ""}`}

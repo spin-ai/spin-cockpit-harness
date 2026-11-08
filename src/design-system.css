@@ -114,3 +114,63 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
 .set-hit{animation:set-hit-flash 1.2s ease-out;border-radius:6px}
 .composer textarea:focus{outline:none;border-color:transparent;box-shadow:none}
 .preview-hint.picked{background:var(--surface-hover);border-color:var(--border);color:var(--fg-2)}
+
+/* ── Workspace focus ──────────────────────────────────────────
+   点击 / Tab 进入某个 pane 时，当前 pane 有细顶部线，其他 pane 轻微降噪。 */
+.todo-pane,.chat-pane,.terminal-pane,.files-pane{outline:none;transition:background-color .16s ease,opacity .16s ease}
+.todo-pane:focus-within,.chat-pane:focus-within,.terminal-pane:focus-within,.files-pane:focus-within{box-shadow:inset 0 1px 0 var(--border-strong)}
+.main:has(.todo-pane:focus-within) .chat-pane:not(:focus-within),
+.main:has(.todo-pane:focus-within) .terminal-pane:not(:focus-within),
+.main:has(.todo-pane:focus-within) .files-pane:not(:focus-within){opacity:.9}
+.main:has(.chat-pane:focus-within) .todo-pane:not(:focus-within),
+.main:has(.chat-pane:focus-within) .terminal-pane:not(:focus-within),
+.main:has(.chat-pane:focus-within) .files-pane:not(:focus-within){opacity:.9}
+.main:has(.terminal-pane:focus-within) .todo-pane:not(:focus-within),
+.main:has(.terminal-pane:focus-within) .chat-pane:not(:focus-within),
+.main:has(.terminal-pane:focus-within) .files-pane:not(:focus-within){opacity:.9}
+.main:has(.files-pane:focus-within) .todo-pane:not(:focus-within),
+.main:has(.files-pane:focus-within) .chat-pane:not(:focus-within),
+.main:has(.files-pane:focus-within) .terminal-pane:not(:focus-within){opacity:.9}
+/* pane 自身被点击时不要显示浏览器 outline */
+.todo-pane:focus-visible,.chat-pane:focus-visible,.terminal-pane:focus-visible,.files-pane:focus-visible{outline:none}
+
+/* Chat 代码块：语言栏 + 复制，和正文分层但不抢 */
+.md-code-block{margin:8px 0;border:1px solid var(--border);border-radius:8px;background:var(--page-canvas);overflow:hidden;max-width:100%}
+.md-code-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 8px;border-bottom:1px solid var(--border);color:var(--faint);font:10px var(--mono);letter-spacing:.04em}
+.md-code-copy{display:inline-flex;align-items:center;gap:4px;border:0;background:transparent;color:var(--faint);font:10px var(--font-sans);padding:1px 4px;border-radius:4px;cursor:pointer}
+.md-code-copy:hover{background:var(--surface-hover);color:var(--fg-2)}
+.md-code-block>.md-code{margin:0;border:0;border-radius:0;background:transparent;max-height:360px}
+.md-code-block>.md-code code{display:block;padding:9px 11px}
+.row-menu-trigger svg{display:block}
+.chat-empty-mark svg{display:block}
+/* pointer/focus 驱动的 pane 焦点（比 :focus-within 更可靠） */
+.main.pane-focus-todo .todo-pane,
+.main.pane-focus-chat .chat-pane,
+.main.pane-focus-terminal .terminal-pane,
+.main.pane-focus-files .files-pane{box-shadow:inset 0 1px 0 var(--border-strong)}
+.main.pane-focus-todo .chat-pane,.main.pane-focus-todo .terminal-pane,.main.pane-focus-todo .files-pane,
+.main.pane-focus-chat .todo-pane,.main.pane-focus-chat .terminal-pane,.main.pane-focus-chat .files-pane,
+.main.pane-focus-terminal .todo-pane,.main.pane-focus-terminal .chat-pane,.main.pane-focus-terminal .files-pane,
+.main.pane-focus-files .todo-pane,.main.pane-focus-files .chat-pane,.main.pane-focus-files .terminal-pane{opacity:.9}
+.main.pane-focus-todo .todo-pane .pane-head,.main.pane-focus-chat .chat-pane .pane-head,
+.main.pane-focus-terminal .terminal-pane .terminal-bar,.main.pane-focus-files .files-pane .right-tabs{color:var(--fg)}
+
+/* 数据页：数字节奏与行 hover */
+.kpi b,.fail-row,.git-commit-row,.agent-stat,.host-meta,.trend-yaxis,.git-diff-stat,.commit-time{font-variant-numeric:tabular-nums}
+.fail-row{padding-left:8px;padding-right:8px;border-radius:6px;transition:background-color .12s}
+.fail-row:hover{background:var(--surface-hover)}
+.fail-row .tag{font-variant-numeric:normal}
+.trend-yaxis span,.trend-col>span{font-variant-numeric:tabular-nums}
+.git-commit-row:hover{background:var(--surface-hover)}
+.git-commit-row{border-radius:6px;padding-left:6px;padding-right:6px}
+.git-diff-line{padding-left:10px}
+.file-tree .tree-row{position:relative}
+.tree-row.on::after{content:"";position:absolute;left:2px;top:6px;bottom:6px;width:2px;border-radius:2px;background:var(--brand)}
+
+/* 收口：主面/浮层只用 token 圆角 */
+.wide .panel,.kpis,.grid2,.git-grid,.settings-body,.notes-main,.notes-disabled-card,.notes-source-card{--_r:var(--radius-card);border-radius:var(--radius-card)}
+.modal,.row-menu-pop,.chat-history-pop,.term-menu,.md-slash{--_r:var(--radius-lg);border-radius:var(--radius-lg)}
+.composer-shell,.tool-group,.msg.user .msg-body,.md-code-block,.md-render{border-radius:var(--radius-card)}
+.empty-state-mark,.notes-empty-mark,.chat-empty-mark,.notes-hub-mark{border-radius:var(--radius-card)}
+.explorer-tree .tree-row{position:relative}
+.file-ico{opacity:.88;filter:saturate(.78)}

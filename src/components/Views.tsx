@@ -3,6 +3,7 @@ import type { Project, ProjectStatus, State } from "../types";
 import { ERROR_CLASS, fmtMs, missingKeyInfo, p50, pct, timeAgo, tokens } from "../ui";
 import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
+import { EllipsisIcon } from "./Icons";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
@@ -88,7 +89,7 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
                   <>
                     <button className="btn tiny-btn primary" disabled={isActive} onClick={() => onSwitch(p.id)}>{isActive ? "使用中" : "打开"}</button>
                     <details className="row-menu">
-                      <summary className="btn tiny-btn row-menu-trigger" title="更多项目操作" aria-label="更多项目操作">⋯</summary>
+                      <summary className="btn tiny-btn row-menu-trigger" title="更多项目操作" aria-label="更多项目操作"><EllipsisIcon size={14} /></summary>
                       <div className="row-menu-pop">
                         <button onClick={() => act("revealProject", { id: p.id })}>在 Finder 中显示</button>
                         <button onClick={() => startRename(p)}>重命名</button>

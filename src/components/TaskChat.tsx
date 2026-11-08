@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Delegation, ElementContext, Message, MissionPlanRecord, State, Thread, Todo } from "../types";
 import { RUN_STATUS, STATUS, activeRun, agentOf, duration, lastRun, missingKeyInfo, timeAgo } from "../ui";
-import { ChevronRightIcon, PanelCollapseIcon, SendIcon } from "./Icons";
+import { ChevronRightIcon, CopyCheckIcon, CopyIcon, PanelCollapseIcon, SendIcon, SparkleIcon } from "./Icons";
 import { requestTerminalAdopt } from "../terminal-events";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
@@ -436,7 +436,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
   };
 
   return (
-    <section className="chat-pane">
+    <section className="chat-pane" tabIndex={0} aria-label="Chat">
       <div className="pane-head">
         <span>Chat</span>
         <div className="row gap6">
@@ -561,7 +561,7 @@ export function TaskChat({ state, thread, now, act, onSelect, onNewThread, onOpe
               )}
               {msgs.length === 0 && (
                 <div className="chat-empty">
-                  <div className="chat-empty-mark">✦</div>
+                  <div className="chat-empty-mark"><SparkleIcon size={15} /></div>
                   <b>{todo ? "还没有消息" : runnableAgents.length > 0 ? "说一句话开始" : dshAvailable ? "还没有可用的 Agent" : "未检测到 dsh"}</b>
                   <p>{todo ? "在下面补充信息、纠偏或追问。" : "直接描述要完成的事；@别名 指定 Agent，或从预览里拾取元素后发送。"}</p>
                   {!todo && (
@@ -999,6 +999,30 @@ function firstLine(text: string) {
   return (text.split("\n")[0] || "").trim().slice(0, 120);
 }
 
+
+function CodeBlock({ lang, text }: { lang: string; text: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await window.harness.clipboardWrite(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch { /* ignore */ }
+  };
+  return (
+    <div className="md-code-block">
+      <div className="md-code-head">
+        <span>{lang || "code"}</span>
+        <button className="md-code-copy" onClick={() => void copy()} title="复制代码">
+          {copied ? <CopyCheckIcon size={12} /> : <CopyIcon size={12} />}
+          {copied ? "已复制" : "复制"}
+        </button>
+      </div>
+      <pre className="md-code"><code>{text}</code></pre>
+    </div>
+  );
+}
+
 /**
  * 轻量 Markdown：围栏代码块 + 行内 code / 粗体 / @提及 / 链接。
  * 不引入第三方依赖，也不使用 innerHTML，避免注入风险。
@@ -1009,11 +1033,7 @@ function RichText({ text }: { text: string }) {
     <>
       {blocks.map((b, i) => {
         if (b.type === "code") {
-          return (
-            <pre className="md-code" key={`c${i}`} data-lang={b.lang || undefined}>
-              <code>{b.text}</code>
-            </pre>
-          );
+          return <CodeBlock key={`c${i}`} lang={b.lang} text={b.text} />;
         }
         return <Fragment key={`t${i}`}>{inlineNodes(b.text, `t${i}`)}</Fragment>;
       })}
