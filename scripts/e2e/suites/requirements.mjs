@@ -322,7 +322,7 @@ export const TESTS = [
     group: "WIKI",
     title: "Wiki 自动保存 + 删除 → 回收站 → 恢复",
     async fn(ctx) {
-      await ctx.ev(`window.__e2e.click(window.__e2e.rail("笔记")); true`);
+      await ctx.ev(`(()=>{const r=window.__e2e.rail("Wiki")||window.__e2e.rail("笔记"); if(r) window.__e2e.click(r); return !!r;})()`);
       await ctx.sleep(700);
       assert(await ctx.ev(`!!document.querySelector(".notes-page")`), "Wiki 未打开");
       const title = `E2E Autosave ${Date.now()}`;
