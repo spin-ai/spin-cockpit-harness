@@ -42,3 +42,21 @@
 
 - `npx tsc --noEmit`、`node --check electron/{main,db,acp}.mjs`、`npm run build`
 - 实机：Rail 项目/收件箱、统计范围与图例、设置说明、命令面板分组/任务搜索、任务行 tabIndex、资源管理器点文件默认隐藏、1180px 下终端栏与文件预览不溢出、跨页面终端命令自动切回 workspace。
+
+## 4. 视觉收口（2026-11）：颜色 / 圆角 / 字号对齐 Design System
+
+按 `docs/DESIGN-SYSTEM.md` 做了一次全站 token 收口，改动集中在 `src/styles.css` / `src/design-system.css`，不动布局与交互。
+
+| 项 | 之前 | 现在 |
+|---|---|---|
+| 语义色 | 硬编码 `#15803d` / `#92400e` / `#6d28d9` / `#fef2f2` … 约 130 处，暗色另写一套 `#86efac` / `#1d1a10` | 一律 `var(--green/--amber/--purple/--red)` 与 `-soft/ -line`；暗色覆盖块直接吃主题 token |
+| 选中 / 运行蓝 | `#1d4ed8` 同时表示选中、运行、链接 | `var(--brand)`（中性），蓝色不再兼职 |
+| 中性色 | `#f4f4f5` / `#e4e4e7` / `#a1a1aa` / `#52525b` | `--surface-hover` / `--border` / `--faint` / `--muted` |
+| 圆角 | 7 / 9 / 11 / 12 / 13 / 16px 混用 53 处 | `--radius-sm` / `--radius` / `--radius-lg`，0 处一次性值 |
+| 一级标题 | `.page-head h2` 18px，与 `PageHeader` 22px 并存 | `var(--text-title)` 22px |
+| 中文小字 | 审计出 13 处内容型中文 < 11.5px（终端 Agent 分组、Chat 空态说明、空态提示、右栏说明…） | 正文 11.5–12px；仅时间 / 快捷键 / 状态保留 10–10.5px |
+
+保留的硬编码颜色：终端 / xterm 的深色 chrome（`term-*`、`--term-bg` 等），它们是跨主题恒定深色，不属于语义色。
+
+验证：`typecheck` / `build` / `verify:plugins` / `verify:design`；8 个一级页面 × 亮暗各截图对照；
+用 CDP 遍历文本节点做「中文 < 11.5px」审计，改完后仅剩提示类 11px 小字。

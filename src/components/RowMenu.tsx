@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { EllipsisIcon } from "./Icons";
 
 /** 行内低频操作菜单：点击外部 / Esc 关闭，靠近底部时向上展开，portal 避免被滚动容器裁切。 */
-export function RowMenu({ children, title = "更多操作" }: { children: ReactNode; title?: string }) {
+export function RowMenu({ children, title = "更多操作", popClassName = "" }: { children: ReactNode; title?: string; popClassName?: string }) {
   const [open, setOpen] = useState(false);
   const [up, setUp] = useState(false);
   const [pos, setPos] = useState({ left: 0, top: 0 });
@@ -61,7 +61,7 @@ export function RowMenu({ children, title = "更多操作" }: { children: ReactN
       {open && createPortal(
         <div
           ref={popRef}
-          className={`row-menu-pop fixed ${up ? "up" : ""}`}
+          className={`row-menu-pop fixed ${up ? "up" : ""} ${popClassName}`.trim()}
           style={{ left: pos.left, top: pos.top }}
           role="menu"
           onClick={() => close()}

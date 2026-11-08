@@ -33,20 +33,19 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
   --shadow-2:0 10px 24px rgba(0,0,0,.34);
   --shadow-float:0 18px 46px rgba(0,0,0,.52),0 2px 8px rgba(0,0,0,.28);
 }
-/* 语义色在暗色下保持可读，但不抢主色 */
+/* 语义色在暗色下保持可读：直接吃主题里的 --green/--amber/--red，不再硬编码 */
 :root[data-theme="dark"] .status.running,
-:root[data-theme="dark"] .git-badge.brand{color:#93c5fd}
+:root[data-theme="dark"] .git-badge.brand{color:var(--brand)}
 :root[data-theme="dark"] .status.done,
-:root[data-theme="dark"] .git-badge.green{color:#86efac}
+:root[data-theme="dark"] .git-badge.green{color:var(--green)}
 :root[data-theme="dark"] .status.waiting,
-:root[data-theme="dark"] .git-badge.amber{color:#fcd34d}
+:root[data-theme="dark"] .git-badge.amber{color:var(--amber)}
 :root[data-theme="dark"] .status.failed,
-:root[data-theme="dark"] .git-badge.red{color:#fca5a5}
+:root[data-theme="dark"] .git-badge.red{color:var(--red)}
 
 /* 主面不依赖重阴影；边框和表面关系负责层级 */
 .wide .panel,.git-grid,.settings-body,.kpis,.grid2{border-color:var(--border);box-shadow:var(--shadow-1)}
 .page-header-actions .btn.primary,.btn.primary{background:var(--fg);border-color:var(--fg);color:var(--surface)}
-.notes-actions .btn.primary{background:var(--fg);border-color:var(--fg);color:var(--surface)}
 .notes-tab.on{background:var(--surface);box-shadow:inset 0 -1px 0 var(--brand)}
 .notes-file.on{background:var(--brand-soft);color:var(--fg);box-shadow:inset 2px 0 0 var(--brand)}
 
@@ -219,6 +218,7 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
 /* RowMenu：fixed portal，避免滚动容器裁切 */
 .row-menu-trigger{width:28px;padding:0;justify-content:center;font-size:14px}
 .row-menu-pop.fixed{position:fixed;right:auto;top:auto;z-index:300;max-height:min(360px,calc(100vh - 24px));overflow:auto}
+.row-menu-pop.notes-menu{max-height:calc(100vh - 32px);min-width:212px}
 .row-menu-pop.fixed.up{transform:translateY(-100%)}
 
 /* 页头副标题：允许两行，且保留 tooltip */
