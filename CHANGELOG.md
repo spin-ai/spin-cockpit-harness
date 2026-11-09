@@ -18,6 +18,7 @@
 
 ### Added
 
+- **Chat 进度可见性**：运行状态固定在消息滚动区上方，不再只在「滚到底部」时出现；显示当前阶段（执行命令 / 读取 / 修改 / 搜索）、已用时间、步数、最近动作，可展开完整步骤
 - **Chat 对齐 DeepSeek 网页对话**：消息阅读列居中（宽面板最大 760px）、助手 Markdown 支持标题 / 列表 / 引用 / 分隔线、思考过程默认折叠、助手消息底部复制 / 重新生成、空态快捷任务卡片
 - **WADE 开发环境迁移**：从 YieldMind 迁入 `.wade.yml`（worktree / feature-plan label / PR 流程 / bot review），模型切换到本机已认证的 DeepSeek，新增 `npm run verify:wade` 预检（配置 / 模型 / label / git 身份）
 - **场景工作台**：每个项目一份文字场景配置（worktree / runtime / agent / concurrency / acceptance / notes），支持校验、AI 建议、项目进展与终端总览
