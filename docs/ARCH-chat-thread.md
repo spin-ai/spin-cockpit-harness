@@ -222,3 +222,11 @@ agent_thought_chunk { content:{ type:"text", text:"User asks: ..." } }
 - 历史行（工具行、思考头）一律用 10s 粗粒度时间，减少无意义重渲染。
 - 展开时 `scrollIntoView({ block: "nearest" })`：面板向下长，长会话里不做这一步会被容器裁掉一半。
 - `.chat-live-head` / `.chat-live-toggle` / `.thought-head` 设 `user-select: none`，正文保持可选，避免按在按钮上拖动产生半截选区。
+
+### 详情里要有真信息，也要能看到全部
+
+- **老消息兼容**：历史工具消息是 `bash · completed`，渲染时 `normalizeToolContent()` 归一化——
+  `bash → Bash`、`list_agents → List Agents`、`completed → 完成`，无需迁移数据。
+- **两行一行信息**：首行「Name · 状态 · 参数」，第二行（灰）是命令 / 路径；命令太长才省略，`title` 给全文。
+- **不限 4 条**：默认最近 6 步，点击「看全部」展开该 run 的全部工具/思考步骤（`min(320px, 45vh)` 内部滚动，
+  `overscroll-behavior: contain` 防止滚动穿透到会话）。

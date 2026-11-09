@@ -41,6 +41,7 @@
 - **全站视觉收口**：语义色 / 中性色 / 圆角全部改走 Design System token（`--green/--amber/--red/--purple`、`--radius-*`、`--surface-hover`、`--faint`），暗色不再单独硬编码；选中与运行色从蓝色收成中性 `--brand`；`.page-head` 标题统一 22px；按 CDP 文本审计把 13 处内容型中文提到 ≥11.5px
 - **Chat 思考与工具可读**：`tool_call` 消息首行改成 `Bash · 完成 · ls -1`（状态中文化、带命令/路径），把 `tool_call_update.content` 里的输出并入正文；思考过程（`agent_thought_chunk`）从折叠工具组拆成独立「思考」块，默认两行可展开
 - **Chat 详情面板可拖选**：展开后冻结计时、历史行按 10s 粒度刷新，展开时把面板带进视野 —— 拖选文字不再被每秒重渲染打断
+- **Chat 详情更有料**：老消息的 `bash · completed` 在渲染时归一化成「Bash · 完成」并补上命令/路径第二行；默认最近 6 步，可「看全部」展开该 run 的所有步骤
 - **Chat 运行中进展可见**
 ## [0.2.0-alpha.2] - 2026-11-07
 

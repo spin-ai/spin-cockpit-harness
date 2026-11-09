@@ -53,13 +53,18 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   const userInputHistory = useMemo(() => msgs.filter((m) => m.role === "user").map((m) => m.content), [msgs]);
   // 运行中的「正在处理」需要细节：第几步、刚做了什么、跑了多久
   const liveSteps = useMemo(() => {
-    if (!active) return { total: 0, recent: [] as { id: string; kind: string; text: string; at: number }[] };
-    const steps = state.messages
+    type LiveStep = { id: string; kind: string; text: string; detail: string; at: number };
+    if (!active) return { total: 0, all: [] as LiveStep[], recent: [] as LiveStep[] };
+    const steps: LiveStep[] = state.messages
       .filter((m) => m.runId === active.id && (m.kind === "tool" || m.kind === "thought"))
       .sort((a, b) => a.createdAt - b.createdAt)
-      .map((m) => ({ id: m.id, kind: m.kind, text: firstLine(m.content), at: m.createdAt }))
+      .map((m) => {
+        if (m.kind === "thought") return { id: m.id, kind: m.kind, text: firstLine(m.content), detail: "", at: m.createdAt };
+        const { head, rest } = normalizeToolContent(m.content);
+        return { id: m.id, kind: m.kind, text: head, detail: firstLine(rest), at: m.createdAt };
+      })
       .filter((step) => step.text);
-    return { total: steps.length, recent: steps.slice(-4).reverse() };
+    return { total: steps.length, all: [...steps].reverse(), recent: steps.slice(-6).reverse() };
   }, [active, state.messages]);
 
   const [text, setText] = useState("");
@@ -1184,9 +1189,7 @@ function ToolRow({ message: m, now, copied, onCopy, onRetry }: {
   message: Message; now: number; copied: boolean; onCopy: () => void; onRetry: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const lines = m.content.split("\n");
-  const head = (lines[0] ?? "").trim();
-  const rest = lines.slice(1).join("\n").trim();
+  const { head, rest } = normalizeToolContent(m.content);
   const long = Boolean(rest) || head.length > 96;
   const shownHead = head.length > 96 ? `${head.slice(0, 96)}…` : head;
   return (
@@ -1206,6 +1209,36 @@ function ToolRow({ message: m, now, copied, onCopy, onRetry }: {
       <button className="msg-copy tool-row-copy" onClick={onCopy}>{copied ? "已复制" : "复制"}</button>
     </div>
   );
+}
+
+/** ACP 的英文状态 → 中文；老消息里的 `bash · completed` 在渲染时归一化 */
+const ACP_STATUS_ZH: Record<string, string> = {
+  pending: "排队中", in_progress: "运行中", running: "运行中", completed: "完成",
+  failed: "失败", cancelled: "已取消", canceled: "已取消", awaiting_approval: "待批准",
+};
+
+function prettifyToolName(name: string) {
+  const raw = String(name || "").trim();
+  if (!raw) return "工具";
+  if (/^[a-z][a-z0-9]*([_-][a-z0-9]+)+$/.test(raw)) {
+    return raw.split(/[_-]+/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
+  }
+  if (/^[a-z][a-z0-9]*$/.test(raw)) return raw[0].toUpperCase() + raw.slice(1);
+  return raw;
+}
+
+/** 返回首行（干了什么）与展开内容（命令 / 路径 / 输出） */
+function normalizeToolContent(content: string) {
+  const lines = String(content || "").split("\n");
+  const head = (lines[0] || "").trim();
+  const rest = lines.slice(1).join("\n").trim();
+  const legacy = head.match(/^([^·]+?)\s*·\s*([a-z_]+)$/);
+  if (legacy && ACP_STATUS_ZH[legacy[2]]) {
+    return { head: `${prettifyToolName(legacy[1])} · ${ACP_STATUS_ZH[legacy[2]]}`, rest };
+  }
+  const parts = head.split(" · ");
+  if (parts.length >= 2) parts[0] = prettifyToolName(parts[0]);
+  return { head: parts.join(" · "), rest };
 }
 
 /** 历史行的时间按 10s 粒度刷新：每秒跳数字会让拖选位置抖动 */
@@ -1387,11 +1420,13 @@ const LIVE_STATUS: Record<string, string> = {
 };
 
 /** 运行中的实时进展：状态 + 已用时 + 步数 + 最近动作，可展开看最近几步。 */
+type LiveStep = { id: string; kind: string; text: string; detail: string; at: number };
+
 function LiveStatus({ run, agentName, projectName, steps, now }: {
   run: State["runs"][number];
   agentName: string;
   projectName: string;
-  steps: { total: number; recent: { id: string; kind: string; text: string; at: number }[] };
+  steps: { total: number; all: LiveStep[]; recent: LiveStep[] };
   now: number;
 }) {
   const [open, setOpen] = useState(false);
@@ -1408,6 +1443,8 @@ function LiveStatus({ run, agentName, projectName, steps, now }: {
       window.requestAnimationFrame(() => boxRef.current?.scrollIntoView({ block: "nearest" }));
     }
   };
+  const [showAll, setShowAll] = useState(false);
+  const list = showAll ? steps.all : steps.recent;
   const label = LIVE_STATUS[run.status] ?? RUN_STATUS[run.status] ?? run.status;
   const latest = steps.recent[0];
   const waiting = run.status !== "running";
@@ -1430,14 +1467,20 @@ function LiveStatus({ run, agentName, projectName, steps, now }: {
         </div>
         {latest && !open && <div className="chat-live-action ellipsis mono" title={latest.text}>{latest.text}</div>}
         {open && (
-          <div className="chat-live-steps">
+          <div className={`chat-live-steps ${showAll ? "all" : ""}`}>
             {steps.total > steps.recent.length && (
-              <div className="chat-live-step-note">最近 {steps.recent.length} 步 · 共 {steps.total} 步</div>
+              <div className="chat-live-step-note">
+                <span>{showAll ? `全部 ${steps.total} 步` : `最近 ${steps.recent.length} 步 · 共 ${steps.total} 步`}</span>
+                <button className="link chat-live-all" onClick={() => setShowAll((v) => !v)}>{showAll ? "只看最近" : "看全部"}</button>
+              </div>
             )}
-            {steps.recent.map((step) => (
+            {list.map((step) => (
               <div className="chat-live-step" key={step.id}>
                 <span className={`chat-live-step-dot ${step.kind}`} />
-                <span className="mono ellipsis" title={step.text}>{step.text}</span>
+                <span className="chat-live-step-main">
+                  <span className="mono ellipsis" title={step.detail ? `${step.text}\n${step.detail}` : step.text}>{step.text}</span>
+                  {step.detail && <span className="chat-live-step-detail mono ellipsis" title={step.detail}>{step.detail}</span>}
+                </span>
                 <em>{timeAgo(step.at, tick)}</em>
               </div>
             ))}
