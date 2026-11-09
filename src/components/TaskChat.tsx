@@ -686,6 +686,15 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
             </div>
           )}
 
+          {active && ["running", "waiting_input", "waiting_plan", "waiting_children"].includes(active.status) && (
+            <LiveStatus
+              run={active}
+              agentName={agent?.name ?? "Agent"}
+              projectName={state.projects.find((p) => p.id === todo?.projectId)?.name ?? ""}
+              steps={liveSteps}
+              now={now}
+            />
+          )}
           <div className="chat-body-wrap">
             <div
               className="chat-scroll"
@@ -727,15 +736,6 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                   />
                 );
               })}
-              {active && ["running", "waiting_input", "waiting_plan", "waiting_children"].includes(active.status) && atBottom && chatItems.length > 0 && (
-                <LiveStatus
-                  run={active}
-                  agentName={agent?.name ?? "Agent"}
-                  projectName={state.projects.find((p) => p.id === todo?.projectId)?.name ?? ""}
-                  steps={liveSteps}
-                  now={now}
-                />
-              )}
               {msgs.length === 0 && (
                 <div className="chat-empty">
                   <div className="chat-empty-mark"><SparkleIcon size={15} /></div>
@@ -1531,6 +1531,18 @@ const LIVE_STATUS: Record<string, string> = {
 /** 运行中的实时进展：状态 + 已用时 + 步数 + 最近动作，可展开看最近几步。 */
 type LiveStep = { id: string; kind: string; text: string; detail: string; at: number };
 
+function phaseOfStep(step: LiveStep | undefined) {
+  if (!step) return "";
+  const head = step.text.toLowerCase();
+  if (/^bash\b|bash ·|exec|command|shell/.test(head)) return "执行命令";
+  if (/^write\b|write ·|edit ·|apply_patch|写入|修改文件/.test(head)) return "修改文件";
+  if (/^read\b|read ·|cat ·|读取/.test(head)) return "读取文件";
+  if (/^grep\b|rg \b|search|搜索/.test(head)) return "搜索";
+  if (/^ls\b|list ·|目录/.test(head)) return "查看目录";
+  if (step.kind === "thought") return "思考";
+  return "调用工具";
+}
+
 function LiveStatus({ run, agentName, projectName, steps, now }: {
   run: State["runs"][number];
   agentName: string;
@@ -1556,6 +1568,7 @@ function LiveStatus({ run, agentName, projectName, steps, now }: {
   const list = showAll ? steps.all : steps.recent;
   const label = LIVE_STATUS[run.status] ?? RUN_STATUS[run.status] ?? run.status;
   const latest = steps.recent[0];
+  const phase = phaseOfStep(latest);
   const waiting = run.status !== "running";
   return (
     <div className={`chat-live ${run.status} ${waiting ? "waiting" : ""}`} aria-live="polite" ref={boxRef}>
@@ -1565,16 +1578,18 @@ function LiveStatus({ run, agentName, projectName, steps, now }: {
           {projectName && <span className="chat-live-project ellipsis" title={projectName}>{projectName}</span>}
           <b>{agentName}</b>
           <span className="chat-live-state">{label}</span>
+          {phase && <><i>·</i><span className="chat-live-phase">{phase}</span></>}
           <i>·</i>
-          <span className="mono">{duration(run, tick)}</span>
+          <span className="mono">已用 {duration(run, tick)}</span>
           {steps.total > 0 && <span className="mono chat-live-steps-count">{steps.total} 步</span>}
           {steps.recent.length > 0 && (
             <button className="link chat-live-toggle" onClick={toggle} aria-expanded={open}>
-              {open ? "收起" : "详情"}
+              {open ? "收起进展" : "查看进展"}
             </button>
           )}
         </div>
-        {latest && !open && <div className="chat-live-action ellipsis mono" title={latest.text}>{latest.text}</div>}
+        {latest && <div className="chat-live-action ellipsis mono" title={latest.detail || latest.text}>{latest.text}</div>}
+        {!latest && <div className="chat-live-action">正在等待 Agent 的第一个动作…</div>}
         {open && (
           <div className={`chat-live-steps ${showAll ? "all" : ""}`}>
             {steps.total > steps.recent.length && (

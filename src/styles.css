@@ -2753,3 +2753,8 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .tool-row.expandable .tool-row-head:hover{color:var(--fg)}
 .tool-row-toggle{flex:none;font-size:9.5px;color:var(--brand);white-space:nowrap}
 .tool-row-toggle:hover{text-decoration:underline}
+
+/* Chat 运行进展：固定在会话滚动区上方，滚动消息时也一直看得到 */
+.chat-live{flex:none;width:calc(100% - 20px);max-width:760px;margin:8px auto 0;box-sizing:border-box}
+.chat-live-phase{color:var(--fg-2);font-size:10.5px}
+.chat-live-action{color:var(--muted)}
