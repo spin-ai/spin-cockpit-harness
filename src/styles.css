@@ -2747,3 +2747,9 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .composer-shell{border-radius:calc(var(--radius) + 4px);padding:8px 9px 7px}
 .composer-submit{height:30px;border-radius:999px;padding:0 12px}
 @media (max-width: 520px){.chat-suggestions{grid-template-columns:1fr}}
+
+/* 工具行：长命令也能一键看输出（此前 head > 96 时没有展开入口） */
+.tool-row.expandable .tool-row-head{cursor:pointer}
+.tool-row.expandable .tool-row-head:hover{color:var(--fg)}
+.tool-row-toggle{flex:none;font-size:9.5px;color:var(--brand);white-space:nowrap}
+.tool-row-toggle:hover{text-decoration:underline}
