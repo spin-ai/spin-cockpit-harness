@@ -2714,3 +2714,36 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
   .notes-page .notes-sidebar,.notes-page .notes-meta{padding:0;border-left:0}
   .notes-page .notes-main{min-height:420px}
 }
+
+/* Chat：参考 DeepSeek 网页对话的阅读列 / Markdown / 消息动作 */
+.chat-scroll > *{width:100%;max-width:760px;margin-left:auto;margin-right:auto}
+.msg-actions{display:flex;align-items:center;gap:4px;margin-top:3px;min-height:18px;opacity:0;transition:opacity .12s}
+.msg:hover .msg-actions,.msg:focus-within .msg-actions{opacity:1}
+.msg-action{display:inline-flex;align-items:center;gap:4px;height:20px;border:0;border-radius:5px;background:transparent;color:var(--faint);font-size:9.5px;padding:0 5px;cursor:pointer}
+.msg-action:hover{background:var(--surface-hover);color:var(--fg-2)}
+.msg.user .msg-actions{display:none}
+.thought-head{width:100%;border:0;background:transparent;padding:0;text-align:left;cursor:pointer;display:flex;align-items:center;gap:6px;margin:0 0 2px}
+.thought-head:hover .thought-label{color:var(--fg-2)}
+.thought-summary{flex:1;min-width:0;color:var(--faint);font-size:10.5px}
+.thought-time{margin-left:auto}
+.thought-toggle{margin-left:0;flex:none}
+.thought-body{display:block;-webkit-line-clamp:unset;overflow:visible;color:var(--fg-2)}
+.md-heading{margin:10px 0 5px;line-height:1.35;color:var(--fg);font-weight:600;white-space:normal}
+.md-heading:first-child{margin-top:0}
+.md-h1{font-size:1.28em}.md-h2{font-size:1.16em}.md-h3{font-size:1.06em}.md-h4,.md-h5,.md-h6{font-size:1em;color:var(--fg-2)}
+.md-list{margin:4px 0 6px;padding-left:20px;white-space:normal}
+.md-list li{margin:2px 0;line-height:1.65}
+.md-list.ordered{list-style:decimal}
+.md-list:not(.ordered){list-style:disc}
+.md-quote{margin:6px 0;padding:3px 0 3px 10px;border-left:2px solid var(--border-strong);color:var(--muted);white-space:pre-wrap}
+.md-hr{border:0;border-top:1px solid var(--border);margin:10px 0}
+.md-inline{font-family:var(--mono);font-size:.9em;background:var(--surface-hover);border:1px solid var(--border);border-radius:4px;padding:0 3px;color:var(--fg-2)}
+.chat-suggestions{display:grid;grid-template-columns:1fr 1fr;gap:7px;width:100%;max-width:520px;margin-top:4px}
+.chat-suggestion{display:flex;flex-direction:column;gap:2px;text-align:left;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:9px 11px;cursor:pointer;transition:border-color .12s,background .12s;min-width:0}
+.chat-suggestion:hover{border-color:var(--border-strong);background:var(--surface-hover)}
+.chat-suggestion b{font-size:11.5px;color:var(--fg-2);font-weight:600}
+.chat-suggestion span{font-size:10px;line-height:1.45;color:var(--faint)}
+.chat-guide-link{font-size:10px;color:var(--faint)}
+.composer-shell{border-radius:calc(var(--radius) + 4px);padding:8px 9px 7px}
+.composer-submit{height:30px;border-radius:999px;padding:0 12px}
+@media (max-width: 520px){.chat-suggestions{grid-template-columns:1fr}}

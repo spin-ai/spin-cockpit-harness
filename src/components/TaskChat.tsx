@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Delegation, ElementContext, Message, MissionPlanRecord, State, Thread, Todo } from "../types";
 import { RUN_STATUS, STATUS, activeRun, agentOf, duration, lastRun, missingKeyInfo, timeAgo } from "../ui";
-import { ChevronRightIcon, CopyCheckIcon, CopyIcon, PanelCollapseIcon, SendIcon, SparkleIcon } from "./Icons";
+import { ChevronRightIcon, CopyCheckIcon, CopyIcon, PanelCollapseIcon, RefreshIcon, SendIcon, SparkleIcon } from "./Icons";
 import { requestTerminalAdopt } from "../terminal-events";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
@@ -50,6 +50,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   const localHost = state.hosts.find((h) => h.kind === "local") ?? null;
   const hostOffline = Boolean(agent && agentHost && agentHost.status === "offline");
   const msgs = useMemo(() => (thread ? state.messages.filter((m) => m.threadId === thread.id) : []), [state.messages, thread]);
+  const lastAgentId = useMemo(() => [...msgs].reverse().find((m) => m.role === "agent")?.id ?? null, [msgs]);
   const userInputHistory = useMemo(() => msgs.filter((m) => m.role === "user").map((m) => m.content), [msgs]);
   // 运行中的「正在处理」需要细节：第几步、刚做了什么、跑了多久
   const liveSteps = useMemo(() => {
@@ -361,6 +362,16 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     if (res.todoId) onSelect(res.todoId);
     if (res.view) window.dispatchEvent(new CustomEvent("harness:view", { detail: res.view }));
     textRef.current?.focus();
+  };
+
+  const regenerate = async () => {
+    if (!thread || active || sending) return;
+    setSending(true);
+    const res = await act("regenerate", { threadId: thread.id });
+    setSending(false);
+    if (!res) return;
+    stickRef.current = true;
+    atBottomRef.current = true;
   };
 
   const copy = async (id: string, content: string) => {
@@ -711,6 +722,8 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                     copied={copiedId === m.id}
                     onCopy={() => void copy(m.id, m.content)}
                     onRetry={() => void act("retryMessage", { id: m.id })}
+                    canRegenerate={m.role === "agent" && m.id === lastAgentId && !active && !todo?.confirmed}
+                    onRegenerate={() => void regenerate()}
                   />
                 );
               })}
@@ -729,14 +742,25 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                   <b>{todo ? "还没有消息" : runnableAgents.length > 0 ? "说一句话开始" : dshAvailable ? "还没有可用的 Agent" : "未检测到 dsh"}</b>
                   <p>{todo ? "在下面补充信息、纠偏或追问。" : "直接描述要完成的事；@别名 指定 Agent，或从预览里拾取元素后发送。"}</p>
                   {!todo && (
-                    <div className="chat-empty-hints">
-                      {runnableAgents.length > 0 && <>
-                        <button onClick={() => updateText("帮我实现 ")}>实现功能</button>
-                        <button onClick={() => updateText("审查这段改动：")}>审查改动</button>
-                        <button onClick={() => updateText("运行测试并修复失败：")}>运行测试</button>
-                      </>}
+                    <>
+                      {runnableAgents.length > 0 && (
+                        <div className="chat-suggestions">
+                          <button className="chat-suggestion" onClick={() => updateText("帮我实现 ")}>
+                            <b>实现功能</b><span>描述目标，Agent 直接开工</span>
+                          </button>
+                          <button className="chat-suggestion" onClick={() => updateText("审查这段改动：")}>
+                            <b>审查改动</b><span>看 diff、找风险、给修改建议</span>
+                          </button>
+                          <button className="chat-suggestion" onClick={() => updateText("运行测试并修复失败：")}>
+                            <b>运行测试</b><span>跑起来，失败项逐个修</span>
+                          </button>
+                          <button className="chat-suggestion" onClick={() => updateText("先帮我理一下这个任务：")}>
+                            <b>先理清楚</b><span>拆目标、验收和涉及模块</span>
+                          </button>
+                        </div>
+                      )}
                       <button className="link chat-guide-link" onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: { view: "guide", page: "super-agent" } }))}>Super Agent 怎么用？</button>
-                    </div>
+                    </>
                   )}
                 </div>
               )}
@@ -1068,8 +1092,9 @@ function delegationLabel(value: string) {
   } as Record<string, string>)[value] || value;
 }
 
-function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry }: {
+function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry, canRegenerate, onRegenerate }: {
   message: Message; agentName: string; now: number; copied: boolean; onCopy: () => void; onRetry: () => void;
+  canRegenerate?: boolean; onRegenerate?: () => void;
 }) {
   const collapsible = (m.role === "tool" || m.kind === "thought" || m.kind === "system") && m.content.length > 220;
   const [expanded, setExpanded] = useState(false);
@@ -1090,7 +1115,6 @@ function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry }: {
             {m.delivery === "failed" && (
               <button className="delivery failed" onClick={onRetry}>投递失败 · 重发</button>
             )}
-            <button className="msg-copy" onClick={onCopy}>{copied ? "已复制" : "复制"}</button>
           </div>
         )}
         {m.kind === "error" && missingKeyInfo(m.content) && (() => {
@@ -1125,6 +1149,19 @@ function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry }: {
         {collapsible && (
           <button className="msg-more link" onClick={() => setExpanded((v) => !v)}>{expanded ? "收起" : "展开全部"}</button>
         )}
+        {!isUser && !isSystem && (
+          <div className="msg-actions">
+            <button className="msg-action" onClick={onCopy} title="复制回答">
+              {copied ? <CopyCheckIcon size={12} /> : <CopyIcon size={12} />}
+              {copied ? "已复制" : "复制"}
+            </button>
+            {canRegenerate && onRegenerate && (
+              <button className="msg-action" onClick={onRegenerate} title="基于上一轮提问重新生成">
+                <RefreshIcon size={12} /> 重新生成
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1137,15 +1174,16 @@ function ThoughtBlock({ message, now }: { message: Message; now: number }) {
   const text = message.content.trim();
   if (!text) return null;
   const lines = text.split("\n").filter((line) => line.trim());
-  const long = text.length > 180 || lines.length > 2;
+  const summary = firstLine(text);
   return (
     <div className={`thought-block ${open ? "open" : ""}`}>
-      <div className="thought-head">
-        <span className="thought-label">思考</span>
+      <button className="thought-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <span className="thought-label">思考过程</span>
+        {!open && summary && <span className="thought-summary ellipsis">{summary}</span>}
         <span className="thought-time">{timeAgo(message.createdAt, coarseNow(now))}</span>
-        {long && <button className="link thought-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>{open ? "收起" : "展开"}</button>}
-      </div>
-      <div className="thought-body">{text}</div>
+        <span className="thought-toggle">{open ? "收起" : lines.length > 1 ? `展开 ${lines.length} 行` : "展开"}</span>
+      </button>
+      {open && <div className="thought-body">{text}</div>}
     </div>
   );
 }
@@ -1296,6 +1334,22 @@ function RichText({ text }: { text: string }) {
             </div>
           );
         }
+        if (b.type === "heading") {
+          const Tag = (`h${Math.min(6, Math.max(1, b.level))}`) as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
+          return <Tag className={`md-heading md-h${b.level}`} key={`h${i}`}>{inlineNodes(b.text, `h${i}`)}</Tag>;
+        }
+        if (b.type === "list") {
+          const List = b.ordered ? "ol" : "ul";
+          return (
+            <List className={`md-list ${b.ordered ? "ordered" : ""}`} key={`l${i}`}>
+              {b.items.map((item, li) => <li key={li} style={{ marginLeft: item.depth * 14 }}>{inlineNodes(item.text, `li${i}-${li}`)}</li>)}
+            </List>
+          );
+        }
+        if (b.type === "quote") {
+          return <blockquote className="md-quote" key={`q${i}`}>{inlineNodes(b.text, `q${i}`)}</blockquote>;
+        }
+        if (b.type === "hr") return <hr className="md-hr" key={`hr${i}`} />;
         return <Fragment key={`t${i}`}>{inlineNodes(b.text, `t${i}`)}</Fragment>;
       })}
     </>
@@ -1305,7 +1359,11 @@ function RichText({ text }: { text: string }) {
 type Block =
   | { type: "text"; text: string }
   | { type: "code"; text: string; lang: string }
-  | { type: "table"; header: string[]; rows: string[][] };
+  | { type: "table"; header: string[]; rows: string[][] }
+  | { type: "heading"; level: number; text: string }
+  | { type: "list"; ordered: boolean; items: { text: string; depth: number }[] }
+  | { type: "quote"; text: string }
+  | { type: "hr" };
 
 function parseTableRow(line: string) {
   const raw = line.trim().replace(/^\|/, "").replace(/\|$/, "");
@@ -1334,7 +1392,45 @@ function parseTextBlocks(text: string): Block[] {
     const isTable = header.length > 1
       && separator.length === header.length
       && separator.every((cell) => /^:?-{3,}:?$/.test(cell));
-    if (!isTable) { buffer.push(line); continue; }
+    if (!isTable) {
+      const heading = line.match(/^(#{1,6})\s+(.+)$/);
+      if (heading) {
+        flush();
+        out.push({ type: "heading", level: heading[1].length, text: heading[2].trim() });
+        continue;
+      }
+      if (/^\s*(?:---+|\*\*\*+|___+)\s*$/.test(line)) {
+        flush();
+        out.push({ type: "hr" });
+        continue;
+      }
+      const quote = line.match(/^>\s?(.*)$/);
+      if (quote) {
+        flush();
+        const parts = [quote[1]];
+        while (i + 1 < lines.length && /^>\s?/.test(lines[i + 1])) parts.push(lines[++i].replace(/^>\s?/, ""));
+        out.push({ type: "quote", text: parts.join("\n") });
+        continue;
+      }
+      const list = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.+)$/);
+      if (list) {
+        flush();
+        const ordered = /^\d/.test(list[2]);
+        const items: { text: string; depth: number }[] = [];
+        let current = i;
+        while (current < lines.length) {
+          const match = lines[current].match(/^(\s*)([-*+]|\d+[.)])\s+(.+)$/);
+          if (!match) break;
+          items.push({ text: match[3].trim(), depth: Math.min(4, Math.floor(match[1].replace(/\t/g, "  ").length / 2)) });
+          current++;
+        }
+        i = current - 1;
+        out.push({ type: "list", ordered, items });
+        continue;
+      }
+      buffer.push(line);
+      continue;
+    }
     flush();
     const rows: string[][] = [];
     i += 2;
@@ -1365,7 +1461,7 @@ function parseBlocks(text: string): Block[] {
 }
 
 function inlineNodes(text: string, keyPrefix: string): ReactNode[] {
-  const re = /(\*\*[^*\n]+\*\*|`[^`\n]+`|@[a-zA-Z0-9_.-]+|https?:\/\/[^\s<>()]+)/g;
+  const re = /(\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~|\*[^*\n]+\*|`[^`\n]+`|@[a-zA-Z0-9_.-]+|https?:\/\/[^\s<>()]+)/g;
   const nodes: ReactNode[] = [];
   let last = 0;
   let m: RegExpExecArray | null;
@@ -1374,7 +1470,9 @@ function inlineNodes(text: string, keyPrefix: string): ReactNode[] {
     if (m.index > last) nodes.push(text.slice(last, m.index));
     const token = m[0];
     const key = `${keyPrefix}-${i++}`;
-    if (token.startsWith("**")) nodes.push(<strong key={key}>{token.slice(2, -2)}</strong>);
+    if (token.startsWith("**") || token.startsWith("__")) nodes.push(<strong key={key}>{token.slice(2, -2)}</strong>);
+    else if (token.startsWith("~~")) nodes.push(<del key={key}>{token.slice(2, -2)}</del>);
+    else if (token.startsWith("*")) nodes.push(<em key={key}>{token.slice(1, -1)}</em>);
     else if (token.startsWith("`")) nodes.push(<code className="md-inline" key={key}>{token.slice(1, -1)}</code>);
     else if (token.startsWith("@")) nodes.push(<span className="md-mention" key={key}>{token}</span>);
     else nodes.push(

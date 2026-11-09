@@ -3078,6 +3078,31 @@ const actions = {
     tick();
     return mission;
   },
+  regenerate: ({ threadId } = {}) => {
+    const thread = store.state.threads.find((t) => t.id === threadId);
+    if (!thread) throw new Error("会话不存在");
+    const todo = thread.todoId ? store.state.todos.find((t) => t.id === thread.todoId) : null;
+    if (!todo) throw new Error("还没有可重新生成的回答");
+    if (activeRunOf(todo.id)) throw new Error("当前还在运行，等结束后再重新生成");
+    if (todo.confirmed) throw new Error("任务已确认，不能再重新生成");
+    const lastUser = [...store.state.messages].reverse().find((m) => m.threadId === thread.id && m.role === "user");
+    if (!lastUser) throw new Error("没有找到上一轮提问");
+    const agent = store.state.agents.find((a) => a.id === (thread.agentId || todo.agentId))
+      || sceneAgentFor(todo.projectId)
+      || defaultChatAgent(todo.projectId);
+    if (!agent) throw new Error("没有可用的 Agent");
+    const err = chatAgentError(agent);
+    if (err) throw new Error(err);
+    thread.agentId = agent.id;
+    todo.agentId = agent.id;
+    thread.updatedAt = now();
+    todo.updatedAt = now();
+    const run = queueRun(todo, agent, "regenerate");
+    store.addMessage(thread.id, run.id, "system", "system", "重新生成");
+    store.addEvent("run.regenerate", `run.regenerate ${todo.key} agent=${agent.name}`);
+    tick();
+    return { mode: "run", threadId: thread.id, todoId: todo.id, runId: run.id };
+  },
   retryMessage: ({ id }) => {
     const msg = store.state.messages.find((m) => m.id === id);
     if (!msg || msg.role !== "user") throw new Error("只能重发用户消息");
