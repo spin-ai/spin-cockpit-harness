@@ -1226,18 +1226,29 @@ function ToolGroup({ messages, now, copiedId, onCopy, onRetry }: {
 function ToolRow({ message: m, now, copied, onCopy, onRetry }: {
   message: Message; now: number; copied: boolean; onCopy: () => void; onRetry: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(m.kind === "error" || m.delivery === "failed");
   const { head, rest } = normalizeToolContent(m.content);
   const long = Boolean(rest) || head.length > 96;
   const shownHead = head.length > 96 ? `${head.slice(0, 96)}…` : head;
+  const toggle = () => { if (long) setExpanded((v) => !v); };
   return (
-    <div className={`tool-row ${m.kind}`}>
+    <div className={`tool-row ${m.kind} ${long ? "expandable" : ""}`}>
       <span className="tool-row-dot" />
       <div className="tool-row-main">
-        <div className="tool-row-head">
+        <div
+          className="tool-row-head"
+          role={long ? "button" : undefined}
+          tabIndex={long ? 0 : undefined}
+          title={long ? (expanded ? "收起输出" : "查看命令 / 输出") : head}
+          onClick={toggle}
+          onKeyDown={(e) => {
+            if (!long) return;
+            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+          }}
+        >
           <span className="mono ellipsis" title={head}>{shownHead || "（空）"}</span>
-          {long && head.length <= 96 && (
-            <button className="link tool-row-toggle" onClick={() => setExpanded((v) => !v)}>{expanded ? "收起" : "展开"}</button>
+          {long && (
+            <span className="tool-row-toggle">{expanded ? "收起输出" : "查看输出"}</span>
           )}
           <span className="tool-row-time">{timeAgo(m.createdAt, coarseNow(now))}</span>
         </div>
