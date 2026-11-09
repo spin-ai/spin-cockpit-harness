@@ -1137,7 +1137,7 @@ function ThoughtBlock({ message, now }: { message: Message; now: number }) {
     <div className={`thought-block ${open ? "open" : ""}`}>
       <div className="thought-head">
         <span className="thought-label">思考</span>
-        <span className="thought-time">{timeAgo(message.createdAt, now)}</span>
+        <span className="thought-time">{timeAgo(message.createdAt, coarseNow(now))}</span>
         {long && <button className="link thought-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>{open ? "收起" : "展开"}</button>}
       </div>
       <div className="thought-body">{text}</div>
@@ -1198,7 +1198,7 @@ function ToolRow({ message: m, now, copied, onCopy, onRetry }: {
           {long && head.length <= 96 && (
             <button className="link tool-row-toggle" onClick={() => setExpanded((v) => !v)}>{expanded ? "收起" : "展开"}</button>
           )}
-          <span className="tool-row-time">{timeAgo(m.createdAt, now)}</span>
+          <span className="tool-row-time">{timeAgo(m.createdAt, coarseNow(now))}</span>
         </div>
         {long && expanded && <pre className="tool-row-rest">{rest || m.content}</pre>}
         {m.delivery === "failed" && <button className="delivery failed" onClick={onRetry}>投递失败 · 重发</button>}
@@ -1206,6 +1206,11 @@ function ToolRow({ message: m, now, copied, onCopy, onRetry }: {
       <button className="msg-copy tool-row-copy" onClick={onCopy}>{copied ? "已复制" : "复制"}</button>
     </div>
   );
+}
+
+/** 历史行的时间按 10s 粒度刷新：每秒跳数字会让拖选位置抖动 */
+function coarseNow(now: number) {
+  return Math.floor(now / 10000) * 10000;
 }
 
 function firstLine(text: string) {
@@ -1390,11 +1395,24 @@ function LiveStatus({ run, agentName, projectName, steps, now }: {
   now: number;
 }) {
   const [open, setOpen] = useState(false);
+  // 展开后冻结计时：否则每秒重渲染会把正在拖选的文字改掉（"11s"→"12s"），选区跟着跳
+  const [frozenAt, setFrozenAt] = useState(0);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const tick = open && frozenAt ? frozenAt : now;
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next) {
+      setFrozenAt(Date.now());
+      // 面板向下展开，可能被滚动容器裁掉一半：先把它带进视野
+      window.requestAnimationFrame(() => boxRef.current?.scrollIntoView({ block: "nearest" }));
+    }
+  };
   const label = LIVE_STATUS[run.status] ?? RUN_STATUS[run.status] ?? run.status;
   const latest = steps.recent[0];
   const waiting = run.status !== "running";
   return (
-    <div className={`chat-live ${run.status} ${waiting ? "waiting" : ""}`} aria-live="polite">
+    <div className={`chat-live ${run.status} ${waiting ? "waiting" : ""}`} aria-live="polite" ref={boxRef}>
       <span className="chat-live-dots" aria-hidden="true"><span /><span /><span /></span>
       <div className="chat-live-main">
         <div className="chat-live-head">
@@ -1402,10 +1420,10 @@ function LiveStatus({ run, agentName, projectName, steps, now }: {
           <b>{agentName}</b>
           <span className="chat-live-state">{label}</span>
           <i>·</i>
-          <span className="mono">{duration(run, now)}</span>
+          <span className="mono">{duration(run, tick)}</span>
           {steps.total > 0 && <span className="mono chat-live-steps-count">{steps.total} 步</span>}
           {steps.recent.length > 0 && (
-            <button className="link chat-live-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+            <button className="link chat-live-toggle" onClick={toggle} aria-expanded={open}>
               {open ? "收起" : "详情"}
             </button>
           )}
@@ -1420,7 +1438,7 @@ function LiveStatus({ run, agentName, projectName, steps, now }: {
               <div className="chat-live-step" key={step.id}>
                 <span className={`chat-live-step-dot ${step.kind}`} />
                 <span className="mono ellipsis" title={step.text}>{step.text}</span>
-                <em>{timeAgo(step.at, now)}</em>
+                <em>{timeAgo(step.at, tick)}</em>
               </div>
             ))}
           </div>

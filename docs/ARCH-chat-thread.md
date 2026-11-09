@@ -212,3 +212,13 @@ agent_thought_chunk { content:{ type:"text", text:"User asks: ..." } }
 | 运行中只有一句「dsh 正在处理」 | `LiveStatus`：项目 · Agent · 状态 · 用时 · 步数 · 最近一步，可展开最近 4 步 |
 
 约束：状态文本只在新消息生成时中文化，历史消息保持原文；`showTool=false` 时思考与工具一起隐藏（沿用原设置）。
+
+### 展开详情时不能和鼠标抢
+
+`now` 是全局面板每秒 tick 一次，直接在渲染里用 `timeAgo(x, now)` 会让每一秒都改写文本节点：
+拖选到一半的选区会被截断/跳位（"11s" → "12s"）。处理：
+
+- 展开「详情」后**冻结计时**（`frozenAt`），面板里的用时与相对时间不再刷新；收起后恢复。
+- 历史行（工具行、思考头）一律用 10s 粗粒度时间，减少无意义重渲染。
+- 展开时 `scrollIntoView({ block: "nearest" })`：面板向下长，长会话里不做这一步会被容器裁掉一半。
+- `.chat-live-head` / `.chat-live-toggle` / `.thought-head` 设 `user-select: none`，正文保持可选，避免按在按钮上拖动产生半截选区。
