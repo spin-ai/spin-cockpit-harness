@@ -887,7 +887,7 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 
 /* 思考过程：浅底 + 左侧 hairline，默认两行 */
 .thought-block{margin:4px 0;padding:6px 9px 7px;border-left:2px solid var(--purple-line);border-radius:0 var(--radius-sm) var(--radius-sm) 0;background:color-mix(in srgb,var(--purple-soft) 55%,transparent)}
-.thought-head{display:flex;align-items:center;gap:6px;margin-bottom:2px}
+.thought-head{display:flex;align-items:center;gap:6px;margin-bottom:2px;user-select:none}
 .thought-label{font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--purple)}
 .thought-time{font-size:10px;color:var(--faint);font-variant-numeric:tabular-nums}
 .thought-toggle{margin-left:auto;font-size:10.5px;color:var(--muted)}
@@ -954,7 +954,8 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .chat-live-dots span:nth-child(2){animation-delay:.15s}
 .chat-live-dots span:nth-child(3){animation-delay:.3s}
 .chat-live.waiting .chat-live-dots span{background:var(--amber);animation:none;opacity:.85}
-.chat-live-main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.chat-live-main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;user-select:text}
+.chat-live-head,.chat-live-toggle{user-select:none}
 .chat-live-head{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
 .chat-live-project{max-width:150px;color:var(--faint);font-size:10.5px}
 .chat-live-project::after{content:"·";margin-left:6px;color:var(--border-strong)}
