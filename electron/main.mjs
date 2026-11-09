@@ -8,6 +8,7 @@ import pty from "node-pty";
 import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 import { fileURLToPath } from "node:url";
+import { formatToolContent, toolOutputText } from "./tool-format.mjs";
 import { openDb, DEFAULT_SETTINGS } from "./db.mjs";
 import { AcpClient, dshPathEnv } from "./acp.mjs";
 import { prepareWorktree, removeWorktree, repoRoot } from "./worktree.mjs";
@@ -1083,8 +1084,12 @@ function handleUpdate(run, todo, handle, u) {
     const status = u.status || prev.status || "";
     // 参数只在首次 tool_call 的 rawInput 里出现；update 时沿用，避免被清空。
     const hint = (u.rawInput ? toolArgHint(u.rawInput) : "") || prev.hint || "";
-    const content = `${title}${status ? ` · ${status}` : ""}${hint ? `\n${hint}` : ""}`;
-    handle.toolMeta.set(key, { title, status, hint });
+    const description = u.rawInput?.description || prev.description || "";
+    // tool_call_update 才带输出；沿用上一次的，避免被后续无 content 的更新清空
+    const output = toolOutputText(u.content) || prev.output || "";
+    // 首行必须是「干了什么」：Bash · 完成 · ls -1（旧版首行只有 bash · completed）
+    const content = formatToolContent({ title, status, hint, description, output });
+    handle.toolMeta.set(key, { title, status, hint, description, output });
     // agent 用 todo_write 维护自己的清单：同步到任务的 subtasks，TODO LIST 行内可见
     if (applyPlan(todo, planEntries(u, title))) store.addEvent("todo.plan", `todo.plan ${todo.key} ${todo.subtasks.length} steps`);
     if (existing) store.updateMessage(existing, { content });

@@ -189,3 +189,26 @@ CHAT
 ## 10. 回滚
 
 数据库是单文件 `harness.db`，升级前备份即可。回滚到旧版本时，新增的 `threads` 表与 `messages.thread_id` / `delivery` 列会被旧代码忽略；旧代码的 `messages.todo_id` 仍在写入，不会丢历史。
+
+## 11. 增量（2026-11）：思考可见 + 工具行可读 + 运行中进展
+
+真实 ACP 载荷（`dsh --profile acp` 实测）：
+
+```text
+tool_call        { title:"bash", kind:"other", status:"in_progress",
+                   rawInput:{ description:"List files in working directory", command:"ls -1" } }
+tool_call_update { status:"completed",
+                   content:[{ type:"content", content:{ type:"text", text:"hello.txt\n" } }] }
+agent_thought_chunk { content:{ type:"text", text:"User asks: ..." } }
+```
+
+据此修了三处「看不出来在干嘛」：
+
+| 问题 | 处理 |
+|---|---|
+| 工具行只有 `bash · completed`：首行取了最没信息量的 title+status，命令藏在第二次展开里 | `electron/tool-format.mjs` 统一格式化：首行 `Bash · 完成 · ls -1`（工具名首字母大写、状态中文化 `in_progress/completed → 运行中/完成`），第二段起依次是完整命令、`rawInput.description`、`tool_call_update.content` 里的输出（截断 1200 字） |
+| 工具输出被丢掉（`content` 字段从来没读） | 同上：输出并入消息正文，展开工具行即可看到 |
+| 思考过程被合进「思考与工具」折叠组，摘要只显示最后一条工具 → 看不到思考 | 前端把 `kind === "thought"` 拆成独立的「思考」块：浅紫底 + 左侧 2px hairline，默认 2 行 + 「展开」，工具仍单独成组 |
+| 运行中只有一句「dsh 正在处理」 | `LiveStatus`：项目 · Agent · 状态 · 用时 · 步数 · 最近一步，可展开最近 4 步 |
+
+约束：状态文本只在新消息生成时中文化，历史消息保持原文；`showTool=false` 时思考与工具一起隐藏（沿用原设置）。

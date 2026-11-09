@@ -885,6 +885,15 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .msg .msg-more{align-self:flex-start;margin-top:1px;font-size:10px}
 .msg.user .msg-more{align-self:flex-end}
 
+/* 思考过程：浅底 + 左侧 hairline，默认两行 */
+.thought-block{margin:4px 0;padding:6px 9px 7px;border-left:2px solid var(--purple-line);border-radius:0 var(--radius-sm) var(--radius-sm) 0;background:color-mix(in srgb,var(--purple-soft) 55%,transparent)}
+.thought-head{display:flex;align-items:center;gap:6px;margin-bottom:2px}
+.thought-label{font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--purple)}
+.thought-time{font-size:10px;color:var(--faint);font-variant-numeric:tabular-nums}
+.thought-toggle{margin-left:auto;font-size:10.5px;color:var(--muted)}
+.thought-toggle:hover{color:var(--fg)}
+.thought-body{font-size:11.5px;line-height:1.65;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.thought-block.open .thought-body{display:block;-webkit-line-clamp:unset;overflow:visible;color:var(--fg-2)}
 .tool-group{border:1px solid var(--border);background:var(--surface);border-radius:var(--radius);overflow:hidden}
 .tool-group-head{width:100%;display:flex;align-items:center;gap:6px;padding:6px 9px;border:0;background:transparent;color:var(--muted);font-size:11px;text-align:left;cursor:pointer;min-width:0}
 .tool-group-head:hover{background:var(--surface-hover);color:var(--fg-2)}
