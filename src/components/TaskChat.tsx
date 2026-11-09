@@ -51,6 +51,16 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   const hostOffline = Boolean(agent && agentHost && agentHost.status === "offline");
   const msgs = useMemo(() => (thread ? state.messages.filter((m) => m.threadId === thread.id) : []), [state.messages, thread]);
   const userInputHistory = useMemo(() => msgs.filter((m) => m.role === "user").map((m) => m.content), [msgs]);
+  // 运行中的「正在处理」需要细节：第几步、刚做了什么、跑了多久
+  const liveSteps = useMemo(() => {
+    if (!active) return { total: 0, recent: [] as { id: string; kind: string; text: string; at: number }[] };
+    const steps = state.messages
+      .filter((m) => m.runId === active.id && (m.kind === "tool" || m.kind === "thought"))
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((m) => ({ id: m.id, kind: m.kind, text: firstLine(m.content), at: m.createdAt }))
+      .filter((step) => step.text);
+    return { total: steps.length, recent: steps.slice(-4).reverse() };
+  }, [active, state.messages]);
 
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -693,11 +703,14 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                   />
                 );
               })}
-              {active && ["running", "waiting_input"].includes(active.status) && atBottom && chatItems.length > 0 && (
-                <div className="chat-typing" aria-label="agent 正在处理">
-                  <span /><span /><span />
-                  <em>{agent?.name ?? "Agent"} 正在处理</em>
-                </div>
+              {active && ["running", "waiting_input", "waiting_plan", "waiting_children"].includes(active.status) && atBottom && chatItems.length > 0 && (
+                <LiveStatus
+                  run={active}
+                  agentName={agent?.name ?? "Agent"}
+                  projectName={state.projects.find((p) => p.id === todo?.projectId)?.name ?? ""}
+                  steps={liveSteps}
+                  now={now}
+                />
               )}
               {msgs.length === 0 && (
                 <div className="chat-empty">
@@ -1334,6 +1347,62 @@ async function copyText(value: string) {
       return false;
     }
   }
+}
+
+const LIVE_STATUS: Record<string, string> = {
+  running: "正在处理",
+  waiting_input: "等你回答",
+  waiting_plan: "等你确认计划",
+  waiting_children: "等待子任务",
+};
+
+/** 运行中的实时进展：状态 + 已用时 + 步数 + 最近动作，可展开看最近几步。 */
+function LiveStatus({ run, agentName, projectName, steps, now }: {
+  run: State["runs"][number];
+  agentName: string;
+  projectName: string;
+  steps: { total: number; recent: { id: string; kind: string; text: string; at: number }[] };
+  now: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = LIVE_STATUS[run.status] ?? RUN_STATUS[run.status] ?? run.status;
+  const latest = steps.recent[0];
+  const waiting = run.status !== "running";
+  return (
+    <div className={`chat-live ${run.status} ${waiting ? "waiting" : ""}`} aria-live="polite">
+      <span className="chat-live-dots" aria-hidden="true"><span /><span /><span /></span>
+      <div className="chat-live-main">
+        <div className="chat-live-head">
+          {projectName && <span className="chat-live-project ellipsis" title={projectName}>{projectName}</span>}
+          <b>{agentName}</b>
+          <span className="chat-live-state">{label}</span>
+          <i>·</i>
+          <span className="mono">{duration(run, now)}</span>
+          {steps.total > 0 && <span className="mono chat-live-steps-count">{steps.total} 步</span>}
+          {steps.recent.length > 0 && (
+            <button className="link chat-live-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+              {open ? "收起" : "详情"}
+            </button>
+          )}
+        </div>
+        {latest && !open && <div className="chat-live-action ellipsis mono" title={latest.text}>{latest.text}</div>}
+        {open && (
+          <div className="chat-live-steps">
+            {steps.total > steps.recent.length && (
+              <div className="chat-live-step-note">最近 {steps.recent.length} 步 · 共 {steps.total} 步</div>
+            )}
+            {steps.recent.map((step) => (
+              <div className="chat-live-step" key={step.id}>
+                <span className={`chat-live-step-dot ${step.kind}`} />
+                <span className="mono ellipsis" title={step.text}>{step.text}</span>
+                <em>{timeAgo(step.at, now)}</em>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function RunDivider({ state, runId, now }: { state: State; runId: string; now: number }) {
