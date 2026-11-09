@@ -230,3 +230,18 @@ agent_thought_chunk { content:{ type:"text", text:"User asks: ..." } }
 - **两行一行信息**：首行「Name · 状态 · 参数」，第二行（灰）是命令 / 路径；命令太长才省略，`title` 给全文。
 - **不限 4 条**：默认最近 6 步，点击「看全部」展开该 run 的全部工具/思考步骤（`min(320px, 45vh)` 内部滚动，
   `overscroll-behavior: contain` 防止滚动穿透到会话）。
+
+## 12. 中断的收口（2026-11）：run 不会永远「进行中」
+
+现场：卡片显示「进行中 14:47 harness/168-r781-d52ep」，涨了十几分钟。查库发现
+`runs.status='running'`，但最后一条消息停在 22:39，且机器上已没有 `dsh --profile acp` 进程——
+应用被重启（重装）时 ACP 子进程一起退出，而数据库没人结算，卡片就一直挂着。
+
+处理：
+
+| 时机 | 行为 |
+|---|---|
+| 优雅退出（`before-quit`） | 仍在跑的 run → `interrupted`，`error="应用退出，运行中断"`，关联 todo 回到 `todo` |
+| 下次启动（`recoverMissions`） | 兜底扫一遍：所有 `running / waiting_input / waiting_plan / waiting_children` 的 run → `interrupted`；`endedAt` 取**该 run 最后一条消息时间**（不是重启时间，否则把停机空档也算成耗时）；往会话补一条 system 消息说明原因 |
+
+`RUN_STATUS.interrupted` 在 UI 显示为「已中断」，任务回到「待执行」，可以直接重跑。

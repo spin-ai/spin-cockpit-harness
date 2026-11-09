@@ -618,6 +618,22 @@ function recoverMissions() {
       changed = true;
     }
   }
+  // 普通 ACP run 的子进程也随应用退出消失：重启后不能把 run 永远挂在「进行中」，
+  // 否则卡片会显示一个永远涨的计时器（r781 那种情况）。
+  for (const run of store.state.runs) {
+    if (!["running", "waiting_input", "waiting_plan", "waiting_children"].includes(run.status)) continue;
+    run.status = "interrupted";
+    // 用这个 run 最后一条消息的时间当结束时间：直接写 now() 会把「重启前的空闲」也算进耗时
+    const lastMsgAt = store.state.messages.reduce((max, m) => (m.runId === run.id && m.createdAt > max ? m.createdAt : max), 0);
+    run.endedAt = run.endedAt || lastMsgAt || now();
+    run.error = run.error || "应用已退出，运行中断";
+    run.errorClass = run.errorClass || "other";
+    const todo = store.state.todos.find((t) => t.id === run.todoId);
+    if (todo && ["queued", "in_progress", "waiting_input"].includes(todo.status)) { todo.status = "todo"; todo.updatedAt = now(); }
+    if (todo) store.addMessage(threadForTodo(todo).id, todo.id, "system", "system", `应用重启：运行 ${run.id} 已中断（Agent 进程随应用退出）`);
+    store.addEvent("run.interrupted", `run.interrupted ${run.id}`);
+    changed = true;
+  }
   for (const delegation of store.state.delegations) {
     if (["queued", "running", "waiting_input", "rework"].includes(delegation.status)) {
       const run = store.state.runs.find((r) => r.id === delegation.childRunId);
@@ -4273,6 +4289,19 @@ app.on("before-quit", () => {
   try { mcpServer?.close(); } catch { /* ignore */ }
   try { wikiMcpServer?.close(); } catch { /* ignore */ }
   void pluginHost?.stopAll();
+  // 正常退出也要结算：否则下次启动前卡片一直是「进行中」
+  try {
+    for (const runId of active.keys()) {
+      const run = store?.state.runs.find((r) => r.id === runId);
+      if (!run || !["running", "waiting_input", "waiting_plan", "waiting_children"].includes(run.status)) continue;
+      run.status = "interrupted";
+      run.endedAt = run.endedAt || Date.now();
+      run.error = run.error || "应用退出，运行中断";
+      run.errorClass = run.errorClass || "other";
+      const todo = store.state.todos.find((t) => t.id === run.todoId);
+      if (todo && ["queued", "in_progress", "waiting_input"].includes(todo.status)) { todo.status = "todo"; todo.updatedAt = Date.now(); }
+    }
+  } catch { /* ignore */ }
   for (const handle of active.values()) { try { handle.client.close(); } catch { /* ignore */ } }
   // 终端 pty 会随应用消失：先按「用户关闭」结算，否则重启后 TODO 会卡在运行中
   for (const [id, info] of terminalUrls) {
