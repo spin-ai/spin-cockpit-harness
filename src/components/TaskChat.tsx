@@ -466,7 +466,8 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   type ChatItem =
     | { kind: "run"; key: string; runId: string }
     | { kind: "msg"; key: string; msg: Message }
-    | { kind: "tools"; key: string; msgs: Message[] };
+    | { kind: "tools"; key: string; msgs: Message[] }
+    | { kind: "thought"; key: string; msg: Message };
   const chatItems = useMemo(() => {
     const items: ChatItem[] = [];
     let group: Message[] = [];
@@ -484,7 +485,9 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
       }
       const hidden = !showTool && (m.role === "tool" || m.kind === "thought");
       if (hidden) continue;
-      if (m.role === "tool" || m.kind === "thought") group.push(m);
+      // 思考过程单独成块：默认就露一行，不用先展开工具组才看得到
+      if (m.kind === "thought") { flush(); items.push({ kind: "thought", key: `thought-${m.id}`, msg: m }); continue; }
+      if (m.role === "tool") group.push(m);
       else { flush(); items.push({ kind: "msg", key: m.id, msg: m }); }
     }
     flush();
@@ -678,6 +681,9 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
             >
               {chatItems.map((item) => {
                 if (item.kind === "run") return <RunDivider key={item.key} state={state} runId={item.runId} now={now} />;
+                if (item.kind === "thought") {
+                  return <ThoughtBlock key={item.key} message={item.msg} now={now} />;
+                }
                 if (item.kind === "tools") {
                   return (
                     <ToolGroup
@@ -1120,6 +1126,25 @@ function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry }: {
 }
 
 /** 连续的工具 / 思考步骤收成一行，点开看细节 */
+/** 思考过程：默认露前两行，点击展开全文 —— 不再藏进工具组里。 */
+function ThoughtBlock({ message, now }: { message: Message; now: number }) {
+  const [open, setOpen] = useState(false);
+  const text = message.content.trim();
+  if (!text) return null;
+  const lines = text.split("\n").filter((line) => line.trim());
+  const long = text.length > 180 || lines.length > 2;
+  return (
+    <div className={`thought-block ${open ? "open" : ""}`}>
+      <div className="thought-head">
+        <span className="thought-label">思考</span>
+        <span className="thought-time">{timeAgo(message.createdAt, now)}</span>
+        {long && <button className="link thought-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>{open ? "收起" : "展开"}</button>}
+      </div>
+      <div className="thought-body">{text}</div>
+    </div>
+  );
+}
+
 function ToolGroup({ messages, now, copiedId, onCopy, onRetry }: {
   messages: Message[]; now: number; copiedId: string | null;
   onCopy: (m: Message) => void; onRetry: (m: Message) => void;
