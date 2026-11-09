@@ -1,0 +1,40 @@
+version: 2
+project:
+  main_branch: main
+  issue_label: feature-plan
+  worktrees_dir: ../.worktrees
+  branch_prefix: feat
+  merge_strategy: PR
+ai:
+  default_tool: opencode
+models:
+  opencode:
+    easy:
+      model: deepseek/deepseek-flash
+      effort: null
+    medium:
+      model: deepseek/deepseek-v4-pro
+      effort: null
+    complex:
+      model: deepseek/deepseek-v4-pro
+      effort: null
+    very_complex:
+      model: deepseek/deepseek-v4-pro
+      effort: null
+provider:
+  name: github
+hooks: {}
+bot_review:
+  auto_trigger: false
+  offer_on_done: true
+  arrival_timeout: 300
+  ack_timeout: 900
+  bots:
+  - name: coderabbit
+    trigger: '@coderabbitai review'
+    enabled: true
+  - name: codex
+    trigger: '@codex review'
+    enabled: true
+  - name: bugbot
+    trigger: bugbot run

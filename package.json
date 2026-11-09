@@ -35,7 +35,8 @@
     "docs:build": "vite build --config site/vite.config.ts",
     "docs:preview": "vite preview --config site/vite.config.ts",
     "dist:mac:slim": "node scripts/dist-slim.mjs",
-    "dist:slim": "node scripts/dist-slim.mjs --dir"
+    "dist:slim": "node scripts/dist-slim.mjs --dir",
+    "verify:wade": "node scripts/verify-wade.mjs"
   },
   "dependencies": {
     "adm-zip": "^0.6.1",

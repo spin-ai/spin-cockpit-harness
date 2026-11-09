@@ -22,6 +22,19 @@ Cockpit Harness 的 agent / contributor 入口。
 10. 行内低频操作使用 `RowMenu`；不要新增不会自动关闭、可能被滚动容器裁切的 `<details>` 菜单。
 11. 非当前 pane 只弱化 header/toolbar，不要整体降低内容透明度。
 
+## 开发流程（WADE）
+
+仓库已接入 WADE（配置见 `.wade.yml`，说明见 `docs/WADE.md`）：
+
+```bash
+npm run verify:wade
+wade plan
+wade implement <issue>
+```
+
+- WADE worktree 的 push 由 `wade implementation-session done` 授权，不要直接 `git push`。
+- 模型使用当前机器已认证的 DeepSeek；不要把 `.wade.yml` 改回未认证的 Anthropic 模型。
+
 ## 验证
 
 ```bash
