@@ -687,15 +687,6 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
             </div>
           )}
 
-          {active && ["running", "waiting_input", "waiting_plan", "waiting_children"].includes(active.status) && (
-            <LiveStatus
-              run={active}
-              agentName={agent?.name ?? "Agent"}
-              projectName={state.projects.find((p) => p.id === todo?.projectId)?.name ?? ""}
-              steps={liveSteps}
-              now={now}
-            />
-          )}
           <div className="chat-body-wrap">
             <div
               className="chat-scroll"
@@ -738,6 +729,15 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                   />
                 );
               })}
+              {active && ["running", "waiting_input", "waiting_plan", "waiting_children"].includes(active.status) && chatItems.length > 0 && (
+                <LiveStatus
+                  run={active}
+                  agentName={agent?.name ?? "Agent"}
+                  projectName={state.projects.find((p) => p.id === todo?.projectId)?.name ?? ""}
+                  steps={liveSteps}
+                  now={now}
+                />
+              )}
               {msgs.length === 0 && (
                 <div className="chat-empty">
                   <div className="chat-empty-mark"><SparkleIcon size={15} /></div>
