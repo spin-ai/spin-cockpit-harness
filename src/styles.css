@@ -2721,7 +2721,18 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .msg:hover .msg-actions,.msg:focus-within .msg-actions{opacity:1}
 .msg-action{display:inline-flex;align-items:center;gap:4px;height:20px;border:0;border-radius:5px;background:transparent;color:var(--faint);font-size:9.5px;padding:0 5px;cursor:pointer}
 .msg-action:hover{background:var(--surface-hover);color:var(--fg-2)}
-.msg.user .msg-actions{display:none}
+
+/* 已发送消息的编辑态（对齐 DeepSeek：编辑 → 保存并发送） */
+.msg-edit{display:flex;flex-direction:column;gap:6px;margin-top:2px}
+.msg-edit-input{width:100%;min-height:56px;resize:vertical;border:1px solid var(--input);border-radius:var(--radius-sm);background:var(--surface);color:var(--fg);padding:8px 10px;font:12.5px/1.6 var(--font-sans);outline:none}
+.msg-edit-input:focus{border-color:var(--brand-line);box-shadow:var(--shadow-1)}
+/* 用户气泡本身已经是输入面：编辑态不再叠一层底色 */
+.msg.user .msg-edit-input{background:transparent;border-color:color-mix(in srgb,var(--fg) 14%,transparent);padding:2px 2px 4px;min-height:40px}
+.msg.user .msg-edit-input:focus{box-shadow:none;border-color:color-mix(in srgb,var(--fg) 22%,transparent)}
+.msg-edit-actions{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+.msg-edit-hint{margin-right:auto;font-size:10.5px;color:var(--faint)}
+.msg.user .msg-edit-hint{color:var(--faint)}
+.msg.user .msg-actions{margin-top:2px}
 .thought-head{width:100%;border:0;background:transparent;padding:0;text-align:left;cursor:pointer;display:flex;align-items:center;gap:6px;margin:0 0 2px}
 .thought-head:hover .thought-label{color:var(--fg-2)}
 .thought-summary{flex:1;min-width:0;color:var(--faint);font-size:10.5px}

@@ -3098,10 +3098,53 @@ const actions = {
     thread.updatedAt = now();
     todo.updatedAt = now();
     const run = queueRun(todo, agent, "regenerate");
+    // 新 run 的 prompt 只收「绑定到该 run 的用户消息」：不重新绑定就等于空跑一次
+    store.updateMessage(lastUser.id, { runId: run.id });
     store.addMessage(thread.id, run.id, "system", "system", "重新生成");
     store.addEvent("run.regenerate", `run.regenerate ${todo.key} agent=${agent.name}`);
     tick();
     return { mode: "run", threadId: thread.id, todoId: todo.id, runId: run.id };
+  },
+  /**
+   * 编辑已发送的用户消息（对齐 DeepSeek 的「编辑」动线）：
+   * - 正在跑：更新内容并作为纠偏投递给当前 run
+   * - 已结束：更新内容 + 绑定到新 run 重发（走同一套 prompt 组装）
+   */
+  editMessage: ({ id, text } = {}) => {
+    const msg = store.state.messages.find((m) => m.id === id);
+    if (!msg || msg.role !== "user") throw new Error("只能编辑自己发出去的消息");
+    const next = String(text || "").trim();
+    if (!next) throw new Error("内容不能为空");
+    const thread = store.state.threads.find((t) => t.id === msg.threadId);
+    const todo = thread?.todoId ? store.state.todos.find((t) => t.id === thread.todoId) : null;
+    if (!thread || !todo) throw new Error("这条消息还没有关联任务，不能重发");
+    if (next === String(msg.content || "").trim()) return { mode: "noop" };
+    store.updateMessage(msg.id, { content: next });
+    store.addEvent("message.edit", `message.edit ${todo.key}`);
+    const running = activeRunOf(todo.id);
+    if (running) {
+      const delivered = msg.context ? `${next}\n\n${formatContext(msg.context, contextDetail())}` : next;
+      const delivery = deliverSteer({ thread, todo, run: running, messageId: msg.id, text: delivered });
+      broadcast();
+      return { mode: "steer", delivery };
+    }
+    if (todo.confirmed) throw new Error("任务已确认，不能再重发");
+    const agent = store.state.agents.find((a) => a.id === (thread.agentId || todo.agentId))
+      || sceneAgentFor(todo.projectId)
+      || defaultChatAgent(todo.projectId);
+    if (!agent) throw new Error("没有可用的 Agent");
+    const err = chatAgentError(agent);
+    if (err) throw new Error(err);
+    thread.agentId = agent.id;
+    todo.agentId = agent.id;
+    thread.updatedAt = now();
+    todo.updatedAt = now();
+    const run = queueRun(todo, agent, "edit");
+    store.updateMessage(msg.id, { runId: run.id });
+    store.addMessage(thread.id, run.id, "system", "system", "编辑后重发");
+    store.addEvent("run.edit", `run.edit ${todo.key} agent=${agent.name}`);
+    tick();
+    return { mode: "run", threadId: thread.id, runId: run.id };
   },
   retryMessage: ({ id }) => {
     const msg = store.state.messages.find((m) => m.id === id);

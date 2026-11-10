@@ -245,3 +245,21 @@ agent_thought_chunk { content:{ type:"text", text:"User asks: ..." } }
 | 下次启动（`recoverMissions`） | 兜底扫一遍：所有 `running / waiting_input / waiting_plan / waiting_children` 的 run → `interrupted`；`endedAt` 取**该 run 最后一条消息时间**（不是重启时间，否则把停机空档也算成耗时）；往会话补一条 system 消息说明原因 |
 
 `RUN_STATUS.interrupted` 在 UI 显示为「已中断」，任务回到「待执行」，可以直接重跑。
+
+## 13. 已发送消息可编辑（2026-11，对齐 DeepSeek 对话）
+
+之前用户消息一发出去就锁死：想改措辞只能重发一条，历史里留两条互相打架的指令。
+
+| 动线 | 行为 |
+|---|---|
+| hover 用户气泡 | 出 `复制` / `编辑`（与助手消息的 `复制` / `重新生成` 同一套 `msg-actions`） |
+| 点「编辑」 | 气泡内联成 textarea，`⌘Enter` 保存并发送、`Esc` 取消、内容没改时按钮禁用 |
+| 保存（该任务没在跑） | `editMessage` 更新消息内容 → `queueRun(trigger="edit")` → 把这条消息重新绑定到新 run → 会话里留一条「编辑后重发」 |
+| 保存（正在跑） | 走 `deliverSteer` 作为纠偏投递给当前 run，界面沿用「投递中 / 已注入」回执 |
+| 任务已确认 | 拒绝重发，提示「任务已确认，不能再重发」 |
+
+顺带修了 `regenerate` 的一个坑：它读了 `lastUser` 却没用，导致新 run 的 prompt 里没有上一轮提问
+（`prompt` 只收「绑定到该 run 的用户消息」）。现在会先把 lastUser 绑到新 run 再入队。
+
+实现：`actions.editMessage({ id, text })`（`electron/main.mjs`）+ `ChatMessage` 的 `onEdit`；
+不改变消息不可变性，历史消息内容直接覆盖 —— 重跑以最新文本为准。

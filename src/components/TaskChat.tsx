@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Delegation, ElementContext, Message, MissionPlanRecord, State, Thread, Todo } from "../types";
 import { RUN_STATUS, STATUS, activeRun, agentOf, duration, lastRun, missingKeyInfo, timeAgo } from "../ui";
-import { ChevronRightIcon, CopyCheckIcon, CopyIcon, PanelCollapseIcon, RefreshIcon, SendIcon, SparkleIcon } from "./Icons";
+import { ChevronRightIcon, CopyCheckIcon, CopyIcon, PanelCollapseIcon, PencilIcon, RefreshIcon, SendIcon, SparkleIcon } from "./Icons";
 import { requestTerminalAdopt } from "../terminal-events";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
@@ -733,6 +733,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                     onRetry={() => void act("retryMessage", { id: m.id })}
                     canRegenerate={m.role === "agent" && m.id === lastAgentId && !active && !todo?.confirmed}
                     onRegenerate={() => void regenerate()}
+                    onEdit={(text) => void act("editMessage", { id: m.id, text })}
                   />
                 );
               })}
@@ -1092,14 +1093,19 @@ function delegationLabel(value: string) {
   } as Record<string, string>)[value] || value;
 }
 
-function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry, canRegenerate, onRegenerate }: {
+function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry, canRegenerate, onRegenerate, onEdit }: {
   message: Message; agentName: string; now: number; copied: boolean; onCopy: () => void; onRetry: () => void;
   canRegenerate?: boolean; onRegenerate?: () => void;
+  onEdit?: (text: string) => void;
 }) {
   const collapsible = (m.role === "tool" || m.kind === "thought" || m.kind === "system") && m.content.length > 220;
   const [expanded, setExpanded] = useState(false);
+  // 已发送的用户消息可以再编辑：改完直接重发（运行中则作为纠偏投递）
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(m.content);
   const shown = collapsible && !expanded ? `${m.content.slice(0, 220).trimEnd()}…` : m.content;
   const isUser = m.role === "user";
+  const canEdit = isUser && Boolean(onEdit) && m.delivery !== "pending";
   const isSystem = m.role === "system" || m.kind === "system";
   const initial = isUser ? "你" : (agentName || "A").trim().slice(0, 1).toUpperCase();
   return (
@@ -1143,11 +1149,47 @@ function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry, canR
             <span className="mono ellipsis">{m.context.selector}</span>
           </div>
         )}
-        <div className="msg-body">
-          {m.role === "agent" || m.role === "user" ? <RichText text={shown} /> : shown}
-        </div>
+        {editing ? (
+          <div className="msg-edit">
+            <textarea
+              className="msg-edit-input"
+              value={draft}
+              autoFocus
+              rows={Math.min(10, Math.max(2, draft.split("\n").length))}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") { e.preventDefault(); setDraft(m.content); setEditing(false); }
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && draft.trim()) {
+                  e.preventDefault();
+                  onEdit?.(draft.trim());
+                  setEditing(false);
+                }
+              }}
+            />
+            <div className="msg-edit-actions">
+              <span className="msg-edit-hint">⌘Enter 发送 · Esc 取消</span>
+              <button className="btn tiny-btn" onClick={() => { setDraft(m.content); setEditing(false); }}>取消</button>
+              <button className="btn tiny-btn primary" disabled={!draft.trim() || draft.trim() === m.content.trim()} onClick={() => { onEdit?.(draft.trim()); setEditing(false); }}>保存并发送</button>
+            </div>
+          </div>
+        ) : (
+          <div className="msg-body">
+            {m.role === "agent" || m.role === "user" ? <RichText text={shown} /> : shown}
+          </div>
+        )}
         {collapsible && (
           <button className="msg-more link" onClick={() => setExpanded((v) => !v)}>{expanded ? "收起" : "展开全部"}</button>
+        )}
+        {isUser && canEdit && !editing && (
+          <div className="msg-actions">
+            <button className="msg-action" onClick={onCopy} title="复制这条消息">
+              {copied ? <CopyCheckIcon size={12} /> : <CopyIcon size={12} />}
+              {copied ? "已复制" : "复制"}
+            </button>
+            <button className="msg-action" onClick={() => { setDraft(m.content); setEditing(true); }} title="编辑后重发">
+              <PencilIcon size={12} /> 编辑
+            </button>
+          </div>
         )}
         {!isUser && !isSystem && (
           <div className="msg-actions">
