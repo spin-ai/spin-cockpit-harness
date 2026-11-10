@@ -16,9 +16,16 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [query, setQuery] = useState("");
   const active = state.projects.find((p) => p.id === state.activeProjectId) ?? null;
   const activeTodos = state.todos.filter((t) => t.projectId === state.activeProjectId);
   const running = state.runs.filter((r) => activeTodos.some((t) => t.id === r.todoId) && ["queued", "running", "waiting_input"].includes(r.status)).length;
+  const filtered = state.projects.filter((p) => {
+    const q = query.trim().toLowerCase();
+    return !q || `${p.name} ${p.alias} ${p.path}`.toLowerCase().includes(q);
+  });
+  const totalOpen = state.todos.filter((t) => !t.confirmed).length;
+  const totalConfirmed = state.todos.filter((t) => t.confirmed).length;
 
   const startRename = (p: Project) => { setEditing(p.id); setDraft(p.name); };
   const saveRename = async (id: string) => {
@@ -36,75 +43,106 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
   };
 
   return (
-    <div className="page">
+    <div className="page project-page">
       <PageHeader
         title="项目"
-        subtitle={`${state.projects.length} 个项目`}
+        subtitle={`${state.projects.length} 个项目 · 本地目录即项目；任务、终端和文件树跟随当前项目`}
         actions={<button className="btn primary" onClick={onAdd}>＋ 添加项目</button>}
       />
 
-      <div className="kpis">
-        <div className="kpi"><span>项目</span><b>{state.projects.length}</b></div>
-        <div className="kpi"><span>当前任务</span><b>{activeTodos.length}</b></div>
-        <div className="kpi"><span>运行中</span><b>{running}</b></div>
-        <div className="kpi"><span>已完成</span><b>{activeTodos.filter((t) => t.confirmed).length}</b></div>
+      <div className="project-overview">
+        <div className="project-overview-item"><b>{state.projects.length}</b><span>项目</span></div>
+        <div className="project-overview-item"><b>{totalOpen}</b><span>未完成</span></div>
+        <div className={`project-overview-item ${running ? "run" : ""}`}><b>{running}</b><span>运行中</span></div>
+        <div className="project-overview-item"><b>{totalConfirmed}</b><span>已确认</span></div>
+        <div className="project-overview-item active-name"><span>当前项目</span><b>{active?.name || "—"}</b></div>
       </div>
 
-      <section className="panel project-list">
-        <div className="panel-head">工作区项目</div>
-        {state.projects.map((p) => {
-          const todos = state.todos.filter((t) => t.projectId === p.id);
-          const isActive = p.id === state.activeProjectId;
-          const open = todos.filter((t) => !t.confirmed).length;
-          const busy = state.runs.filter((r) => todos.some((t) => t.id === r.todoId) && ["queued", "running", "waiting_input"].includes(r.status)).length;
-          return (
-            <div className={`project-row ${isActive ? "on" : ""}`} key={p.id}>
-              <div className={`project-mark ${p.color}`}>{p.name.trim().slice(0, 1).toUpperCase() || "P"}</div>
-              <div className="project-main">
-                <div className="row gap6 wrap">
-                  {editing === p.id ? (
-                    <input className="project-name-input" autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveRename(p.id); if (e.key === "Escape") setEditing(null); }} />
-                  ) : (
-                    <b className="ellipsis">{p.name}</b>
-                  )}
-                  <span className="tag mono">@{p.alias}</span>
-                  {isActive && <span className="tag ok">当前</span>}
-                  <span className={`tag project-status ${p.status}`}>{PROJECT_STATUS[p.status] || p.status}</span>
-                </div>
-                <div className="tiny mono muted ellipsis" title={p.path}>{p.path}</div>
-                <div className="row gap10 wrap tiny muted">
-                  <span>{todos.length} 任务</span>
-                  <span>{open} 未完成</span>
-                  {busy > 0 && <span className="live" />}<span>{busy} 运行中</span>
-                  <span>最近打开 {timeAgo(p.lastOpenedAt, now)}前</span>
-                </div>
-              </div>
-              <div className="project-actions">
-                {editing === p.id ? (
-                  <>
-                    <button className="btn tiny-btn primary" onClick={() => void saveRename(p.id)}>保存</button>
-                    <button className="btn tiny-btn" onClick={() => setEditing(null)}>取消</button>
-                  </>
-                ) : (
-                  <>
-                    <button className="btn tiny-btn primary" disabled={isActive} onClick={() => onSwitch(p.id)}>{isActive ? "使用中" : "打开"}</button>
-                    <RowMenu title="更多项目操作">
-                      <button onClick={() => act("revealProject", { id: p.id })}>在 Finder 中显示</button>
-                      <button onClick={() => startRename(p)}>重命名</button>
-                      <label className="row-menu-label">状态
-                        <select className="project-status-select" value={p.status} onChange={(e) => act("setProjectStatus", { id: p.id, status: e.target.value })}>
-                          {(Object.keys(PROJECT_STATUS) as ProjectStatus[]).map((s) => <option key={s} value={s}>{PROJECT_STATUS[s]}</option>)}
-                        </select>
-                      </label>
-                      <button className="danger" onClick={() => void remove(p)}>移除项目</button>
-                    </RowMenu>
-                  </>
-                )}
-              </div>
-            </div>
-          );
-        })}
-        {state.projects.length === 0 && <EmptyState compact title="还没有项目" desc="添加一个本地目录，任务、终端和文件树会跟随项目。" action={<button className="btn primary" onClick={onAdd}>＋ 添加项目</button>} />}
+      <section className="panel project-list-panel">
+        <div className="project-list-head">
+          <div className="row gap8">
+            <b>工作区项目</b>
+            <span className="tiny faint">{filtered.length}/{state.projects.length}</span>
+          </div>
+          <input
+            className="project-search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索名称 / 别名 / 路径"
+            aria-label="搜索项目"
+          />
+        </div>
+
+        {filtered.length > 0 ? (
+          <div className="project-grid">
+            {filtered.map((p) => {
+              const todos = state.todos.filter((t) => t.projectId === p.id);
+              const isActive = p.id === state.activeProjectId;
+              const open = todos.filter((t) => !t.confirmed).length;
+              const confirmed = todos.filter((t) => t.confirmed).length;
+              const busy = state.runs.filter((r) => todos.some((t) => t.id === r.todoId) && ["queued", "running", "waiting_input"].includes(r.status)).length;
+              return (
+                <article className={`project-card ${isActive ? "on" : ""}`} key={p.id}>
+                  <header className="project-card-head">
+                    <div className={`project-mark ${p.color}`}>{p.name.trim().slice(0, 1).toUpperCase() || "P"}</div>
+                    <div className="project-card-title">
+                      <div className="row gap6 wrap">
+                        {editing === p.id ? (
+                          <input
+                            className="project-name-input"
+                            autoFocus
+                            value={draft}
+                            onChange={(e) => setDraft(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") void saveRename(p.id); if (e.key === "Escape") setEditing(null); }}
+                          />
+                        ) : <b className="ellipsis">{p.name}</b>}
+                        <span className="tag mono">@{p.alias}</span>
+                        {isActive && <span className="tag ok">当前</span>}
+                        <span className={`tag project-status ${p.status}`}>{PROJECT_STATUS[p.status] || p.status}</span>
+                      </div>
+                      <div className="project-card-path mono tiny muted ellipsis" title={p.path}>{p.path}</div>
+                    </div>
+                  </header>
+
+                  <div className="project-card-stats">
+                    <span><b>{todos.length}</b>任务</span>
+                    <span><b>{open}</b>未完成</span>
+                    <span className={busy ? "run" : ""}><b>{busy}</b>运行中</span>
+                    <span><b>{confirmed}</b>已确认</span>
+                  </div>
+
+                  <footer className="project-card-foot">
+                    <span className="tiny faint">最近打开 {timeAgo(p.lastOpenedAt, now)} 前</span>
+                    <div className="project-actions">
+                      {editing === p.id ? (
+                        <>
+                          <button className="btn tiny-btn primary" onClick={() => void saveRename(p.id)}>保存</button>
+                          <button className="btn tiny-btn" onClick={() => setEditing(null)}>取消</button>
+                        </>
+                      ) : (
+                        <>
+                          <button className="btn tiny-btn primary" disabled={isActive} onClick={() => onSwitch(p.id)}>{isActive ? "使用中" : "打开"}</button>
+                          <RowMenu title="更多项目操作">
+                            <button onClick={() => act("revealProject", { id: p.id })}>在 Finder 中显示</button>
+                            <button onClick={() => startRename(p)}>重命名</button>
+                            <label className="row-menu-label">状态
+                              <select className="project-status-select" value={p.status} onChange={(e) => act("setProjectStatus", { id: p.id, status: e.target.value })}>
+                                {(Object.keys(PROJECT_STATUS) as ProjectStatus[]).map((s) => <option key={s} value={s}>{PROJECT_STATUS[s]}</option>)}
+                              </select>
+                            </label>
+                            <button className="danger" onClick={() => void remove(p)}>移除项目</button>
+                          </RowMenu>
+                        </>
+                      )}
+                    </div>
+                  </footer>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <EmptyState compact title={query ? "没有匹配的项目" : "还没有项目"} desc={query ? "换个关键词试试。" : "添加一个本地目录，任务、终端和文件树会跟随项目。"} action={!query ? <button className="btn primary" onClick={onAdd}>＋ 添加项目</button> : undefined} />
+        )}
       </section>
     </div>
   );
