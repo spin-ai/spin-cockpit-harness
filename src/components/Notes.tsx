@@ -13,6 +13,12 @@ type PageSummary = {
   id: string; slug: string; title: string; summary: string;
   status: "draft" | "reviewed" | "stale"; confidence: "low" | "medium" | "high";
   updatedAt: number; citations: number; backlinks: number; snippet?: string;
+  /** 已审核页面被人编辑后回到 draft：为什么、什么时候 */
+  reopenReason?: string; reopenedAt?: number | null;
+  /** 引用资料更新/删除导致过期：原因、时间、原状态 */
+  staleReason?: string; staleAt?: number | null; staleFrom?: string | null;
+  /** 最近一次审核（退回原因展示） */
+  lastReview?: { status: string; feedback: string; createdAt: number } | null;
 };
 type Citation = { id: string; pageId: string; sourceId: string; quote?: string; locator?: string; source?: Source };
 type Page = Omit<PageSummary, "citations" | "backlinks"> & { content: string; citations: Citation[]; backlinks: PageSummary[] };
@@ -30,6 +36,21 @@ type SearchHit = { kind: string; id: string; title: string; status?: string; at?
 
 function emptyPane(): Pane { return { tabs: [], active: null }; }
 function statusLabel(status: string) { return status === "reviewed" ? "已审核" : status === "stale" ? "已过期" : "草稿"; }
+/** 阅读模式目录：只取 h2/h3，按文档顺序编号（与预览 DOM 里的 h2,h3 顺序一致）。 */
+function mdHeadings(text: string) {
+  const out: { text: string; level: number }[] = [];
+  for (const match of String(text || "").matchAll(/^(#{2,3})\s+(.+)$/gm)) {
+    const text2 = match[2].replace(/[*_`~]/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").trim();
+    if (text2) out.push({ text: text2, level: match[1].length });
+  }
+  return out;
+}
+function dreamKindLabel(kind: string) {
+  return kind === "missing-citation" ? "缺少引用" : kind === "stale-draft" ? "草稿放了 7 天" : kind === "duplicate-title" ? "标题重复" : kind;
+}
+function staleReasonLabel(reason?: string) {
+  return reason === "source-updated" ? "引用资料已更新" : reason === "source-deleted" ? "引用资料已删除" : "手动标记过期";
+}
 function confidenceLabel(level?: string) { return level === "high" ? "高" : level === "low" ? "低" : "中"; }
 
 /** 相对时间：列表第二行用，避免一列绝对时间戳比标题还长 */
@@ -46,6 +67,32 @@ function timeAgo(at?: number) {
   return new Date(at).toLocaleDateString([], { month: "numeric", day: "numeric" });
 }
 function escapeRegExp(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+type DiffLine = { type: "add" | "del" | "same"; text: string };
+
+/** 行级 LCS diff：超大文档退化成「全删 + 全加」，避免 O(n*m) 内存爆掉。 */
+function lineDiff(before: string, after: string): DiffLine[] {
+  const A = before.split("\n");
+  const B = after.split("\n");
+  if (A.length * B.length > 400000) {
+    return [...A.map((text) => ({ type: "del" as const, text })), ...B.map((text) => ({ type: "add" as const, text }))];
+  }
+  const dp: Uint32Array[] = Array.from({ length: A.length + 1 }, () => new Uint32Array(B.length + 1));
+  for (let i = A.length - 1; i >= 0; i -= 1) {
+    for (let j = B.length - 1; j >= 0; j -= 1) {
+      dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out: DiffLine[] = [];
+  let i = 0; let j = 0;
+  while (i < A.length && j < B.length) {
+    if (A[i] === B[j]) { out.push({ type: "same", text: A[i] }); i += 1; j += 1; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ type: "del", text: A[i] }); i += 1; }
+    else { out.push({ type: "add", text: B[j] }); j += 1; }
+  }
+  while (i < A.length) { out.push({ type: "del", text: A[i] }); i += 1; }
+  while (j < B.length) { out.push({ type: "add", text: B[j] }); j += 1; }
+  return out;
+}
 function markText(text: string, query: string) {
   const q = String(query || "").trim();
   if (!q) return text;
@@ -93,7 +140,21 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const [linkHover, setLinkHover] = useState<{ title: string; summary: string; status: string; x: number; y: number } | null>(null);
   const [askOpen, setAskOpen] = useState(false);
   const [askQuestion, setAskQuestion] = useState("");
-  const [askResult, setAskResult] = useState<{ found: boolean; answer: string; citations: { id: string; title: string }[] } | null>(null);
+  const [askResult, setAskResult] = useState<{ found: boolean; answer: string; citations: { id: string; title: string; kind?: string }[] } | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyList, setHistoryList] = useState<{ id: string; reason: string; status: string; createdAt: number; size: number }[]>([]);
+  const [historySel, setHistorySel] = useState<string | null>(null);
+  const [historyDiff, setHistoryDiff] = useState<DiffLine[] | null>(null);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [rejectTarget, setRejectTarget] = useState<{ id: string; title: string } | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [dreamOpen, setDreamOpen] = useState(false);
+  const [dreamIssues, setDreamIssues] = useState<{ key: string; kind: string; pageId: string; title: string }[]>([]);
+  const [vaultPrompt, setVaultPrompt] = useState<{ mode: "create" | "rename"; path: string; value: string } | null>(null);
+  const [batch, setBatch] = useState<"pages" | "sources" | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [tocActive, setTocActive] = useState(-1);
+  const previewRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [askLoading, setAskLoading] = useState(false);
   const [docs, setDocs] = useState<Record<string, Doc>>({});
   const [left, setLeft] = useState<Pane>(emptyPane);
@@ -167,6 +228,26 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   }, [enabled, invoke]);
 
   useEffect(() => { void refresh(); void refreshVault(); }, [refresh, refreshVault]);
+
+  // 阅读模式目录：跟随预览滚动高亮（h2/h3 顺序与 mdHeadings 一致）
+  useEffect(() => {
+    if (mode !== "preview" || !activeDoc) { setTocActive(-1); return; }
+    const el = previewRefs.current[focus] || previewRefs.current.left || previewRefs.current.right;
+    if (!el) return;
+    const headings = [...el.querySelectorAll<HTMLElement>("h2,h3")];
+    const onScroll = () => {
+      const edge = el.getBoundingClientRect().top + 28;
+      let index = -1;
+      headings.forEach((heading, i) => { if (heading.getBoundingClientRect().top <= edge) index = i; });
+      setTocActive(index);
+    };
+    onScroll();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [mode, activeDoc?.id, activeDoc?.content, focus, split]);
+
+  // 切 tab 时退出批量选择，避免把上一种类型的选中带到另一个列表
+  useEffect(() => { setBatch(null); setPicked(new Set()); }, [tab]);
 
   const loadPage = useCallback(async (pageId: string) => {
     const existing = docs[pageId];
@@ -284,13 +365,26 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
         }
         setNotice("已写回本地文件");
       } else {
+        const prevTitle = doc.title;
         const res = await invoke("wiki.savePage", { id: pageId, content: doc.content, title: doc.title, summary: doc.summary });
         if (res) setDocs((current) => ({ ...current, [pageId]: { ...res, dirty: false } }));
-        setNotice("已保存 draft");
+        if (res && prevTitle !== res.title) {
+          // 标题改了：后端已同步全库双链，刷新其它打开中的 tab（跳过 dirty，避免覆盖编辑中内容）
+          const ids = [...new Set([...left.tabs, ...right.tabs])].filter((id) => id !== pageId);
+          const fresh = await Promise.all(ids.map(async (id) => { try { return await invoke("wiki.getPage", { id }); } catch { return null; } }));
+          setDocs((current) => {
+            const next = { ...current };
+            for (const item of fresh) if (item && next[item.id] && !next[item.id].dirty) next[item.id] = { ...item, dirty: false };
+            return next;
+          });
+          setNotice(res.renamedLinks ? `标题已改，同步 ${res.renamedLinks} 个页面的双链` : "标题已改，slug 已更新");
+        } else {
+          setNotice("已保存 draft");
+        }
         await refresh();
       }
     } catch (err) { fail(err); } finally { setBusy(false); }
-  }, [docs, invoke, refresh]);
+  }, [docs, invoke, refresh, left.tabs, right.tabs]);
 
   // 停笔约 1s 自动保存；保存失败保留 dirty 并提示，不丢内容
   useEffect(() => {
@@ -505,13 +599,144 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     return `Untitled ${i}`;
   };
 
-  const reviewPage = async (pageId: string, decision: "accept" | "reject") => {
+  const reviewPage = async (pageId: string, decision: "accept" | "reject", feedback = "") => {
     setBusy(true);
     try {
-      const feedback = ""; // 不弹 prompt（Electron 不支持）；退回原因可在页面里写
       const page = await invoke("wiki.review", { id: pageId, decision, feedback });
       if (page) setDocs((current) => ({ ...current, [pageId]: { ...page, dirty: false } }));
       setNotice(decision === "accept" ? "已接受为 reviewed" : "已退回 draft");
+      await refresh();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const submitReject = async () => {
+    if (!rejectTarget) return;
+    await reviewPage(rejectTarget.id, "reject", rejectReason.trim());
+    setRejectTarget(null);
+    setRejectReason("");
+  };
+
+  const clearStale = async (pageId: string) => {
+    setBusy(true);
+    try {
+      const page = await invoke("wiki.clearStale", { id: pageId });
+      if (page) setDocs((current) => ({ ...current, [pageId]: { ...page, dirty: false } }));
+      setNotice("已确认仍有效，恢复原状态");
+      await refresh();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const setConfidence = async (pageId: string, confidence: string) => {
+    setBusy(true);
+    try {
+      const page = await invoke("wiki.setConfidence", { id: pageId, confidence });
+      if (page) setDocs((current) => ({ ...current, [pageId]: { ...page, dirty: false } }));
+      await refresh();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const openHistory = async () => {
+    if (!activeDoc) return;
+    setHistoryOpen(true);
+    setHistoryBusy(true);
+    setHistorySel(null);
+    setHistoryDiff(null);
+    try {
+      const list = await invoke("wiki.revisions", { id: activeDoc.id, limit: 80 });
+      setHistoryList(Array.isArray(list) ? list : []);
+    } catch (err) { fail(err); } finally { setHistoryBusy(false); }
+  };
+
+  const loadRevision = async (revisionId: string) => {
+    if (!activeDoc) return;
+    setHistorySel(revisionId);
+    setHistoryBusy(true);
+    try {
+      const rev = await invoke("wiki.revision", { id: activeDoc.id, revisionId });
+      setHistoryDiff(lineDiff(String(rev?.content || ""), String(activeDoc.content || "")));
+    } catch (err) { fail(err); } finally { setHistoryBusy(false); }
+  };
+
+  const revertTo = async (revisionId: string) => {
+    if (!activeDoc) return;
+    if (!window.confirm("回滚到这个版本？当前内容会作为新版本保留。")) return;
+    setHistoryBusy(true);
+    try {
+      const page = await invoke("wiki.revert", { id: activeDoc.id, revisionId });
+      if (page) setDocs((current) => ({ ...current, [activeDoc.id]: { ...page, dirty: false } }));
+      setHistoryOpen(false);
+      setNotice("已回滚，标记为草稿待重新审核");
+      await refresh();
+    } catch (err) { fail(err); } finally { setHistoryBusy(false); }
+  };
+
+  const submitVaultPrompt = async () => {
+    const draft = vaultPrompt;
+    if (!draft || !draft.value.trim()) return;
+    setBusy(true);
+    try {
+      if (draft.mode === "create") {
+        const file = await invoke("wiki.vault.create", { path: draft.value.trim(), content: "" });
+        setVaultPrompt(null);
+        await refreshVault();
+        if (file?.path) await openVaultFile(file.path);
+        setNotice("已创建本地 Markdown");
+      } else {
+        const file = await invoke("wiki.vault.rename", { path: draft.path, nextPath: draft.value.trim() });
+        setVaultPrompt(null);
+        await refreshVault();
+        if (file?.path && activeDoc?.local && activeDoc.localPath === draft.path) await openVaultFile(file.path);
+        setNotice("已重命名本地文件");
+      }
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const deleteVaultFile = async (file: { path: string; title: string }) => {
+    if (!window.confirm(`删除本地文件「${file.path}」？不会进 Wiki 回收站，无法撤销。`)) return;
+    setBusy(true);
+    try {
+      await invoke("wiki.vault.delete", { path: file.path });
+      const docId = `vault:${file.path}`;
+      setDocs((current) => { const next = { ...current }; delete next[docId]; return next; });
+      const strip = (p: Pane) => ({ tabs: p.tabs.filter((x) => x !== docId), active: p.active === docId ? null : p.active });
+      setLeft(strip); setRight(strip);
+      await refreshVault();
+      setNotice("已删除本地文件");
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const togglePick = (id: string) => {
+    setPicked((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const batchIds = (kind: "pages" | "sources") => (kind === "pages" ? filteredPages : filteredSources).map((item) => item.id);
+
+  const batchDeletePicked = async () => {
+    if (!batch || !picked.size) return;
+    if (!window.confirm(`把选中的 ${picked.size} 个${batch === "pages" ? "页面" : "资料"}移入回收站？`)) return;
+    setBusy(true);
+    try {
+      for (const id of picked) {
+        if (batch === "pages") await invoke("wiki.deletePage", { id });
+        else await invoke("wiki.deleteSource", { id });
+      }
+      setNotice(`已移入回收站 ${picked.size} 项`);
+      setPicked(new Set());
+      await refresh();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const batchAcceptPicked = async () => {
+    if (!picked.size) return;
+    setBusy(true);
+    try {
+      for (const id of picked) await invoke("wiki.review", { id, decision: "accept" });
+      setNotice(`已接受 ${picked.size} 个页面`);
+      setPicked(new Set());
       await refresh();
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
@@ -636,10 +861,19 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
       if (res) {
         const issues = Array.isArray(res.issues) ? res.issues : [];
         setMemory(res.memory || memory);
-        setNotice(issues.length ? `Dream 发现 ${issues.length} 个维护项（见通知/页面）` : "Dream 未发现明显问题");
+        setDreamIssues(issues);
+        setDreamOpen(true);
+        setNotice(issues.length ? `Dream 发现 ${issues.length} 个维护项` : "Dream 未发现明显问题");
         if (issues.length) setSourceDraft(null);
       }
     } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const dismissDreamIssue = async (key: string) => {
+    try {
+      await invoke("wiki.dismissDream", { key });
+      setDreamIssues((current) => current.filter((issue) => issue.key !== key));
+    } catch (err) { fail(err); }
   };
 
   const openGraph = async () => {
@@ -738,6 +972,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                       <i>·</i>
                       {timeAgo(doc.updatedAt)}
                       {doc.dirty && <span className="notes-dirty">未保存</span>}
+                      {doc.reopenReason && <span className="notes-dirty" title="审核后被编辑，需要重新审核">改过 · 待重新审核</span>}
                     </>
                   )}
                 </span>
@@ -754,8 +989,9 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                     </>
                   ) : (
                     <>
-                      {doc.status === "draft" && <button onClick={() => void reviewPage(doc.id, "reject")} disabled={busy}>退回</button>}
+                      {doc.status === "draft" && <button onClick={() => { setRejectTarget({ id: doc.id, title: doc.title }); setRejectReason(""); }} disabled={busy}>退回…</button>}
                       <button onClick={() => void createTask()} disabled={busy}>创建任务</button>
+                      <button onClick={() => void openHistory()}>历史版本…</button>
                       <button onClick={() => void exportPdf()}>导出 PDF</button>
                     </>
                   )}
@@ -764,7 +1000,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
               </div>
             </div>
             {mode === "preview" ? (
-              <div className="notes-preview markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(wikiMarkdown(doc.content)) }} onClick={(e) => {
+              <div className="notes-preview markdown-body" ref={(el) => { previewRefs.current[which] = el; }} dangerouslySetInnerHTML={{ __html: renderMarkdown(wikiMarkdown(doc.content)) }} onClick={(e) => {
                 const anchor = (e.target as HTMLElement).closest("a");
                 const href = anchor?.getAttribute("href") || "";
                 if (!href) return;
@@ -922,10 +1158,12 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     if (!askResult?.found) return;
     try {
       const title = askQuestion.trim().slice(0, 60) || "知识库问答";
+      const sourceIds = askResult.citations.filter((c) => c.kind === "source").map((c) => c.id);
       const page = await invoke("wiki.upsertDraft", {
         title,
         content: `# ${title}\n\n${askResult.answer}\n`,
         summary: `来自问答：${askQuestion.trim()}`,
+        sourceIds,
       });
       if (page) {
         setAskOpen(false);
@@ -974,21 +1212,27 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     try { setTagPages((await invoke("wiki.byTag", { tag: key })) || []); } catch { setTagPages([]); }
   };
 
-  const pageRow = (p: PageSummary) => (
-    <div key={p.id} className={`notes-row ${activeDoc?.id === p.id ? "on" : ""}`}>
-      <button className={`notes-file ${activeDoc?.id === p.id ? "on" : ""}`} onClick={() => void openPage(p.id)} title={p.title}>
-        <span className={`notes-status-dot ${p.status}`} />
-        <span className="notes-file-main">
-          <span className="ellipsis">{p.title}</span>
-          <span className="notes-file-sub">{statusLabel(p.status)} · {timeAgo(p.updatedAt)}</span>
-        </span>
-      </button>
-      <span className="notes-row-actions">
-        <button className="link tiny" title={pins.includes(p.id) ? "取消收藏" : "收藏 / 置顶"} onClick={(e) => { e.stopPropagation(); void pinPage(p.id); }}>{pins.includes(p.id) ? "★" : "☆"}</button>
-        <button className="link tiny" title="删除页面" onClick={(e) => { e.stopPropagation(); void deletePage({ id: p.id, title: p.title }); }}>删除</button>
-      </span>
-    </div>
-  );
+  const pageRow = (p: PageSummary) => {
+    const picking = batch === "pages";
+    const on = picked.has(p.id);
+    return (
+      <div key={p.id} className={`notes-row ${activeDoc?.id === p.id ? "on" : ""} ${on ? "picked" : ""}`}>
+        <button className={`notes-file ${activeDoc?.id === p.id ? "on" : ""}`} onClick={() => (picking ? togglePick(p.id) : void openPage(p.id))} title={p.title}>
+          {picking ? <span className={`notes-pick ${on ? "on" : ""}`} aria-hidden /> : <span className={`notes-status-dot ${p.status}`} />}
+          <span className="notes-file-main">
+            <span className="ellipsis">{p.title}</span>
+            <span className="notes-file-sub">{statusLabel(p.status)} · {timeAgo(p.updatedAt)}</span>
+          </span>
+        </button>
+        {!picking && (
+          <span className="notes-row-actions">
+            <button className="link tiny" title={pins.includes(p.id) ? "取消收藏" : "收藏 / 置顶"} onClick={(e) => { e.stopPropagation(); void pinPage(p.id); }}>{pins.includes(p.id) ? "★" : "☆"}</button>
+            <button className="link tiny" title="删除页面" onClick={(e) => { e.stopPropagation(); void deletePage({ id: p.id, title: p.title }); }}>删除</button>
+          </span>
+        )}
+      </div>
+    );
+  };
 
   const timeCutoff = searchTime === "7d" ? Date.now() - 7 * 86400e3 : searchTime === "30d" ? Date.now() - 30 * 86400e3 : 0;
   const filteredHits = searchHits.filter((hit) => (searchKind === "all" || hit.kind === searchKind)
@@ -1028,10 +1272,113 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                   const target = pages.find((p) => p.title === title || p.slug === title || p.id === title);
                   if (target) { setAskOpen(false); void openPage(target.id); }
                 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(wikiMarkdown(askResult.answer)) }} />
-                {askResult.citations.length > 0 && <div className="wiki-ask-cites">{askResult.citations.map((c) => <button key={c.id} onClick={() => { setAskOpen(false); void openPage(c.id); }}>{c.title}</button>)}</div>}
+                {askResult.citations.length > 0 && <div className="wiki-ask-cites">{askResult.citations.map((c) => <button key={`${c.kind || "page"}-${c.id}`} onClick={() => { setAskOpen(false); if (c.kind === "source") void openSource(c.id); else void openPage(c.id); }} title={c.kind === "source" ? "打开资料" : "打开页面"}>{c.kind === "source" ? `资料 · ${c.title}` : c.title}</button>)}</div>}
                 {askResult.found && <button className="btn tiny-btn" onClick={() => void saveAnswer()}>存为知识库草稿</button>}
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {historyOpen && activeDoc && (
+        <div className="modal-mask" role="dialog" aria-modal="true" aria-label="历史版本">
+          <div className="modal wiki-history">
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ margin: 0 }}>历史版本 · {activeDoc.title}</h3>
+              <button className="icon-btn" onClick={() => setHistoryOpen(false)} aria-label="关闭">×</button>
+            </div>
+            <div className="wiki-history-body">
+              <div className="wiki-history-list">
+                {historyBusy && historyList.length === 0 && <div className="wiki-history-empty">读取中…</div>}
+                {!historyBusy && historyList.length === 0 && <div className="wiki-history-empty">还没有历史版本</div>}
+                {historyList.map((rev) => (
+                  <button key={rev.id} className={`wiki-history-item ${historySel === rev.id ? "on" : ""}`} onClick={() => void loadRevision(rev.id)}>
+                    <span>{rev.reason || "edit"} · {statusLabel(rev.status)}</span>
+                    <em>{timeAgo(rev.createdAt)} · {rev.size} 字</em>
+                  </button>
+                ))}
+              </div>
+              <div className="wiki-history-diff">
+                {!historySel && <div className="wiki-history-empty">选一个版本对比当前内容</div>}
+                {historySel && historyBusy && <div className="wiki-history-empty">对比中…</div>}
+                {historySel && !historyBusy && historyDiff && historyDiff.map((line, index) => (
+                  <span key={index} className={`wiki-diff-line ${line.type}`}>{line.type === "add" ? "+ " : line.type === "del" ? "- " : "  "}{line.text || " "}</span>
+                ))}
+              </div>
+            </div>
+            <div className="wiki-history-foot">
+              <span className="tiny muted">回滚会生成新版本，不会删除历史；回滚后页面回到草稿待重新审核。</span>
+              <button className="btn tiny-btn" disabled={!historySel || historyBusy} onClick={() => historySel && void revertTo(historySel)}>回滚到此版本</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {rejectTarget && (
+        <div className="modal-mask" role="dialog" aria-modal="true" aria-label="退回页面">
+          <div className="modal wiki-reject">
+            <h3>退回「{rejectTarget.title}」</h3>
+            <p className="tiny muted">退回后页面保持草稿；原因会记录在页面上，方便下次修改。</p>
+            <textarea
+              autoFocus
+              rows={4}
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="哪里需要改？（可留空）"
+              onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setRejectTarget(null); } }}
+            />
+            <div className="row gap6" style={{ justifyContent: "flex-end" }}>
+              <button className="btn tiny-btn" onClick={() => setRejectTarget(null)}>取消</button>
+              <button className="btn tiny-btn primary" onClick={() => void submitReject()} disabled={busy}>确认退回</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {dreamOpen && (
+        <div className="modal-mask" role="dialog" aria-modal="true" aria-label="Wiki 维护项">
+          <div className="modal wiki-dream">
+            <h3>维护项 · Dream</h3>
+            <p className="tiny muted">只做确定性检查（缺引用 / 久放草稿 / 标题重复），不会自动改页面；忽略后不再提示。</p>
+            {dreamIssues.length === 0
+              ? <div className="wiki-dream-empty">没有待处理项。</div>
+              : (
+                <div className="wiki-dream-list">
+                  {dreamIssues.map((issue) => (
+                    <div className="wiki-dream-row" key={issue.key}>
+                      <div className="wiki-dream-main">
+                        <b>{issue.title}</b>
+                        <em>{dreamKindLabel(issue.kind)}</em>
+                      </div>
+                      <button className="link tiny" onClick={() => { setDreamOpen(false); void openPage(issue.pageId); }}>打开</button>
+                      <button className="link tiny" onClick={() => void dismissDreamIssue(issue.key)}>忽略</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            <div className="row gap6" style={{ justifyContent: "flex-end" }}>
+              <button className="btn tiny-btn" onClick={() => setDreamOpen(false)}>关闭</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {vaultPrompt && (
+        <div className="modal-mask" role="dialog" aria-modal="true" aria-label={vaultPrompt.mode === "create" ? "新建 Markdown" : "重命名 Markdown"}>
+          <div className="modal wiki-vault-prompt">
+            <h3>{vaultPrompt.mode === "create" ? "新建 Markdown" : "重命名 Markdown"}</h3>
+            <input
+              autoFocus
+              className="notes-source-title"
+              value={vaultPrompt.value}
+              placeholder="文件名，可含子目录（如 notes/foo）"
+              onChange={(e) => setVaultPrompt({ ...vaultPrompt, value: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); void submitVaultPrompt(); }
+                if (e.key === "Escape") { e.preventDefault(); setVaultPrompt(null); }
+              }}
+            />
+            <p className="tiny muted">保存为 `.md`；重命名会移动文件，Wiki 里的资料记录不受影响。</p>
+            <div className="row gap6" style={{ justifyContent: "flex-end" }}>
+              <button className="btn tiny-btn" onClick={() => setVaultPrompt(null)}>取消</button>
+              <button className="btn tiny-btn primary" onClick={() => void submitVaultPrompt()} disabled={busy || !vaultPrompt.value.trim()}>{vaultPrompt.mode === "create" ? "创建" : "重命名"}</button>
+            </div>
           </div>
         </div>
       )}
@@ -1160,6 +1507,22 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
             </div>
           )}
           {filteredHits.length > 0 && <div className="notes-search-results">{filteredHits.slice(0, 12).map((hit) => <button key={hit.kind + hit.id} onClick={() => void openHit(hit)}><b>{markText(hit.title, query)}</b><span>{hit.kind}</span><em>{markText(hit.snippet, query)}</em></button>)}</div>}
+          {(tab === "pages" || tab === "sources") && (
+            <div className="notes-batch-bar">
+              {batch === tab ? (
+                <>
+                  <span className="notes-batch-count">{picked.size} 已选</span>
+                  <button className="link tiny" onClick={() => setPicked(new Set(batchIds(tab)))}>全选</button>
+                  <button className="link tiny" onClick={() => setPicked(new Set())}>清除</button>
+                  {tab === "pages" && <button className="link tiny" onClick={() => void batchAcceptPicked()} disabled={!picked.size || busy}>批量接受</button>}
+                  <button className="link tiny" onClick={() => void batchDeletePicked()} disabled={!picked.size || busy}>批量删除</button>
+                  <button className="link tiny" onClick={() => { setBatch(null); setPicked(new Set()); }}>退出</button>
+                </>
+              ) : (
+                <button className="link tiny" onClick={() => { setBatch(tab); setPicked(new Set()); }}>批量选择</button>
+              )}
+            </div>
+          )}
           <div className="notes-tree">
             {tab === "pages" && !tagFilter && pinnedPages.length > 0 && (
               <>
@@ -1181,18 +1544,24 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
               </>
             )}
             {tab === "pages" && !tagFilter && restPages.map(pageRow)}
-            {tab === "sources" && filteredSources.map((s) => (
-              <div key={s.id} className="notes-row">
-                <button className="notes-file" onClick={() => void openSource(s.id)}>
-                  <FileTextIcon size={12} className="notes-source-icon" />
-                  <span className="ellipsis">{s.title}</span>
-                  <em title="被引用次数">{s.citations || 0}</em>
-                </button>
-                <span className="notes-row-actions">
-                  <button className="link tiny" title="删除资料" onClick={(e) => { e.stopPropagation(); void deleteSource({ id: s.id, title: s.title }); }}>删除</button>
-                </span>
-              </div>
-            ))}
+            {tab === "sources" && filteredSources.map((s) => {
+              const picking = batch === "sources";
+              const on = picked.has(s.id);
+              return (
+                <div key={s.id} className={`notes-row ${on ? "picked" : ""}`}>
+                  <button className="notes-file" onClick={() => (picking ? togglePick(s.id) : void openSource(s.id))}>
+                    {picking ? <span className={`notes-pick ${on ? "on" : ""}`} aria-hidden /> : <FileTextIcon size={12} className="notes-source-icon" />}
+                    <span className="ellipsis">{s.title}</span>
+                    <em title="被引用次数">{s.citations || 0}</em>
+                  </button>
+                  {!picking && (
+                    <span className="notes-row-actions">
+                      <button className="link tiny" title="删除资料" onClick={(e) => { e.stopPropagation(); void deleteSource({ id: s.id, title: s.title }); }}>删除</button>
+                    </span>
+                  )}
+                </div>
+              );
+            })}
             {tab === "review" && reviews.map((p) => (
               <div key={p.id} className="notes-row">
                 <button className="notes-file" onClick={() => void openPage(p.id)}>
@@ -1202,18 +1571,29 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 </button>
                 <span className="notes-row-actions">
                   <button className="link tiny" title="接受" onClick={(e) => { e.stopPropagation(); void reviewPage(p.id, "accept"); }}>接受</button>
-                  <button className="link tiny" title="退回" onClick={(e) => { e.stopPropagation(); void reviewPage(p.id, "reject"); }}>退回</button>
+                  <button className="link tiny" title="退回" onClick={(e) => { e.stopPropagation(); setRejectTarget({ id: p.id, title: p.title }); setRejectReason(""); }}>退回…</button>
                 </span>
               </div>
             ))}
             {tab === "vault" && vault.path && (
               <>
-                <div className="notes-sidebar-head"><span className="ellipsis" title={vault.path}>{vault.path.split(/[\\/]/).pop() || vault.path}</span><span><button onClick={() => void refreshVault()}>刷新</button><button onClick={() => void pickLocalFolder()}>更换</button></span></div>
+                <div className="notes-sidebar-head"><span className="ellipsis" title={vault.path}>{vault.path.split(/[\\/]/).pop() || vault.path}</span><span><button onClick={() => setVaultPrompt({ mode: "create", path: "", value: "" })}>新建</button><button onClick={() => void refreshVault()}>刷新</button><button onClick={() => void pickLocalFolder()}>更换</button></span></div>
                 {vault.error && <div className="notes-empty-list">{vault.error}</div>}
                 {vaultGroups.map(([folder, files]) => (
                   <div key={folder || "__root"} className="notes-vault-group">
                     <div className="notes-folder-label">{folder || "根目录"} <em>{files.length}</em></div>
-                    {files.map((f) => <button key={f.path} className={`notes-file ${activeDoc?.local && activeDoc.localPath === f.path ? "on" : ""}`} title={f.path} onClick={() => void openVaultFile(f.path)}><FileTextIcon size={12} className="notes-source-icon" /><span className="ellipsis">{f.title}</span></button>)}
+                    {files.map((f) => (
+                      <div key={f.path} className="notes-vault-row">
+                        <button className={`notes-file ${activeDoc?.local && activeDoc.localPath === f.path ? "on" : ""}`} title={f.path} onClick={() => void openVaultFile(f.path)}>
+                          <FileTextIcon size={12} className="notes-source-icon" />
+                          <span className="ellipsis">{f.title}</span>
+                        </button>
+                        <span className="notes-row-actions">
+                          <button className="link tiny" title="重命名" onClick={(e) => { e.stopPropagation(); setVaultPrompt({ mode: "rename", path: f.path, value: f.path.replace(/\.md$/i, "") }); }}>改名</button>
+                          <button className="link tiny" title="删除本地文件" onClick={(e) => { e.stopPropagation(); void deleteVaultFile(f); }}>删除</button>
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 ))}
                 {filteredVaultFiles.length === 0 && !vault.error && <div className="notes-empty-list">{query ? "没有匹配的本地文件。" : "目录里还没有 Markdown 文件。"}</div>}
@@ -1322,12 +1702,51 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                   <span>更新</span><b>{timeAgo(activeDoc.updatedAt)}</b>
                 </div>
               </div>
+              {mode === "preview" && (() => {
+                const heads = mdHeadings(activeDoc.content);
+                if (!heads.length) return null;
+                return (
+                  <div className="notes-meta-block notes-toc">
+                    <div className="notes-meta-title">本页目录 <em>{heads.length}</em></div>
+                    {heads.map((heading, index) => (
+                      <button
+                        key={`${heading.level}-${index}`}
+                        className={`notes-toc-link level-${heading.level} ${tocActive === index ? "on" : ""}`}
+                        title={heading.text}
+                        onClick={() => {
+                          const el = previewRefs.current[focus] || previewRefs.current.left || previewRefs.current.right;
+                          el?.querySelectorAll<HTMLElement>("h2,h3")[index]?.scrollIntoView({ block: "start", behavior: "smooth" });
+                        }}
+                      >{heading.text}</button>
+                    ))}
+                  </div>
+                );
+              })()}
               <div className="notes-meta-block">
                 <div className="notes-meta-title">状态</div>
                 <div className="notes-meta-row">
                   <span className={`notes-review-badge ${activeDoc.status}`}>{statusLabel(activeDoc.status)}</span>
-                  <span className="notes-meta-hint">置信度 {confidenceLabel(activeDoc.confidence)}</span>
+                  <label className="notes-confidence" title="置信度（人工设置）">
+                    <span>置信度</span>
+                    <select value={activeDoc.confidence} onChange={(e) => void setConfidence(activeDoc.id, e.target.value)} disabled={busy}>
+                      <option value="low">低</option>
+                      <option value="medium">中</option>
+                      <option value="high">高</option>
+                    </select>
+                  </label>
                 </div>
+                {activeDoc.lastReview?.feedback && (
+                  <div className="notes-review-feedback" title={`${timeAgo(activeDoc.lastReview.createdAt)} 退回`}>
+                    <em>退回原因</em>
+                    <p>{activeDoc.lastReview.feedback}</p>
+                  </div>
+                )}
+                {activeDoc.status === "stale" && (
+                  <div className="notes-stale-note">
+                    <p>{staleReasonLabel(activeDoc.staleReason)}{activeDoc.staleAt ? ` · ${timeAgo(activeDoc.staleAt)}` : ""}</p>
+                    <button className="btn tiny-btn" onClick={() => void clearStale(activeDoc.id)} disabled={busy}>确认仍有效</button>
+                  </div>
+                )}
               </div>
               <div className="notes-meta-block">
                 <div className="notes-meta-title">引用来源 <em>{activeDoc.citations.length}</em></div>
