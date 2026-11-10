@@ -49,7 +49,8 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   const agentHost = agent ? state.hosts.find((h) => h.id === agent.hostId) ?? null : null;
   const localHost = state.hosts.find((h) => h.kind === "local") ?? null;
   const hostOffline = Boolean(agent && agentHost && agentHost.status === "offline");
-  const msgs = useMemo(() => (thread ? state.messages.filter((m) => m.threadId === thread.id) : []), [state.messages, thread]);
+  // 被「编辑后重发」取代的消息不再展示：新回答紧跟在编辑后的提问下面
+  const msgs = useMemo(() => (thread ? state.messages.filter((m) => m.threadId === thread.id && !m.supersededBy) : []), [state.messages, thread]);
   const lastAgentId = useMemo(() => [...msgs].reverse().find((m) => m.role === "agent")?.id ?? null, [msgs]);
   const userInputHistory = useMemo(() => msgs.filter((m) => m.role === "user").map((m) => m.content), [msgs]);
   // 运行中的「正在处理」需要细节：第几步、刚做了什么、跑了多久

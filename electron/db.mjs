@@ -91,6 +91,8 @@ export async function openDb(dir) {
     "ALTER TABLE threads ADD COLUMN effort TEXT",
     "ALTER TABLE messages ADD COLUMN delivery TEXT",
     "ALTER TABLE messages ADD COLUMN context TEXT",
+    // 编辑消息后重发：被新版本取代的后续消息打标记（软删除，可追溯）
+    "ALTER TABLE messages ADD COLUMN superseded_by TEXT",
     // 主机：能力矩阵 / 探测时间 / 负载上限 / 默认远端目录（见 docs/ARCH-hosts-stats.md）
     "ALTER TABLE hosts ADD COLUMN caps TEXT",
     "ALTER TABLE hosts ADD COLUMN last_probe INTEGER",
@@ -187,6 +189,7 @@ export async function openDb(dir) {
     id: r.id, threadId: r.thread_id || null, todoId: r.todo_id || null, runId: r.run_id || null,
     role: r.role, kind: r.kind, content: r.content, injected: !!r.injected,
     delivery: r.delivery || undefined, context: J(r.context, null), createdAt: r.created_at,
+    supersededBy: r.superseded_by || null,
   }));
   state.artifacts = rows("SELECT * FROM artifacts").map((r) => ({ id: r.id, todoId: r.todo_id, runId: r.run_id, kind: r.kind, title: r.title, origin: r.origin, ref: r.ref, deepLink: r.deep_link, createdAt: r.created_at }));
   state.events = rows("SELECT * FROM events").map((r) => ({ id: r.id, ts: r.ts, type: r.type, text: r.text }));
@@ -284,7 +287,7 @@ export async function openDb(dir) {
         r.kind || "worker", r.delegationId || null, r.terminalId || null, r.runtime || null, r.worktreeCleaned ? 1 : 0],
     );
     for (const t of state.threads) db.run("INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.todoId || null, t.title || "", t.projectId || null, t.project || "", t.agentId || null, t.createdAt || Date.now(), t.updatedAt || Date.now(), t.model || null, t.modelName || null, t.effort || null, t.kind || "chat"]);
-    for (const m of state.messages) db.run("INSERT INTO messages VALUES (?,?,?,?,?,?,?,?,?,?,?)", [m.id, m.todoId || null, m.runId || null, m.role, m.kind || "text", m.content, m.injected ? 1 : 0, m.createdAt, m.threadId || null, m.delivery || null, m.context ? JSON.stringify(m.context) : null]);
+    for (const m of state.messages) db.run("INSERT INTO messages VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [m.id, m.todoId || null, m.runId || null, m.role, m.kind || "text", m.content, m.injected ? 1 : 0, m.createdAt, m.threadId || null, m.delivery || null, m.context ? JSON.stringify(m.context) : null, m.supersededBy || null]);
     for (const a of state.artifacts) db.run("INSERT INTO artifacts VALUES (?,?,?,?,?,?,?,?,?)", [a.id, a.todoId, a.runId, a.kind, a.title, a.origin, a.ref, a.deepLink, a.createdAt || Date.now()]);
     for (const e of state.events) db.run("INSERT INTO events VALUES (?,?,?,?)", [e.id, e.ts, e.type, e.text]);
     for (const i of state.inbox) db.run("INSERT INTO inbox VALUES (?,?,?,?,?,?,?)", [i.id, i.todoId, i.kind, i.title, i.at, i.read ? 1 : 0, i.pinned ? 1 : 0]);
