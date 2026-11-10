@@ -26,6 +26,7 @@ let data = {
   backlinks: {},
   layout: null,
   vaultPath: "",
+  dreamDismissed: [],
 };
 
 function now() { return Date.now(); }
@@ -194,6 +195,7 @@ function hydrate(raw) {
     pins: Array.isArray(raw.pins) ? raw.pins : [],
     recents: Array.isArray(raw.recents) ? raw.recents : [],
     backlinks: raw.backlinks && typeof raw.backlinks === "object" ? raw.backlinks : {},
+    dreamDismissed: Array.isArray(raw.dreamDismissed) ? raw.dreamDismissed : [],
     revisions: [],
   };
   data.pages = (data.pages || []).map(attachPage);
@@ -376,6 +378,7 @@ async function persist() {
     backlinks: data.backlinks || {},
     layout: data.layout,
     vaultPath: data.vaultPath,
+    dreamDismissed: data.dreamDismissed || [],
     searchDirty,
   };
   const tmpIndex = `${indexPath()}.tmp`;
@@ -420,11 +423,13 @@ function unlinkedMentionsOf(page) {
 
 function pageView(page, includeContent = true) {
   if (!page) return null;
+  const lastReview = data.reviews.find((r) => r.pageId === page.id);
   return {
     ...clone(page),
     content: includeContent ? page.content : undefined,
     citations: citationsOf(page.id),
     backlinks: backlinksOf(page),
+    lastReview: lastReview ? { status: lastReview.status, feedback: lastReview.feedback || "", createdAt: lastReview.createdAt } : null,
   };
 }
 
@@ -880,6 +885,18 @@ export async function activate(context) {
     await persist();
     return pageView(page);
   });
+  ctx.api.handle("wiki.reviews", async ({ id: pageId, limit = 50 } = {}) => {
+    const list = pageId ? data.reviews.filter((r) => r.pageId === pageId) : data.reviews;
+    return list.slice(0, Math.max(1, Number(limit) || 50));
+  });
+  ctx.api.handle("wiki.dismissDream", async ({ key } = {}) => {
+    const k = String(key || "").trim();
+    if (!k) throw new Error("缺少维护项 key");
+    data.dreamDismissed = [...new Set([k, ...(data.dreamDismissed || [])])].slice(0, 500);
+    addLog("dream.dismiss", k);
+    await persist();
+    return data.dreamDismissed;
+  });
   ctx.api.handle("wiki.deletePage", async ({ id: pageId } = {}) => {
     const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
     if (!page) throw new Error("page not found");
@@ -1271,16 +1288,17 @@ export async function activate(context) {
     // Deterministic first pass: surface maintenance work without mutating reviewed pages.
     const issues = [];
     for (const page of data.pages) {
-      if (!citationsOf(page.id).length) issues.push({ kind: "missing-citation", pageId: page.id, title: page.title });
-      if (page.status === "draft" && page.updatedAt < now() - 7 * 24 * 3600 * 1000) issues.push({ kind: "stale-draft", pageId: page.id, title: page.title });
+      if (!citationsOf(page.id).length) issues.push({ kind: "missing-citation", key: `missing-citation:${page.id}`, pageId: page.id, title: page.title });
+      if (page.status === "draft" && page.updatedAt < now() - 7 * 24 * 3600 * 1000) issues.push({ kind: "stale-draft", key: `stale-draft:${page.id}`, pageId: page.id, title: page.title });
     }
     const seen = new Map();
     for (const page of data.pages) {
-      const key = page.title.toLowerCase();
-      if (seen.has(key)) issues.push({ kind: "duplicate-title", pageId: page.id, title: page.title });
-      else seen.set(key, page.id);
+      const title = page.title.toLowerCase();
+      if (seen.has(title)) issues.push({ kind: "duplicate-title", key: `duplicate-title:${page.id}`, pageId: page.id, title: page.title });
+      else seen.set(title, page.id);
     }
-    return { issues, memory: memoryMarkdown() };
+    const dismissed = new Set(data.dreamDismissed || []);
+    return { issues: issues.filter((issue) => !dismissed.has(issue.key)), memory: memoryMarkdown() };
   });
   /**
    * 生成 Wiki 草稿骨架：每份还没有页面的 source 生成一个 draft，并建立 citation。

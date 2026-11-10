@@ -233,6 +233,24 @@ r = await run(`
 check("历史版本可列出且能读内容", r.count >= 4 && r.hasContent === true, JSON.stringify({ count: r.count, hasContent: r.hasContent }));
 check("回滚恢复旧内容并生成新版本", r.afterHasA === true && r.count2 === r.count + 1 && r.status === "draft", JSON.stringify({ hasA: r.afterHasA, count2: r.count2, count: r.count, status: r.status }));
 
+// ── 审核反馈 + Dream 维护项 ─────────────────
+r = await run(`
+  const call = async (method, args) => { try { return { ok: true, value: (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method, args })).result }; } catch (e) { return { ok: false, error: String(e?.message || e) }; } };
+  const page = (await call("wiki.createPage", { title: "reject-feedback" })).value;
+  await call("wiki.savePage", { id: page.id, content: "# reject-feedback\\n\\n待审内容\\n" });
+  await call("wiki.review", { id: page.id, decision: "reject", feedback: "缺少出处，补 2 条引用" });
+  const after = (await call("wiki.getPage", { id: page.id })).value;
+  const reviews = (await call("wiki.reviews", { id: page.id })).value || [];
+  const dream = (await call("wiki.dream")).value;
+  const issue = (dream.issues || []).find((x) => x.pageId === page.id && x.kind === "missing-citation");
+  await call("wiki.dismissDream", { key: issue?.key });
+  const dream2 = (await call("wiki.dream")).value;
+  const stillThere = (dream2.issues || []).some((x) => x.key === issue?.key);
+  return { status: after.status, feedback: after.lastReview?.feedback, reviewCount: reviews.length, hasIssue: Boolean(issue), dismissed: !stillThere };
+`);
+check("退回原因保存并在页面可见", r.status === "draft" && r.feedback === "缺少出处，补 2 条引用" && r.reviewCount >= 1, JSON.stringify(r));
+check("Dream 维护项可列出 / 忽略后不再出现", r.hasIssue === true && r.dismissed === true, JSON.stringify({ hasIssue: r.hasIssue, dismissed: r.dismissed }));
+
 ws.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");
 process.exit(fails ? 1 : 0);
