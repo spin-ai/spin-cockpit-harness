@@ -269,6 +269,14 @@ export const TESTS = [
       await ctx.sleep(350);
       const s2 = await ctx.state();
       assert(s2.activeProjectId === project.id, "项目未切换");
+      await gotoRail(ctx, "项目", ".project-grid");
+      const cards = await ctx.ev(`document.querySelectorAll(".project-grid .project-card").length`);
+      assert(cards >= 1, "项目卡片未渲染");
+      await ctx.ev(`(()=>{const i=document.querySelector(".project-search"); if(i) window.__e2e.setValue(i,"E2E Alpha"); return true;})()`);
+      await ctx.sleep(250);
+      const filtered = await ctx.ev(`[...document.querySelectorAll(".project-grid .project-card")].map((c)=>c.textContent)`);
+      assert(filtered.length === 1 && filtered[0].includes("E2E Alpha"), `项目搜索未过滤: ${filtered.length}`);
+      await ctx.ev(`(()=>{const i=document.querySelector(".project-search"); if(i) window.__e2e.setValue(i,""); return true;})()`);
       await openWorkspace(ctx);
     },
   },
