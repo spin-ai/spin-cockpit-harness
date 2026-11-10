@@ -1198,7 +1198,7 @@ function startWikiMcpServer() {
       else if (name === "wiki_list_sources") result = (await pluginHost.invoke("ai.cockpit.notes", "wiki.sources", {})).map((s) => ({ id: s.id, title: s.title, kind: s.kind, uri: s.uri }));
       else if (name === "wiki_read_source") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.source", { id: args.id });
       else if (name === "wiki_read_page") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: args.id });
-      else if (name === "wiki_upsert_draft") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.upsertDraft", { title: args.title, content: args.content, summary: args.summary, sourceIds: args.source_ids || [] });
+      else if (name === "wiki_upsert_draft") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.upsertDraft", { title: args.title, content: args.content, summary: args.summary, sourceIds: args.source_ids || [], agent: true });
       else if (name === "wiki_add_citation") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.addCitation", { pageId: args.page, sourceId: args.source, quote: args.quote, locator: args.locator });
       else throw new Error(`unknown wiki tool: ${name}`);
       return send(200, { ok: true, result });

@@ -110,6 +110,13 @@ wiki.importUrl
 wiki.sources
 wiki.source
 wiki.addCitation
+wiki.markStale
+wiki.clearStale
+wiki.revisions
+wiki.revision
+wiki.revert
+wiki.reviews
+wiki.dismissDream
 wiki.reviewQueue
 wiki.search
 wiki.graph
@@ -141,11 +148,12 @@ wiki_upsert_draft
 wiki_add_citation
 ```
 
-约束：
+约束（代码强制）：
 
 - 只能写 draft；
-- 不能删除/覆盖 reviewed 页面；
-- 写入必须带 source_ids 或后续补 citation；
+- **不能覆盖 reviewed 页面**：`wiki_upsert_draft` 命中 reviewed 会直接报错，必须由人工先退回 draft；
+- **写入必须带至少 1 个有效 source_ids**：空数组或无效 id 都会报错（先 `wiki_list_sources`）；
+- 人工编辑 reviewed 页面会回到 draft，并写 `reopenReason=edited-after-review`（UI 显示「改过 · 待重新审核」）；
 - 所有写入追加 log/revision；
 - 读 source 内容视为不可信数据。
 
@@ -179,7 +187,7 @@ wiki.dream
   → 生成新的 Memory 索引
 ```
 
-它只产出维护项，不自动修改 reviewed 页面。
+它只产出维护项，不自动修改 reviewed 页面。UI 在 Memory 面板点 Dream 打开「维护项」列表：缺引用 / 久放草稿 / 标题重复，可跳到页面处理或「忽略」（忽略记录在 `dreamDismissed`，不再重复提示）。
 
 LLM Dreaming（后续）：
 
@@ -238,12 +246,13 @@ Source 不变；page 是派生知识。本地文件是用户资产，不会被 A
 
 ### 4.4 Stale
 
-Source hash 变化后（P1）：
+已实现：source hash 变化 / source 被删除时，自动找到引用它的页面并标记 `stale`：
 
-- 找到引用该 source 的 page；
-- 标记 stale；
-- 生成新 draft + diff；
-- 人工决定是否替换。
+- `importSource` 命中同一 uri/hash 且内容变化 → 引用页面 `stale`，`staleReason=source-updated`
+- `deleteSource` → 引用页面 `stale`，`staleReason=source-deleted`
+- 页面保留原正文，只改状态；`clearStale`（「确认仍有效」）恢复到过期前的状态（通常 reviewed）
+- 也可 `markStale` 手动标记；每次状态变化都写 revision + log
+- 「生成新 draft + diff」仍走 #10（revision 历史）
 
 ---
 
@@ -329,8 +338,6 @@ plugins/notes/main.mjs
 
 未实现：
 
-- source hash stale 自动检测
-- revision diff UI
 - PDF / 网页正文抽取打磨
 - 语义搜索 / embedding
 - Query Chat 的 citation 校验
@@ -353,8 +360,8 @@ plugins/notes/main.mjs
 
 ### P1
 
-- source hash / stale
-- revision diff
+- source hash / stale（已完成）
+- revision diff（已完成）
 - citation 检查
 - Review queue 体验
 - 图谱过滤
