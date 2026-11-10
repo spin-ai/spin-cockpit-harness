@@ -102,7 +102,13 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask }
       <PageHeader
         title="项目"
         subtitle={`${state.projects.length} 个项目 · 本地目录即项目；任务、终端和文件树跟随当前项目`}
-        actions={<button className="btn primary" onClick={onAdd}>＋ 添加项目</button>}
+        actions={<div className="row gap8">
+          <div className="view-switch" role="group" aria-label="项目视图">
+            <button className={layout === "cards" ? "on" : ""} onClick={() => setLayout("cards")} title="卡片视图">▦ 卡片</button>
+            <button className={layout === "list" ? "on" : ""} onClick={() => setLayout("list")} title="列表视图">☰ 列表</button>
+          </div>
+          <button className="btn primary" onClick={onAdd}>＋ 添加项目</button>
+        </div>}
       />
 
       <div className="project-overview">
@@ -132,10 +138,6 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask }
               <option value="running">运行中优先</option>
               <option value="status">状态</option>
             </select>
-            <div className="view-switch" role="group" aria-label="项目视图">
-              <button className={layout === "cards" ? "on" : ""} onClick={() => setLayout("cards")} title="卡片视图">▦ 卡片</button>
-              <button className={layout === "list" ? "on" : ""} onClick={() => setLayout("list")} title="列表视图">☰ 列表</button>
-            </div>
             <input
               className="project-search"
               value={query}
