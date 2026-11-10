@@ -26,6 +26,7 @@ let data = {
   backlinks: {},
   layout: null,
   vaultPath: "",
+  dreamDismissed: [],
 };
 
 function now() { return Date.now(); }
@@ -194,6 +195,7 @@ function hydrate(raw) {
     pins: Array.isArray(raw.pins) ? raw.pins : [],
     recents: Array.isArray(raw.recents) ? raw.recents : [],
     backlinks: raw.backlinks && typeof raw.backlinks === "object" ? raw.backlinks : {},
+    dreamDismissed: Array.isArray(raw.dreamDismissed) ? raw.dreamDismissed : [],
     revisions: [],
   };
   data.pages = (data.pages || []).map(attachPage);
@@ -376,6 +378,7 @@ async function persist() {
     backlinks: data.backlinks || {},
     layout: data.layout,
     vaultPath: data.vaultPath,
+    dreamDismissed: data.dreamDismissed || [],
     searchDirty,
   };
   const tmpIndex = `${indexPath()}.tmp`;
@@ -420,11 +423,13 @@ function unlinkedMentionsOf(page) {
 
 function pageView(page, includeContent = true) {
   if (!page) return null;
+  const lastReview = data.reviews.find((r) => r.pageId === page.id);
   return {
     ...clone(page),
     content: includeContent ? page.content : undefined,
     citations: citationsOf(page.id),
     backlinks: backlinksOf(page),
+    lastReview: lastReview ? { status: lastReview.status, feedback: lastReview.feedback || "", createdAt: lastReview.createdAt } : null,
   };
 }
 
@@ -432,12 +437,104 @@ function pageSummary(page) {
   return { id: page.id, slug: page.slug, title: page.title, summary: page.summary || "", status: page.status, confidence: page.confidence || "medium", updatedAt: page.updatedAt, citations: citationsOf(page.id).length, backlinks: backlinksOf(page).length };
 }
 
+/** 只改写代码块/行内代码之外的 [[旧标题]] → [[新标题]]（保留 #heading 与 |alias）。 */
+function rewriteWikiLinks(text, oldTitle, newTitle) {
+  const target = String(oldTitle || "").trim().toLowerCase();
+  if (!target) return String(text || "");
+  return String(text || "").split(/(```[\s\S]*?```|`[^`\n]*`)/g).map((chunk) => {
+    if (chunk.startsWith("```") || chunk.startsWith("`")) return chunk;
+    return chunk.replace(/\[\[([^\]|#]+)(#[^\]|]*)?(\|[^\]]*)?\]\]/g, (match, page, heading = "", alias = "") => (
+      String(page).trim().toLowerCase() === target ? `[[${newTitle}${heading}${alias}]]` : match
+    ));
+  }).join("");
+}
+
+function renamePageLinks(oldTitle, newTitle) {
+  const changed = [];
+  const seen = new Set([String(newTitle || "").trim().toLowerCase()]);
+  for (const other of data.pages) {
+    // 目标标题自身不再重复改写（避免 [[new]] → [[new]] 的 revision 噪音）
+    if (seen.has(String(other.title || "").trim().toLowerCase())) continue;
+    const next = rewriteWikiLinks(other.content, oldTitle, newTitle);
+    if (next === other.content) continue;
+    other.content = next;
+    other.updatedAt = now();
+    updateSearchEntry("page", other);
+    pageRevision(other, `link-rename:${oldTitle}`);
+    changed.push(other);
+  }
+  return changed;
+}
+
+const REVISION_LIMIT = 200;
+function revisionFile(pageId) { return path.join(revisionDir(), `${safeFile(pageId)}.ndjson`); }
+
+/** 每页最多保留 200 条历史：追加后裁剪，避免 NDJSON 无限增长。 */
+function pruneRevisions(file) {
+  try {
+    const lines = fsSync.readFileSync(file, "utf8").split("\n").filter(Boolean);
+    if (lines.length <= REVISION_LIMIT) return;
+    const tmp = `${file}.tmp`;
+    fsSync.writeFileSync(tmp, `${lines.slice(-REVISION_LIMIT).join("\n")}\n`, "utf8");
+    fsSync.renameSync(tmp, file);
+  } catch { /* 裁剪失败不影响主流程 */ }
+}
+
 function pageRevision(page, reason) {
   const rev = { id: id("rev"), pageId: page.id, content: page.content, status: page.status, reason, createdAt: now() };
   try {
     fsSync.mkdirSync(revisionDir(), { recursive: true });
-    fsSync.appendFileSync(path.join(revisionDir(), `${safeFile(page.id)}.ndjson`), `${JSON.stringify(rev)}\n`, "utf8");
+    const file = revisionFile(page.id);
+    fsSync.appendFileSync(file, `${JSON.stringify(rev)}\n`, "utf8");
+    pruneRevisions(file);
   } catch { /* 历史记录失败不影响页面保存 */ }
+}
+
+/** 历史列表：只回传元信息（内容可能很大），按时间倒序。 */
+function revisionsOf(pageId, limit = 50) {
+  try {
+    const lines = fsSync.readFileSync(revisionFile(pageId), "utf8").split("\n").filter(Boolean);
+    const out = [];
+    for (let i = lines.length - 1; i >= 0 && out.length < Math.max(1, limit); i -= 1) {
+      try {
+        const rev = JSON.parse(lines[i]);
+        out.push({ id: rev.id, pageId: rev.pageId, status: rev.status, reason: rev.reason, createdAt: rev.createdAt, size: String(rev.content || "").length });
+      } catch { /* skip broken line */ }
+    }
+    return out;
+  } catch { return []; }
+}
+
+function revisionOf(pageId, revisionId) {
+  try {
+    const lines = fsSync.readFileSync(revisionFile(pageId), "utf8").split("\n").filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      try { const rev = JSON.parse(lines[i]); if (rev.id === revisionId) return rev; } catch { /* skip */ }
+    }
+  } catch { /* no history */ }
+  return null;
+}
+
+/** 引用某个 source 的页面标记为 stale；记下原状态，确认仍有效时可恢复。 */
+function markPagesStale(sourceIds, reason) {
+  const targets = sourceIds instanceof Set ? sourceIds : new Set(sourceIds || []);
+  const affected = new Set();
+  for (const cite of data.citations) if (targets.has(cite.sourceId)) affected.add(cite.pageId);
+  const changed = [];
+  for (const pageId of affected) {
+    const page = data.pages.find((p) => p.id === pageId);
+    if (!page || page.status === "stale") continue;
+    page.staleFrom = page.status;
+    page.status = "stale";
+    page.staleReason = String(reason || "manual");
+    page.staleAt = now();
+    page.reviewedAt = null;
+    updateSearchEntry("page", page);
+    pageRevision(page, `stale:${page.staleReason}`);
+    addLog("page.stale", `${page.title} · ${page.staleReason}`);
+    changed.push(page);
+  }
+  return changed;
 }
 
 function ensurePage({ title, summary = "", content = "", sourceIds = [] }) {
@@ -653,33 +750,60 @@ export async function activate(context) {
   ctx.api.handle("wiki.ask", async ({ question, limit = 3 } = {}) => {
     const q = String(question || "").trim();
     if (!q) throw new Error("问题不能为空");
-    const chars = [...q.replace(/\s+/g, "")];
+    // 用 2-gram 而不是单字：避免「zzzzqqqq」这类乱码靠零星字母命中
+    const compact = [...q.replace(/\s+/g, "")].join("").toLowerCase();
+    const grams = new Set();
+    for (let i = 0; i < compact.length - 1; i += 1) grams.add(compact.slice(i, i + 2));
+    if (!grams.size && compact) grams.add(compact);
     const scoreSentence = (sentence) => {
       const text = String(sentence || "").toLowerCase();
       let hit = 0;
-      for (const ch of chars) if (text.includes(ch.toLowerCase())) hit += 1;
-      return chars.length ? hit / chars.length : 0;
+      for (const gram of grams) if (text.includes(gram)) hit += 1;
+      return grams.size ? hit / grams.size : 0;
     };
+    const pickSentences = (text) => String(text || "")
+      .replace(/```[\s\S]*?```/g, " ")
+      .split(/(?<=[。！？.!?])\s+|\n+/)
+      .map((x) => x.replace(/^#+\s*/, "").trim())
+      .filter((x) => x.length > 8)
+      .map((text) => ({ text, s: scoreSentence(text) }))
+      .filter((x) => x.s > 0.2)
+      .sort((a, b) => b.s - a.s)
+      .slice(0, 2);
     loadSearchSync();
-    const textById = new Map((searchCache || []).filter((x) => x.kind === "page").map((x) => [x.id, x.text]));
-    const ranked = data.pages.map((page) => {
-      const search = searchScore(textById.get(page.id) || `${page.title}\n${page.summary}`, q);
-      const sentences = String(textById.get(page.id) || "")
-        .replace(/```[\s\S]*?```/g, " ")
-        .split(/(?<=[。！？.!?])\s+|\n+/)
-        .map((x) => x.replace(/^#+\s*/, "").trim())
-        .filter((x) => x.length > 8);
-      const picked = sentences.map((text) => ({ text, s: scoreSentence(text) })).filter((x) => x.s > 0.2).sort((a, b) => b.s - a.s).slice(0, 2);
-      return { page, score: (search?.score || 0) + picked.reduce((n, x) => n + x.s * 4, 0), picked };
-    }).filter((x) => x.picked.length > 0).sort((a, b) => b.score - a.score).slice(0, limit);
+    // 页面 + 资料都参与检索；引用只来自候选集，保证答案里的出处可点开
+    const candidates = [];
+    for (const entry of searchCache || []) {
+      const text = String(entry.text || "");
+      const picked = pickSentences(text);
+      if (!picked.length) continue;
+      const search = searchScore(text, q);
+      if (entry.kind === "page") {
+        const page = data.pages.find((p) => p.id === entry.id);
+        if (!page) continue;
+        candidates.push({ kind: "page", id: page.id, title: page.title, search, picked });
+      } else if (entry.kind === "source") {
+        const source = data.sources.find((s) => s.id === entry.id);
+        if (!source) continue;
+        candidates.push({ kind: "source", id: source.id, title: source.title, search, picked });
+      }
+    }
+    const ranked = candidates
+      .map((item) => ({ ...item, score: (item.search?.score || 0) + item.picked.reduce((n, x) => n + x.s * 4, 0) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, Math.max(1, Number(limit) || 3));
     if (!ranked.length) {
       return { found: false, answer: "Wiki 里没有找到能回答这个问题的页面或资料。", citations: [] };
     }
-    const lines = ranked.map(({ page, picked }) => `- ${picked.map((x) => x.text).join(" ")} [[${page.title}]]`);
+    const lines = ranked.map((item) => {
+      const text = item.picked.map((x) => x.text).join(" ");
+      return item.kind === "page" ? `- ${text} [[${item.title}]]` : `- ${text}（资料：${item.title}）`;
+    });
+    const hasSource = ranked.some((item) => item.kind === "source");
     return {
       found: true,
-      answer: `根据 Wiki 页面：\n\n${lines.join("\n")}`,
-      citations: ranked.map(({ page }) => ({ id: page.id, title: page.title })),
+      answer: `根据 Wiki ${hasSource ? "页面与资料" : "页面"}：\n\n${lines.join("\n")}`,
+      citations: ranked.map((item) => ({ id: item.id, title: item.title, kind: item.kind })),
     };
   });
   ctx.api.handle("wiki.unlinked", async ({ id: pageId } = {}) => {
@@ -703,15 +827,87 @@ export async function activate(context) {
   ctx.api.handle("wiki.savePage", async ({ id: pageId, content, title, summary, status } = {}) => {
     const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
     if (!page) throw new Error("page not found");
+    const before = { title: page.title, summary: page.summary, content: page.content };
     if (typeof title === "string" && title.trim()) page.title = title.trim().slice(0, 180);
     if (typeof summary === "string") page.summary = summary.slice(0, 2000);
     if (typeof content === "string") page.content = content;
+    const titleChanged = page.title !== before.title;
+    const changed = titleChanged || page.summary !== before.summary || page.content !== before.content;
+    const wasReviewed = page.status === "reviewed";
+    const wasStale = page.status === "stale";
     page.status = status === "reviewed" ? "reviewed" : "draft";
     page.updatedAt = now();
-    if (page.status === "reviewed") page.reviewedAt = now();
-    pageRevision(page, "edit");
+    if (page.status === "reviewed") {
+      page.reviewedAt = now();
+      page.reopenReason = "";
+      page.reopenedAt = null;
+    } else if (wasStale) {
+      page.staleFrom = null;
+      page.staleReason = "";
+      page.staleAt = null;
+    } else if (wasReviewed && changed) {
+      // 人工编辑已审核页面：不静默保留 reviewed，明确标记「改过、待重审」
+      page.reviewedAt = null;
+      page.reopenReason = "edited-after-review";
+      page.reopenedAt = now();
+    }
+    let renamedLinks = 0;
+    if (titleChanged) {
+      // slug 跟着标题走（保持唯一），并同步全库 [[旧标题]]
+      const base = slugify(page.title) || "page";
+      let slug = base;
+      let n = 2;
+      while (data.pages.some((p) => p.id !== page.id && p.slug === slug)) slug = `${base}-${n++}`;
+      page.slug = slug;
+      renamedLinks = renamePageLinks(before.title, page.title).length;
+    }
+    pageRevision(page, wasReviewed && changed && page.status === "draft" ? "edit-after-review" : "edit");
     updateSearchEntry("page", page);
-    addLog("page.save", page.title);
+    addLog("page.save", page.title + (renamedLinks ? ` · ${renamedLinks} pages relinked` : ""));
+    await persist();
+    return { ...pageView(page), renamedLinks };
+  });
+  ctx.api.handle("wiki.setConfidence", async ({ id: pageId, confidence } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    const value = confidence === "high" || confidence === "low" ? confidence : "medium";
+    page.confidence = value;
+    page.updatedAt = now();
+    pageRevision(page, `confidence:${value}`);
+    updateSearchEntry("page", page);
+    addLog("page.confidence", `${page.title} → ${value}`);
+    await persist();
+    return pageView(page);
+  });
+  ctx.api.handle("wiki.revisions", async ({ id: pageId, limit = 50 } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    return revisionsOf(page.id, Number(limit) || 50);
+  });
+  ctx.api.handle("wiki.revision", async ({ id: pageId, revisionId } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    const rev = revisionOf(page.id, revisionId);
+    if (!rev) throw new Error("revision not found");
+    return rev;
+  });
+  ctx.api.handle("wiki.revert", async ({ id: pageId, revisionId } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    const rev = revisionOf(page.id, revisionId);
+    if (!rev) throw new Error("revision not found");
+    page.content = String(rev.content || "");
+    page.status = "draft";
+    page.reviewedAt = null;
+    page.reopenReason = "reverted";
+    page.reopenedAt = now();
+    page.staleFrom = null;
+    page.staleReason = "";
+    page.staleAt = null;
+    page.updatedAt = now();
+    pageRevision(page, `revert:${rev.id}`);
+    updateSearchEntry("page", page);
+    addLog("page.revert", `${page.title} ← ${rev.reason || rev.id}`);
     await persist();
     return pageView(page);
   });
@@ -721,6 +917,13 @@ export async function activate(context) {
     const status = decision === "accept" ? "reviewed" : "draft";
     page.status = status;
     page.reviewedAt = status === "reviewed" ? now() : null;
+    if (status === "reviewed") {
+      page.reopenReason = "";
+      page.reopenedAt = null;
+      page.staleFrom = null;
+      page.staleReason = "";
+      page.staleAt = null;
+    }
     page.updatedAt = now();
     data.reviews.unshift({ id: id("review"), pageId: page.id, status, feedback: String(feedback).slice(0, 4000), createdAt: now() });
     pageRevision(page, `review:${status}`);
@@ -728,6 +931,50 @@ export async function activate(context) {
     addLog("page.review", `${page.title} → ${status}`);
     await persist();
     return pageView(page);
+  });
+  ctx.api.handle("wiki.markStale", async ({ id: pageId, reason = "manual" } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    if (page.status === "stale") return pageView(page);
+    page.staleFrom = page.status;
+    page.status = "stale";
+    page.staleReason = String(reason || "manual");
+    page.staleAt = now();
+    page.reviewedAt = null;
+    updateSearchEntry("page", page);
+    pageRevision(page, `stale:${page.staleReason}`);
+    addLog("page.stale", `${page.title} · ${page.staleReason}`);
+    await persist();
+    return pageView(page);
+  });
+  /** 确认过期页面仍有效：恢复到过期前的状态（通常是 reviewed）。 */
+  ctx.api.handle("wiki.clearStale", async ({ id: pageId } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    if (page.status !== "stale") return pageView(page);
+    page.status = page.staleFrom === "reviewed" ? "reviewed" : "draft";
+    if (page.status === "reviewed") page.reviewedAt = now();
+    page.staleFrom = null;
+    page.staleReason = "";
+    page.staleAt = null;
+    page.updatedAt = now();
+    updateSearchEntry("page", page);
+    pageRevision(page, "stale:cleared");
+    addLog("page.stale", `${page.title} · cleared`);
+    await persist();
+    return pageView(page);
+  });
+  ctx.api.handle("wiki.reviews", async ({ id: pageId, limit = 50 } = {}) => {
+    const list = pageId ? data.reviews.filter((r) => r.pageId === pageId) : data.reviews;
+    return list.slice(0, Math.max(1, Number(limit) || 50));
+  });
+  ctx.api.handle("wiki.dismissDream", async ({ key } = {}) => {
+    const k = String(key || "").trim();
+    if (!k) throw new Error("缺少维护项 key");
+    data.dreamDismissed = [...new Set([k, ...(data.dreamDismissed || [])])].slice(0, 500);
+    addLog("dream.dismiss", k);
+    await persist();
+    return data.dreamDismissed;
   });
   ctx.api.handle("wiki.deletePage", async ({ id: pageId } = {}) => {
     const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
@@ -790,11 +1037,14 @@ export async function activate(context) {
     const existed = findSource({ uri, content: text });
     if (existed) {
       // 重复导入：更新标题/内容但不再新增一条，UI 据此提示「已存在」
+      const hashChanged = existed.hash !== hash(text);
       if (title && String(title).trim()) existed.title = String(title).trim().slice(0, 200);
       existed.content = text;
       existed.hash = hash(text);
+      const staled = hashChanged ? markPagesStale([existed.id], "source-updated") : [];
+      updateSearchEntry("source", existed);
       await persist();
-      return { ...existed, deduped: true };
+      return { ...existed, deduped: true, staled: staled.map((p) => ({ id: p.id, title: p.title })) };
     }
     const source = {
       id: id("src"), title: String(title || uri || "Untitled source").slice(0, 200),
@@ -837,13 +1087,14 @@ export async function activate(context) {
       });
     }
     data.trash = data.trash.slice(0, 500);
+    const staled = markPagesStale(targets, "source-deleted");
     for (const id of targets) removeSearchEntry("source", id);
     data.sources = data.sources.filter((s) => !targets.has(s.id));
     const removedCitations = data.citations.filter((c) => targets.has(c.sourceId)).length;
     data.citations = data.citations.filter((c) => !targets.has(c.sourceId));
     const removed = before - data.sources.length;
     if (removed) { addLog("source.delete", `${removed} sources`); await persist(); }
-    return { removed, removedCitations };
+    return { removed, removedCitations, staled: staled.map((p) => ({ id: p.id, title: p.title })) };
   });
 
   ctx.api.handle("wiki.vault.get", async () => vaultIndex());
@@ -874,6 +1125,52 @@ export async function activate(context) {
     await persist();
     return readVaultFile(vaultRel(full));
   });
+  ctx.api.handle("wiki.vault.create", async ({ path: relPath, content = "" } = {}) => {
+    const clean = String(relPath || "").trim().replace(/^\/+/, "");
+    if (!clean) throw new Error("需要文件名");
+    const rel = /\.md$/i.test(clean) ? clean : `${clean}.md`;
+    const { full } = withinVault(rel);
+    const exists = await fs.stat(full).then(() => true).catch(() => false);
+    if (exists) throw new Error("同名文件已存在");
+    await fs.mkdir(path.dirname(full), { recursive: true });
+    const safeRel = vaultRel(full);
+    const title = vaultTitle("", safeRel);
+    await fs.writeFile(full, String(content || `# ${title}\n\n`), "utf8");
+    vaultCache = null;
+    addLog("vault.create", safeRel);
+    await persist();
+    return readVaultFile(safeRel);
+  });
+  ctx.api.handle("wiki.vault.rename", async ({ path: relPath, nextPath } = {}) => {
+    const from = withinVault(relPath).full;
+    if (!/\.md$/i.test(from)) throw new Error("只支持 Markdown 文件");
+    const clean = String(nextPath || "").trim().replace(/^\/+/, "");
+    if (!clean) throw new Error("需要新文件名");
+    const rel = /\.md$/i.test(clean) ? clean : `${clean}.md`;
+    const { full: to } = withinVault(rel);
+    if (to === from) throw new Error("新文件名没有变化");
+    const exists = await fs.stat(to).then(() => true).catch(() => false);
+    if (exists) throw new Error("目标文件已存在");
+    await fs.mkdir(path.dirname(to), { recursive: true });
+    await fs.rename(from, to);
+    vaultCache = null;
+    const safeRel = vaultRel(to);
+    addLog("vault.rename", `${vaultRel(from)} → ${safeRel}`);
+    await persist();
+    return readVaultFile(safeRel);
+  });
+  ctx.api.handle("wiki.vault.delete", async ({ path: relPath } = {}) => {
+    if (!String(relPath || "").trim()) throw new Error("缺少文件路径");
+    const { full } = withinVault(relPath);
+    if (!/\.md$/i.test(full)) throw new Error("只支持 Markdown 文件");
+    const exists = await fs.stat(full).then(() => true).catch(() => false);
+    if (!exists) throw new Error("文件不存在");
+    await fs.rm(full, { force: false });
+    vaultCache = null;
+    addLog("vault.delete", vaultRel(full));
+    await persist();
+    return true;
+  });
   ctx.api.handle("wiki.vault.reveal", async ({ path: relPath } = {}) => {
     const { full } = withinVault(relPath);
     await ctx.fs.reveal(full);
@@ -894,20 +1191,28 @@ export async function activate(context) {
     await persist();
     return sourceView(source, true);
   });
-  ctx.api.handle("wiki.upsertDraft", async ({ title, content = "", summary = "", sourceIds = [] } = {}) => {
+  ctx.api.handle("wiki.upsertDraft", async ({ title, content = "", summary = "", sourceIds = [], agent = false } = {}) => {
     const safeTitle = String(title || "").trim().slice(0, 180);
     if (!safeTitle) throw new Error("title is required");
+    const ids = Array.isArray(sourceIds) ? [...new Set(sourceIds.filter(Boolean))] : [];
+    if (agent) {
+      // Agent（MCP）写入必须可溯源：至少 1 个真实 source，且不允许覆盖 reviewed
+      const invalid = ids.filter((sid) => !data.sources.some((s) => s.id === sid));
+      if (invalid.length) throw new Error(`source_ids 含无效 id：${invalid.join(", ")}（先用 wiki_list_sources 确认）`);
+      if (!ids.length) throw new Error("Agent 写入必须带至少 1 个有效 source_ids；没有来源的页面交给人工新建");
+    }
     let page = data.pages.find((p) => p.title.toLowerCase() === safeTitle.toLowerCase() || p.slug === slugify(safeTitle));
+    if (page && page.status === "reviewed") throw new Error(`「${page.title}」已审核（reviewed），不能被写入覆盖；请先人工退回 draft`);
     if (!page) page = ensurePage({ title: safeTitle, summary, content });
     page.content = String(content || page.content);
     page.summary = String(summary || page.summary || "");
     page.status = "draft";
     page.updatedAt = now();
-    for (const sourceId of Array.isArray(sourceIds) ? sourceIds : []) {
+    for (const sourceId of ids) {
       if (!data.sources.some((s) => s.id === sourceId)) continue;
       if (!data.citations.some((c) => c.pageId === page.id && c.sourceId === sourceId)) data.citations.push({ id: id("cite"), pageId: page.id, sourceId, quote: "", locator: "", createdAt: now() });
     }
-    pageRevision(page, "agent.draft");
+    pageRevision(page, agent ? "agent.draft" : "draft");
     updateSearchEntry("page", page);
     addLog("page.draft", page.title);
     await persist();
@@ -1108,16 +1413,17 @@ export async function activate(context) {
     // Deterministic first pass: surface maintenance work without mutating reviewed pages.
     const issues = [];
     for (const page of data.pages) {
-      if (!citationsOf(page.id).length) issues.push({ kind: "missing-citation", pageId: page.id, title: page.title });
-      if (page.status === "draft" && page.updatedAt < now() - 7 * 24 * 3600 * 1000) issues.push({ kind: "stale-draft", pageId: page.id, title: page.title });
+      if (!citationsOf(page.id).length) issues.push({ kind: "missing-citation", key: `missing-citation:${page.id}`, pageId: page.id, title: page.title });
+      if (page.status === "draft" && page.updatedAt < now() - 7 * 24 * 3600 * 1000) issues.push({ kind: "stale-draft", key: `stale-draft:${page.id}`, pageId: page.id, title: page.title });
     }
     const seen = new Map();
     for (const page of data.pages) {
-      const key = page.title.toLowerCase();
-      if (seen.has(key)) issues.push({ kind: "duplicate-title", pageId: page.id, title: page.title });
-      else seen.set(key, page.id);
+      const title = page.title.toLowerCase();
+      if (seen.has(title)) issues.push({ kind: "duplicate-title", key: `duplicate-title:${page.id}`, pageId: page.id, title: page.title });
+      else seen.set(title, page.id);
     }
-    return { issues, memory: memoryMarkdown() };
+    const dismissed = new Set(data.dreamDismissed || []);
+    return { issues: issues.filter((issue) => !dismissed.has(issue.key)), memory: memoryMarkdown() };
   });
   /**
    * 生成 Wiki 草稿骨架：每份还没有页面的 source 生成一个 draft，并建立 citation。
