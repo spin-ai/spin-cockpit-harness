@@ -215,3 +215,7 @@ export const CheckSquareIcon = (p: IconProps) => (
 export const NoteIcon = (p: IconProps) => (
   <Svg {...p}><path d="M6 3.5h8.5L19 8v12.5H6z" /><path d="M14 3.5V8h5" /><path d="M9 12h7M9 16h5" /></Svg>
 );
+
+export const PencilIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M4 20h4l10-10a2.8 2.8 0 0 0-4-4L4 16z" /><path d="m13.5 6.5 4 4" /></Svg>
+);
