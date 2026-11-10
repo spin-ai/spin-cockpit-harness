@@ -271,6 +271,29 @@ r = await run(`
 check("问 Wiki 能检索资料并返回 source 引用", r.found === true && r.hasSourceCitation === true && r.answerMentionsSource === true, JSON.stringify(r));
 check("问 Wiki 无依据时不编造", r.missFound === false && r.missCitations === 0, JSON.stringify({ missFound: r.missFound, missCitations: r.missCitations }));
 
+// ── 改标题同步 slug / 双链 + confidence ─────────────────
+r = await run(`
+  const call = async (method, args) => { try { return { ok: true, value: (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method, args })).result }; } catch (e) { return { ok: false, error: String(e?.message || e) }; } };
+  const target = (await call("wiki.createPage", { title: "rename-old" })).value;
+  await call("wiki.savePage", { id: target.id, content: "# rename-old\\n\\n旧正文\\n" });
+  const linker = (await call("wiki.createPage", { title: "rename-linker" })).value;
+  await call("wiki.savePage", { id: linker.id, content: "# rename-linker\\n\\n引用 [[rename-old]] 与 \`[[rename-old]]\` 代码\\n" });
+  const renamed = await call("wiki.savePage", { id: target.id, title: "rename-new", content: "# rename-new\\n\\n旧正文\\n" });
+  const after = (await call("wiki.getPage", { id: target.id })).value;
+  const linkerAfter = (await call("wiki.getPage", { id: linker.id })).value;
+  const conf = await call("wiki.setConfidence", { id: target.id, confidence: "high" });
+  return {
+    title: after.title,
+    slug: after.slug,
+    renamedLinks: renamed.value?.renamedLinks,
+    linkerLinked: linkerAfter.content.includes("[[rename-new]]"),
+    codeKept: linkerAfter.content.includes("\`[[rename-old]]\`"),
+    confidence: conf.value?.confidence,
+  };
+`);
+check("改标题后 slug 更新并同步双链（代码块不改）", r.title === "rename-new" && /^rename-new/.test(r.slug) && r.renamedLinks >= 1 && r.linkerLinked === true && r.codeKept === true, JSON.stringify(r));
+check("confidence 可设置", r.confidence === "high", JSON.stringify({ confidence: r.confidence }));
+
 ws.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");
 process.exit(fails ? 1 : 0);

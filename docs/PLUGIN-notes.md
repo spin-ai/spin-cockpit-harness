@@ -118,6 +118,7 @@ wiki.revert
 wiki.reviews
 wiki.dismissDream
 wiki.ask
+wiki.setConfidence
 wiki.reviewQueue
 wiki.search
 wiki.graph
@@ -284,6 +285,10 @@ Wiki
 - 分屏 + 可拖拽比例
 - 页面状态 / citations 数
 - 编辑模式可直接改标题；保存时同时写回 title / summary
+
+#### 标题改名
+
+保存时如果标题变了：自动生成唯一 slug，并把全库 `[[旧标题]]`（含 `#小节` / `|别名`）改写成新标题；代码块与行内代码里的文本不动。会返回 `renamedLinks` 数量，UI 刷新其它打开中的 tab（跳过未保存的）。
 
 #### 编辑器
 

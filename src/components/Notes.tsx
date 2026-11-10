@@ -331,13 +331,26 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
         }
         setNotice("已写回本地文件");
       } else {
+        const prevTitle = doc.title;
         const res = await invoke("wiki.savePage", { id: pageId, content: doc.content, title: doc.title, summary: doc.summary });
         if (res) setDocs((current) => ({ ...current, [pageId]: { ...res, dirty: false } }));
-        setNotice("已保存 draft");
+        if (res && prevTitle !== res.title) {
+          // 标题改了：后端已同步全库双链，刷新其它打开中的 tab（跳过 dirty，避免覆盖编辑中内容）
+          const ids = [...new Set([...left.tabs, ...right.tabs])].filter((id) => id !== pageId);
+          const fresh = await Promise.all(ids.map(async (id) => { try { return await invoke("wiki.getPage", { id }); } catch { return null; } }));
+          setDocs((current) => {
+            const next = { ...current };
+            for (const item of fresh) if (item && next[item.id] && !next[item.id].dirty) next[item.id] = { ...item, dirty: false };
+            return next;
+          });
+          setNotice(res.renamedLinks ? `标题已改，同步 ${res.renamedLinks} 个页面的双链` : "标题已改，slug 已更新");
+        } else {
+          setNotice("已保存 draft");
+        }
         await refresh();
       }
     } catch (err) { fail(err); } finally { setBusy(false); }
-  }, [docs, invoke, refresh]);
+  }, [docs, invoke, refresh, left.tabs, right.tabs]);
 
   // 停笔约 1s 自动保存；保存失败保留 dirty 并提示，不丢内容
   useEffect(() => {
@@ -575,6 +588,15 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
       const page = await invoke("wiki.clearStale", { id: pageId });
       if (page) setDocs((current) => ({ ...current, [pageId]: { ...page, dirty: false } }));
       setNotice("已确认仍有效，恢复原状态");
+      await refresh();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const setConfidence = async (pageId: string, confidence: string) => {
+    setBusy(true);
+    try {
+      const page = await invoke("wiki.setConfidence", { id: pageId, confidence });
+      if (page) setDocs((current) => ({ ...current, [pageId]: { ...page, dirty: false } }));
       await refresh();
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
@@ -1517,7 +1539,14 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 <div className="notes-meta-title">状态</div>
                 <div className="notes-meta-row">
                   <span className={`notes-review-badge ${activeDoc.status}`}>{statusLabel(activeDoc.status)}</span>
-                  <span className="notes-meta-hint">置信度 {confidenceLabel(activeDoc.confidence)}</span>
+                  <label className="notes-confidence" title="置信度（人工设置）">
+                    <span>置信度</span>
+                    <select value={activeDoc.confidence} onChange={(e) => void setConfidence(activeDoc.id, e.target.value)} disabled={busy}>
+                      <option value="low">低</option>
+                      <option value="medium">中</option>
+                      <option value="high">高</option>
+                    </select>
+                  </label>
                 </div>
                 {activeDoc.lastReview?.feedback && (
                   <div className="notes-review-feedback" title={`${timeAgo(activeDoc.lastReview.createdAt)} 退回`}>
