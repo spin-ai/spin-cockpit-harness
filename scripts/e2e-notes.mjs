@@ -103,14 +103,15 @@ r = await ev(`
   if (!reviewTab) return { error: "no review tab" };
   reviewTab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 400));
+  const before = (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" }))?.result?.reviews?.length || 0;
   const row = [...document.querySelectorAll(".notes-row")][0];
   const accept = [...(row?.querySelectorAll(".notes-row-actions .link") || [])].find((b) => b.textContent.trim() === "接受");
-  if (!accept) return { error: "no accept" };
+  if (!accept) return { error: "no accept", before };
   accept.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 1500));
   const list = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" });
-  return { reviews: list?.result?.reviews?.length, notice: document.querySelector(".notes-banner")?.textContent || "" };`);
-check("审核 tab：hover 直接接受（待审核 -1）", r.reviews === 1, JSON.stringify(r));
+  return { before, reviews: list?.result?.reviews?.length, notice: document.querySelector(".notes-banner")?.textContent || "" };`);
+check("审核 tab：hover 直接接受（待审核 -1）", typeof r.before === "number" && r.reviews === r.before - 1, JSON.stringify(r));
 // ── 本地文档导入（docs:read / docsPick）──────────────────────────
 r = await run(`
   const docs = await window.harness.docsRead(["/tmp/doc-import.md", "/tmp/table-import.csv", "/tmp/doc-binary.bin"]);
@@ -157,6 +158,118 @@ check("整理：弱标题改成正文 H1 + 大纲四段 + 索引",
   JSON.stringify(r.headings) === JSON.stringify(["## 要点", "## 原文摘录", "## 相关"]) && /要点一/.test(r.points || ""),
   JSON.stringify({ titles: r.titles, headings: r.headings }));
 check("整理幂等（第二次 renamed/updated 均为 0）", r.renamedAgain === 0 && r.updatedAgain === 0, JSON.stringify({ renamed: r.renamedAgain, updated: r.updatedAgain }));
+
+// ── reviewed 保护 + Agent 写入必须带 citation ─────────────────
+r = await run(`
+  const call = async (method, args) => { try { return { ok: true, value: (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method, args })).result }; } catch (e) { return { ok: false, error: String(e?.message || e) }; } };
+  const list = (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" })).result;
+  const sourceId = list.sources[0]?.id;
+  const created = (await call("wiki.createPage", { title: "reviewed-guard" })).value;
+  await call("wiki.savePage", { id: created.id, content: "# reviewed-guard\\n\\n原始正文\\n" });
+  await call("wiki.review", { id: created.id, decision: "accept" });
+  const noCite = await call("wiki.upsertDraft", { title: "reviewed-guard", content: "# 改坏\\n", agent: true });
+  const overwrite = await call("wiki.upsertDraft", { title: "reviewed-guard", content: "# 改坏\\n", sourceIds: [sourceId], agent: true });
+  const badId = await call("wiki.upsertDraft", { title: "reviewed-guard", content: "# 改坏\\n", sourceIds: ["nope"], agent: true });
+  const fresh = await call("wiki.upsertDraft", { title: "agent-draft-ok", content: "# ok\\n", sourceIds: [sourceId], agent: true });
+  const after = (await call("wiki.getPage", { id: created.id })).value;
+  const human = await call("wiki.savePage", { id: created.id, content: "# reviewed-guard\\n\\n人工补充\\n" });
+  const afterHuman = (await call("wiki.getPage", { id: created.id })).value;
+  return {
+    noCite: noCite.error || "", overwrite: overwrite.error || "", badId: badId.error || "",
+    freshOk: fresh.value?.status === "draft", content: after.content, status: after.status,
+    humanStatus: human.value?.status, reopen: afterHuman.reopenReason || "", reviewedAt: afterHuman.reviewedAt,
+  };`);
+check("Agent 无 source_ids 被拒", /source_ids/.test(r.noCite), r.noCite);
+check("Agent 覆盖 reviewed 被拒且正文不变", /已审核|reviewed/.test(r.overwrite) && r.content.includes("原始正文") && r.status === "reviewed", JSON.stringify({ err: r.overwrite, status: r.status }));
+check("Agent 无效 source_ids 被拒", /无效/.test(r.badId), r.badId);
+check("Agent 带有效 source 可以新建 draft", r.freshOk === true);
+check("人工编辑 reviewed 后回 draft 且标记待重审", r.humanStatus === "draft" && r.reopen === "edited-after-review" && r.reviewedAt == null, JSON.stringify({ status: r.humanStatus, reopen: r.reopen }));
+
+// ── stale：资料更新/删除让引用页面过期，可确认恢复 ─────────────
+r = await run(`
+  const call = async (method, args) => { try { return { ok: true, value: (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method, args })).result }; } catch (e) { return { ok: false, error: String(e?.message || e) }; } };
+  const src = await call("wiki.importSource", { title: "stale-src", content: "原始内容 A", kind: "text", uri: "test://stale-src" });
+  const page = (await call("wiki.createPage", { title: "stale-page" })).value;
+  await call("wiki.savePage", { id: page.id, content: "# stale-page\\n\\n正文\\n" });
+  await call("wiki.addCitation", { pageId: page.id, sourceId: src.value.id });
+  await call("wiki.review", { id: page.id, decision: "accept" });
+  await call("wiki.importSource", { title: "stale-src", content: "原始内容 A", kind: "text", uri: "test://stale-src" });
+  const afterSame = (await call("wiki.getPage", { id: page.id })).value;
+  const updated = await call("wiki.importSource", { title: "stale-src", content: "原始内容 B 改了", kind: "text", uri: "test://stale-src" });
+  const afterUpdate = (await call("wiki.getPage", { id: page.id })).value;
+  const cleared = await call("wiki.clearStale", { id: page.id });
+  const afterClear = (await call("wiki.getPage", { id: page.id })).value;
+  const src2 = await call("wiki.importSource", { title: "stale-src-2", content: "内容 C", kind: "text", uri: "test://stale-src-2" });
+  const page2 = (await call("wiki.createPage", { title: "stale-page-2" })).value;
+  await call("wiki.addCitation", { pageId: page2.id, sourceId: src2.value.id });
+  await call("wiki.review", { id: page2.id, decision: "accept" });
+  await call("wiki.deleteSource", { id: src2.value.id });
+  const afterDelete = (await call("wiki.getPage", { id: page2.id })).value;
+  return {
+    sameOk: afterSame.status === "reviewed",
+    updatedOk: afterUpdate.status === "stale" && afterUpdate.staleReason === "source-updated" && afterUpdate.content.includes("正文"),
+    updatedStaled: (updated.value?.staled || []).length,
+    clearOk: cleared.value?.status === "reviewed" && !afterClear.staleReason,
+    deletedOk: afterDelete.status === "stale" && afterDelete.staleReason === "source-deleted",
+  };
+`);
+check("重复导入相同内容不标 stale", r.sameOk === true);
+check("资料更新 → 引用页面 stale（正文不变）", r.updatedOk === true && r.updatedStaled === 1, JSON.stringify(r));
+check("确认仍有效 → 恢复 reviewed", r.clearOk === true);
+check("资料删除 → 引用页面 stale", r.deletedOk === true);
+
+// ── revision 历史 / diff / 回滚 ─────────────────
+r = await run(`
+  const call = async (method, args) => { try { return { ok: true, value: (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method, args })).result }; } catch (e) { return { ok: false, error: String(e?.message || e) }; } };
+  const page = (await call("wiki.createPage", { title: "rev-page" })).value;
+  await call("wiki.savePage", { id: page.id, content: "# rev-page\\n\\n版本 A\\n" });
+  await call("wiki.savePage", { id: page.id, content: "# rev-page\\n\\n版本 B\\n" });
+  await call("wiki.savePage", { id: page.id, content: "# rev-page\\n\\n版本 C\\n" });
+  const list = (await call("wiki.revisions", { id: page.id, limit: 20 })).value || [];
+  const target = list[list.length - 2] || list[list.length - 1];
+  const detail = (await call("wiki.revision", { id: page.id, revisionId: target.id })).value;
+  await call("wiki.revert", { id: page.id, revisionId: target.id });
+  const after = (await call("wiki.getPage", { id: page.id })).value;
+  const list2 = (await call("wiki.revisions", { id: page.id, limit: 30 })).value || [];
+  return { count: list.length, hasContent: typeof detail?.content === "string", afterHasA: after.content.includes("版本 A"), status: after.status, count2: list2.length, reopen: after.reopenReason };
+`);
+check("历史版本可列出且能读内容", r.count >= 4 && r.hasContent === true, JSON.stringify({ count: r.count, hasContent: r.hasContent }));
+check("回滚恢复旧内容并生成新版本", r.afterHasA === true && r.count2 === r.count + 1 && r.status === "draft", JSON.stringify({ hasA: r.afterHasA, count2: r.count2, count: r.count, status: r.status }));
+
+// ── 审核反馈 + Dream 维护项 ─────────────────
+r = await run(`
+  const call = async (method, args) => { try { return { ok: true, value: (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method, args })).result }; } catch (e) { return { ok: false, error: String(e?.message || e) }; } };
+  const page = (await call("wiki.createPage", { title: "reject-feedback" })).value;
+  await call("wiki.savePage", { id: page.id, content: "# reject-feedback\\n\\n待审内容\\n" });
+  await call("wiki.review", { id: page.id, decision: "reject", feedback: "缺少出处，补 2 条引用" });
+  const after = (await call("wiki.getPage", { id: page.id })).value;
+  const reviews = (await call("wiki.reviews", { id: page.id })).value || [];
+  const dream = (await call("wiki.dream")).value;
+  const issue = (dream.issues || []).find((x) => x.pageId === page.id && x.kind === "missing-citation");
+  await call("wiki.dismissDream", { key: issue?.key });
+  const dream2 = (await call("wiki.dream")).value;
+  const stillThere = (dream2.issues || []).some((x) => x.key === issue?.key);
+  return { status: after.status, feedback: after.lastReview?.feedback, reviewCount: reviews.length, hasIssue: Boolean(issue), dismissed: !stillThere };
+`);
+check("退回原因保存并在页面可见", r.status === "draft" && r.feedback === "缺少出处，补 2 条引用" && r.reviewCount >= 1, JSON.stringify(r));
+check("Dream 维护项可列出 / 忽略后不再出现", r.hasIssue === true && r.dismissed === true, JSON.stringify({ hasIssue: r.hasIssue, dismissed: r.dismissed }));
+
+// ── 问 Wiki：覆盖资料 + 引用可点开 ─────────────────
+r = await run(`
+  const call = async (method, args) => { try { return { ok: true, value: (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method, args })).result }; } catch (e) { return { ok: false, error: String(e?.message || e) }; } };
+  await call("wiki.importSource", { title: "ask-source", content: "量子纠错需要把逻辑量子比特编码到多个物理量子比特上，表面码是常见方案。", kind: "text", uri: "test://ask-source" });
+  const hit = await call("wiki.ask", { question: "量子纠错怎么编码" });
+  const miss = await call("wiki.ask", { question: "zzzzqqqqxxxxvvvv" });
+  return {
+    found: hit.value?.found,
+    hasSourceCitation: (hit.value?.citations || []).some((c) => c.kind === "source"),
+    answerMentionsSource: /资料/.test(hit.value?.answer || ""),
+    missFound: miss.value?.found,
+    missCitations: (miss.value?.citations || []).length,
+  };
+`);
+check("问 Wiki 能检索资料并返回 source 引用", r.found === true && r.hasSourceCitation === true && r.answerMentionsSource === true, JSON.stringify(r));
+check("问 Wiki 无依据时不编造", r.missFound === false && r.missCitations === 0, JSON.stringify({ missFound: r.missFound, missCitations: r.missCitations }));
 
 ws.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");
