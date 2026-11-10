@@ -1195,6 +1195,13 @@ function startWikiMcpServer() {
       let result;
       if (name === "wiki_memory") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.memory", { maxChars: args.max_chars || 12000 });
       else if (name === "wiki_search") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.search", { query: args.query });
+      else if (name === "wiki_list_pages") result = (await pluginHost.invoke("ai.cockpit.notes", "wiki.list", {})).pages;
+      else if (name === "wiki_list_tags") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.tags", {});
+      else if (name === "wiki_update_summary") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.updateSummary", { id: args.id, summary: args.summary });
+      else if (name === "wiki_import_source") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.importSource", { title: args.title, content: args.content, kind: args.kind || "text", uri: args.uri || "" });
+      else if (name === "wiki_curate") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.curate", { dryRun: args.confirm !== true });
+      else if (name === "wiki_mark_stale") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.markStale", { id: args.id, reason: args.reason || "agent" });
+      else if (name === "wiki_revisions") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.revisions", { id: args.id, limit: args.limit || 20 });
       else if (name === "wiki_ask") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.ask", { question: args.question, limit: args.limit });
       else if (name === "wiki_list_sources") result = (await pluginHost.invoke("ai.cockpit.notes", "wiki.sources", {})).map((s) => ({ id: s.id, title: s.title, kind: s.kind, uri: s.uri }));
       else if (name === "wiki_read_source") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.source", { id: args.id });

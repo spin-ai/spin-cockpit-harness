@@ -867,6 +867,17 @@ export async function activate(context) {
     await persist();
     return { ...pageView(page), renamedLinks };
   });
+  ctx.api.handle("wiki.updateSummary", async ({ id: pageId, summary = "" } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    page.summary = String(summary).slice(0, 2000);
+    page.updatedAt = now();
+    pageRevision(page, "summary");
+    updateSearchEntry("page", page);
+    addLog("page.summary", page.title);
+    await persist();
+    return pageSummary(page);
+  });
   ctx.api.handle("wiki.setConfidence", async ({ id: pageId, confidence } = {}) => {
     const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
     if (!page) throw new Error("page not found");

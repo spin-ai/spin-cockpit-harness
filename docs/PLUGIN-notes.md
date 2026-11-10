@@ -119,6 +119,7 @@ wiki.reviews
 wiki.dismissDream
 wiki.ask
 wiki.setConfidence
+wiki.updateSummary
 wiki.reviewQueue
 wiki.search
 wiki.graph
@@ -152,7 +153,16 @@ wiki_read_page
 wiki_upsert_draft
 wiki_add_citation
 wiki_ask
+wiki_list_pages
+wiki_list_tags
+wiki_update_summary
+wiki_import_source
+wiki_curate
+wiki_mark_stale
+wiki_revisions
 ```
+
+说明：页面改名（title/slug/双链同步）故意不暴露给 Agent，只能由人操作；Agent 可以改 summary（`wiki_update_summary`），不会改正文或审核状态。
 
 约束（代码强制）：
 
