@@ -17,6 +17,10 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
+  const [layout, setLayout] = useState<"cards" | "list">(() => {
+    try { return localStorage.getItem("ymh.projects.layout") === "list" ? "list" : "cards"; } catch { return "cards"; }
+  });
+  useEffect(() => { try { localStorage.setItem("ymh.projects.layout", layout); } catch { /* ignore */ } }, [layout]);
   const active = state.projects.find((p) => p.id === state.activeProjectId) ?? null;
   const activeTodos = state.todos.filter((t) => t.projectId === state.activeProjectId);
   const running = state.runs.filter((r) => activeTodos.some((t) => t.id === r.todoId) && ["queued", "running", "waiting_input"].includes(r.status)).length;
@@ -42,6 +46,29 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
     if (res) notify("项目已移除");
   };
 
+  const actionsFor = (p: Project, isActive: boolean) => (
+    editing === p.id ? (
+      <>
+        <button className="btn tiny-btn primary" onClick={() => void saveRename(p.id)}>保存</button>
+        <button className="btn tiny-btn" onClick={() => setEditing(null)}>取消</button>
+      </>
+    ) : (
+      <>
+        <button className="btn tiny-btn primary" disabled={isActive} onClick={() => onSwitch(p.id)}>{isActive ? "使用中" : "打开"}</button>
+        <RowMenu title="更多项目操作">
+          <button onClick={() => act("revealProject", { id: p.id })}>在 Finder 中显示</button>
+          <button onClick={() => startRename(p)}>重命名</button>
+          <label className="row-menu-label">状态
+            <select className="project-status-select" value={p.status} onChange={(e) => act("setProjectStatus", { id: p.id, status: e.target.value })}>
+              {(Object.keys(PROJECT_STATUS) as ProjectStatus[]).map((s) => <option key={s} value={s}>{PROJECT_STATUS[s]}</option>)}
+            </select>
+          </label>
+          <button className="danger" onClick={() => void remove(p)}>移除项目</button>
+        </RowMenu>
+      </>
+    )
+  );
+
   return (
     <div className="page project-page">
       <PageHeader
@@ -64,16 +91,23 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
             <b>工作区项目</b>
             <span className="tiny faint">{filtered.length}/{state.projects.length}</span>
           </div>
-          <input
-            className="project-search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索名称 / 别名 / 路径"
-            aria-label="搜索项目"
-          />
+          <div className="project-list-tools">
+            <div className="view-switch" role="group" aria-label="项目视图">
+              <button className={layout === "cards" ? "on" : ""} onClick={() => setLayout("cards")} title="卡片视图">▦ 卡片</button>
+              <button className={layout === "list" ? "on" : ""} onClick={() => setLayout("list")} title="列表视图">☰ 列表</button>
+            </div>
+            <input
+              className="project-search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索名称 / 别名 / 路径"
+              aria-label="搜索项目"
+            />
+          </div>
         </div>
 
         {filtered.length > 0 ? (
+          layout === "cards" ? (
           <div className="project-grid">
             {filtered.map((p) => {
               const todos = state.todos.filter((t) => t.projectId === p.id);
@@ -113,33 +147,55 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
 
                   <footer className="project-card-foot">
                     <span className="tiny faint">最近打开 {timeAgo(p.lastOpenedAt, now)} 前</span>
-                    <div className="project-actions">
-                      {editing === p.id ? (
-                        <>
-                          <button className="btn tiny-btn primary" onClick={() => void saveRename(p.id)}>保存</button>
-                          <button className="btn tiny-btn" onClick={() => setEditing(null)}>取消</button>
-                        </>
-                      ) : (
-                        <>
-                          <button className="btn tiny-btn primary" disabled={isActive} onClick={() => onSwitch(p.id)}>{isActive ? "使用中" : "打开"}</button>
-                          <RowMenu title="更多项目操作">
-                            <button onClick={() => act("revealProject", { id: p.id })}>在 Finder 中显示</button>
-                            <button onClick={() => startRename(p)}>重命名</button>
-                            <label className="row-menu-label">状态
-                              <select className="project-status-select" value={p.status} onChange={(e) => act("setProjectStatus", { id: p.id, status: e.target.value })}>
-                                {(Object.keys(PROJECT_STATUS) as ProjectStatus[]).map((s) => <option key={s} value={s}>{PROJECT_STATUS[s]}</option>)}
-                              </select>
-                            </label>
-                            <button className="danger" onClick={() => void remove(p)}>移除项目</button>
-                          </RowMenu>
-                        </>
-                      )}
-                    </div>
+                    <div className="project-actions">{actionsFor(p, isActive)}</div>
                   </footer>
                 </article>
               );
             })}
           </div>
+          ) : (
+            <div className="project-list-rows">
+              {filtered.map((p) => {
+                const todos = state.todos.filter((t) => t.projectId === p.id);
+                const isActive = p.id === state.activeProjectId;
+                const open = todos.filter((t) => !t.confirmed).length;
+                const confirmed = todos.filter((t) => t.confirmed).length;
+                const busy = state.runs.filter((r) => todos.some((t) => t.id === r.todoId) && ["queued", "running", "waiting_input"].includes(r.status)).length;
+                return (
+                  <div className={`project-list-item ${isActive ? "on" : ""}`} key={p.id}>
+                    <div className="project-list-main">
+                      <div className={`project-mark ${p.color}`}>{p.name.trim().slice(0, 1).toUpperCase() || "P"}</div>
+                      <div className="project-list-title">
+                        <div className="row gap6 wrap">
+                          {editing === p.id ? (
+                            <input
+                              className="project-name-input"
+                              autoFocus
+                              value={draft}
+                              onChange={(e) => setDraft(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === "Enter") void saveRename(p.id); if (e.key === "Escape") setEditing(null); }}
+                            />
+                          ) : <b className="ellipsis">{p.name}</b>}
+                          <span className="tag mono">@{p.alias}</span>
+                          {isActive && <span className="tag ok">当前</span>}
+                          <span className={`tag project-status ${p.status}`}>{PROJECT_STATUS[p.status] || p.status}</span>
+                        </div>
+                        <div className="project-card-path mono tiny muted ellipsis" title={p.path}>{p.path}</div>
+                      </div>
+                    </div>
+                    <div className="project-list-stats">
+                      <span><b>{todos.length}</b>任务</span>
+                      <span><b>{open}</b>未完成</span>
+                      <span className={busy ? "run" : ""}><b>{busy}</b>运行中</span>
+                      <span><b>{confirmed}</b>已确认</span>
+                    </div>
+                    <span className="project-list-time tiny faint">最近打开 {timeAgo(p.lastOpenedAt, now)} 前</span>
+                    <div className="project-actions">{actionsFor(p, isActive)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )
         ) : (
           <EmptyState compact title={query ? "没有匹配的项目" : "还没有项目"} desc={query ? "换个关键词试试。" : "添加一个本地目录，任务、终端和文件树会跟随项目。"} action={!query ? <button className="btn primary" onClick={onAdd}>＋ 添加项目</button> : undefined} />
         )}
@@ -179,6 +235,7 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
   const [form, setForm] = useState({ name: "", addr: "", user: "", port: "22", path: "" });
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const online = state.hosts.filter((h) => h.status === "online").length;
+  const activeRuns = state.runs.filter((r) => ["queued", "running", "waiting_input"].includes(r.status)).length;
 
   // 只在「主机页可见」时心跳：离开页面即停，不做常驻守护进程
   useEffect(() => {
@@ -236,15 +293,22 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
   };
 
   return (
-    <div className="page">
+    <div className="page host-page">
       <PageHeader
         title="主机"
-        subtitle={`${online}/${state.hosts.length} 在线`}
+        subtitle={`${online}/${state.hosts.length} 在线 · Agent 的运行位置；本机与 SSH 共用一套并发 / 审批 / 探测`}
         actions={<div className="row gap8">
           <button className="btn" disabled={probingAll} onClick={() => void probeAll()}>{probingAll ? "探测中…" : "全部探测"}</button>
           <button className="btn primary" onClick={() => (open ? setOpen(false) : openAdd())}>＋ 添加主机</button>
         </div>}
       />
+
+      <div className="project-overview host-overview-bar">
+        <div className="project-overview-item"><b>{online}/{state.hosts.length}</b><span>在线主机</span></div>
+        <div className="project-overview-item"><b>{state.agents.length}</b><span>Agent</span></div>
+        <div className={`project-overview-item ${activeRuns ? "run" : ""}`}><b>{activeRuns}</b><span>运行中</span></div>
+        <div className="project-overview-item"><b>{(state.cliCapabilities || []).length}</b><span>可用 CLI</span></div>
+      </div>
 
       {open && (
         <section className="panel host-form">
@@ -267,8 +331,7 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
         </section>
       )}
 
-      <div className="hosts-layout">
-      <div className="host-cards">
+      <div className="host-cards host-grid">
         {state.hosts.map((h) => {
           const caps = h.caps || [];
           const agents = state.agents.filter((a) => a.hostId === h.id);
@@ -276,40 +339,62 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
           const limit = h.maxConcurrency || 0;
           const isProbing = probing[h.id];
           return (
-            <section className={`panel host-card ${h.status}`} key={h.id}>
-              <div className="host-card-head">
-                <div className="row gap8" style={{ minWidth: 0 }}>
+            <section className={`panel host-card host-panel ${h.status}`} key={h.id}>
+              <header className="host-card-head">
+                <div className="host-card-title">
                   <span className={`dot ${h.status === "online" ? "green" : h.status === "offline" ? "red" : "amber"}`} />
-                  <b className="ellipsis">{h.name}</b>
-                  <span className="tag mono">{h.kind === "local" ? "本机" : "ssh"}</span>
-                  {isProbing && <span className="live" title="探测中" />}
+                  <div>
+                    <div className="row gap6 wrap">
+                      <b>{h.name}</b>
+                      <span className="tag mono">{h.kind === "local" ? "本机" : "ssh"}</span>
+                      <span className={`tag ${h.status === "online" ? "ok" : ""}`}>{isProbing ? "检测中" : HOST_STATUS[h.status] || h.status}</span>
+                      {isProbing && <span className="live" title="探测中" />}
+                    </div>
+                    <span className="mono tiny faint ellipsis" title={h.kind === "ssh" ? `${h.user ? `${h.user}@` : ""}${h.addr}:${h.port || 22}` : h.addr}>
+                      {h.kind === "ssh" ? `${h.user ? `${h.user}@` : ""}${h.addr}:${h.port || 22}` : h.addr}
+                    </span>
+                  </div>
                 </div>
-                <div className="row gap6">
-                  <span className="tiny muted mono">{h.kind === "ssh" ? `${h.user ? `${h.user}@` : ""}${h.addr}:${h.port || 22}` : h.addr}</span>
-                  <span className={`tag ${h.status === "online" ? "ok" : ""}`}>{isProbing ? "检测中" : HOST_STATUS[h.status] || h.status}</span>
+                <div className="host-head-actions">
+                  <button className="btn tiny-btn" disabled={isProbing} onClick={() => void probe(h.id)}>{isProbing ? "探测中…" : "重新探测"}</button>
+                  {h.kind !== "local" && <button className="btn tiny-btn" onClick={() => openEdit(h)}>编辑</button>}
+                  {h.kind !== "local" && <button className="btn tiny-btn danger" onClick={() => void remove(h.id, h.name)}>移除</button>}
+                </div>
+              </header>
+
+              <div className="host-panel-body">
+                <div className="host-cap-block">
+                  <div className="host-block-head"><span>可用 CLI</span><em>{caps.length}</em></div>
+                  <div className="host-cap-list">
+                    {caps.map((c) => (
+                      <div className="host-cap-row" key={c.cli} title={c.path || c.cli}>
+                        <b className="mono">{c.cli}</b>
+                        <span className="mono tiny muted">{c.version}</span>
+                        <em className="mono tiny faint ellipsis">{c.path || "—"}</em>
+                      </div>
+                    ))}
+                    {caps.length === 0 && <span className="tiny muted">{h.kind === "local" ? "未检测到 CLI" : "未探测"}</span>}
+                  </div>
+                </div>
+                <div className="host-meta-grid">
+                  <div><span>负载</span><b>{busy}{limit ? `/${limit}` : ""}</b></div>
+                  <div><span>延迟</span><b>{h.latencyMs == null ? "—" : `${h.latencyMs}ms`}</b></div>
+                  <div><span>探测</span><b>{h.lastProbe ? `${timeAgo(h.lastProbe, now)} 前` : "未探测"}</b></div>
+                  <div><span>Agent</span><b>{agents.length}</b></div>
                 </div>
               </div>
 
-              <div className="host-caps">
-                {caps.map((c) => (
-                  <span className="tag mono host-cap" key={c.cli} title={c.path || c.cli}>
-                    {c.cli}<i>{c.version}</i>
-                  </span>
-                ))}
-                {caps.length === 0 && <span className="tiny muted">{h.kind === "local" ? "未检测到 CLI" : "未探测"}</span>}
+              <div className="host-concurrency">
+                <span className="tiny muted">并发上限</span>
+                <HostMaxInput value={limit} onCommit={(max) => void act("setHostMax", { id: h.id, max })} />
+                <span className="tiny faint">0 = 不限；新 run 生效</span>
               </div>
 
-              <div className="host-meta tiny muted">
-                <span>负载 {busy}{limit ? `/${limit}` : ""}</span>
-                <span>延迟 {h.latencyMs == null ? "—" : `${h.latencyMs}ms`}</span>
-                <span>{h.lastProbe ? `${timeAgo(h.lastProbe, now)}前探测` : "未探测"}</span>
-                {agents.length > 0 && <span>{agents.length} Agent</span>}
-              </div>
-
-              {h.probeError && <div className="tiny red ellipsis" title={h.probeError}>{h.probeError}</div>}
+              {h.probeError && <div className="host-probe-error tiny red ellipsis" title={h.probeError}>{h.probeError}</div>}
 
               {agents.length > 0 && (
                 <div className="host-agents">
+                  <div className="host-block-head"><span>Agent</span><em>{agents.length}</em></div>
                   {agents.map((a) => (
                     <div className="host-agent-row" key={a.id}>
                       <span className={`dot ${a.color}`} />
@@ -337,37 +422,9 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
                   ))}
                 </div>
               )}
-
-              <div className="host-actions">
-                <button className="btn tiny-btn" disabled={isProbing} onClick={() => void probe(h.id)}>{isProbing ? "探测中…" : "重新探测"}</button>
-                <label className="tiny muted row gap6" title="并发上限；0 = 不限">
-                  并发
-                  <HostMaxInput value={limit} onCommit={(max) => void act("setHostMax", { id: h.id, max })} />
-                </label>
-                {h.kind !== "local" && <button className="btn tiny-btn" onClick={() => openEdit(h)}>编辑</button>}
-                {h.kind !== "local" && <button className="btn tiny-btn danger" onClick={() => void remove(h.id, h.name)}>移除</button>}
-              </div>
             </section>
           );
         })}
-      </div>
-      <aside className="hosts-side">
-        <section className="panel">
-          <div className="panel-head">主机概览</div>
-          <div className="host-overview">
-            <div><span>在线主机</span><b>{online}/{state.hosts.length}</b></div>
-            <div><span>Agent</span><b>{state.agents.length}</b></div>
-            <div><span>运行中</span><b>{state.runs.filter((r) => ["queued", "running", "waiting_input"].includes(r.status)).length}</b></div>
-          </div>
-        </section>
-        <section className="panel">
-          <div className="panel-head">可用 CLI</div>
-          <div className="row gap6 wrap">
-            {(state.cliCapabilities || []).map((c) => <span className="tag mono" key={c}>{c}</span>)}
-            {(state.cliCapabilities || []).length === 0 && <span className="muted small">—</span>}
-          </div>
-        </section>
-      </aside>
       </div>
     </div>
   );
