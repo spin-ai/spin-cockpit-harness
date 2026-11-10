@@ -11,7 +11,9 @@ const tools = [
   { name: "wiki_read_source", description: "读取一个 source 的完整内容。", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
   { name: "wiki_read_page", description: "读取一个 Wiki 页面（含 citations / backlinks）。", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
   { name: "wiki_upsert_draft", description: "创建或更新一个 Wiki draft。source_ids 用于绑定引用；不会直接标记 reviewed。", inputSchema: { type: "object", properties: { title: { type: "string" }, content: { type: "string" }, summary: { type: "string" }, source_ids: { type: "array", items: { type: "string" } } }, required: ["title", "content"] } },
-  { name: "wiki_add_citation", description: "给页面绑定一个 source 引用。page/source 都可以用 id 或标题。", inputSchema: { type: "object", properties: { page: { type: "string" }, source: { type: "string" }, quote: { type: "string" }, locator: { type: "string" } }, required: ["page", "source"] } },
+  { name: "wiki_add_citation", description: "给页面绑定一个 source 引用。page/source 都可以用 id 或标题；重复添加会合并。", inputSchema: { type: "object", properties: { page: { type: "string" }, source: { type: "string" }, quote: { type: "string" }, locator: { type: "string" } }, required: ["page", "source"] } },
+  { name: "wiki_update_citation", description: "更新一条引用的摘录 / 定位。", inputSchema: { type: "object", properties: { page: { type: "string" }, citation_id: { type: "string" }, quote: { type: "string" }, locator: { type: "string" } }, required: ["page", "citation_id"] } },
+  { name: "wiki_remove_citation", description: "删除页面上的一条引用。", inputSchema: { type: "object", properties: { page: { type: "string" }, citation_id: { type: "string" } }, required: ["page", "citation_id"] } },
 ];
 let buffer = "";
 process.stdin.setEncoding("utf8");

@@ -110,6 +110,8 @@ wiki.importUrl
 wiki.sources
 wiki.source
 wiki.addCitation
+wiki.updateCitation
+wiki.removeCitation
 wiki.reviewQueue
 wiki.search
 wiki.graph
@@ -139,6 +141,8 @@ wiki_read_source
 wiki_read_page
 wiki_upsert_draft
 wiki_add_citation
+wiki_update_citation
+wiki_remove_citation
 ```
 
 约束：

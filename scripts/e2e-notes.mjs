@@ -47,10 +47,14 @@ let r = await ev(`
   window.__wait = async (fn, ms = 6000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = fn(); if (v) return v; await new Promise((r) => setTimeout(r, 80)); } return null; };
   // 页头动作收进了 ⋯ 菜单：先开菜单再按文字找
   window.__menu = async (label) => {
-    const trigger = document.querySelector(".page-header-actions .row-menu-trigger");
-    if (trigger) trigger.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 250));
-    return [...document.querySelectorAll(".row-menu-pop button")].find((b) => b.textContent.includes(label)) || null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 6000) {
+      if (!document.querySelector(".row-menu-pop")) document.querySelector(".page-header-actions .row-menu-trigger")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 200));
+      const found = [...document.querySelectorAll(".row-menu-pop button")].find((b) => b.textContent.includes(label));
+      if (found) return found;
+    }
+    return null;
   };
   await window.harness.action("pluginEnable", { id: "ai.cockpit.notes" });
   await new Promise((r) => setTimeout(r, 800));
@@ -58,7 +62,7 @@ let r = await ev(`
   const rail = await window.__wait(() => [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.includes("Wiki")));
   if (!rail) return { error: "no notes rail" };
   rail.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 1600));
+  await window.__wait(() => document.querySelector(".notes-page"), 10000);
   const gen = await window.__menu("生成 Wiki");
   if (!gen) return { error: "no generate button", page: !!document.querySelector(".notes-page") };
   gen.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -154,6 +158,27 @@ check("整理：弱标题改成正文 H1 + 大纲四段 + 索引",
   JSON.stringify(r.headings) === JSON.stringify(["## 要点", "## 原文摘录", "## 相关"]) && /要点一/.test(r.points || ""),
   JSON.stringify({ titles: r.titles, headings: r.headings }));
 check("整理幂等（第二次 renamed/updated 均为 0）", r.renamedAgain === 0 && r.updatedAgain === 0, JSON.stringify({ renamed: r.renamedAgain, updated: r.updatedAgain }));
+
+// ── 引用：标题解析成 id / 去重 / 编辑 / 删除 ─────────────────
+r = await run(`
+  const call = async (method, args) => { try { return { ok: true, value: (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method, args })).result }; } catch (e) { return { ok: false, error: String(e?.message || e) }; } };
+  const list = (await call("wiki.list")).value;
+  const src = list.sources[0];
+  const before = src.citations || 0;
+  const page = (await call("wiki.createPage", { title: "citation-target" })).value;
+  await call("wiki.addCitation", { pageId: page.id, sourceId: src.title, quote: "第一段" });
+  const a2 = await call("wiki.addCitation", { pageId: page.id, sourceId: src.title, quote: "第二段" });
+  const cites = a2.value?.citations || [];
+  const cite = cites[0];
+  const upd = await call("wiki.updateCitation", { pageId: page.id, citationId: cite.id, quote: "更新后的摘录", locator: "L12" });
+  const afterUpd = (upd.value?.citations || [])[0];
+  const del = await call("wiki.removeCitation", { pageId: page.id, citationId: cite.id });
+  const sourcesAfter = (await call("wiki.list")).value.sources.find((s) => s.id === src.id);
+  return { sameId: cite?.sourceId === src.id, count: cites.length, quote: afterUpd?.quote, locator: afterUpd?.locator, afterRemove: (del.value?.citations || []).length, before, after: sourcesAfter?.citations };
+`);
+check("引用按标题添加会存真实 id 且不重复", r.sameId === true && r.count === 1, JSON.stringify({ sameId: r.sameId, count: r.count }));
+check("引用可编辑摘录 / 定位", r.quote === "更新后的摘录" && r.locator === "L12", JSON.stringify({ quote: r.quote, locator: r.locator }));
+check("引用可删除且 source 计数同步", r.afterRemove === 0 && r.after === r.before, JSON.stringify({ afterRemove: r.afterRemove, before: r.before, after: r.after }));
 
 ws.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");
