@@ -7,7 +7,7 @@ import { SceneConfigModal } from "./SceneConfigModal";
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
 /**
- * 执行配置总览：只展示每个项目的执行配置和运行状态。
+ * 场景总览：只展示每个项目的执行配置和运行状态。
  * 配置编辑统一走 SceneConfigModal；项目本身的管理留在「项目」页，避免两个项目列表。
  */
 export function ScenePage({ state, act, notify, onOpenProject, onOpenTerminal }: {
@@ -39,8 +39,8 @@ export function ScenePage({ state, act, notify, onOpenProject, onOpenTerminal }:
   return (
     <div className="page scene-page">
       <PageHeader
-        kicker="执行"
-        title="执行配置"
+        kicker="SCENE"
+        title="场景"
         subtitle={`${state.projects.length} 个项目 · 每个项目一份执行配置；Chat 派活时按这里推荐项目 / Agent / 执行方式`}
         actions={<span className="tiny muted">全局默认 worktree：{state.settings.worktreeMode || "auto"}</span>}
       />

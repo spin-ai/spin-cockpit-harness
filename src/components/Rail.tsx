@@ -18,7 +18,7 @@ const icon = (name: string) => {
 export function Rail({ view, onChange, notesEnabled = false, badges = {} }: { view: View; onChange: (v: View) => void; notesEnabled?: boolean; badges?: Partial<Record<View, number>> }) {
   const items: { id: View; label: string }[] = [
     { id: "workspace", label: "工作区" },
-    { id: "scene", label: "执行配置" },
+    { id: "scene", label: "场景" },
     { id: "projects", label: "项目" },
     { id: "stats", label: "统计" },
     { id: "hosts", label: "主机" },
