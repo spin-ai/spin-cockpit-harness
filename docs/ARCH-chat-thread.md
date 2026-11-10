@@ -282,3 +282,12 @@ agent_thought_chunk { content:{ type:"text", text:"User asks: ..." } }
 启动时对每个 `trigger=edit` 的 run 做一次幂等修复：
 把该会话里「编辑那条消息之后、新 run 开始之前」的消息补上 `superseded_by`。
 不删数据，只影响渲染；已标记过的跳过。
+
+### 两个把「顺序」看成错位的实现 bug（2026-11）
+
+1. **`messages.run_id` 被写成 todoId**：`recoverMissions` 里把 `todo.id` 传给了 `addMessage` 的 runId 参数，
+   于是会话末尾多出一条 `run-divider t168 / t1299` 的假分隔条，后面还跟着一条孤立系统消息。
+   现已改传 `run.id`，并在启动修复里把「指向不存在 run」的消息 `run_id` 归零。
+2. **旧窗口残留**：安装脚本对卡住的进程只发 SIGTERM 就覆盖 .app，旧进程仍活着继续渲染旧界面 ——
+   外面看是「装了新版还是老样子」。现在安装脚本 2s 后仍活着就 SIGKILL，应用本身也加了
+   `requestSingleInstanceLock()`（锁按 userData 目录区分，不影响 E2E 的临时目录）。
