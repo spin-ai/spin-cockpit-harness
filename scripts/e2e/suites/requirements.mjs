@@ -532,20 +532,25 @@ export const TESTS = [
       await ctx.action("switchProject", { id: project.id });
       await ctx.sleep(350);
       await gotoRail(ctx, "场景", ".scene-page");
+      const opened = await ctx.ev(`(async()=>{
+        const b=document.querySelector('.scene-project[data-project-id=${JSON.stringify(project.id)}]');
+        if(!b) return false;
+        window.__e2e.click(b);
+        return !!(await window.__e2e.until(() => document.querySelector(".scene-detail .scene-editor"), 3000));
+      })()`);
+      assert(opened, "场景详情未打开");
+      assert(await ctx.ev(`document.querySelectorAll(".scene-stat").length >= 5`), "场景状态卡片不完整");
       const marker = `E2E scene ${Date.now()}`;
       const text = `worktree: auto\nruntime: auto\nnotes: ${marker}`;
       const changed = await ctx.ev(`(()=>{
-        const card=[...document.querySelectorAll(".scene-card")].find((c)=>c.textContent.includes("E2E Scene"));
-        if(!card) return false;
-        const ta=card.querySelector(".scene-editor");
+        const ta=document.querySelector(".scene-detail .scene-editor");
         if(!ta) return false;
         window.__e2e.setValue(ta, ${JSON.stringify(text)});
         return true;
       })()`);
       assert(changed, "场景配置输入框不存在");
       const clicked = await ctx.ev(`(()=>{
-        const card=[...document.querySelectorAll(".scene-card")].find((c)=>c.textContent.includes("E2E Scene"));
-        const b=card && [...card.querySelectorAll(".scene-card-actions .btn")].find((x)=>x.textContent.includes("保存"));
+        const b=[...document.querySelectorAll(".scene-config .btn")].find((x)=>x.textContent.includes("保存"));
         if(!b) return false; window.__e2e.click(b); return true;
       })()`);
       assert(clicked, "场景保存按钮不存在");
