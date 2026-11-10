@@ -46,7 +46,7 @@ const SEARCH_INDEX: { section: Section; title: string; hint?: string; k?: string
   { section: "general", title: "Enter 发送", k: "enterToSend", hint: "关闭后用 ⌘Enter 发送" },
   { section: "general", title: "停止前确认", k: "confirmStop", hint: "停止运行前弹确认" },
   { section: "general", title: "重置面板尺寸", hint: "TODO / Chat / Terminal / 文件列宽" },
-  { section: "appearance", title: "主题", k: "theme", hint: "跟随系统 / 浅色 / 纸感 / 深色 / 午夜蓝 / 森林 / 石墨" },
+  { section: "appearance", title: "主题", k: "theme", hint: THEMES.map((t) => t.label).join(" / ") },
   { section: "appearance", title: "Chat 字号", k: "chatFontSize", hint: "11–16px" },
   { section: "execution", title: "全局并发上限", k: "maxConcurrentRuns", hint: "同时运行的 run 数量，0 = 不限" },
   { section: "execution", title: "审批策略", k: "approvalPolicy", hint: "ACP 权限请求：询问 / 自动批准 / 自动拒绝" },
@@ -180,7 +180,7 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && hits[0]) { e.preventDefault(); jumpTo(hits[0].section, hits[0].k || hits[0].title); }
-              if (e.key === "ArrowDown" && hits.length) { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
+              if (e.key === "ArrowDown" && hits.length) { e.preventDefault(); window.setTimeout(() => document.querySelector<HTMLElement>(".settings-hits .settings-hit")?.focus(), 0); }
             }}
           />
         </div>

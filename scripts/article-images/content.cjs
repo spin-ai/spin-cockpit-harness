@@ -659,7 +659,7 @@ function acpSequence() {
     { y: 706, from: 0, to: 1, color: C.red, marker: "arrow-red", label: "allow / deny" },
     { y: 748, from: 1, to: 3, color: C.red, marker: "arrow-red", label: "outcome.selected" },
     { y: 796, from: 3, to: 1, color: C.green, marker: "arrow-green", label: "prompt result" },
-    { y: 838, from: 1, to: 2, color: C.amber, marker: "arrow-amber", label: "completed + inbox" },
+    { y: 838, from: 1, to: 2, color: C.amber, marker: "arrow-amber", label: "completed" },
     { y: 880, from: 1, to: 0, color: C.blue, marker: "arrow-blue", label: "state / 待确认" },
   ];
 

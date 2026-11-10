@@ -249,7 +249,7 @@ export default function App() {
     if (p?.terminalId) requestTerminalAdopt({ ...p, title: p.title || "Agent 终端" });
   }), []);
 
-  // 全局快速记录（⌘⇧K）：先切到 Wiki，再让 Notes 弹输入框  // 全局快速记录（⌘⇧K）：先切到 Wiki，再让 Notes 弹输入框
+  // 全局快速记录（⌘⇧K）：先切到知识库，再让 Notes 弹输入框  // 全局快速记录（⌘⇧K）：先切到知识库，再让 Notes 弹输入框
   useEffect(() => {
     return window.harness.onQuickCapture(() => {
       if (!notesEnabled) { notify("先在设置 → 插件里启用 Notes"); return; }
@@ -295,6 +295,12 @@ export default function App() {
     await act("switchProject", { id });
     setView("workspace");
   }, [act]);
+
+  const newTaskInProject = useCallback(async (id: string) => {
+    if (id !== state?.activeProjectId) await switchProject(id);
+    else setView("workspace");
+    window.setTimeout(() => window.dispatchEvent(new CustomEvent("harness:new-task")), 120);
+  }, [state?.activeProjectId, switchProject]);
 
   const newThread = useCallback(async () => {
     // 新对话默认全局；需要项目作用域时在 Chat 的「作用域」里选
@@ -344,12 +350,12 @@ export default function App() {
     if (!state) return [];
     const list: Command[] = [
       { id: "view-workspace", label: "工作区", hint: "⌘1", group: "导航", run: () => setView("workspace") },
-      { id: "view-scene", label: "场景", group: "导航", run: () => setView("scene") },
+      { id: "view-scene", label: "执行配置", group: "导航", run: () => setView("scene") },
       { id: "view-projects", label: "项目", group: "导航", run: () => setView("projects") },
       { id: "view-stats", label: "统计", group: "导航", run: () => setView("stats") },
       { id: "view-hosts", label: "主机", group: "导航", run: () => setView("hosts") },
       { id: "view-git", label: "Git / 源码管理", group: "导航", run: () => setView("git") },
-      { id: "quick-capture", label: "快速记录到 Wiki", hint: "⌘⇧K", group: "任务", run: () => void act("openQuickCapture") },
+      { id: "quick-capture", label: "快速记录到知识库", hint: "⌘⇧K", group: "任务", run: () => void act("openQuickCapture") },
       { id: "new-thread", label: "新建会话", hint: "⌘N", group: "任务", run: () => void newThread() },
       { id: "new-task", label: "新建任务", hint: "⌘⇧N", group: "任务", run: () => dispatchInWorkspace(() => new Event("harness:new-task")) },
       { id: "new-terminal", label: "新建终端标签", hint: "⌘T", group: "终端", run: () => dispatchInWorkspace(() => new Event("harness:new-terminal")) },
@@ -362,7 +368,7 @@ export default function App() {
       { id: "open-settings", label: "打开设置", hint: "⌘,", group: "导航", run: () => setView("settings") },
       { id: "open-model-key", label: "配置模型密钥（DEEPSEEK_API_KEY 等）", group: "导航", hint: "设置 → 执行", run: () => window.dispatchEvent(new CustomEvent("harness:open-settings", { detail: { section: "execution", focus: "dshEnv" } })) },
       { id: "open-guide", label: "使用说明 / Super Agent 怎么用", group: "导航", run: () => setView("guide") },
-      ...(notesEnabled ? [{ id: "open-notes", label: "打开 Wiki", group: "插件", run: () => setView("notes") }] : []),
+      ...(notesEnabled ? [{ id: "open-notes", label: "打开知识库", group: "插件", run: () => setView("notes") }] : []),
       ...((state.pluginCommands ?? []).map((c) => ({
         id: `plugin-${c.pluginId}-${c.id}`,
         label: c.title,
@@ -458,6 +464,11 @@ export default function App() {
 
   if (!state) return <div className="boot">启动中…</div>;
 
+  const railBadges = {
+    workspace: state.runs.filter((r) => ["queued", "running", "waiting_input"].includes(r.status)).length,
+    hosts: state.hosts.filter((h) => h.status === "offline").length,
+  };
+
   // 终端默认吃掉剩余宽度；终端收起时，由仍展开的最右侧面板吃掉剩余宽度。
   const flexPane: PaneId | null = !collapsed.terminal ? "terminal" : !collapsed.files ? "files" : !collapsed.chat ? "chat" : !collapsed.todo ? "todo" : null;
   const paneCol = (id: PaneId, width: number, min: number) =>
@@ -474,7 +485,7 @@ export default function App() {
   return (
     <div className="app">
       <div className={`main pane-focus-${focusedPane ?? "none"}`} style={{ gridTemplateColumns: gridCols }} onPointerDownCapture={markFocusedPane} onFocusCapture={markFocusedPane}>
-        <Rail view={view} notesEnabled={notesEnabled} onChange={(v) => setView(v)} />
+        <Rail view={view} notesEnabled={notesEnabled} badges={railBadges} onChange={(v) => setView(v)} />
         {/* 工作区始终挂载、只切显隐：切到项目/统计再回来时，终端 pty、标签、滚动位置都不能丢 */}
         {scoped && (
           <div className="workspace-view" style={{ display: view === "workspace" ? "contents" : "none" }}>
@@ -531,7 +542,7 @@ export default function App() {
           </div>
         )}
         {view === "scene" && <div className="wide"><ScenePage state={state} act={act} notify={notify} onOpenProject={(id) => void switchProject(id)} onOpenTerminal={(cwd) => { setView("workspace"); window.setTimeout(() => requestTerminalAt(cwd), 90); }} /></div>}
-        {view === "projects" && <div className="wide"><Projects state={state} now={now} act={act} notify={notify} onAdd={() => void addProject()} onSwitch={(id) => void switchProject(id)} /></div>}
+        {view === "projects" && <div className="wide"><Projects state={state} now={now} act={act} notify={notify} onAdd={() => void addProject()} onSwitch={(id) => void switchProject(id)} onNewTask={(id) => void newTaskInProject(id)} /></div>}
         {view === "stats" && scoped && <div className="wide"><Stats state={state} onOpen={(id) => void openTodoFromPalette(id)} /></div>}
         {view === "hosts" && <div className="wide"><Hosts state={state} act={act} notify={notify} now={now} /></div>}
         {view === "git" && <div className="wide"><GitView state={state} notify={notify} /></div>}
