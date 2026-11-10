@@ -17,6 +17,8 @@ type PageSummary = {
   reopenReason?: string; reopenedAt?: number | null;
   /** 引用资料更新/删除导致过期：原因、时间、原状态 */
   staleReason?: string; staleAt?: number | null; staleFrom?: string | null;
+  /** 最近一次审核（退回原因展示） */
+  lastReview?: { status: string; feedback: string; createdAt: number } | null;
 };
 type Citation = { id: string; pageId: string; sourceId: string; quote?: string; locator?: string; source?: Source };
 type Page = Omit<PageSummary, "citations" | "backlinks"> & { content: string; citations: Citation[]; backlinks: PageSummary[] };
@@ -34,6 +36,9 @@ type SearchHit = { kind: string; id: string; title: string; status?: string; at?
 
 function emptyPane(): Pane { return { tabs: [], active: null }; }
 function statusLabel(status: string) { return status === "reviewed" ? "已审核" : status === "stale" ? "已过期" : "草稿"; }
+function dreamKindLabel(kind: string) {
+  return kind === "missing-citation" ? "缺少引用" : kind === "stale-draft" ? "草稿放了 7 天" : kind === "duplicate-title" ? "标题重复" : kind;
+}
 function staleReasonLabel(reason?: string) {
   return reason === "source-updated" ? "引用资料已更新" : reason === "source-deleted" ? "引用资料已删除" : "手动标记过期";
 }
@@ -132,6 +137,10 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const [historySel, setHistorySel] = useState<string | null>(null);
   const [historyDiff, setHistoryDiff] = useState<DiffLine[] | null>(null);
   const [historyBusy, setHistoryBusy] = useState(false);
+  const [rejectTarget, setRejectTarget] = useState<{ id: string; title: string } | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [dreamOpen, setDreamOpen] = useState(false);
+  const [dreamIssues, setDreamIssues] = useState<{ key: string; kind: string; pageId: string; title: string }[]>([]);
   const [askLoading, setAskLoading] = useState(false);
   const [docs, setDocs] = useState<Record<string, Doc>>({});
   const [left, setLeft] = useState<Pane>(emptyPane);
@@ -543,15 +552,21 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     return `Untitled ${i}`;
   };
 
-  const reviewPage = async (pageId: string, decision: "accept" | "reject") => {
+  const reviewPage = async (pageId: string, decision: "accept" | "reject", feedback = "") => {
     setBusy(true);
     try {
-      const feedback = ""; // 不弹 prompt（Electron 不支持）；退回原因可在页面里写
       const page = await invoke("wiki.review", { id: pageId, decision, feedback });
       if (page) setDocs((current) => ({ ...current, [pageId]: { ...page, dirty: false } }));
       setNotice(decision === "accept" ? "已接受为 reviewed" : "已退回 draft");
       await refresh();
     } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const submitReject = async () => {
+    if (!rejectTarget) return;
+    await reviewPage(rejectTarget.id, "reject", rejectReason.trim());
+    setRejectTarget(null);
+    setRejectReason("");
   };
 
   const clearStale = async (pageId: string) => {
@@ -719,10 +734,19 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
       if (res) {
         const issues = Array.isArray(res.issues) ? res.issues : [];
         setMemory(res.memory || memory);
-        setNotice(issues.length ? `Dream 发现 ${issues.length} 个维护项（见通知/页面）` : "Dream 未发现明显问题");
+        setDreamIssues(issues);
+        setDreamOpen(true);
+        setNotice(issues.length ? `Dream 发现 ${issues.length} 个维护项` : "Dream 未发现明显问题");
         if (issues.length) setSourceDraft(null);
       }
     } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const dismissDreamIssue = async (key: string) => {
+    try {
+      await invoke("wiki.dismissDream", { key });
+      setDreamIssues((current) => current.filter((issue) => issue.key !== key));
+    } catch (err) { fail(err); }
   };
 
   const openGraph = async () => {
@@ -838,7 +862,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                     </>
                   ) : (
                     <>
-                      {doc.status === "draft" && <button onClick={() => void reviewPage(doc.id, "reject")} disabled={busy}>退回</button>}
+                      {doc.status === "draft" && <button onClick={() => { setRejectTarget({ id: doc.id, title: doc.title }); setRejectReason(""); }} disabled={busy}>退回…</button>}
                       <button onClick={() => void createTask()} disabled={busy}>创建任务</button>
                       <button onClick={() => void openHistory()}>历史版本…</button>
                       <button onClick={() => void exportPdf()}>导出 PDF</button>
@@ -1153,6 +1177,53 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
           </div>
         </div>
       )}
+      {rejectTarget && (
+        <div className="modal-mask" role="dialog" aria-modal="true" aria-label="退回页面">
+          <div className="modal wiki-reject">
+            <h3>退回「{rejectTarget.title}」</h3>
+            <p className="tiny muted">退回后页面保持草稿；原因会记录在页面上，方便下次修改。</p>
+            <textarea
+              autoFocus
+              rows={4}
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="哪里需要改？（可留空）"
+              onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setRejectTarget(null); } }}
+            />
+            <div className="row gap6" style={{ justifyContent: "flex-end" }}>
+              <button className="btn tiny-btn" onClick={() => setRejectTarget(null)}>取消</button>
+              <button className="btn tiny-btn primary" onClick={() => void submitReject()} disabled={busy}>确认退回</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {dreamOpen && (
+        <div className="modal-mask" role="dialog" aria-modal="true" aria-label="Wiki 维护项">
+          <div className="modal wiki-dream">
+            <h3>维护项 · Dream</h3>
+            <p className="tiny muted">只做确定性检查（缺引用 / 久放草稿 / 标题重复），不会自动改页面；忽略后不再提示。</p>
+            {dreamIssues.length === 0
+              ? <div className="wiki-dream-empty">没有待处理项。</div>
+              : (
+                <div className="wiki-dream-list">
+                  {dreamIssues.map((issue) => (
+                    <div className="wiki-dream-row" key={issue.key}>
+                      <div className="wiki-dream-main">
+                        <b>{issue.title}</b>
+                        <em>{dreamKindLabel(issue.kind)}</em>
+                      </div>
+                      <button className="link tiny" onClick={() => { setDreamOpen(false); void openPage(issue.pageId); }}>打开</button>
+                      <button className="link tiny" onClick={() => void dismissDreamIssue(issue.key)}>忽略</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            <div className="row gap6" style={{ justifyContent: "flex-end" }}>
+              <button className="btn tiny-btn" onClick={() => setDreamOpen(false)}>关闭</button>
+            </div>
+          </div>
+        </div>
+      )}
       {quickOpen && (
         <div className="modal-mask" role="dialog" aria-modal="true" aria-label="快速记录">
           <div className="modal quick-capture">
@@ -1434,6 +1505,12 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                   <span className={`notes-review-badge ${activeDoc.status}`}>{statusLabel(activeDoc.status)}</span>
                   <span className="notes-meta-hint">置信度 {confidenceLabel(activeDoc.confidence)}</span>
                 </div>
+                {activeDoc.lastReview?.feedback && (
+                  <div className="notes-review-feedback" title={`${timeAgo(activeDoc.lastReview.createdAt)} 退回`}>
+                    <em>退回原因</em>
+                    <p>{activeDoc.lastReview.feedback}</p>
+                  </div>
+                )}
                 {activeDoc.status === "stale" && (
                   <div className="notes-stale-note">
                     <p>{staleReasonLabel(activeDoc.staleReason)}{activeDoc.staleAt ? ` · ${timeAgo(activeDoc.staleAt)}` : ""}</p>

@@ -115,6 +115,8 @@ wiki.clearStale
 wiki.revisions
 wiki.revision
 wiki.revert
+wiki.reviews
+wiki.dismissDream
 wiki.reviewQueue
 wiki.search
 wiki.graph
@@ -185,7 +187,7 @@ wiki.dream
   → 生成新的 Memory 索引
 ```
 
-它只产出维护项，不自动修改 reviewed 页面。
+它只产出维护项，不自动修改 reviewed 页面。UI 在 Memory 面板点 Dream 打开「维护项」列表：缺引用 / 久放草稿 / 标题重复，可跳到页面处理或「忽略」（忽略记录在 `dreamDismissed`，不再重复提示）。
 
 LLM Dreaming（后续）：
 
