@@ -1028,7 +1028,6 @@ async function startRun(run, todo, agent) {
     if (delegation) {
       settleDelegation(todo, "completed", missionChildSummary(todo, run).summary, run);
     } else {
-      store.state.inbox.unshift({ id: store.nextId("i"), todoId: todo.id, kind: "review", title: `待验收 · ${todo.title}`, at: Date.now(), read: false });
     }
     await client.close();
   } catch (err) {
@@ -1052,7 +1051,6 @@ async function startRun(run, todo, agent) {
       if (delegation) {
         settleDelegation(todo, "failed", run.error, run);
       } else {
-        store.state.inbox.unshift({ id: store.nextId("i"), todoId: todo.id, kind: "failed", title: `失败 · ${todo.title}`, at: Date.now(), read: false });
       }
       try { await client.close(); } catch { /* ignore */ }
     }
@@ -1986,10 +1984,6 @@ function finishMission(mission, summary = "", artifacts = [], source = "supervis
       deepLink: `yieldmind-ide://open?path=${encodeURIComponent(String(ref))}`, createdAt: now(),
     });
   }
-  const existing = store.state.inbox.find((i) => i.todoId === mission.id && i.kind === "mission_review" && !i.read);
-  if (!existing) {
-    store.state.inbox.unshift({ id: store.nextId("i"), todoId: mission.id, kind: "mission_review", title: `Mission 待确认 · ${mission.title}`, at: now(), read: false });
-  }
   store.addEvent("mission.finished", `mission.finished ${mission.key} source=${source}`);
   pluginHost?.emit("mission.finished", { missionId: mission.id, title: mission.title, summary: text, status: mission.status });
   broadcast();
@@ -2034,7 +2028,6 @@ function failMission(mission, error) {
   for (const [token, record] of mcpTokens) if (record.missionId === mission.id) mcpTokens.delete(token);
   if (supervisor) releaseWikiToken(supervisor.id);
   store.addMessage(missionThread(mission).id, supervisor?.id || null, "system", "error", `Mission 失败：${String(error || "未知错误").slice(0, 500)}`);
-  store.state.inbox.unshift({ id: store.nextId("i"), todoId: mission.id, kind: "mission_failed", title: `Mission 失败 · ${mission.title}`, at: now(), read: false });
   store.addEvent("mission.failed", `mission.failed ${mission.key} ${String(error || "").slice(0, 200)}`);
   broadcast();
   tick();
@@ -2425,7 +2418,6 @@ const actions = {
     store.addEvent("data.export", `data.export ${res.filePath}`);
     return res.filePath;
   },
-  clearInbox: () => { store.state.inbox = []; store.addEvent("inbox.cleared", "inbox.cleared"); return { ok: true }; },
   addProject: ({ path: dirPath, name = "", desc = "", color = "" }) => {
     if (!dirPath) throw new Error("请选择项目目录");
     const abs = path.resolve(String(dirPath));
@@ -3121,7 +3113,6 @@ const actions = {
     mission.status = "cancelled";
     mission.updatedAt = now();
     for (const [token, record] of mcpTokens) if (record.missionId === mission.id) mcpTokens.delete(token);
-    for (const item of store.state.inbox) if (item.todoId === mission.id) item.read = true;
     store.addMessage(missionThread(mission).id, null, "system", "system", "Mission 已取消");
     store.addEvent("mission.cancelled", `mission.cancelled ${mission.key}`);
     broadcast();
@@ -3243,7 +3234,6 @@ const actions = {
       }
     }
     todo.updatedAt = now();
-    for (const item of store.state.inbox) if (item.todoId === id) item.read = true;
     store.addMessage(threadForTodo(todo).id, null, "system", "system", `已确认 · ${todo.key}`);
     store.addEvent(todo.kind === "mission" ? "mission.confirmed" : "todo.confirmed", `${todo.kind === "mission" ? "mission" : "todo"}.confirmed ${todo.key}`);
     pluginHost?.emit("todo.confirmed", { todoId: todo.id, title: todo.title, mission: todo.kind === "mission" });
@@ -3396,11 +3386,6 @@ const actions = {
     store.addMessage(threadForTodo(todo).id, run.id, "system", "system", "重试");
     tick();
   },
-  readInbox: ({ id }) => {
-    const item = store.state.inbox.find((i) => i.id === id);
-    if (item) item.read = true;
-  },
-  readAllInbox: () => { store.state.inbox.forEach((i) => { i.read = true; }); },
   setContext: (payload) => {
     store.state.context = { ...payload, updatedAt: now(), stale: false, source: "ide" };
     store.addEvent("context.changed", "context.changed source=ide");

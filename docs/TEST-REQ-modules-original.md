@@ -407,7 +407,7 @@ npm run test:e2e:requirements -- --keep   # 保留隔离 userData 便于排查
 npm run test:e2e:requirements -- --run-skipped  # 临时执行 skip 用例
 ```
 
-已代码化（23 条）：
+已代码化（24 条）：
 
 | 自动化 ID | 对应用例 |
 |---|---|
@@ -434,5 +434,6 @@ npm run test:e2e:requirements -- --run-skipped  # 临时执行 skip 用例
 | FG-03 | Git API：status/diff/stage/commit/log |
 | E2E-01 | 普通 TODO 广播给两个 Agent（独立 run/worktree） |
 | HOST-01 | 主机概览 / CLI 列表 / 指标 / 重新探测 |
+| STAT-01 | 统计指标 / 图表或空态 / 范围 / 导出 |
 
 暂未代码化（保留手工）：E2E-03（Mission 审批/子任务长流程）、E2E-05（Wiki 生成/审核/提问）。这两条依赖真实模型或 Mission 夹具，继续保留手工 E2E。

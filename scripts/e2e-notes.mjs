@@ -45,7 +45,9 @@ let r = await ev(`
   // confirm 自动确认 + 等待助手
   window.confirm = () => true;
   window.__wait = async (fn, ms = 6000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = fn(); if (v) return v; await new Promise((r) => setTimeout(r, 80)); } return null; };
-  // 页头动作收进了 ⋯ 菜单：先开菜单再按文字找
+  // 页头直接可见的按钮（新建 / 导入资料 / 生成 / 整理 / 问 Wiki）
+  window.__hbtn = (label) => [...document.querySelectorAll(".page-header-actions .btn")].find((b) => b.textContent.includes(label)) || null;
+  // 低频动作仍在 ⋯ 菜单：先开菜单再按文字找
   window.__menu = async (label) => {
     const trigger = document.querySelector(".page-header-actions .row-menu-trigger");
     if (trigger) trigger.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -55,11 +57,11 @@ let r = await ev(`
   await window.harness.action("pluginEnable", { id: "ai.cockpit.notes" });
   await new Promise((r) => setTimeout(r, 800));
   await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.vault.open", args: { path: "${VAULT}" } });
-  const rail = await window.__wait(() => [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.includes("Wiki")));
+  const rail = await window.__wait(() => [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.includes("知识库")));
   if (!rail) return { error: "no notes rail" };
   rail.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 1600));
-  const gen = await window.__menu("生成 Wiki");
+  const gen = await window.__wait(() => window.__hbtn("生成知识库"));
   if (!gen) return { error: "no generate button", page: !!document.querySelector(".notes-page") };
   gen.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 4000));
@@ -124,7 +126,8 @@ r = await run(`
 check("本地文档变成资料（kind=file）", (r.kinds || []).filter((k) => k === "file").length === 2, JSON.stringify(r));
 
 r = await run(`
-  const paste = await window.__menu("粘贴文本");
+  const paste = window.__hbtn("导入资料");
+  if (!paste) return { error: "no import button" };
   paste.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 500));
   const modes = [...document.querySelectorAll(".notes-source-mode button")].map((b) => b.textContent.trim());

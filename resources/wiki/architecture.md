@@ -40,7 +40,7 @@ SQLite 是唯一事实来源，主要表：
 | `delegations` / `mission_plans` | Mission 的委派合同与计划 revision |
 | `projects` / `hosts` / `agents` | 项目、主机、执行体 |
 | `settings` | 用户设置（主题、模型、dsh 路径、并发等） |
-| `inbox` / `events` | 通知与审计事件 |
+| `events` | 审计事件 |
 
 ![数据模型](./wiki/data-model.png)
 

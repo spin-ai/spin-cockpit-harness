@@ -20,7 +20,6 @@ CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, todo_id TEXT, title TEX
 CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, todo_id TEXT, run_id TEXT, role TEXT, kind TEXT, content TEXT, injected INTEGER, created_at INTEGER, thread_id TEXT, delivery TEXT, context TEXT);
 CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, todo_id TEXT, run_id TEXT, kind TEXT, title TEXT, origin TEXT, ref TEXT, deep_link TEXT, created_at INTEGER);
 CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, ts INTEGER, type TEXT, text TEXT);
-CREATE TABLE IF NOT EXISTS inbox (id TEXT PRIMARY KEY, todo_id TEXT, kind TEXT, title TEXT, at INTEGER, read INTEGER, pinned INTEGER);
 CREATE TABLE IF NOT EXISTS context (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS mission_plans (id TEXT PRIMARY KEY, mission_id TEXT, revision INTEGER, status TEXT, plan TEXT, created_at INTEGER, approved_at INTEGER);
@@ -126,9 +125,12 @@ export async function openDb(dir) {
     "ALTER TABLE runs ADD COLUMN worktree_cleaned INTEGER",
   ]) { try { db.run(sql); } catch { /* exists */ } }
 
+  // 独立收件箱已移除；旧版本数据库里的 inbox 表一并清理，避免遗留死数据。
+  try { db.run("DROP TABLE IF EXISTS inbox"); } catch { /* ignore */ }
+
   const state = {
     hosts: [], projects: [], agents: [], todos: [], runs: [], threads: [], messages: [],
-    artifacts: [], events: [], inbox: [], context: {}, seq: 0, activeProjectId: null,
+    artifacts: [], events: [], context: {}, seq: 0, activeProjectId: null,
     missionPlans: [], delegations: [],
     plugins: [], pluginKv: [], todoLinks: [], scenes: [], terminals: [],
     settings: { ...DEFAULT_SETTINGS },
@@ -193,7 +195,6 @@ export async function openDb(dir) {
   }));
   state.artifacts = rows("SELECT * FROM artifacts").map((r) => ({ id: r.id, todoId: r.todo_id, runId: r.run_id, kind: r.kind, title: r.title, origin: r.origin, ref: r.ref, deepLink: r.deep_link, createdAt: r.created_at }));
   state.events = rows("SELECT * FROM events").map((r) => ({ id: r.id, ts: r.ts, type: r.type, text: r.text }));
-  state.inbox = rows("SELECT * FROM inbox").map((r) => ({ id: r.id, todoId: r.todo_id, kind: r.kind, title: r.title, at: r.at, read: !!r.read, pinned: !!r.pinned }));
   state.missionPlans = rows("SELECT * FROM mission_plans").map((r) => ({
     id: r.id, missionId: r.mission_id, revision: r.revision || 1, status: r.status || "draft",
     plan: J(r.plan, {}), createdAt: r.created_at || Date.now(), approvedAt: r.approved_at || null,
@@ -269,7 +270,7 @@ export async function openDb(dir) {
   let timer = null;
   const writeNow = () => {
     db.run("BEGIN");
-    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "inbox", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "terminals", "context", "settings", "meta"]) db.run(`DELETE FROM ${t}`);
+    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "terminals", "context", "settings", "meta"]) db.run(`DELETE FROM ${t}`);
     for (const h of state.hosts) db.run(
       "INSERT INTO hosts (id,name,kind,addr,status,heartbeat,version,port,user,caps,last_probe,latency_ms,max_concurrency,default_cwd,probe_error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [h.id, h.name, h.kind, h.addr, h.status, h.heartbeat || 0, h.version || "—", h.port || 22, h.user || "",
@@ -290,7 +291,6 @@ export async function openDb(dir) {
     for (const m of state.messages) db.run("INSERT INTO messages VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [m.id, m.todoId || null, m.runId || null, m.role, m.kind || "text", m.content, m.injected ? 1 : 0, m.createdAt, m.threadId || null, m.delivery || null, m.context ? JSON.stringify(m.context) : null, m.supersededBy || null]);
     for (const a of state.artifacts) db.run("INSERT INTO artifacts VALUES (?,?,?,?,?,?,?,?,?)", [a.id, a.todoId, a.runId, a.kind, a.title, a.origin, a.ref, a.deepLink, a.createdAt || Date.now()]);
     for (const e of state.events) db.run("INSERT INTO events VALUES (?,?,?,?)", [e.id, e.ts, e.type, e.text]);
-    for (const i of state.inbox) db.run("INSERT INTO inbox VALUES (?,?,?,?,?,?,?)", [i.id, i.todoId, i.kind, i.title, i.at, i.read ? 1 : 0, i.pinned ? 1 : 0]);
     for (const p of state.missionPlans || []) db.run("INSERT INTO mission_plans VALUES (?,?,?,?,?,?,?)", [p.id, p.missionId, p.revision || 1, p.status || "draft", JSON.stringify(p.plan || {}), p.createdAt || Date.now(), p.approvedAt || null]);
     for (const d of state.delegations || []) db.run("INSERT INTO delegations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [d.id, d.missionId, d.supervisorRunId, d.childTodoId, d.childRunId || null, d.agentId, d.planStepKey || "", d.title, d.brief || "", JSON.stringify(d.acceptance || []), d.status || "proposed", d.resultSummary || "", JSON.stringify(d.artifacts || []), d.branch || null, d.createdAt || Date.now(), d.updatedAt || Date.now(), d.completedAt || null]);
     for (const p of state.plugins || []) db.run("INSERT INTO plugins VALUES (?,?,?,?,?,?,?,?,?,?)", [p.id, p.version || "", p.path || "", p.enabled ? 1 : 0, p.builtin ? 1 : 0, JSON.stringify(p.manifest || {}), JSON.stringify(p.permissions || []), p.installedAt || 0, p.lastError || null, p.lastRunAt || null]);

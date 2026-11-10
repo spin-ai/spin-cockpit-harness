@@ -136,7 +136,6 @@ export interface ElementContext {
 export interface Message { id: string; threadId: string; todoId: string | null; runId: string | null; role: string; kind: string; content: string; injected: boolean; delivery?: Delivery; context?: ElementContext | null; createdAt: number; /** 被编辑后的新版本取代时指向新 run，UI 不再展示 */ supersededBy?: string | null; }
 export interface Artifact { id: string; todoId: string; runId: string; kind: string; title: string; origin: string; ref: string; deepLink: string; createdAt: number; }
 export interface Event { id: string; ts: number; type: string; text: string; }
-export interface InboxItem { id: string; todoId: string; kind: string; title: string; at: number; read: boolean; pinned?: boolean; }
 export interface ContextState { dataset?: string; selection?: string[]; figure?: string; canvasElement?: string; activeFile?: string; updatedAt?: number; stale?: boolean; source?: string; }
 export type ThemeMode = "system" | "light" | "paper" | "vslight" | "dark" | "vsdark" | "midnight" | "forest" | "graphite" | "monokai" | "onedark" | "solarized" | "dracula";
 export interface Settings {
@@ -171,7 +170,7 @@ export interface State {
   hosts: Host[]; agents: Agent[]; todos: Todo[]; runs: Run[]; threads: Thread[]; messages: Message[];
   missionPlans?: MissionPlanRecord[]; delegations?: Delegation[];
   plugins?: PluginRecord[]; pluginCommands?: PluginCommand[]; todoLinks?: TodoLink[];
-  artifacts: Artifact[]; events: Event[]; inbox: InboxItem[]; context: ContextState;
+  artifacts: Artifact[]; events: Event[]; context: ContextState;
   approvals: Approval[];
   summary: { activeRuns: number; cost: number; tokens: number; failures: number };
   workspacePath: string;
