@@ -6,11 +6,19 @@ const endpoint = process.env.COCKPIT_WIKI_URL || "";
 const token = process.env.COCKPIT_WIKI_TOKEN || "";
 const tools = [
   { name: "wiki_memory", description: "读取小型顶层 Memory 索引；需要详情时再用 wiki_search / wiki_read_page。", inputSchema: { type: "object", properties: { max_chars: { type: "number" } } } },
+  { name: "wiki_list_pages", description: "列出 Wiki 页面（id / title / status / summary / citations / updatedAt），用于挑选要读写的目标页面。", inputSchema: { type: "object", properties: {} } },
+  { name: "wiki_list_tags", description: "列出 Wiki 标签及数量。", inputSchema: { type: "object", properties: {} } },
+  { name: "wiki_update_summary", description: "只更新页面摘要，不改正文/状态（reviewed 也安全）。", inputSchema: { type: "object", properties: { id: { type: "string" }, summary: { type: "string" } }, required: ["id", "summary"] } },
+  { name: "wiki_import_source", description: "把一段文本导入为 source（可带 uri 去重）；不会创建页面。", inputSchema: { type: "object", properties: { title: { type: "string" }, content: { type: "string" }, uri: { type: "string" } }, required: ["title", "content"] } },
+  { name: "wiki_curate", description: "整理 Wiki（统一大纲 / 补互链 / 重建索引）。默认 dry-run；传 confirm=true 才真正写入。", inputSchema: { type: "object", properties: { confirm: { type: "boolean" } } } },
+  { name: "wiki_mark_stale", description: "把页面标记为过期（需要重新审核）。", inputSchema: { type: "object", properties: { id: { type: "string" }, reason: { type: "string" } }, required: ["id"] } },
+  { name: "wiki_revisions", description: "读取页面历史版本列表（不含正文）。", inputSchema: { type: "object", properties: { id: { type: "string" }, limit: { type: "number" } }, required: ["id"] } },
+  { name: "wiki_ask", description: "只基于本地 Wiki 页面与资料做检索式回答，返回带引用的答案；无依据时 found=false。", inputSchema: { type: "object", properties: { question: { type: "string" }, limit: { type: "number" } }, required: ["question"] } },
   { name: "wiki_search", description: "搜索 Wiki 页面和 sources。", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
   { name: "wiki_list_sources", description: "列出已导入的 sources（id / title / kind）。", inputSchema: { type: "object", properties: {} } },
   { name: "wiki_read_source", description: "读取一个 source 的完整内容。", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
   { name: "wiki_read_page", description: "读取一个 Wiki 页面（含 citations / backlinks）。", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
-  { name: "wiki_upsert_draft", description: "创建或更新一个 Wiki draft。source_ids 用于绑定引用；不会直接标记 reviewed。", inputSchema: { type: "object", properties: { title: { type: "string" }, content: { type: "string" }, summary: { type: "string" }, source_ids: { type: "array", items: { type: "string" } } }, required: ["title", "content"] } },
+  { name: "wiki_upsert_draft", description: "创建或更新一个 Wiki draft。source_ids 必填（至少 1 个有效 source），用于绑定引用；reviewed 页面不能被覆盖，需先人工退回 draft。", inputSchema: { type: "object", properties: { title: { type: "string" }, content: { type: "string" }, summary: { type: "string" }, source_ids: { type: "array", items: { type: "string" } } }, required: ["title", "content", "source_ids"] } },
   { name: "wiki_add_citation", description: "给页面绑定一个 source 引用。page/source 都可以用 id 或标题。", inputSchema: { type: "object", properties: { page: { type: "string" }, source: { type: "string" }, quote: { type: "string" }, locator: { type: "string" } }, required: ["page", "source"] } },
 ];
 let buffer = "";

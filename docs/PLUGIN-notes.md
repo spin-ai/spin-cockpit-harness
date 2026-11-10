@@ -110,6 +110,16 @@ wiki.importUrl
 wiki.sources
 wiki.source
 wiki.addCitation
+wiki.markStale
+wiki.clearStale
+wiki.revisions
+wiki.revision
+wiki.revert
+wiki.reviews
+wiki.dismissDream
+wiki.ask
+wiki.setConfidence
+wiki.updateSummary
 wiki.reviewQueue
 wiki.search
 wiki.graph
@@ -124,6 +134,9 @@ wiki.vault.pick
 wiki.vault.open
 wiki.vault.file
 wiki.vault.save
+wiki.vault.create
+wiki.vault.rename
+wiki.vault.delete
 wiki.vault.reveal
 wiki.vault.importSource
 ```
@@ -139,13 +152,24 @@ wiki_read_source
 wiki_read_page
 wiki_upsert_draft
 wiki_add_citation
+wiki_ask
+wiki_list_pages
+wiki_list_tags
+wiki_update_summary
+wiki_import_source
+wiki_curate
+wiki_mark_stale
+wiki_revisions
 ```
 
-约束：
+说明：页面改名（title/slug/双链同步）故意不暴露给 Agent，只能由人操作；Agent 可以改 summary（`wiki_update_summary`），不会改正文或审核状态。
+
+约束（代码强制）：
 
 - 只能写 draft；
-- 不能删除/覆盖 reviewed 页面；
-- 写入必须带 source_ids 或后续补 citation；
+- **不能覆盖 reviewed 页面**：`wiki_upsert_draft` 命中 reviewed 会直接报错，必须由人工先退回 draft；
+- **写入必须带至少 1 个有效 source_ids**：空数组或无效 id 都会报错（先 `wiki_list_sources`）；
+- 人工编辑 reviewed 页面会回到 draft，并写 `reopenReason=edited-after-review`（UI 显示「改过 · 待重新审核」）；
 - 所有写入追加 log/revision；
 - 读 source 内容视为不可信数据。
 
@@ -179,7 +203,7 @@ wiki.dream
   → 生成新的 Memory 索引
 ```
 
-它只产出维护项，不自动修改 reviewed 页面。
+它只产出维护项，不自动修改 reviewed 页面。UI 在 Memory 面板点 Dream 打开「维护项」列表：缺引用 / 久放草稿 / 标题重复，可跳到页面处理或「忽略」（忽略记录在 `dreamDismissed`，不再重复提示）。
 
 LLM Dreaming（后续）：
 
@@ -238,12 +262,13 @@ Source 不变；page 是派生知识。本地文件是用户资产，不会被 A
 
 ### 4.4 Stale
 
-Source hash 变化后（P1）：
+已实现：source hash 变化 / source 被删除时，自动找到引用它的页面并标记 `stale`：
 
-- 找到引用该 source 的 page；
-- 标记 stale；
-- 生成新 draft + diff；
-- 人工决定是否替换。
+- `importSource` 命中同一 uri/hash 且内容变化 → 引用页面 `stale`，`staleReason=source-updated`
+- `deleteSource` → 引用页面 `stale`，`staleReason=source-deleted`
+- 页面保留原正文，只改状态；`clearStale`（「确认仍有效」）恢复到过期前的状态（通常 reviewed）
+- 也可 `markStale` 手动标记；每次状态变化都写 revision + log
+- 「生成新 draft + diff」仍走 #10（revision 历史）
 
 ---
 
@@ -261,7 +286,8 @@ Wiki
 - **页面**：标题、draft/reviewed/stale
 - **资料**：source 列表、引用数
 - **审核**：待审核 draft
-- **本地**：打开 / 更换本地 Markdown 目录，按文件夹列出 `.md`；点击直接编辑并写回磁盘
+- **本地**：打开 / 更换本地 Markdown 目录，按文件夹列出 `.md`；点击直接编辑并写回磁盘；支持新建 / 重命名 / 删除（`wiki.vault.create/rename/delete`，沿用 mtime 冲突保护）
+- **批量**：页面 / 资料列表可「批量选择」，支持全选、批量接受、批量删除
 - 搜索：页面 / source / 本地文件名
 - 最近 wiki log
 
@@ -271,8 +297,13 @@ Wiki
 - 阅读 / CodeMirror 编辑
 - `[[Page]]` 内部链接
 - 分屏 + 可拖拽比例
+- 阅读模式右侧「本页目录」：h2 / h3，滚动高亮，点击跳转
 - 页面状态 / citations 数
 - 编辑模式可直接改标题；保存时同时写回 title / summary
+
+#### 标题改名
+
+保存时如果标题变了：自动生成唯一 slug，并把全库 `[[旧标题]]`（含 `#小节` / `|别名`）改写成新标题；代码块与行内代码里的文本不动。会返回 `renamedLinks` 数量，UI 刷新其它打开中的 tab（跳过未保存的）。
 
 #### 编辑器
 
@@ -329,11 +360,8 @@ plugins/notes/main.mjs
 
 未实现：
 
-- source hash stale 自动检测
-- revision diff UI
 - PDF / 网页正文抽取打磨
 - 语义搜索 / embedding
-- Query Chat 的 citation 校验
 - 导出 Markdown / 导入 Obsidian
 - 多 Wiki / 团队协作
 
@@ -353,12 +381,12 @@ plugins/notes/main.mjs
 
 ### P1
 
-- source hash / stale
-- revision diff
+- source hash / stale（已完成）
+- revision diff（已完成）
 - citation 检查
 - Review queue 体验
 - 图谱过滤
-- Query Chat
+- Query Chat（已完成，覆盖页面 + 资料）
 
 ### P2
 
