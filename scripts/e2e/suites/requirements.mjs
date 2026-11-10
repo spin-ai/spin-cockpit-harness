@@ -624,8 +624,8 @@ export const TESTS = [
       assert(project, "场景项目未添加");
       await ctx.action("switchProject", { id: project.id });
       await ctx.sleep(350);
-      await gotoRail(ctx, "执行配置", ".scene-page");
-      assert(await ctx.ev(`document.querySelectorAll(".scene-overview-bar .project-overview-item").length >= 4`), "执行配置概览不完整");
+      await gotoRail(ctx, "场景", ".scene-page");
+      assert(await ctx.ev(`document.querySelectorAll(".scene-overview-bar .project-overview-item").length >= 4`), "场景概览不完整");
       const opened = await ctx.ev(`(async()=>{
         const card=[...document.querySelectorAll(".scene-card")].find((c)=>c.dataset.projectId === ${JSON.stringify(project.id)});
         if(!card) return false;

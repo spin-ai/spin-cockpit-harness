@@ -350,7 +350,7 @@ export default function App() {
     if (!state) return [];
     const list: Command[] = [
       { id: "view-workspace", label: "工作区", hint: "⌘1", group: "导航", run: () => setView("workspace") },
-      { id: "view-scene", label: "执行配置", group: "导航", run: () => setView("scene") },
+      { id: "view-scene", label: "场景", group: "导航", run: () => setView("scene") },
       { id: "view-projects", label: "项目", group: "导航", run: () => setView("projects") },
       { id: "view-stats", label: "统计", group: "导航", run: () => setView("stats") },
       { id: "view-hosts", label: "主机", group: "导航", run: () => setView("hosts") },
