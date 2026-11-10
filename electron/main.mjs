@@ -20,6 +20,22 @@ const appIconPath = app.isPackaged ? path.join(process.resourcesPath, "icon.png"
 const devUrl = process.env.VITE_DEV_SERVER_URL;
 // 目录名统一为 Cockpit Harness；老安装继续用 ~/Documents/YieldMind，避免已存任务路径失效
 const legacyWorkspaceRoot = path.join(app.getPath("documents"), "YieldMind", "workspace");
+// 单实例：第二个实例立刻退出（只提示已运行），避免旧窗口残留显示旧界面、以及两个进程同时写同一个库。
+// userData 必须先定下来：锁是按 userData 目录区分的，否则 E2E 的临时目录会和已打开的应用抢同一把锁。
+const isolatedDataDir = process.env.COCKPIT_USER_DATA || process.env.YMH_USER_DATA; // 旧变量名保留兼容
+if (isolatedDataDir) app.setPath("userData", isolatedDataDir);
+if (!app.requestSingleInstanceLock()) {
+  console.log("[app] 已有实例在运行，退出第二个实例");
+  app.quit();
+  process.exit(0);
+}
+app.on("second-instance", () => {
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
+});
+
 const workspaceRoot = fs.existsSync(legacyWorkspaceRoot)
   ? legacyWorkspaceRoot
   : path.join(app.getPath("documents"), "Cockpit Harness", "workspace");
@@ -630,7 +646,7 @@ function recoverMissions() {
     run.errorClass = run.errorClass || "other";
     const todo = store.state.todos.find((t) => t.id === run.todoId);
     if (todo && ["queued", "in_progress", "waiting_input"].includes(todo.status)) { todo.status = "todo"; todo.updatedAt = now(); }
-    if (todo) store.addMessage(threadForTodo(todo).id, todo.id, "system", "system", `应用重启：运行 ${run.id} 已中断（Agent 进程随应用退出）`);
+    if (todo) store.addMessage(threadForTodo(todo).id, run.id, "system", "system", `应用重启：运行 ${run.id} 已中断（Agent 进程随应用退出）`);
     store.addEvent("run.interrupted", `run.interrupted ${run.id}`);
     changed = true;
   }
@@ -659,6 +675,11 @@ function recoverMissions() {
  */
 function repairEditedThreads() {
   let changed = false;
+  // 早期版本把 todoId 误写进了 messages.run_id：指向不存在的 run，界面会渲染出一条假的分隔条
+  const runIds = new Set(store.state.runs.map((r) => r.id));
+  for (const m of store.state.messages) {
+    if (m.runId && !runIds.has(m.runId)) { m.runId = null; changed = true; }
+  }
   for (const run of store.state.runs) {
     if (run.trigger !== "edit") continue;
     const own = store.state.messages.filter((m) => m.runId === run.id);
@@ -4358,9 +4379,7 @@ app.whenReady().then(async () => {
   } catch { /* ignore */ }
   installMenu();
   // 多实例 / E2E 隔离：显式指定 userData 目录，避免与正在使用的窗口抢同一个 harness.db
-  const isolatedData = process.env.COCKPIT_USER_DATA || process.env.YMH_USER_DATA; // 旧变量名保留兼容
-  if (isolatedData) app.setPath("userData", isolatedData);
-  else migrateUserData("YieldMind Harness"); // 产品名改为 Cockpit Harness：老数据目录一次性搬过来
+  if (!isolatedDataDir) migrateUserData("YieldMind Harness"); // 产品名改为 Cockpit Harness：老数据目录一次性搬过来
   store = await openDb(app.getPath("userData"));
   seed();
   startMissionMcpServer();

@@ -75,6 +75,18 @@ function quitApp() {
     for (const pid of pids) { try { process.kill(Number(pid), "SIGTERM"); } catch { /* ignore */ } }
     console.log(`[install] SIGTERM ${pids.length} 个进程`);
   }
+  // SIGTERM 后仍活着的（旧窗口卡住）必须硬杀：残留进程会继续显示旧界面，让人以为「装了还是老样子」
+  const t1 = Date.now();
+  while (Date.now() - t1 < 2000) {
+    if (!running()) return;
+    spawnSync("sleep", ["0.2"]);
+  }
+  if (running()) {
+    const pids = String(spawnSync("pgrep", ["-f", `${APP_NAME}/Contents/MacOS/`], { encoding: "utf8" }).stdout || "")
+      .split("\n").map((x) => x.trim()).filter(Boolean);
+    for (const pid of pids) { try { process.kill(Number(pid), "SIGKILL"); } catch { /* ignore */ } }
+    console.log(`[install] SIGKILL ${pids.length} 个残留进程`);
+  }
 }
 
 function plist(app, key) {
