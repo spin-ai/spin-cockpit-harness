@@ -275,3 +275,10 @@ agent_thought_chunk { content:{ type:"text", text:"User asks: ..." } }
   `编辑后重发 · 替换其后 N 条消息`
 - 效果：`编辑后的提问 → 新 run 的输出` 紧挨着，和 DeepSeek 的「编辑 → 重新生成」一致
 - 数据不删：被取代的消息仍在库里（`superseded_by` 可追溯），将来要做分支切换可以复用
+
+### 存量修复：`repairEditedThreads()`
+
+早期版本编辑时只 rebind 消息、不标记旧内容，于是留下「问题 → 一大段旧答案 → 新答案」的历史会话。
+启动时对每个 `trigger=edit` 的 run 做一次幂等修复：
+把该会话里「编辑那条消息之后、新 run 开始之前」的消息补上 `superseded_by`。
+不删数据，只影响渲染；已标记过的跳过。
