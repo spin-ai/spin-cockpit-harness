@@ -437,6 +437,35 @@ function pageSummary(page) {
   return { id: page.id, slug: page.slug, title: page.title, summary: page.summary || "", status: page.status, confidence: page.confidence || "medium", updatedAt: page.updatedAt, citations: citationsOf(page.id).length, backlinks: backlinksOf(page).length };
 }
 
+/** 只改写代码块/行内代码之外的 [[旧标题]] → [[新标题]]（保留 #heading 与 |alias）。 */
+function rewriteWikiLinks(text, oldTitle, newTitle) {
+  const target = String(oldTitle || "").trim().toLowerCase();
+  if (!target) return String(text || "");
+  return String(text || "").split(/(```[\s\S]*?```|`[^`\n]*`)/g).map((chunk) => {
+    if (chunk.startsWith("```") || chunk.startsWith("`")) return chunk;
+    return chunk.replace(/\[\[([^\]|#]+)(#[^\]|]*)?(\|[^\]]*)?\]\]/g, (match, page, heading = "", alias = "") => (
+      String(page).trim().toLowerCase() === target ? `[[${newTitle}${heading}${alias}]]` : match
+    ));
+  }).join("");
+}
+
+function renamePageLinks(oldTitle, newTitle) {
+  const changed = [];
+  const seen = new Set([String(newTitle || "").trim().toLowerCase()]);
+  for (const other of data.pages) {
+    // 目标标题自身不再重复改写（避免 [[new]] → [[new]] 的 revision 噪音）
+    if (seen.has(String(other.title || "").trim().toLowerCase())) continue;
+    const next = rewriteWikiLinks(other.content, oldTitle, newTitle);
+    if (next === other.content) continue;
+    other.content = next;
+    other.updatedAt = now();
+    updateSearchEntry("page", other);
+    pageRevision(other, `link-rename:${oldTitle}`);
+    changed.push(other);
+  }
+  return changed;
+}
+
 const REVISION_LIMIT = 200;
 function revisionFile(pageId) { return path.join(revisionDir(), `${safeFile(pageId)}.ndjson`); }
 
@@ -802,7 +831,8 @@ export async function activate(context) {
     if (typeof title === "string" && title.trim()) page.title = title.trim().slice(0, 180);
     if (typeof summary === "string") page.summary = summary.slice(0, 2000);
     if (typeof content === "string") page.content = content;
-    const changed = page.title !== before.title || page.summary !== before.summary || page.content !== before.content;
+    const titleChanged = page.title !== before.title;
+    const changed = titleChanged || page.summary !== before.summary || page.content !== before.content;
     const wasReviewed = page.status === "reviewed";
     const wasStale = page.status === "stale";
     page.status = status === "reviewed" ? "reviewed" : "draft";
@@ -821,9 +851,31 @@ export async function activate(context) {
       page.reopenReason = "edited-after-review";
       page.reopenedAt = now();
     }
+    let renamedLinks = 0;
+    if (titleChanged) {
+      // slug 跟着标题走（保持唯一），并同步全库 [[旧标题]]
+      const base = slugify(page.title) || "page";
+      let slug = base;
+      let n = 2;
+      while (data.pages.some((p) => p.id !== page.id && p.slug === slug)) slug = `${base}-${n++}`;
+      page.slug = slug;
+      renamedLinks = renamePageLinks(before.title, page.title).length;
+    }
     pageRevision(page, wasReviewed && changed && page.status === "draft" ? "edit-after-review" : "edit");
     updateSearchEntry("page", page);
-    addLog("page.save", page.title);
+    addLog("page.save", page.title + (renamedLinks ? ` · ${renamedLinks} pages relinked` : ""));
+    await persist();
+    return { ...pageView(page), renamedLinks };
+  });
+  ctx.api.handle("wiki.setConfidence", async ({ id: pageId, confidence } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    const value = confidence === "high" || confidence === "low" ? confidence : "medium";
+    page.confidence = value;
+    page.updatedAt = now();
+    pageRevision(page, `confidence:${value}`);
+    updateSearchEntry("page", page);
+    addLog("page.confidence", `${page.title} → ${value}`);
     await persist();
     return pageView(page);
   });
