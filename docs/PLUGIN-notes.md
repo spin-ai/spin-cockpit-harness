@@ -110,6 +110,8 @@ wiki.importUrl
 wiki.sources
 wiki.source
 wiki.addCitation
+wiki.markStale
+wiki.clearStale
 wiki.reviewQueue
 wiki.search
 wiki.graph
@@ -239,12 +241,13 @@ Source 不变；page 是派生知识。本地文件是用户资产，不会被 A
 
 ### 4.4 Stale
 
-Source hash 变化后（P1）：
+已实现：source hash 变化 / source 被删除时，自动找到引用它的页面并标记 `stale`：
 
-- 找到引用该 source 的 page；
-- 标记 stale；
-- 生成新 draft + diff；
-- 人工决定是否替换。
+- `importSource` 命中同一 uri/hash 且内容变化 → 引用页面 `stale`，`staleReason=source-updated`
+- `deleteSource` → 引用页面 `stale`，`staleReason=source-deleted`
+- 页面保留原正文，只改状态；`clearStale`（「确认仍有效」）恢复到过期前的状态（通常 reviewed）
+- 也可 `markStale` 手动标记；每次状态变化都写 revision + log
+- 「生成新 draft + diff」仍走 #10（revision 历史）
 
 ---
 
@@ -330,7 +333,6 @@ plugins/notes/main.mjs
 
 未实现：
 
-- source hash stale 自动检测
 - revision diff UI
 - PDF / 网页正文抽取打磨
 - 语义搜索 / embedding

@@ -101,14 +101,15 @@ r = await ev(`
   if (!reviewTab) return { error: "no review tab" };
   reviewTab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 400));
+  const before = (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" }))?.result?.reviews?.length || 0;
   const row = [...document.querySelectorAll(".notes-row")][0];
   const accept = [...(row?.querySelectorAll(".notes-row-actions .link") || [])].find((b) => b.textContent.trim() === "接受");
-  if (!accept) return { error: "no accept" };
+  if (!accept) return { error: "no accept", before };
   accept.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 1500));
   const list = await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" });
-  return { reviews: list?.result?.reviews?.length, notice: document.querySelector(".notes-banner")?.textContent || "" };`);
-check("审核 tab：hover 直接接受（待审核 -1）", r.reviews === 1, JSON.stringify(r));
+  return { before, reviews: list?.result?.reviews?.length, notice: document.querySelector(".notes-banner")?.textContent || "" };`);
+check("审核 tab：hover 直接接受（待审核 -1）", typeof r.before === "number" && r.reviews === r.before - 1, JSON.stringify(r));
 // ── 本地文档导入（docs:read / docsPick）──────────────────────────
 r = await run(`
   const docs = await window.harness.docsRead(["/tmp/doc-import.md", "/tmp/table-import.csv", "/tmp/doc-binary.bin"]);
@@ -180,6 +181,39 @@ check("Agent 覆盖 reviewed 被拒且正文不变", /已审核|reviewed/.test(r
 check("Agent 无效 source_ids 被拒", /无效/.test(r.badId), r.badId);
 check("Agent 带有效 source 可以新建 draft", r.freshOk === true);
 check("人工编辑 reviewed 后回 draft 且标记待重审", r.humanStatus === "draft" && r.reopen === "edited-after-review" && r.reviewedAt == null, JSON.stringify({ status: r.humanStatus, reopen: r.reopen }));
+
+// ── stale：资料更新/删除让引用页面过期，可确认恢复 ─────────────
+r = await run(`
+  const call = async (method, args) => { try { return { ok: true, value: (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method, args })).result }; } catch (e) { return { ok: false, error: String(e?.message || e) }; } };
+  const src = await call("wiki.importSource", { title: "stale-src", content: "原始内容 A", kind: "text", uri: "test://stale-src" });
+  const page = (await call("wiki.createPage", { title: "stale-page" })).value;
+  await call("wiki.savePage", { id: page.id, content: "# stale-page\\n\\n正文\\n" });
+  await call("wiki.addCitation", { pageId: page.id, sourceId: src.value.id });
+  await call("wiki.review", { id: page.id, decision: "accept" });
+  await call("wiki.importSource", { title: "stale-src", content: "原始内容 A", kind: "text", uri: "test://stale-src" });
+  const afterSame = (await call("wiki.getPage", { id: page.id })).value;
+  const updated = await call("wiki.importSource", { title: "stale-src", content: "原始内容 B 改了", kind: "text", uri: "test://stale-src" });
+  const afterUpdate = (await call("wiki.getPage", { id: page.id })).value;
+  const cleared = await call("wiki.clearStale", { id: page.id });
+  const afterClear = (await call("wiki.getPage", { id: page.id })).value;
+  const src2 = await call("wiki.importSource", { title: "stale-src-2", content: "内容 C", kind: "text", uri: "test://stale-src-2" });
+  const page2 = (await call("wiki.createPage", { title: "stale-page-2" })).value;
+  await call("wiki.addCitation", { pageId: page2.id, sourceId: src2.value.id });
+  await call("wiki.review", { id: page2.id, decision: "accept" });
+  await call("wiki.deleteSource", { id: src2.value.id });
+  const afterDelete = (await call("wiki.getPage", { id: page2.id })).value;
+  return {
+    sameOk: afterSame.status === "reviewed",
+    updatedOk: afterUpdate.status === "stale" && afterUpdate.staleReason === "source-updated" && afterUpdate.content.includes("正文"),
+    updatedStaled: (updated.value?.staled || []).length,
+    clearOk: cleared.value?.status === "reviewed" && !afterClear.staleReason,
+    deletedOk: afterDelete.status === "stale" && afterDelete.staleReason === "source-deleted",
+  };
+`);
+check("重复导入相同内容不标 stale", r.sameOk === true);
+check("资料更新 → 引用页面 stale（正文不变）", r.updatedOk === true && r.updatedStaled === 1, JSON.stringify(r));
+check("确认仍有效 → 恢复 reviewed", r.clearOk === true);
+check("资料删除 → 引用页面 stale", r.deletedOk === true);
 
 ws.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");

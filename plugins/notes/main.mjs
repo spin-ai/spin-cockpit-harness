@@ -440,6 +440,28 @@ function pageRevision(page, reason) {
   } catch { /* 历史记录失败不影响页面保存 */ }
 }
 
+/** 引用某个 source 的页面标记为 stale；记下原状态，确认仍有效时可恢复。 */
+function markPagesStale(sourceIds, reason) {
+  const targets = sourceIds instanceof Set ? sourceIds : new Set(sourceIds || []);
+  const affected = new Set();
+  for (const cite of data.citations) if (targets.has(cite.sourceId)) affected.add(cite.pageId);
+  const changed = [];
+  for (const pageId of affected) {
+    const page = data.pages.find((p) => p.id === pageId);
+    if (!page || page.status === "stale") continue;
+    page.staleFrom = page.status;
+    page.status = "stale";
+    page.staleReason = String(reason || "manual");
+    page.staleAt = now();
+    page.reviewedAt = null;
+    updateSearchEntry("page", page);
+    pageRevision(page, `stale:${page.staleReason}`);
+    addLog("page.stale", `${page.title} · ${page.staleReason}`);
+    changed.push(page);
+  }
+  return changed;
+}
+
 function ensurePage({ title, summary = "", content = "", sourceIds = [] }) {
   const safeTitle = String(title || "").trim().slice(0, 180) || "Untitled";
   let slug = slugify(safeTitle);
@@ -709,12 +731,17 @@ export async function activate(context) {
     if (typeof content === "string") page.content = content;
     const changed = page.title !== before.title || page.summary !== before.summary || page.content !== before.content;
     const wasReviewed = page.status === "reviewed";
+    const wasStale = page.status === "stale";
     page.status = status === "reviewed" ? "reviewed" : "draft";
     page.updatedAt = now();
     if (page.status === "reviewed") {
       page.reviewedAt = now();
       page.reopenReason = "";
       page.reopenedAt = null;
+    } else if (wasStale) {
+      page.staleFrom = null;
+      page.staleReason = "";
+      page.staleAt = null;
     } else if (wasReviewed && changed) {
       // 人工编辑已审核页面：不静默保留 reviewed，明确标记「改过、待重审」
       page.reviewedAt = null;
@@ -736,12 +763,47 @@ export async function activate(context) {
     if (status === "reviewed") {
       page.reopenReason = "";
       page.reopenedAt = null;
+      page.staleFrom = null;
+      page.staleReason = "";
+      page.staleAt = null;
     }
     page.updatedAt = now();
     data.reviews.unshift({ id: id("review"), pageId: page.id, status, feedback: String(feedback).slice(0, 4000), createdAt: now() });
     pageRevision(page, `review:${status}`);
     updateSearchEntry("page", page);
     addLog("page.review", `${page.title} → ${status}`);
+    await persist();
+    return pageView(page);
+  });
+  ctx.api.handle("wiki.markStale", async ({ id: pageId, reason = "manual" } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    if (page.status === "stale") return pageView(page);
+    page.staleFrom = page.status;
+    page.status = "stale";
+    page.staleReason = String(reason || "manual");
+    page.staleAt = now();
+    page.reviewedAt = null;
+    updateSearchEntry("page", page);
+    pageRevision(page, `stale:${page.staleReason}`);
+    addLog("page.stale", `${page.title} · ${page.staleReason}`);
+    await persist();
+    return pageView(page);
+  });
+  /** 确认过期页面仍有效：恢复到过期前的状态（通常是 reviewed）。 */
+  ctx.api.handle("wiki.clearStale", async ({ id: pageId } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    if (page.status !== "stale") return pageView(page);
+    page.status = page.staleFrom === "reviewed" ? "reviewed" : "draft";
+    if (page.status === "reviewed") page.reviewedAt = now();
+    page.staleFrom = null;
+    page.staleReason = "";
+    page.staleAt = null;
+    page.updatedAt = now();
+    updateSearchEntry("page", page);
+    pageRevision(page, "stale:cleared");
+    addLog("page.stale", `${page.title} · cleared`);
     await persist();
     return pageView(page);
   });
@@ -806,11 +868,14 @@ export async function activate(context) {
     const existed = findSource({ uri, content: text });
     if (existed) {
       // 重复导入：更新标题/内容但不再新增一条，UI 据此提示「已存在」
+      const hashChanged = existed.hash !== hash(text);
       if (title && String(title).trim()) existed.title = String(title).trim().slice(0, 200);
       existed.content = text;
       existed.hash = hash(text);
+      const staled = hashChanged ? markPagesStale([existed.id], "source-updated") : [];
+      updateSearchEntry("source", existed);
       await persist();
-      return { ...existed, deduped: true };
+      return { ...existed, deduped: true, staled: staled.map((p) => ({ id: p.id, title: p.title })) };
     }
     const source = {
       id: id("src"), title: String(title || uri || "Untitled source").slice(0, 200),
@@ -853,13 +918,14 @@ export async function activate(context) {
       });
     }
     data.trash = data.trash.slice(0, 500);
+    const staled = markPagesStale(targets, "source-deleted");
     for (const id of targets) removeSearchEntry("source", id);
     data.sources = data.sources.filter((s) => !targets.has(s.id));
     const removedCitations = data.citations.filter((c) => targets.has(c.sourceId)).length;
     data.citations = data.citations.filter((c) => !targets.has(c.sourceId));
     const removed = before - data.sources.length;
     if (removed) { addLog("source.delete", `${removed} sources`); await persist(); }
-    return { removed, removedCitations };
+    return { removed, removedCitations, staled: staled.map((p) => ({ id: p.id, title: p.title })) };
   });
 
   ctx.api.handle("wiki.vault.get", async () => vaultIndex());
