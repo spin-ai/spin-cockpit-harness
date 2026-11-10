@@ -53,6 +53,32 @@ function timeAgo(at?: number) {
   return new Date(at).toLocaleDateString([], { month: "numeric", day: "numeric" });
 }
 function escapeRegExp(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+type DiffLine = { type: "add" | "del" | "same"; text: string };
+
+/** 行级 LCS diff：超大文档退化成「全删 + 全加」，避免 O(n*m) 内存爆掉。 */
+function lineDiff(before: string, after: string): DiffLine[] {
+  const A = before.split("\n");
+  const B = after.split("\n");
+  if (A.length * B.length > 400000) {
+    return [...A.map((text) => ({ type: "del" as const, text })), ...B.map((text) => ({ type: "add" as const, text }))];
+  }
+  const dp: Uint32Array[] = Array.from({ length: A.length + 1 }, () => new Uint32Array(B.length + 1));
+  for (let i = A.length - 1; i >= 0; i -= 1) {
+    for (let j = B.length - 1; j >= 0; j -= 1) {
+      dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out: DiffLine[] = [];
+  let i = 0; let j = 0;
+  while (i < A.length && j < B.length) {
+    if (A[i] === B[j]) { out.push({ type: "same", text: A[i] }); i += 1; j += 1; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ type: "del", text: A[i] }); i += 1; }
+    else { out.push({ type: "add", text: B[j] }); j += 1; }
+  }
+  while (i < A.length) { out.push({ type: "del", text: A[i] }); i += 1; }
+  while (j < B.length) { out.push({ type: "add", text: B[j] }); j += 1; }
+  return out;
+}
 function markText(text: string, query: string) {
   const q = String(query || "").trim();
   if (!q) return text;
@@ -101,6 +127,11 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const [askOpen, setAskOpen] = useState(false);
   const [askQuestion, setAskQuestion] = useState("");
   const [askResult, setAskResult] = useState<{ found: boolean; answer: string; citations: { id: string; title: string }[] } | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyList, setHistoryList] = useState<{ id: string; reason: string; status: string; createdAt: number; size: number }[]>([]);
+  const [historySel, setHistorySel] = useState<string | null>(null);
+  const [historyDiff, setHistoryDiff] = useState<DiffLine[] | null>(null);
+  const [historyBusy, setHistoryBusy] = useState(false);
   const [askLoading, setAskLoading] = useState(false);
   const [docs, setDocs] = useState<Record<string, Doc>>({});
   const [left, setLeft] = useState<Pane>(emptyPane);
@@ -533,6 +564,41 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
+  const openHistory = async () => {
+    if (!activeDoc) return;
+    setHistoryOpen(true);
+    setHistoryBusy(true);
+    setHistorySel(null);
+    setHistoryDiff(null);
+    try {
+      const list = await invoke("wiki.revisions", { id: activeDoc.id, limit: 80 });
+      setHistoryList(Array.isArray(list) ? list : []);
+    } catch (err) { fail(err); } finally { setHistoryBusy(false); }
+  };
+
+  const loadRevision = async (revisionId: string) => {
+    if (!activeDoc) return;
+    setHistorySel(revisionId);
+    setHistoryBusy(true);
+    try {
+      const rev = await invoke("wiki.revision", { id: activeDoc.id, revisionId });
+      setHistoryDiff(lineDiff(String(rev?.content || ""), String(activeDoc.content || "")));
+    } catch (err) { fail(err); } finally { setHistoryBusy(false); }
+  };
+
+  const revertTo = async (revisionId: string) => {
+    if (!activeDoc) return;
+    if (!window.confirm("回滚到这个版本？当前内容会作为新版本保留。")) return;
+    setHistoryBusy(true);
+    try {
+      const page = await invoke("wiki.revert", { id: activeDoc.id, revisionId });
+      if (page) setDocs((current) => ({ ...current, [activeDoc.id]: { ...page, dirty: false } }));
+      setHistoryOpen(false);
+      setNotice("已回滚，标记为草稿待重新审核");
+      await refresh();
+    } catch (err) { fail(err); } finally { setHistoryBusy(false); }
+  };
+
   const importSource = async () => {
     if (!sourceDraft) return;
     setBusy(true);
@@ -774,6 +840,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                     <>
                       {doc.status === "draft" && <button onClick={() => void reviewPage(doc.id, "reject")} disabled={busy}>退回</button>}
                       <button onClick={() => void createTask()} disabled={busy}>创建任务</button>
+                      <button onClick={() => void openHistory()}>历史版本…</button>
                       <button onClick={() => void exportPdf()}>导出 PDF</button>
                     </>
                   )}
@@ -1050,6 +1117,39 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 {askResult.found && <button className="btn tiny-btn" onClick={() => void saveAnswer()}>存为 Wiki draft</button>}
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {historyOpen && activeDoc && (
+        <div className="modal-mask" role="dialog" aria-modal="true" aria-label="历史版本">
+          <div className="modal wiki-history">
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ margin: 0 }}>历史版本 · {activeDoc.title}</h3>
+              <button className="icon-btn" onClick={() => setHistoryOpen(false)} aria-label="关闭">×</button>
+            </div>
+            <div className="wiki-history-body">
+              <div className="wiki-history-list">
+                {historyBusy && historyList.length === 0 && <div className="wiki-history-empty">读取中…</div>}
+                {!historyBusy && historyList.length === 0 && <div className="wiki-history-empty">还没有历史版本</div>}
+                {historyList.map((rev) => (
+                  <button key={rev.id} className={`wiki-history-item ${historySel === rev.id ? "on" : ""}`} onClick={() => void loadRevision(rev.id)}>
+                    <span>{rev.reason || "edit"} · {statusLabel(rev.status)}</span>
+                    <em>{timeAgo(rev.createdAt)} · {rev.size} 字</em>
+                  </button>
+                ))}
+              </div>
+              <div className="wiki-history-diff">
+                {!historySel && <div className="wiki-history-empty">选一个版本对比当前内容</div>}
+                {historySel && historyBusy && <div className="wiki-history-empty">对比中…</div>}
+                {historySel && !historyBusy && historyDiff && historyDiff.map((line, index) => (
+                  <span key={index} className={`wiki-diff-line ${line.type}`}>{line.type === "add" ? "+ " : line.type === "del" ? "- " : "  "}{line.text || " "}</span>
+                ))}
+              </div>
+            </div>
+            <div className="wiki-history-foot">
+              <span className="tiny muted">回滚会生成新版本，不会删除历史；回滚后页面回到草稿待重新审核。</span>
+              <button className="btn tiny-btn" disabled={!historySel || historyBusy} onClick={() => historySel && void revertTo(historySel)}>回滚到此版本</button>
+            </div>
           </div>
         </div>
       )}

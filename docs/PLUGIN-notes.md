@@ -112,6 +112,9 @@ wiki.source
 wiki.addCitation
 wiki.markStale
 wiki.clearStale
+wiki.revisions
+wiki.revision
+wiki.revert
 wiki.reviewQueue
 wiki.search
 wiki.graph
@@ -333,7 +336,6 @@ plugins/notes/main.mjs
 
 未实现：
 
-- revision diff UI
 - PDF / 网页正文抽取打磨
 - 语义搜索 / embedding
 - Query Chat 的 citation 校验
@@ -356,8 +358,8 @@ plugins/notes/main.mjs
 
 ### P1
 
-- source hash / stale
-- revision diff
+- source hash / stale（已完成）
+- revision diff（已完成）
 - citation 检查
 - Review queue 体验
 - 图谱过滤

@@ -215,6 +215,24 @@ check("资料更新 → 引用页面 stale（正文不变）", r.updatedOk === t
 check("确认仍有效 → 恢复 reviewed", r.clearOk === true);
 check("资料删除 → 引用页面 stale", r.deletedOk === true);
 
+// ── revision 历史 / diff / 回滚 ─────────────────
+r = await run(`
+  const call = async (method, args) => { try { return { ok: true, value: (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method, args })).result }; } catch (e) { return { ok: false, error: String(e?.message || e) }; } };
+  const page = (await call("wiki.createPage", { title: "rev-page" })).value;
+  await call("wiki.savePage", { id: page.id, content: "# rev-page\\n\\n版本 A\\n" });
+  await call("wiki.savePage", { id: page.id, content: "# rev-page\\n\\n版本 B\\n" });
+  await call("wiki.savePage", { id: page.id, content: "# rev-page\\n\\n版本 C\\n" });
+  const list = (await call("wiki.revisions", { id: page.id, limit: 20 })).value || [];
+  const target = list[list.length - 2] || list[list.length - 1];
+  const detail = (await call("wiki.revision", { id: page.id, revisionId: target.id })).value;
+  await call("wiki.revert", { id: page.id, revisionId: target.id });
+  const after = (await call("wiki.getPage", { id: page.id })).value;
+  const list2 = (await call("wiki.revisions", { id: page.id, limit: 30 })).value || [];
+  return { count: list.length, hasContent: typeof detail?.content === "string", afterHasA: after.content.includes("版本 A"), status: after.status, count2: list2.length, reopen: after.reopenReason };
+`);
+check("历史版本可列出且能读内容", r.count >= 4 && r.hasContent === true, JSON.stringify({ count: r.count, hasContent: r.hasContent }));
+check("回滚恢复旧内容并生成新版本", r.afterHasA === true && r.count2 === r.count + 1 && r.status === "draft", JSON.stringify({ hasA: r.afterHasA, count2: r.count2, count: r.count, status: r.status }));
+
 ws.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");
 process.exit(fails ? 1 : 0);

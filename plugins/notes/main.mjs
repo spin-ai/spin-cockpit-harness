@@ -432,12 +432,53 @@ function pageSummary(page) {
   return { id: page.id, slug: page.slug, title: page.title, summary: page.summary || "", status: page.status, confidence: page.confidence || "medium", updatedAt: page.updatedAt, citations: citationsOf(page.id).length, backlinks: backlinksOf(page).length };
 }
 
+const REVISION_LIMIT = 200;
+function revisionFile(pageId) { return path.join(revisionDir(), `${safeFile(pageId)}.ndjson`); }
+
+/** 每页最多保留 200 条历史：追加后裁剪，避免 NDJSON 无限增长。 */
+function pruneRevisions(file) {
+  try {
+    const lines = fsSync.readFileSync(file, "utf8").split("\n").filter(Boolean);
+    if (lines.length <= REVISION_LIMIT) return;
+    const tmp = `${file}.tmp`;
+    fsSync.writeFileSync(tmp, `${lines.slice(-REVISION_LIMIT).join("\n")}\n`, "utf8");
+    fsSync.renameSync(tmp, file);
+  } catch { /* 裁剪失败不影响主流程 */ }
+}
+
 function pageRevision(page, reason) {
   const rev = { id: id("rev"), pageId: page.id, content: page.content, status: page.status, reason, createdAt: now() };
   try {
     fsSync.mkdirSync(revisionDir(), { recursive: true });
-    fsSync.appendFileSync(path.join(revisionDir(), `${safeFile(page.id)}.ndjson`), `${JSON.stringify(rev)}\n`, "utf8");
+    const file = revisionFile(page.id);
+    fsSync.appendFileSync(file, `${JSON.stringify(rev)}\n`, "utf8");
+    pruneRevisions(file);
   } catch { /* 历史记录失败不影响页面保存 */ }
+}
+
+/** 历史列表：只回传元信息（内容可能很大），按时间倒序。 */
+function revisionsOf(pageId, limit = 50) {
+  try {
+    const lines = fsSync.readFileSync(revisionFile(pageId), "utf8").split("\n").filter(Boolean);
+    const out = [];
+    for (let i = lines.length - 1; i >= 0 && out.length < Math.max(1, limit); i -= 1) {
+      try {
+        const rev = JSON.parse(lines[i]);
+        out.push({ id: rev.id, pageId: rev.pageId, status: rev.status, reason: rev.reason, createdAt: rev.createdAt, size: String(rev.content || "").length });
+      } catch { /* skip broken line */ }
+    }
+    return out;
+  } catch { return []; }
+}
+
+function revisionOf(pageId, revisionId) {
+  try {
+    const lines = fsSync.readFileSync(revisionFile(pageId), "utf8").split("\n").filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      try { const rev = JSON.parse(lines[i]); if (rev.id === revisionId) return rev; } catch { /* skip */ }
+    }
+  } catch { /* no history */ }
+  return null;
 }
 
 /** 引用某个 source 的页面标记为 stale；记下原状态，确认仍有效时可恢复。 */
@@ -751,6 +792,38 @@ export async function activate(context) {
     pageRevision(page, wasReviewed && changed && page.status === "draft" ? "edit-after-review" : "edit");
     updateSearchEntry("page", page);
     addLog("page.save", page.title);
+    await persist();
+    return pageView(page);
+  });
+  ctx.api.handle("wiki.revisions", async ({ id: pageId, limit = 50 } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    return revisionsOf(page.id, Number(limit) || 50);
+  });
+  ctx.api.handle("wiki.revision", async ({ id: pageId, revisionId } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    const rev = revisionOf(page.id, revisionId);
+    if (!rev) throw new Error("revision not found");
+    return rev;
+  });
+  ctx.api.handle("wiki.revert", async ({ id: pageId, revisionId } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    const rev = revisionOf(page.id, revisionId);
+    if (!rev) throw new Error("revision not found");
+    page.content = String(rev.content || "");
+    page.status = "draft";
+    page.reviewedAt = null;
+    page.reopenReason = "reverted";
+    page.reopenedAt = now();
+    page.staleFrom = null;
+    page.staleReason = "";
+    page.staleAt = null;
+    page.updatedAt = now();
+    pageRevision(page, `revert:${rev.id}`);
+    updateSearchEntry("page", page);
+    addLog("page.revert", `${page.title} ← ${rev.reason || rev.id}`);
     await persist();
     return pageView(page);
   });
