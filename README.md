@@ -85,7 +85,7 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 
 ## 已实现
 
-- Electron + SQLite（Todo/Run/Message/Artifact/Event/Inbox/Project/项目路径）
+- Electron + SQLite（Todo/Run/Message/Artifact/Event/Project/项目路径）
 - 多项目：一个本地目录 = 一个项目，在 TODO LIST 下方切换，任务按项目隔离
 - Chat 分派 → 立即创建任务并起 run
 - 会话（thread）模型：消息宿主是会话而非任务，派活是会话的一条消息；单一 `send` 路径

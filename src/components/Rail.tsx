@@ -15,21 +15,22 @@ const icon = (name: string) => {
   return <svg {...common}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>;
 };
 
-export function Rail({ view, onChange, notesEnabled = false }: { view: View; onChange: (v: View) => void; notesEnabled?: boolean }) {
+export function Rail({ view, onChange, notesEnabled = false, badges = {} }: { view: View; onChange: (v: View) => void; notesEnabled?: boolean; badges?: Partial<Record<View, number>> }) {
   const items: { id: View; label: string }[] = [
     { id: "workspace", label: "工作区" },
-    { id: "scene", label: "场景" },
+    { id: "scene", label: "执行配置" },
     { id: "projects", label: "项目" },
     { id: "stats", label: "统计" },
     { id: "hosts", label: "主机" },
     { id: "git", label: "Git" },
-    ...(notesEnabled ? [{ id: "notes" as View, label: "Wiki" }] : []),
+    ...(notesEnabled ? [{ id: "notes" as View, label: "知识库" }] : []),
   ];
   return (
     <nav className="rail">
       {items.map((it) => (
-        <button key={it.id} className={`rail-btn ${view === it.id ? "on" : ""}`} onClick={() => onChange(it.id)}>
+        <button key={it.id} className={`rail-btn ${view === it.id ? "on" : ""}`} onClick={() => onChange(it.id)} title={badges[it.id] ? `${it.label} · ${badges[it.id]} 项` : it.label}>
           {icon(it.id === "notes" ? "note" : it.id)}<span>{it.label}</span>
+          {badges[it.id] ? <em className={`rail-badge ${it.id === "workspace" ? "run" : ""}`}>{badges[it.id]! > 99 ? "99+" : badges[it.id]}</em> : null}
         </button>
       ))}
       <div className="rail-bottom">

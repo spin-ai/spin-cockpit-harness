@@ -4,6 +4,7 @@ import { ERROR_CLASS, fmtMs, missingKeyInfo, p50, pct, timeAgo, tokens } from ".
 import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
 import { RowMenu } from "./RowMenu";
+import { SceneConfigModal } from "./SceneConfigModal";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
@@ -11,12 +12,15 @@ const PROJECT_STATUS: Record<ProjectStatus, string> = {
   planned: "计划中", in_progress: "进行中", paused: "已暂停", completed: "已完成", cancelled: "已取消",
 };
 
-export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
-  state: State; now: number; act: Act; notify: (m: string) => void; onAdd: () => void; onSwitch: (id: string) => void;
+export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask }: {
+  state: State; now: number; act: Act; notify: (m: string) => void; onAdd: () => void; onSwitch: (id: string) => void; onNewTask: (id: string) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "running" | "open" | "paused">("all");
+  const [sceneProject, setSceneProject] = useState<Project | null>(null);
+  const [sort, setSort] = useState<"recent" | "name" | "running" | "status">("recent");
   const [layout, setLayout] = useState<"cards" | "list">(() => {
     try { return localStorage.getItem("ymh.projects.layout") === "list" ? "list" : "cards"; } catch { return "cards"; }
   });
@@ -24,10 +28,32 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
   const active = state.projects.find((p) => p.id === state.activeProjectId) ?? null;
   const activeTodos = state.todos.filter((t) => t.projectId === state.activeProjectId);
   const running = state.runs.filter((r) => activeTodos.some((t) => t.id === r.todoId) && ["queued", "running", "waiting_input"].includes(r.status)).length;
-  const filtered = state.projects.filter((p) => {
-    const q = query.trim().toLowerCase();
-    return !q || `${p.name} ${p.alias} ${p.path}`.toLowerCase().includes(q);
+  const enriched = state.projects.map((p) => {
+    const todos = state.todos.filter((t) => t.projectId === p.id);
+    const isActive = p.id === state.activeProjectId;
+    const open = todos.filter((t) => !t.confirmed).length;
+    const confirmed = todos.filter((t) => t.confirmed).length;
+    const busy = state.runs.filter((r) => todos.some((t) => t.id === r.todoId) && ["queued", "running", "waiting_input"].includes(r.status)).length;
+    return { p, todos, isActive, open, confirmed, busy };
   });
+  const filtered = enriched
+    .filter(({ p }) => {
+      const q = query.trim().toLowerCase();
+      return !q || `${p.name} ${p.alias} ${p.path}`.toLowerCase().includes(q);
+    })
+    .filter(({ open, busy, p }) => {
+      if (filter === "running") return busy > 0;
+      if (filter === "open") return open > 0;
+      if (filter === "paused") return p.status === "paused";
+      return true;
+    })
+    .sort((a, b) => {
+      if (sort === "name") return a.p.name.localeCompare(b.p.name, "zh");
+      if (sort === "running") return b.busy - a.busy || (b.p.lastOpenedAt || 0) - (a.p.lastOpenedAt || 0);
+      if (sort === "status") return a.p.status.localeCompare(b.p.status) || a.p.name.localeCompare(b.p.name, "zh");
+      return (b.p.lastOpenedAt || 0) - (a.p.lastOpenedAt || 0) || a.p.name.localeCompare(b.p.name, "zh");
+    });
+  const filterLabel = { all: "全部", running: "运行中", open: "未完成", paused: "已暂停" }[filter];
   const totalOpen = state.todos.filter((t) => !t.confirmed).length;
   const totalConfirmed = state.todos.filter((t) => t.confirmed).length;
 
@@ -55,8 +81,10 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
     ) : (
       <>
         <button className="btn tiny-btn primary" disabled={isActive} onClick={() => onSwitch(p.id)}>{isActive ? "使用中" : "打开"}</button>
+        <button className="btn tiny-btn" onClick={() => onNewTask(p.id)} title="在当前项目中新建任务">＋ 任务</button>
         <RowMenu title="更多项目操作">
           <button onClick={() => act("revealProject", { id: p.id })}>在 Finder 中显示</button>
+          <button onClick={() => setSceneProject(p)}>执行配置</button>
           <button onClick={() => startRename(p)}>重命名</button>
           <label className="row-menu-label">状态
             <select className="project-status-select" value={p.status} onChange={(e) => act("setProjectStatus", { id: p.id, status: e.target.value })}>
@@ -89,9 +117,21 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
         <div className="project-list-head">
           <div className="row gap8">
             <b>工作区项目</b>
-            <span className="tiny faint">{filtered.length}/{state.projects.length}</span>
+            <span className="tiny faint">{filtered.length}/{state.projects.length}{filter !== "all" ? ` · ${filterLabel}` : ""}</span>
           </div>
           <div className="project-list-tools">
+            <select className="project-filter" aria-label="筛选项目" value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
+              <option value="all">全部项目</option>
+              <option value="running">运行中</option>
+              <option value="open">有未完成任务</option>
+              <option value="paused">已暂停</option>
+            </select>
+            <select className="project-filter" aria-label="项目排序" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
+              <option value="recent">最近打开</option>
+              <option value="name">名称</option>
+              <option value="running">运行中优先</option>
+              <option value="status">状态</option>
+            </select>
             <div className="view-switch" role="group" aria-label="项目视图">
               <button className={layout === "cards" ? "on" : ""} onClick={() => setLayout("cards")} title="卡片视图">▦ 卡片</button>
               <button className={layout === "list" ? "on" : ""} onClick={() => setLayout("list")} title="列表视图">☰ 列表</button>
@@ -109,12 +149,8 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
         {filtered.length > 0 ? (
           layout === "cards" ? (
           <div className="project-grid">
-            {filtered.map((p) => {
-              const todos = state.todos.filter((t) => t.projectId === p.id);
-              const isActive = p.id === state.activeProjectId;
-              const open = todos.filter((t) => !t.confirmed).length;
-              const confirmed = todos.filter((t) => t.confirmed).length;
-              const busy = state.runs.filter((r) => todos.some((t) => t.id === r.todoId) && ["queued", "running", "waiting_input"].includes(r.status)).length;
+            {filtered.map((entry) => {
+              const { p, todos, isActive, open, confirmed, busy } = entry;
               return (
                 <article className={`project-card ${isActive ? "on" : ""}`} key={p.id}>
                   <header className="project-card-head">
@@ -155,12 +191,8 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
           </div>
           ) : (
             <div className="project-list-rows">
-              {filtered.map((p) => {
-                const todos = state.todos.filter((t) => t.projectId === p.id);
-                const isActive = p.id === state.activeProjectId;
-                const open = todos.filter((t) => !t.confirmed).length;
-                const confirmed = todos.filter((t) => t.confirmed).length;
-                const busy = state.runs.filter((r) => todos.some((t) => t.id === r.todoId) && ["queued", "running", "waiting_input"].includes(r.status)).length;
+              {filtered.map((entry) => {
+                const { p, todos, isActive, open, confirmed, busy } = entry;
                 return (
                   <div className={`project-list-item ${isActive ? "on" : ""}`} key={p.id}>
                     <div className="project-list-main">
@@ -200,31 +232,21 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch }: {
           <EmptyState compact title={query ? "没有匹配的项目" : "还没有项目"} desc={query ? "换个关键词试试。" : "添加一个本地目录，任务、终端和文件树会跟随项目。"} action={!query ? <button className="btn primary" onClick={onAdd}>＋ 添加项目</button> : undefined} />
         )}
       </section>
+
+      {sceneProject && (
+        <SceneConfigModal
+          key={sceneProject.id}
+          project={sceneProject}
+          text={(state.scenes || []).find((s) => s.projectId === sceneProject.id)?.text || ""}
+          act={act}
+          notify={notify}
+          onClose={() => setSceneProject(null)}
+        />
+      )}
     </div>
   );
 }
 
-export function Inbox({ state, now, act, onOpen }: { state: State; now: number; act: Act; onOpen: (id: string) => void }) {
-  return (
-    <div className="page">
-      <PageHeader
-        title="收件箱"
-        subtitle={`${state.inbox.filter((i) => !i.read).length} 未读`}
-        actions={<button className="btn" onClick={() => act("readAllInbox")}>全部已读</button>}
-      />
-      <div className="panel">
-        {state.inbox.map((i) => (
-          <button key={i.id} className={`inbox-row ${i.read ? "read" : ""}`} onClick={() => { act("readInbox", { id: i.id }); onOpen(i.todoId); }}>
-            <span className={`kind ${i.kind}`}>{i.kind === "failed" ? "!" : "✓"}</span>
-            <span className="inbox-title">{i.title}</span>
-            <span className="muted tiny">{timeAgo(i.at, now)} 前</span>
-          </button>
-        ))}
-        {state.inbox.length === 0 && <EmptyState compact title="收件箱是空的" desc="任务完成、失败或等待确认时会出现在这里。" />}
-      </div>
-    </div>
-  );
-}
 const HOST_STATUS: Record<string, string> = { online: "在线", offline: "离线", probing: "检测中" };
 
 export function Hosts({ state, act, notify, now }: { state: State; act: Act; notify: (m: string) => void; now: number }) {
@@ -233,6 +255,10 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
   const [probingAll, setProbingAll] = useState(false);
   const [editingHost, setEditingHost] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", addr: "", user: "", port: "22", path: "" });
+  const [layout, setLayout] = useState<"cards" | "list">(() => {
+    try { return localStorage.getItem("ymh.hosts.layout") === "list" ? "list" : "cards"; } catch { return "cards"; }
+  });
+  useEffect(() => { try { localStorage.setItem("ymh.hosts.layout", layout); } catch { /* ignore */ } }, [layout]);
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const online = state.hosts.filter((h) => h.status === "online").length;
   const activeRuns = state.runs.filter((r) => ["queued", "running", "waiting_input"].includes(r.status)).length;
@@ -292,12 +318,24 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
     if (ok) notify("主机已移除");
   };
 
+  const actionsFor = (h: State["hosts"][number], isProbing: boolean) => (
+    <>
+      <button className="btn tiny-btn" disabled={isProbing} onClick={() => void probe(h.id)}>{isProbing ? "探测中…" : "重新探测"}</button>
+      {h.kind !== "local" && <button className="btn tiny-btn" onClick={() => openEdit(h)}>编辑</button>}
+      {h.kind !== "local" && <button className="btn tiny-btn danger" onClick={() => void remove(h.id, h.name)}>移除</button>}
+    </>
+  );
+
   return (
     <div className="page host-page">
       <PageHeader
         title="主机"
         subtitle={`${online}/${state.hosts.length} 在线 · Agent 的运行位置；本机与 SSH 共用一套并发 / 审批 / 探测`}
         actions={<div className="row gap8">
+          <div className="view-switch" role="group" aria-label="主机视图">
+            <button className={layout === "cards" ? "on" : ""} onClick={() => setLayout("cards")} title="卡片视图">▦ 卡片</button>
+            <button className={layout === "list" ? "on" : ""} onClick={() => setLayout("list")} title="列表视图">☰ 列表</button>
+          </div>
           <button className="btn" disabled={probingAll} onClick={() => void probeAll()}>{probingAll ? "探测中…" : "全部探测"}</button>
           <button className="btn primary" onClick={() => (open ? setOpen(false) : openAdd())}>＋ 添加主机</button>
         </div>}
@@ -331,6 +369,11 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
         </section>
       )}
 
+      {state.hosts.length === 0 && (
+        <EmptyState compact title="还没有主机" desc="添加本机或 SSH 主机，Agent 才能在上面运行。" action={<button className="btn primary" onClick={openAdd}>＋ 添加主机</button>} />
+      )}
+
+      {layout === "cards" ? (
       <div className="host-cards host-grid">
         {state.hosts.map((h) => {
           const caps = h.caps || [];
@@ -355,11 +398,7 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
                     </span>
                   </div>
                 </div>
-                <div className="host-head-actions">
-                  <button className="btn tiny-btn" disabled={isProbing} onClick={() => void probe(h.id)}>{isProbing ? "探测中…" : "重新探测"}</button>
-                  {h.kind !== "local" && <button className="btn tiny-btn" onClick={() => openEdit(h)}>编辑</button>}
-                  {h.kind !== "local" && <button className="btn tiny-btn danger" onClick={() => void remove(h.id, h.name)}>移除</button>}
-                </div>
+                <div className="host-head-actions">{actionsFor(h, Boolean(isProbing))}</div>
               </header>
 
               <div className="host-panel-body">
@@ -426,6 +465,40 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
           );
         })}
       </div>
+      ) : (
+        <div className="host-list-rows">
+          {state.hosts.map((h) => {
+            const caps = h.caps || [];
+            const agents = state.agents.filter((a) => a.hostId === h.id);
+            const busy = state.runs.filter((r) => r.hostId === h.id && ["queued", "running", "waiting_input"].includes(r.status)).length;
+            const limit = h.maxConcurrency || 0;
+            const isProbing = probing[h.id];
+            return (
+              <div className={`panel host-list-item ${h.status} ${h.status === "offline" ? "offline" : ""}`} key={h.id}>
+                <div className="host-list-main">
+                  <span className={`dot ${h.status === "online" ? "green" : h.status === "offline" ? "red" : "amber"}`} />
+                  <div className="host-list-title">
+                    <div className="row gap6 wrap">
+                      <b>{h.name}</b>
+                      <span className="tag mono">{h.kind === "local" ? "本机" : "ssh"}</span>
+                      <span className={`tag ${h.status === "online" ? "ok" : ""}`}>{isProbing ? "检测中" : HOST_STATUS[h.status] || h.status}</span>
+                    </div>
+                    <span className="mono tiny faint ellipsis" title={h.addr}>{h.kind === "ssh" ? `${h.user ? `${h.user}@` : ""}${h.addr}:${h.port || 22}` : h.addr}</span>
+                  </div>
+                </div>
+                <div className="host-list-metrics">
+                  <span><b>{caps.length}</b>CLI</span>
+                  <span><b>{busy}{limit ? `/${limit}` : ""}</b>负载</span>
+                  <span><b>{agents.length}</b>Agent</span>
+                  <span><b>{h.latencyMs != null ? `${h.latencyMs}ms` : "—"}</b>延迟</span>
+                </div>
+                <span className="host-list-probe tiny faint">探测 {h.lastProbe ? `${timeAgo(h.lastProbe, now)} 前` : "—"}</span>
+                <div className="host-head-actions">{actionsFor(h, Boolean(isProbing))}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -569,10 +642,10 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
   };
 
   return (
-    <div className="page">
+    <div className="page stats-page">
       <PageHeader
         title="统计"
-        subtitle={scope === "all" ? "全部项目" : state.projects.find((p) => p.id === scope)?.name || "项目"}
+        subtitle={`${scope === "all" ? "全部项目" : state.projects.find((p) => p.id === scope)?.name || "项目"} · ${runs.length} 次运行 / ${completed} 成功 / ${failed} 失败`}
         actions={<div className="row gap6 stats-actions">
           <select className="settings-control stats-scope" value={scope} onChange={(e) => setScope(e.target.value)} title="统计范围">
             <option value="all">全部项目</option>
@@ -587,14 +660,37 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
         </div>}
       />
 
-      <div className="kpis">
-        <div className="kpi"><span>成功率</span><b>{pct(completed, done.length)}</b><small>{completed}/{done.length} · {failed} 失败</small></div>
-        <div className="kpi"><span>中位耗时</span><b>{fmtMs(p50(durations))}</b><small>最慢 {fmtMs(Math.max(...durations, 0) || null)}</small></div>
-        <div className="kpi"><span>排队 p50</span><b>{fmtMs(p50(waits))}</b><small>{runs.filter((r) => r.status === "queued").length} 排队中</small></div>
-        <div className="kpi"><span>Token</span><b>{reported.length ? `${tokens(tokensIn)} ↑ ${tokens(tokensOut)} ↓` : "未上报"}</b><small>{reported.length}/{done.length} 已完成 run 有 usage{unreported ? ` · ${unreported} 未上报` : ""}</small></div>
+      <div className="stats-overview">
+        <article className="stats-tile ok">
+          <div className="stats-tile-head"><span>成功率</span><em>{failed ? `${failed} 失败` : done.length ? "运行稳定" : "暂无完成"}</em></div>
+          <b>{pct(completed, done.length)}</b>
+          <small>{completed}/{done.length} 成功 · {runs.length} 次运行</small>
+          <div className="stats-meter"><i style={{ width: `${done.length ? (completed / done.length) * 100 : 0}%` }} /></div>
+        </article>
+        <article className="stats-tile time">
+          <div className="stats-tile-head"><span>中位耗时</span><em>p50</em></div>
+          <b>{fmtMs(p50(durations))}</b>
+          <small>最慢 {fmtMs(Math.max(...durations, 0) || null)}</small>
+        </article>
+        <article className="stats-tile queue">
+          <div className="stats-tile-head"><span>排队 p50</span><em>{runs.filter((r) => r.status === "queued").length} 排队中</em></div>
+          <b>{fmtMs(p50(waits))}</b>
+          <small>从入队到开始执行</small>
+        </article>
+        <article className="stats-tile token">
+          <div className="stats-tile-head"><span>Token</span><em>{reported.length ? "ACP usage" : "未上报"}</em></div>
+          <b className="stats-token-value">{reported.length ? `${tokens(tokensIn)} ↑ ${tokens(tokensOut)} ↓` : "—"}</b>
+          <small>{reported.length}/{done.length} 次有 usage{unreported ? ` · ${unreported} 次未上报` : ""}</small>
+        </article>
       </div>
 
-      <div className="grid2">
+      {runs.length === 0 ? (
+        <section className="panel stats-empty-panel">
+          <EmptyState compact title="所选范围内没有运行" desc="切换时间或项目范围，或先在工作区派一个任务。" />
+        </section>
+      ) : (
+      <>
+      <div className="stats-grid">
         <section className="panel">
           <div className="panel-head">
             每日运行
@@ -603,7 +699,7 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
               <span><i className="bad" />失败 {runs.filter((r) => r.status === "failed").length}</span>
             </div>
           </div>
-          {runs.length === 0 ? <div className="muted small">所选范围内没有运行</div> : (
+          {done.length === 0 ? <div className="trend-empty">所选范围内还没有完成或失败的运行<div className="tiny faint">排队 / 运行中的任务会在结束后进入趋势图。</div></div> : (
           <div className="trend-chart" role="img" aria-label={`每日运行趋势：成功 ${runs.filter((r) => r.status === "completed").length}，失败 ${runs.filter((r) => r.status === "failed").length}`}>
             <div className="trend-yaxis">
               {yTicks.map((t) => <span key={t}>{t}</span>)}
@@ -633,21 +729,27 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
           </div>
           )}
         </section>
-        <section className="panel">
-          <div className="panel-head">失败分类</div>
-          <div className="row gap6 wrap">
-            {Object.entries(ERROR_CLASS).map(([k, label]) => (
-              <button
-                key={k}
-                className={`tag err-chip ${errFilter === k ? "on" : ""}`}
-                onClick={() => setErrFilter(errFilter === k ? null : k)}
-                title={k}
-              >
-                {label} {errorCounts[k] || 0}
-              </button>
-            ))}
-            {errFilter && <button className="btn tiny-btn" onClick={() => setErrFilter(null)}>清除筛选</button>}
+        <section className="panel stats-error-panel">
+          <div className="panel-head">失败分类 <span className="tiny muted">{failed} 次</span></div>
+          <div className="error-cat-list">
+            {Object.entries(ERROR_CLASS).map(([k, label]) => {
+              const count = errorCounts[k] || 0;
+              const maxError = Math.max(1, ...Object.values(errorCounts));
+              return (
+                <button
+                  key={k}
+                  className={`error-cat ${errFilter === k ? "on" : ""}`}
+                  onClick={() => setErrFilter(errFilter === k ? null : k)}
+                  title={k}
+                >
+                  <span>{label}</span><b>{count}</b>
+                  <i><em style={{ width: `${(count / maxError) * 100}%` }} /></i>
+                </button>
+              );
+            })}
           </div>
+          {errFilter && <button className="btn tiny-btn error-clear" onClick={() => setErrFilter(null)}>清除筛选</button>}
+          {failed === 0 && <div className="tiny muted stats-error-empty">没有失败记录</div>}
         </section>
       </div>
 
@@ -660,6 +762,11 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
             ))}
           </div>
         </div>
+        {groups.length > 0 && (
+          <div className="agent-stat stats-group-head">
+            <span /><span>{{ agent: "Agent", project: "项目", host: "主机", runtime: "执行方式" }[groupBy]}</span><span /><span>运行</span><span>成功率</span><span>中位耗时</span>
+          </div>
+        )}
         {groups.map((g) => (
           <div className="agent-stat" key={g.label}>
             <span className={`dot ${g.color}`} />
@@ -698,8 +805,10 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
             </button>
           );
         })}
-        {failures.length === 0 && <EmptyState compact title="没有失败记录" desc="这段时间内所有运行都正常结束。" />}
+        {failures.length === 0 && <div className="stats-inline-empty">没有失败记录 · 这段时间内所有运行都正常结束。</div>}
       </section>
+      </>
+      )}
     </div>
   );
 }

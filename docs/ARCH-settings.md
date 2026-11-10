@@ -68,7 +68,7 @@
 | 预览 | `previewHomeUrl` | `http://localhost:5173/` | `PreviewSurface` 地址栏默认值 |
 | 预览 | `elementScreenshots` | `true` | 元素拾取截图（`preview:pick`） |
 | 预览 | `contextDetail` | `standard` | `formatContext`：compact 去掉组件/盒模型/样式/HTML |
-| 数据 | — | — | 打开数据目录、导出 `.db`、清空收件箱、重置设置 |
+| 数据 | — | — | 打开数据目录、导出 `.db`、重置设置 |
 
 ## 3. 持久化
 
@@ -90,7 +90,6 @@ CREATE TABLE settings (k TEXT PRIMARY KEY, v TEXT);   -- 单行：('app', JSON)
 | `resetSettings()` | 恢复 `DEFAULT_SETTINGS` |
 | `openDataDir()` | `shell.openPath(userData)` |
 | `exportData()` | `flush()` 后复制 `harness.db` 到用户选择的位置 |
-| `clearInbox()` | 只清通知 |
 
 `snapshot()` 额外下发 `settings`、`dbPath`、`userDataPath`、`appVersion`，因此设置页不需要额外 IPC。
 
@@ -125,7 +124,7 @@ CREATE TABLE settings (k TEXT PRIMARY KEY, v TEXT);   -- 单行：('app', JSON)
 | 同类产品能力 | 现状 |
 |---|---|
 | 账号与登录 / 用量与计费 | 未做（本地单用户） |
-| 通知偏好、声音、免打扰 | 未做（收件箱固定规则） |
+| 通知偏好、声音、免打扰 | 未做（任务状态与审批弹窗） |
 | 集成（GitHub / Slack / Linear） | 未做 |
 | 自动更新 / 签名 | 未做 |
 | 设置搜索、URL 深链 `?tab=` | 未做（分区导航足够小） |
