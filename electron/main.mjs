@@ -1195,6 +1195,7 @@ function startWikiMcpServer() {
       let result;
       if (name === "wiki_memory") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.memory", { maxChars: args.max_chars || 12000 });
       else if (name === "wiki_search") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.search", { query: args.query });
+      else if (name === "wiki_ask") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.ask", { question: args.question, limit: args.limit });
       else if (name === "wiki_list_sources") result = (await pluginHost.invoke("ai.cockpit.notes", "wiki.sources", {})).map((s) => ({ id: s.id, title: s.title, kind: s.kind, uri: s.uri }));
       else if (name === "wiki_read_source") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.source", { id: args.id });
       else if (name === "wiki_read_page") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: args.id });

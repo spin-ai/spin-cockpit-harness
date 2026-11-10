@@ -6,6 +6,7 @@ const endpoint = process.env.COCKPIT_WIKI_URL || "";
 const token = process.env.COCKPIT_WIKI_TOKEN || "";
 const tools = [
   { name: "wiki_memory", description: "读取小型顶层 Memory 索引；需要详情时再用 wiki_search / wiki_read_page。", inputSchema: { type: "object", properties: { max_chars: { type: "number" } } } },
+  { name: "wiki_ask", description: "只基于本地 Wiki 页面与资料做检索式回答，返回带引用的答案；无依据时 found=false。", inputSchema: { type: "object", properties: { question: { type: "string" }, limit: { type: "number" } }, required: ["question"] } },
   { name: "wiki_search", description: "搜索 Wiki 页面和 sources。", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
   { name: "wiki_list_sources", description: "列出已导入的 sources（id / title / kind）。", inputSchema: { type: "object", properties: {} } },
   { name: "wiki_read_source", description: "读取一个 source 的完整内容。", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },

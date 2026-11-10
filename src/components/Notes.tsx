@@ -131,7 +131,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const [linkHover, setLinkHover] = useState<{ title: string; summary: string; status: string; x: number; y: number } | null>(null);
   const [askOpen, setAskOpen] = useState(false);
   const [askQuestion, setAskQuestion] = useState("");
-  const [askResult, setAskResult] = useState<{ found: boolean; answer: string; citations: { id: string; title: string }[] } | null>(null);
+  const [askResult, setAskResult] = useState<{ found: boolean; answer: string; citations: { id: string; title: string; kind?: string }[] } | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyList, setHistoryList] = useState<{ id: string; reason: string; status: string; createdAt: number; size: number }[]>([]);
   const [historySel, setHistorySel] = useState<string | null>(null);
@@ -1031,10 +1031,12 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     if (!askResult?.found) return;
     try {
       const title = askQuestion.trim().slice(0, 60) || "知识库问答";
+      const sourceIds = askResult.citations.filter((c) => c.kind === "source").map((c) => c.id);
       const page = await invoke("wiki.upsertDraft", {
         title,
         content: `# ${title}\n\n${askResult.answer}\n`,
         summary: `来自问答：${askQuestion.trim()}`,
+        sourceIds,
       });
       if (page) {
         setAskOpen(false);
@@ -1137,7 +1139,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                   const target = pages.find((p) => p.title === title || p.slug === title || p.id === title);
                   if (target) { setAskOpen(false); void openPage(target.id); }
                 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(wikiMarkdown(askResult.answer)) }} />
-                {askResult.citations.length > 0 && <div className="wiki-ask-cites">{askResult.citations.map((c) => <button key={c.id} onClick={() => { setAskOpen(false); void openPage(c.id); }}>{c.title}</button>)}</div>}
+                {askResult.citations.length > 0 && <div className="wiki-ask-cites">{askResult.citations.map((c) => <button key={`${c.kind || "page"}-${c.id}`} onClick={() => { setAskOpen(false); if (c.kind === "source") void openSource(c.id); else void openPage(c.id); }} title={c.kind === "source" ? "打开资料" : "打开页面"}>{c.kind === "source" ? `资料 · ${c.title}` : c.title}</button>)}</div>}
                 {askResult.found && <button className="btn tiny-btn" onClick={() => void saveAnswer()}>存为知识库草稿</button>}
               </div>
             )}

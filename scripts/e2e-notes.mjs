@@ -254,6 +254,23 @@ r = await run(`
 check("退回原因保存并在页面可见", r.status === "draft" && r.feedback === "缺少出处，补 2 条引用" && r.reviewCount >= 1, JSON.stringify(r));
 check("Dream 维护项可列出 / 忽略后不再出现", r.hasIssue === true && r.dismissed === true, JSON.stringify({ hasIssue: r.hasIssue, dismissed: r.dismissed }));
 
+// ── 问 Wiki：覆盖资料 + 引用可点开 ─────────────────
+r = await run(`
+  const call = async (method, args) => { try { return { ok: true, value: (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method, args })).result }; } catch (e) { return { ok: false, error: String(e?.message || e) }; } };
+  await call("wiki.importSource", { title: "ask-source", content: "量子纠错需要把逻辑量子比特编码到多个物理量子比特上，表面码是常见方案。", kind: "text", uri: "test://ask-source" });
+  const hit = await call("wiki.ask", { question: "量子纠错怎么编码" });
+  const miss = await call("wiki.ask", { question: "zzzzqqqqxxxxvvvv" });
+  return {
+    found: hit.value?.found,
+    hasSourceCitation: (hit.value?.citations || []).some((c) => c.kind === "source"),
+    answerMentionsSource: /资料/.test(hit.value?.answer || ""),
+    missFound: miss.value?.found,
+    missCitations: (miss.value?.citations || []).length,
+  };
+`);
+check("问 Wiki 能检索资料并返回 source 引用", r.found === true && r.hasSourceCitation === true && r.answerMentionsSource === true, JSON.stringify(r));
+check("问 Wiki 无依据时不编造", r.missFound === false && r.missCitations === 0, JSON.stringify({ missFound: r.missFound, missCitations: r.missCitations }));
+
 ws.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");
 process.exit(fails ? 1 : 0);
