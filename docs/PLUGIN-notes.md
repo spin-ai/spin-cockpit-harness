@@ -117,6 +117,7 @@ wiki.revision
 wiki.revert
 wiki.reviews
 wiki.dismissDream
+wiki.ask
 wiki.reviewQueue
 wiki.search
 wiki.graph
@@ -146,6 +147,7 @@ wiki_read_source
 wiki_read_page
 wiki_upsert_draft
 wiki_add_citation
+wiki_ask
 ```
 
 约束（代码强制）：
@@ -340,7 +342,6 @@ plugins/notes/main.mjs
 
 - PDF / 网页正文抽取打磨
 - 语义搜索 / embedding
-- Query Chat 的 citation 校验
 - 导出 Markdown / 导入 Obsidian
 - 多 Wiki / 团队协作
 
@@ -365,7 +366,7 @@ plugins/notes/main.mjs
 - citation 检查
 - Review queue 体验
 - 图谱过滤
-- Query Chat
+- Query Chat（已完成，覆盖页面 + 资料）
 
 ### P2
 

@@ -721,33 +721,60 @@ export async function activate(context) {
   ctx.api.handle("wiki.ask", async ({ question, limit = 3 } = {}) => {
     const q = String(question || "").trim();
     if (!q) throw new Error("问题不能为空");
-    const chars = [...q.replace(/\s+/g, "")];
+    // 用 2-gram 而不是单字：避免「zzzzqqqq」这类乱码靠零星字母命中
+    const compact = [...q.replace(/\s+/g, "")].join("").toLowerCase();
+    const grams = new Set();
+    for (let i = 0; i < compact.length - 1; i += 1) grams.add(compact.slice(i, i + 2));
+    if (!grams.size && compact) grams.add(compact);
     const scoreSentence = (sentence) => {
       const text = String(sentence || "").toLowerCase();
       let hit = 0;
-      for (const ch of chars) if (text.includes(ch.toLowerCase())) hit += 1;
-      return chars.length ? hit / chars.length : 0;
+      for (const gram of grams) if (text.includes(gram)) hit += 1;
+      return grams.size ? hit / grams.size : 0;
     };
+    const pickSentences = (text) => String(text || "")
+      .replace(/```[\s\S]*?```/g, " ")
+      .split(/(?<=[。！？.!?])\s+|\n+/)
+      .map((x) => x.replace(/^#+\s*/, "").trim())
+      .filter((x) => x.length > 8)
+      .map((text) => ({ text, s: scoreSentence(text) }))
+      .filter((x) => x.s > 0.2)
+      .sort((a, b) => b.s - a.s)
+      .slice(0, 2);
     loadSearchSync();
-    const textById = new Map((searchCache || []).filter((x) => x.kind === "page").map((x) => [x.id, x.text]));
-    const ranked = data.pages.map((page) => {
-      const search = searchScore(textById.get(page.id) || `${page.title}\n${page.summary}`, q);
-      const sentences = String(textById.get(page.id) || "")
-        .replace(/```[\s\S]*?```/g, " ")
-        .split(/(?<=[。！？.!?])\s+|\n+/)
-        .map((x) => x.replace(/^#+\s*/, "").trim())
-        .filter((x) => x.length > 8);
-      const picked = sentences.map((text) => ({ text, s: scoreSentence(text) })).filter((x) => x.s > 0.2).sort((a, b) => b.s - a.s).slice(0, 2);
-      return { page, score: (search?.score || 0) + picked.reduce((n, x) => n + x.s * 4, 0), picked };
-    }).filter((x) => x.picked.length > 0).sort((a, b) => b.score - a.score).slice(0, limit);
+    // 页面 + 资料都参与检索；引用只来自候选集，保证答案里的出处可点开
+    const candidates = [];
+    for (const entry of searchCache || []) {
+      const text = String(entry.text || "");
+      const picked = pickSentences(text);
+      if (!picked.length) continue;
+      const search = searchScore(text, q);
+      if (entry.kind === "page") {
+        const page = data.pages.find((p) => p.id === entry.id);
+        if (!page) continue;
+        candidates.push({ kind: "page", id: page.id, title: page.title, search, picked });
+      } else if (entry.kind === "source") {
+        const source = data.sources.find((s) => s.id === entry.id);
+        if (!source) continue;
+        candidates.push({ kind: "source", id: source.id, title: source.title, search, picked });
+      }
+    }
+    const ranked = candidates
+      .map((item) => ({ ...item, score: (item.search?.score || 0) + item.picked.reduce((n, x) => n + x.s * 4, 0) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, Math.max(1, Number(limit) || 3));
     if (!ranked.length) {
       return { found: false, answer: "Wiki 里没有找到能回答这个问题的页面或资料。", citations: [] };
     }
-    const lines = ranked.map(({ page, picked }) => `- ${picked.map((x) => x.text).join(" ")} [[${page.title}]]`);
+    const lines = ranked.map((item) => {
+      const text = item.picked.map((x) => x.text).join(" ");
+      return item.kind === "page" ? `- ${text} [[${item.title}]]` : `- ${text}（资料：${item.title}）`;
+    });
+    const hasSource = ranked.some((item) => item.kind === "source");
     return {
       found: true,
-      answer: `根据 Wiki 页面：\n\n${lines.join("\n")}`,
-      citations: ranked.map(({ page }) => ({ id: page.id, title: page.title })),
+      answer: `根据 Wiki ${hasSource ? "页面与资料" : "页面"}：\n\n${lines.join("\n")}`,
+      citations: ranked.map((item) => ({ id: item.id, title: item.title, kind: item.kind })),
     };
   });
   ctx.api.handle("wiki.unlinked", async ({ id: pageId } = {}) => {
