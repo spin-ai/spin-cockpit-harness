@@ -649,6 +649,34 @@ function recoverMissions() {
   return changed;
 }
 
+/**
+ * 修复「编辑后重发」留下的话题顺序：早期版本只改了文本、没有隐藏它之后的旧回答，
+ * 于是新回答被追加到整段历史末尾，看起来像问和答错位。
+ *
+ * 对每个 `trigger=edit` 的 run：把该会话里「编辑那条消息之后、新 run 之前」的消息
+ * 标成 superseded_by（软置），UI 就不再渲染，于是「问题 → 新回答」重新挨在一起。
+ * 幂等：已标记过的跳过；新 run 自己的消息（createdAt >= run.createdAt）不动。
+ */
+function repairEditedThreads() {
+  let changed = false;
+  for (const run of store.state.runs) {
+    if (run.trigger !== "edit") continue;
+    const own = store.state.messages.filter((m) => m.runId === run.id);
+    const edited = own.find((m) => m.role === "user");
+    if (!edited) continue;
+    const cutoff = Number(edited.createdAt) || 0;
+    const started = Number(run.createdAt || run.startedAt || 0);
+    for (const m of store.state.messages) {
+      if (m.threadId !== edited.threadId || m.id === edited.id || m.supersededBy) continue;
+      if (m.createdAt <= cutoff) continue;
+      if (started && m.createdAt >= started) continue;
+      m.supersededBy = run.id;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 function seed() {
   const { state } = store;
   ensureProjects();
@@ -668,6 +696,7 @@ function seed() {
     if (!t.kind) t.kind = t.todoId && state.todos.find((x) => x.id === t.todoId)?.kind === "mission" ? "mission" : "chat";
   }
   recoverMissions();
+  if (repairEditedThreads()) store.addEvent("message.supersede", "message.supersede 修复历史编辑顺序");
   ensureThreads();
   if (state.hosts.length) {
     // 每次启动刷新本机 caps：CLI 在装机/升级后会变，主机页不该长期显示旧版本
