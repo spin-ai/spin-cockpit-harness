@@ -104,6 +104,7 @@ export const TESTS = [
       assert(Array.isArray(s.hosts) && s.hosts.length >= 1, "host 未探测");
       assert(typeof s.appVersion === "string" && s.appVersion.length > 0, "appVersion 缺失");
       assert(Array.isArray(s.projects), "projects 缺失");
+      assert(!("inbox" in s), "inbox 应已移除");
     },
   },
   {
@@ -170,6 +171,14 @@ export const TESTS = [
       const size = await ctx.ev(`getComputedStyle(document.documentElement).getPropertyValue("--chat-font-size").trim()`);
       assert(size === "15px", `CSS 字号=${size}`);
       await ctx.action("setSettings", { chatFontSize: 13 });
+      await gotoRail(ctx, "设置", ".settings-page");
+      await ctx.ev(`(()=>{const b=[...document.querySelectorAll(".settings-nav-item")].find((x)=>x.textContent.trim()==="外观"); if(b) window.__e2e.click(b); return true;})()`);
+      await ctx.sleep(200);
+      assert(await ctx.ev(`document.querySelectorAll(".theme-card").length === 13`), "主题卡片不是 13 个");
+      await ctx.ev(`(()=>{const i=document.querySelector(".settings-search"); if(!i) return false; window.__e2e.setValue(i,"Dracula"); return true;})()`);
+      await ctx.sleep(250);
+      assert(await ctx.ev(`[...document.querySelectorAll(".settings-hit")].some((b)=>b.textContent.includes("主题"))`), "主题名搜索没有命中");
+      await ctx.ev(`(()=>{const i=document.querySelector(".settings-search"); if(i) window.__e2e.setValue(i,""); return true;})()`);
     },
   },
   {
@@ -283,6 +292,24 @@ export const TESTS = [
       await ctx.ev(`(()=>{const b=[...document.querySelectorAll(".view-switch button")].find((x)=>x.textContent.includes("卡片")); if(b) window.__e2e.click(b); return true;})()`);
       await ctx.sleep(200);
       assert(await ctx.ev(`document.querySelectorAll(".project-grid .project-card").length >= 1`), "卡片视图未恢复");
+      const controls = await ctx.ev(`(()=>({
+        filters: document.querySelectorAll(".project-filter").length,
+        sorts: [...document.querySelectorAll(".project-filter")].map((s)=>s.options.length),
+        taskBtn: [...document.querySelectorAll(".project-card .btn")].some((b)=>b.textContent.includes("任务")),
+      }))()`);
+      assert(controls.filters === 2, `项目筛选/排序控件=${controls.filters}`);
+      assert(controls.sorts.every((n) => n >= 3), `排序选项不足: ${controls.sorts}`);
+      assert(controls.taskBtn, "项目卡片缺少新建任务按钮");
+      await ctx.ev(`(()=>{const s=[...document.querySelectorAll(".project-filter")].find((x)=>x.getAttribute("aria-label")==="项目排序"); if(!s) return false; s.value="name"; s.dispatchEvent(new Event("change",{bubbles:true})); return true;})()`);
+      await ctx.sleep(200);
+      assert(await ctx.ev(`document.querySelectorAll(".project-grid .project-card").length >= 1`), "排序后项目列表为空");
+      const newTask = await ctx.ev(`(async()=>{
+        const b=[...document.querySelectorAll(".project-card .btn")].find((x)=>x.textContent.includes("任务"));
+        if(!b) return false; window.__e2e.click(b);
+        return !!(await window.__e2e.until(() => document.querySelector(".task-create textarea"), 3000));
+      })()`);
+      assert(newTask, "项目页新建任务未打开 TODO 输入框");
+      await ctx.ev(`(()=>{const b=[...document.querySelectorAll(".task-create .btn")].find((x)=>x.textContent.includes("取消")); if(b) window.__e2e.click(b); return true;})()`);
       await openWorkspace(ctx);
     },
   },
@@ -309,9 +336,9 @@ export const TESTS = [
   {
     id: "WIKI-01",
     group: "WIKI",
-    title: "Notes：打开 Wiki、创建页面、编辑器就绪",
+    title: "Notes：打开知识库、创建页面、编辑器就绪",
     async fn(ctx) {
-      await gotoRail(ctx, "Wiki", ".notes-page");
+      await gotoRail(ctx, "知识库", ".notes-page");
       assert(await ctx.ev(`document.querySelectorAll(".notes-wiki-tabs button").length >= 3`), "Wiki tabs 不完整");
       await ctx.ev(`(()=>{const b=document.querySelector(".notes-tab-add"); if(b) window.__e2e.click(b); return true;})()`);
       await ctx.sleep(900);
@@ -349,9 +376,9 @@ export const TESTS = [
   {
     id: "WK-06",
     group: "WIKI",
-    title: "Wiki 自动保存 + 删除 → 回收站 → 恢复",
+    title: "知识库自动保存 + 删除 → 回收站 → 恢复",
     async fn(ctx) {
-      await gotoRail(ctx, "Wiki", ".notes-page");
+      await gotoRail(ctx, "知识库", ".notes-page");
       const marker = `autosave-${Date.now()}`;
       await ctx.ev(`(()=>{const b=document.querySelector(".notes-tab-add"); if(b) window.__e2e.click(b); return true;})()`);
       await ctx.sleep(800);
@@ -550,10 +577,38 @@ export const TESTS = [
       assert(r.caps >= 1, "可用 CLI 列表为空");
       assert(r.meta === 4, `主机指标=${r.meta}`);
       assert(r.probe, "重新探测按钮缺失");
+      const listMode = await ctx.ev(`(async()=>{
+        const b=[...document.querySelectorAll(".host-page .view-switch button")].find((x)=>x.textContent.includes("列表"));
+        if(!b) return false; window.__e2e.click(b);
+        return !!(await window.__e2e.until(() => document.querySelector(".host-list-item"), 2000));
+      })()`);
+      assert(listMode, "主机列表视图未渲染");
+      await ctx.ev(`(()=>{const b=[...document.querySelectorAll(".host-page .view-switch button")].find((x)=>x.textContent.includes("卡片")); if(b) window.__e2e.click(b); return true;})()`);
+      await ctx.sleep(200);
+      assert(await ctx.ev(`document.querySelectorAll(".host-panel").length >= 1`), "主机卡片视图未恢复");
       const clicked = await ctx.ev(`(()=>{const b=[...document.querySelectorAll(".host-panel .host-head-actions .btn")].find((x)=>x.textContent.includes("重新探测")); if(!b) return false; window.__e2e.click(b); return true;})()`);
       assert(clicked, "重新探测未触发");
       const { value } = await waitForState(ctx, (s) => s.hosts.find((h) => h.kind === "local" && h.status === "online"), 10000);
       assert(value, "本机主机探测后不在线");
+    },
+  },
+  {
+    id: "STAT-01",
+    group: "STATS",
+    title: "统计：指标 / 图表或空态",
+    async fn(ctx) {
+      await gotoRail(ctx, "统计", ".stats-page");
+      const r = await ctx.ev(`(()=>({
+        tiles: document.querySelectorAll(".stats-tile").length,
+        empty: !!document.querySelector(".stats-empty-panel"),
+        grid: !!document.querySelector(".stats-grid"),
+        range: document.querySelectorAll(".stats-range .seg-btn").length,
+        export: [...document.querySelectorAll(".stats-actions .btn")].some((b)=>b.textContent.includes("CSV")),
+      }))()`);
+      assert(r.tiles === 4, `统计指标卡=${r.tiles}`);
+      assert(r.empty || r.grid, "统计主体未渲染");
+      assert(r.range >= 4, "统计时间范围缺失");
+      assert(r.export, "统计导出按钮缺失");
     },
   },
   {
@@ -569,29 +624,32 @@ export const TESTS = [
       assert(project, "场景项目未添加");
       await ctx.action("switchProject", { id: project.id });
       await ctx.sleep(350);
-      await gotoRail(ctx, "场景", ".scene-page");
+      await gotoRail(ctx, "执行配置", ".scene-page");
+      assert(await ctx.ev(`document.querySelectorAll(".scene-overview-bar .project-overview-item").length >= 4`), "执行配置概览不完整");
       const opened = await ctx.ev(`(async()=>{
-        const b=document.querySelector('.scene-project[data-project-id=${JSON.stringify(project.id)}]');
+        const card=[...document.querySelectorAll(".scene-card")].find((c)=>c.dataset.projectId === ${JSON.stringify(project.id)});
+        if(!card) return false;
+        const b=[...card.querySelectorAll(".btn")].find((x)=>x.textContent.includes("编辑配置"));
         if(!b) return false;
         window.__e2e.click(b);
-        return !!(await window.__e2e.until(() => document.querySelector(".scene-detail .scene-editor"), 3000));
+        return !!(await window.__e2e.until(() => document.querySelector(".scene-modal .scene-editor"), 3000));
       })()`);
-      assert(opened, "场景详情未打开");
-      assert(await ctx.ev(`document.querySelectorAll(".scene-stat").length >= 5`), "场景状态卡片不完整");
+      assert(opened, "执行配置弹窗未打开");
+      assert(await ctx.ev(`(()=>{const card=[...document.querySelectorAll(".scene-card")].find((c)=>c.dataset.projectId === ${JSON.stringify(project.id)}); return card ? card.querySelectorAll(".scene-card-stats span").length >= 4 : false;})()`), "执行配置状态卡片不完整");
       const marker = `E2E scene ${Date.now()}`;
       const text = `worktree: auto\nruntime: auto\nnotes: ${marker}`;
       const changed = await ctx.ev(`(()=>{
-        const ta=document.querySelector(".scene-detail .scene-editor");
+        const ta=document.querySelector(".scene-modal .scene-editor");
         if(!ta) return false;
         window.__e2e.setValue(ta, ${JSON.stringify(text)});
         return true;
       })()`);
-      assert(changed, "场景配置输入框不存在");
+      assert(changed, "执行配置输入框不存在");
       const clicked = await ctx.ev(`(()=>{
-        const b=[...document.querySelectorAll(".scene-config .btn")].find((x)=>x.textContent.includes("保存"));
+        const b=[...document.querySelectorAll(".scene-modal .btn")].find((x)=>x.textContent.includes("保存"));
         if(!b) return false; window.__e2e.click(b); return true;
       })()`);
-      assert(clicked, "场景保存按钮不存在");
+      assert(clicked, "执行配置保存按钮不存在");
       const { value } = await waitForState(ctx, (s) => (s.scenes || []).find((x) => x.projectId === project.id && x.text.includes(marker)), 5000);
       assert(value, "场景配置没有保存到 state");
     },
