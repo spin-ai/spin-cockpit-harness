@@ -9,6 +9,7 @@
  * 用法：node scripts/e2e-notes.mjs [port]
  */
 import fs from "node:fs";
+import { spawn } from "node:child_process";
 
 const port = Number(process.argv[2] || 9223);
 const VAULT = "/tmp/notes-vault";
@@ -347,6 +348,28 @@ r = await run(`
   return { gone: !titles.includes("batch-a") && !titles.includes("batch-b") };
 `);
 check("批量选择 + 批量删除页面", r.gone === true, JSON.stringify(r));
+
+// ── MCP tools/list ─────────────────
+const toolNames = await new Promise((resolve, reject) => {
+  const child = spawn(process.execPath, ["electron/wiki-mcp-bridge.mjs"], { cwd: process.cwd(), env: { ...process.env, COCKPIT_WIKI_URL: "http://127.0.0.1:1/call", COCKPIT_WIKI_TOKEN: "x" } });
+  let buf = "";
+  const timer = setTimeout(() => { child.kill(); reject(new Error("mcp tools/list timeout")); }, 5000);
+  child.stdout.on("data", (chunk) => {
+    buf += String(chunk);
+    for (;;) {
+      const at = buf.indexOf("\n");
+      if (at < 0) break;
+      const line = buf.slice(0, at); buf = buf.slice(at + 1);
+      let msg; try { msg = JSON.parse(line); } catch { continue; }
+      if (msg.id === 2) { clearTimeout(timer); child.kill(); resolve((msg.result?.tools || []).map((t) => t.name)); return; }
+    }
+  });
+  child.on("error", reject);
+  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }) + "\n");
+});
+const wantTools = ["wiki_list_pages", "wiki_ask", "wiki_import_source", "wiki_update_summary", "wiki_curate", "wiki_mark_stale", "wiki_revisions"];
+check("MCP 工具列表补齐", wantTools.every((name) => toolNames.includes(name)), JSON.stringify({ count: toolNames.length, missing: wantTools.filter((name) => !toolNames.includes(name)) }));
 
 ws.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");
