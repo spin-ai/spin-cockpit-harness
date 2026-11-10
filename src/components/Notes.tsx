@@ -13,6 +13,10 @@ type PageSummary = {
   id: string; slug: string; title: string; summary: string;
   status: "draft" | "reviewed" | "stale"; confidence: "low" | "medium" | "high";
   updatedAt: number; citations: number; backlinks: number; snippet?: string;
+  /** 已审核页面被人编辑后回到 draft：为什么、什么时候 */
+  reopenReason?: string; reopenedAt?: number | null;
+  /** 引用资料更新/删除导致过期：原因、时间、原状态 */
+  staleReason?: string; staleAt?: number | null; staleFrom?: string | null;
 };
 type Citation = { id: string; pageId: string; sourceId: string; quote?: string; locator?: string; source?: Source };
 type Page = Omit<PageSummary, "citations" | "backlinks"> & { content: string; citations: Citation[]; backlinks: PageSummary[] };
@@ -30,6 +34,9 @@ type SearchHit = { kind: string; id: string; title: string; status?: string; at?
 
 function emptyPane(): Pane { return { tabs: [], active: null }; }
 function statusLabel(status: string) { return status === "reviewed" ? "已审核" : status === "stale" ? "已过期" : "草稿"; }
+function staleReasonLabel(reason?: string) {
+  return reason === "source-updated" ? "引用资料已更新" : reason === "source-deleted" ? "引用资料已删除" : "手动标记过期";
+}
 function confidenceLabel(level?: string) { return level === "high" ? "高" : level === "low" ? "低" : "中"; }
 
 /** 相对时间：列表第二行用，避免一列绝对时间戳比标题还长 */
@@ -516,6 +523,16 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
+  const clearStale = async (pageId: string) => {
+    setBusy(true);
+    try {
+      const page = await invoke("wiki.clearStale", { id: pageId });
+      if (page) setDocs((current) => ({ ...current, [pageId]: { ...page, dirty: false } }));
+      setNotice("已确认仍有效，恢复原状态");
+      await refresh();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
   const importSource = async () => {
     if (!sourceDraft) return;
     setBusy(true);
@@ -738,6 +755,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                       <i>·</i>
                       {timeAgo(doc.updatedAt)}
                       {doc.dirty && <span className="notes-dirty">未保存</span>}
+                      {doc.reopenReason && <span className="notes-dirty" title="审核后被编辑，需要重新审核">改过 · 待重新审核</span>}
                     </>
                   )}
                 </span>
@@ -1316,6 +1334,12 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                   <span className={`notes-review-badge ${activeDoc.status}`}>{statusLabel(activeDoc.status)}</span>
                   <span className="notes-meta-hint">置信度 {confidenceLabel(activeDoc.confidence)}</span>
                 </div>
+                {activeDoc.status === "stale" && (
+                  <div className="notes-stale-note">
+                    <p>{staleReasonLabel(activeDoc.staleReason)}{activeDoc.staleAt ? ` · ${timeAgo(activeDoc.staleAt)}` : ""}</p>
+                    <button className="btn tiny-btn" onClick={() => void clearStale(activeDoc.id)} disabled={busy}>确认仍有效</button>
+                  </div>
+                )}
               </div>
               <div className="notes-meta-block">
                 <div className="notes-meta-title">引用来源 <em>{activeDoc.citations.length}</em></div>
