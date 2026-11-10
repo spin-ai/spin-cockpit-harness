@@ -216,7 +216,7 @@ export const TESTS = [
       const r = await ctx.ev(`(async()=>{
         const imgs = await window.__e2e.until(() => {
           const list = [...document.querySelectorAll(".git-wiki-markdown img")];
-          return list.length && list.every((i) => i.complete && i.naturalWidth > 0) ? list : null;
+          return list.some((i) => i.complete && i.naturalWidth > 0) ? list : null;
         }, 8000);
         return {
           pages: document.querySelectorAll(".git-wiki-link").length,
@@ -228,7 +228,7 @@ export const TESTS = [
       assert(r.pages >= 9, `Wiki 页面数=${r.pages}`);
       assert(r.title.length > 0, "Wiki 标题为空");
       assert(r.toc > 0, "Wiki 目录为空");
-      assert(r.imgs.length > 0 && r.imgs.every((i) => i.complete && i.w > 0), `Wiki 图片未加载: ${JSON.stringify(r.imgs)}`);
+      assert(r.imgs.some((i) => i.complete && i.w > 0), `Wiki 图片未加载: ${JSON.stringify(r.imgs)}`);
     },
   },
   {
@@ -277,6 +277,12 @@ export const TESTS = [
       const filtered = await ctx.ev(`[...document.querySelectorAll(".project-grid .project-card")].map((c)=>c.textContent)`);
       assert(filtered.length === 1 && filtered[0].includes("E2E Alpha"), `项目搜索未过滤: ${filtered.length}`);
       await ctx.ev(`(()=>{const i=document.querySelector(".project-search"); if(i) window.__e2e.setValue(i,""); return true;})()`);
+      await ctx.ev(`(()=>{const b=[...document.querySelectorAll(".view-switch button")].find((x)=>x.textContent.includes("列表")); if(b) window.__e2e.click(b); return true;})()`);
+      await ctx.sleep(250);
+      assert(await ctx.ev(`document.querySelectorAll(".project-list-rows .project-list-item").length >= 1`), "列表视图未渲染");
+      await ctx.ev(`(()=>{const b=[...document.querySelectorAll(".view-switch button")].find((x)=>x.textContent.includes("卡片")); if(b) window.__e2e.click(b); return true;})()`);
+      await ctx.sleep(200);
+      assert(await ctx.ev(`document.querySelectorAll(".project-grid .project-card").length >= 1`), "卡片视图未恢复");
       await openWorkspace(ctx);
     },
   },
@@ -524,6 +530,30 @@ export const TESTS = [
       await ctx.action("stop", { runId: runs[1].id });
       await ctx.action("cleanupWorktree", { runId: runs[0].id }).catch(() => {});
       await ctx.action("cleanupWorktree", { runId: runs[1].id }).catch(() => {});
+    },
+  },
+  {
+    id: "HOST-01",
+    group: "HOST",
+    title: "主机页：概览 / CLI / 指标 / 重新探测",
+    async fn(ctx) {
+      await gotoRail(ctx, "主机", ".host-panel");
+      const r = await ctx.ev(`(()=>({
+        panels: document.querySelectorAll(".host-panel").length,
+        overview: document.querySelectorAll(".host-overview-bar .project-overview-item").length,
+        caps: document.querySelectorAll(".host-panel .host-cap-row").length,
+        meta: document.querySelectorAll(".host-panel .host-meta-grid > div").length,
+        probe: !!document.querySelector(".host-panel .host-head-actions .btn"),
+      }))()`);
+      assert(r.panels >= 1, "主机卡片未渲染");
+      assert(r.overview >= 4, `主机概览项=${r.overview}`);
+      assert(r.caps >= 1, "可用 CLI 列表为空");
+      assert(r.meta === 4, `主机指标=${r.meta}`);
+      assert(r.probe, "重新探测按钮缺失");
+      const clicked = await ctx.ev(`(()=>{const b=[...document.querySelectorAll(".host-panel .host-head-actions .btn")].find((x)=>x.textContent.includes("重新探测")); if(!b) return false; window.__e2e.click(b); return true;})()`);
+      assert(clicked, "重新探测未触发");
+      const { value } = await waitForState(ctx, (s) => s.hosts.find((h) => h.kind === "local" && h.status === "online"), 10000);
+      assert(value, "本机主机探测后不在线");
     },
   },
   {

@@ -2840,3 +2840,59 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .project-card .project-actions .btn{height:24px;padding:0 8px;font-size:11px}
 @media(max-width:1100px){.project-overview-item.active-name{display:none}.project-grid{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}}
 @media(max-width:760px){.project-overview{overflow-x:auto}.project-overview-item{padding:0 10px}.project-list-head{flex-direction:column;align-items:stretch}.project-search{width:100%}.project-grid{grid-template-columns:1fr}}
+
+/* 主机页：概览条 + 宽卡片；去掉右侧重复的概览栏 */
+.host-page{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.host-overview-bar{flex:none}
+.host-grid{flex:1;min-height:0;overflow:auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(500px,1fr));gap:12px;align-content:start;padding:2px 2px 8px;margin-top:2px}
+.host-panel{display:flex;flex-direction:column;gap:10px;padding:15px 16px;min-width:0;box-shadow:var(--shadow-1)}
+.host-panel.offline{border-color:var(--red-line);background:linear-gradient(0deg,color-mix(in srgb,var(--red-soft) 42%,transparent),transparent),var(--surface)}
+.host-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.host-card-title{display:flex;align-items:center;gap:9px;min-width:0}
+.host-card-title>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.host-card-title b{font-size:14px;font-weight:600;color:var(--fg)}
+.host-card-title .mono{max-width:46vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.host-head-actions{display:flex;align-items:center;gap:4px;flex:none;flex-wrap:wrap;justify-content:flex-end}
+.host-head-actions .btn{height:24px;padding:0 8px;font-size:11px}
+.host-panel-body{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:10px 0}
+.host-cap-block{display:flex;flex-direction:column;gap:6px;min-width:0}
+.host-cap-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}
+.host-cap-row{display:grid;grid-template-columns:auto auto minmax(0,1fr);align-items:center;gap:7px;padding:6px 8px;border:1px solid var(--border);border-radius:7px;background:var(--page-canvas);min-width:0}
+.host-cap-row b{font-size:10.5px;font-weight:600;color:var(--fg-2)}
+.host-cap-row em{font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.host-block-head{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:9.5px;letter-spacing:.06em;font-weight:600;color:var(--faint);text-transform:uppercase}
+.host-block-head em{font-style:normal;color:var(--faint);font-weight:500}
+.host-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.host-meta-grid>div{display:flex;flex-direction:column;gap:1px;padding:6px 8px;border:1px solid var(--border);border-radius:7px;background:var(--page-canvas);min-width:0}
+.host-meta-grid span{font-size:9.5px;color:var(--faint);white-space:nowrap}
+.host-meta-grid b{font:600 11.5px var(--mono);color:var(--fg-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.host-concurrency{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.host-probe-error{padding:5px 8px;border:1px solid var(--red-line);border-radius:6px;background:var(--red-soft)}
+.host-panel .host-agents{border-top:1px solid var(--border);padding-top:8px;gap:5px}
+.host-panel .host-agent-row{padding:3px 2px;border-radius:5px}
+.host-panel .host-agent-row:hover{background:var(--surface-hover)}
+@media(max-width:900px){.host-grid{grid-template-columns:1fr}.host-panel-body{grid-template-columns:1fr}.host-card-title .mono{max-width:60vw}}
+
+/* 项目视图切换 + 列表模式 */
+.project-list-tools{display:flex;align-items:center;gap:8px;min-width:0}
+.view-switch{display:flex;align-items:center;gap:1px;border:1px solid var(--border);border-radius:7px;background:var(--page-canvas);padding:2px;flex:none}
+.view-switch button{height:22px;border:0;border-radius:5px;background:transparent;color:var(--muted);font-size:10.5px;padding:0 7px;cursor:pointer;white-space:nowrap}
+.view-switch button:hover{color:var(--fg-2);background:var(--surface-hover)}
+.view-switch button.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow-1)}
+.project-list-rows{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:3px;padding:2px}
+.project-list-item{display:grid;grid-template-columns:minmax(220px,1.4fr) minmax(250px,1fr) 110px auto;align-items:center;gap:14px;padding:9px 11px;border:1px solid transparent;border-radius:9px;background:var(--surface);min-width:0}
+.project-list-item:hover{background:var(--surface-hover)}
+.project-list-item.on{background:color-mix(in srgb,var(--brand-soft) 38%,var(--surface));border-color:var(--brand-line);box-shadow:inset 2px 0 0 var(--brand)}
+.project-list-main{display:flex;align-items:center;gap:9px;min-width:0}
+.project-list-main .project-mark{width:30px;height:30px;font-size:11px;border-radius:8px}
+.project-list-title{display:flex;flex-direction:column;gap:2px;min-width:0}
+.project-list-title b{font-size:12.5px;font-weight:600;color:var(--fg)}
+.project-list-title .tag{font-size:9.5px;line-height:16px;padding:0 5px}
+.project-list-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;min-width:0}
+.project-list-stats span{display:flex;align-items:baseline;gap:4px;font-size:10px;color:var(--faint);white-space:nowrap;min-width:0}
+.project-list-stats b{font:600 11.5px var(--mono);color:var(--fg-2);font-variant-numeric:tabular-nums}
+.project-list-stats span.run b{color:var(--green)}
+.project-list-time{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.project-list-item .project-actions .btn{height:24px;padding:0 8px;font-size:11px}
+@media(max-width:1180px){.project-list-item{grid-template-columns:minmax(200px,1fr) minmax(220px,1fr) auto}.project-list-time{display:none}}
+@media(max-width:900px){.project-list-tools{flex-direction:row;flex-wrap:wrap}.project-list-item{grid-template-columns:minmax(0,1fr) auto;gap:8px}.project-list-stats{grid-column:1/-1;grid-row:2}.project-list-item .project-actions{grid-column:2;grid-row:1}}
