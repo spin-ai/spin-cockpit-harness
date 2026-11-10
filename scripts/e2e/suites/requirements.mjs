@@ -626,6 +626,13 @@ export const TESTS = [
       await ctx.sleep(350);
       await gotoRail(ctx, "场景", ".scene-page");
       assert(await ctx.ev(`document.querySelectorAll(".scene-overview-bar .project-overview-item").length >= 4`), "场景概览不完整");
+      assert(await ctx.ev(`document.querySelectorAll(".scene-page .view-switch button").length === 2`), "场景缺少卡片/列表切换");
+      await ctx.ev(`(()=>{const b=[...document.querySelectorAll(".scene-page .view-switch button")].find((x)=>x.textContent.includes("列表")); if(b) window.__e2e.click(b); return true;})()`);
+      await ctx.sleep(250);
+      assert(await ctx.ev(`document.querySelectorAll(".scene-list-item").length >= 1`), "场景列表视图未渲染");
+      await ctx.ev(`(()=>{const b=[...document.querySelectorAll(".scene-page .view-switch button")].find((x)=>x.textContent.includes("卡片")); if(b) window.__e2e.click(b); return true;})()`);
+      await ctx.sleep(200);
+      assert(await ctx.ev(`document.querySelectorAll(".scene-card").length >= 1`), "场景卡片视图未恢复");
       const opened = await ctx.ev(`(async()=>{
         const card=[...document.querySelectorAll(".scene-card")].find((c)=>c.dataset.projectId === ${JSON.stringify(project.id)});
         if(!card) return false;
