@@ -133,7 +133,7 @@ export interface ElementContext {
   source?: { file?: string; line?: number } | null;
   screenshot?: string | null;
 }
-export interface Message { id: string; threadId: string; todoId: string | null; runId: string | null; role: string; kind: string; content: string; injected: boolean; delivery?: Delivery; context?: ElementContext | null; createdAt: number; }
+export interface Message { id: string; threadId: string; todoId: string | null; runId: string | null; role: string; kind: string; content: string; injected: boolean; delivery?: Delivery; context?: ElementContext | null; createdAt: number; /** 被编辑后的新版本取代时指向新 run，UI 不再展示 */ supersededBy?: string | null; }
 export interface Artifact { id: string; todoId: string; runId: string; kind: string; title: string; origin: string; ref: string; deepLink: string; createdAt: number; }
 export interface Event { id: string; ts: number; type: string; text: string; }
 export interface InboxItem { id: string; todoId: string; kind: string; title: string; at: number; read: boolean; pinned?: boolean; }

@@ -3139,9 +3139,15 @@ const actions = {
     todo.agentId = agent.id;
     thread.updatedAt = now();
     todo.updatedAt = now();
+    // 编辑后重发相当于从这里开新分支：把这条消息之后的旧回答/旧追问软置为「已被取代」，
+    // 否则新回答会追加在整段历史末尾，看起来像是「结果跑到了错误的位置」。
+    const cutoff = Number(msg.createdAt) || 0;
+    const stale = store.state.messages.filter((m) => m.threadId === thread.id && m.id !== msg.id
+      && (m.createdAt > cutoff || (m.createdAt === cutoff && m.id > msg.id)));
     const run = queueRun(todo, agent, "edit");
+    for (const m of stale) m.supersededBy = run.id;
     store.updateMessage(msg.id, { runId: run.id });
-    store.addMessage(thread.id, run.id, "system", "system", "编辑后重发");
+    store.addMessage(thread.id, run.id, "system", "system", stale.length ? `编辑后重发 · 替换其后 ${stale.length} 条消息` : "编辑后重发");
     store.addEvent("run.edit", `run.edit ${todo.key} agent=${agent.name}`);
     tick();
     return { mode: "run", threadId: thread.id, runId: run.id };

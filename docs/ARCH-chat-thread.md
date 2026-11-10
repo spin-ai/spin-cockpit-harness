@@ -262,4 +262,16 @@ agent_thought_chunk { content:{ type:"text", text:"User asks: ..." } }
 （`prompt` 只收「绑定到该 run 的用户消息」）。现在会先把 lastUser 绑到新 run 再入队。
 
 实现：`actions.editMessage({ id, text })`（`electron/main.mjs`）+ `ChatMessage` 的 `onEdit`；
+不改变消息不可变性，历史消息内容直接覆盖 —— 重跑以最新文本为准。实现：`actions.editMessage({ id, text })`（`electron/main.mjs`）+ `ChatMessage` 的 `onEdit`；
 不改变消息不可变性，历史消息内容直接覆盖 —— 重跑以最新文本为准。
+
+### 位置：编辑后重发 = 从这条消息开新分支
+
+第一版只改了文本、没有处理「这条消息之后的内容」，于是新回答追加在整段历史末尾，
+看起来像「结果跑到了错误的位置」。现在：
+
+- `messages.superseded_by`（迁移列）：指向取代它的 run id；被标记的消息不再渲染
+- 编辑并重发时，把该消息之后的旧回答 / 旧追问一并打标记，会话里留一条
+  `编辑后重发 · 替换其后 N 条消息`
+- 效果：`编辑后的提问 → 新 run 的输出` 紧挨着，和 DeepSeek 的「编辑 → 重新生成」一致
+- 数据不删：被取代的消息仍在库里（`superseded_by` 可追溯），将来要做分支切换可以复用
