@@ -94,6 +94,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const [askOpen, setAskOpen] = useState(false);
   const [askQuestion, setAskQuestion] = useState("");
   const [askResult, setAskResult] = useState<{ found: boolean; answer: string; citations: { id: string; title: string }[] } | null>(null);
+  const [citeEditing, setCiteEditing] = useState<{ id: string; quote: string } | null>(null);
   const [askLoading, setAskLoading] = useState(false);
   const [docs, setDocs] = useState<Record<string, Doc>>({});
   const [left, setLeft] = useState<Pane>(emptyPane);
@@ -572,6 +573,30 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     setBusy(true);
     try {
       const page = await invoke("wiki.addCitation", { pageId: activeDoc.id, sourceId });
+      if (page) setDocs((current) => ({ ...current, [activeDoc.id]: { ...page, dirty: false } }));
+      await refresh();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const removeCitation = async (citationId: string) => {
+    if (!activeDoc) return;
+    setBusy(true);
+    try {
+      const page = await invoke("wiki.removeCitation", { pageId: activeDoc.id, citationId });
+      if (page) setDocs((current) => ({ ...current, [activeDoc.id]: { ...page, dirty: false } }));
+      if (citeEditing?.id === citationId) setCiteEditing(null);
+      await refresh();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  /** 引用摘录：失焦保存；Enter 只是失焦，Esc 放弃。 */
+  const saveCitationQuote = async () => {
+    const draft = citeEditing;
+    if (!draft || !activeDoc) return;
+    setCiteEditing(null);
+    setBusy(true);
+    try {
+      const page = await invoke("wiki.updateCitation", { pageId: activeDoc.id, citationId: draft.id, quote: draft.quote });
       if (page) setDocs((current) => ({ ...current, [activeDoc.id]: { ...page, dirty: false } }));
       await refresh();
     } catch (err) { fail(err); } finally { setBusy(false); }
@@ -1320,7 +1345,29 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
               <div className="notes-meta-block">
                 <div className="notes-meta-title">引用来源 <em>{activeDoc.citations.length}</em></div>
                 {activeDoc.citations.length === 0 && <p className="notes-meta-empty">还没有引用资料。用下面的选择器添加，或在正文里标注出处。</p>}
-                {activeDoc.citations.map((c) => <button key={c.id} className="notes-link" onClick={() => c.sourceId && void openSource(c.sourceId)}><b>{c.source?.title || c.sourceId}</b>{c.quote && <span>{c.quote.slice(0, 80)}</span>}</button>)}
+                {activeDoc.citations.map((c) => (
+                  <div key={c.id} className="notes-cite-row">
+                    <button className="notes-link" onClick={() => c.sourceId && void openSource(c.sourceId)} title="打开资料"><b>{c.source?.title || c.sourceId}</b></button>
+                    {citeEditing?.id === c.id
+                      ? <input
+                          className="notes-cite-quote-input"
+                          autoFocus
+                          value={citeEditing.quote}
+                          placeholder="引用摘录（可留空）"
+                          onChange={(e) => setCiteEditing({ id: c.id, quote: e.target.value })}
+                          onBlur={() => void saveCitationQuote()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+                            if (e.key === "Escape") { e.preventDefault(); setCiteEditing(null); }
+                          }}
+                        />
+                      : c.quote ? <button className="notes-cite-quote" onClick={() => setCiteEditing({ id: c.id, quote: c.quote || "" })} title="编辑引用摘录">{c.quote.slice(0, 80)}</button> : null}
+                    <span className="notes-cite-actions">
+                      <button className="link tiny" onClick={() => setCiteEditing({ id: c.id, quote: c.quote || "" })}>摘录</button>
+                      <button className="link tiny" onClick={() => void removeCitation(c.id)}>删除</button>
+                    </span>
+                  </div>
+                ))}
                 {sources.length > 0 && <select className="notes-cite-select" value="" onChange={(e) => { if (e.target.value) void addCitation(e.target.value); }}><option value="">＋ 引用 source</option>{sources.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}</select>}
               </div>
               <div className="notes-meta-block">
