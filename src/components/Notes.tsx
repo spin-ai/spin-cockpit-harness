@@ -1074,21 +1074,33 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
         actions={(
           <>
             <button className="btn primary" onClick={() => void createPage()} disabled={busy}>＋ 新建页面</button>
+            <button
+              className="btn"
+              onClick={() => setSourceDraft({ title: "", content: "", url: "", mode: "text" })}
+              disabled={busy}
+              title="导入资料：粘贴文本 / Markdown、URL，或从磁盘选文件"
+            >导入资料</button>
+            <button
+              className="btn"
+              onClick={() => void generateWiki()}
+              disabled={busy}
+              title={sources.length ? `按 ${sources.length} 份资料生成草稿页面` : vault.files.length ? `会先把本地 ${vault.files.length} 个 Markdown 导入为资料再生成` : "先打开本地目录或导入资料"}
+            >{busy ? "生成中…" : sources.length ? `生成 Wiki (${sources.length})` : "生成 Wiki"}</button>
+            <button
+              className="btn"
+              onClick={() => void curateWiki()}
+              disabled={busy || pages.length === 0}
+              title="统一页面大纲（要点 / 原文摘录 / 相关）、补页面互链，并重建「Wiki 索引」页"
+            >整理 Wiki</button>
+            <button className="btn" onClick={() => setAskOpen(true)} title="只基于本地 Wiki 页面回答，带页面引用">问 Wiki</button>
             <RowMenu title="更多 Wiki 操作" popClassName="notes-menu">
-              <div className="row-menu-label">生成与整理</div>
-              <button onClick={() => void generateWiki()} disabled={busy} title={sources.length ? `按 ${sources.length} 份资料生成草稿页面` : "先打开本地目录或导入资料"}>
-                {busy ? "生成中…" : sources.length ? `生成 Wiki（${sources.length} 份资料）` : "生成 Wiki"}
-              </button>
-              <button onClick={() => void curateWiki()} disabled={busy || pages.length === 0}>整理大纲 / 互链 / 索引</button>
-              <div className="row-menu-label">导入</div>
-              <button onClick={() => void importDocuments()} disabled={busy}>导入文档…</button>
-              <button onClick={() => setSourceDraft({ title: "", content: "", url: "", mode: "text" })} disabled={busy}>粘贴文本 / URL…</button>
+              <div className="row-menu-label">本地目录</div>
               <button onClick={() => void pickLocalFolder()} disabled={busy}>{vault.path ? "更换本地目录…" : "打开本地目录…"}</button>
-              <div className="row-menu-label">查看与导出</div>
-              <button onClick={() => setAskOpen(true)}>问 Wiki</button>
+              <div className="row-menu-label">查看</div>
               <button onClick={() => { setMemoryOpen(false); graph ? setGraph(false) : void openGraph(); }}>{graph ? "关闭图谱" : "图谱"}</button>
               <button onClick={() => { setGraph(false); void openMemory(); }}>{memoryOpen ? "关闭记忆" : "记忆"}</button>
               <button onClick={toggleSplit}>{split ? "取消分屏" : "分屏"}</button>
+              <div className="row-menu-label">导出</div>
               <button onClick={() => void exportMarkdown()} disabled={busy || pages.length === 0}>导出 Markdown…</button>
               <button onClick={() => void exportPdf()} disabled={!activeDoc}>导出当前页 PDF…</button>
             </RowMenu>
