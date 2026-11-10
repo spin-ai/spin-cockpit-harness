@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Project, State } from "../types";
 import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
@@ -16,6 +16,10 @@ export function ScenePage({ state, act, notify, onOpenProject, onOpenTerminal }:
   onOpenTerminal: (cwd: string) => void;
 }) {
   const [editing, setEditing] = useState<Project | null>(null);
+  const [layout, setLayout] = useState<"cards" | "list">(() => {
+    try { return localStorage.getItem("ymh.scene.layout") === "list" ? "list" : "cards"; } catch { return "cards"; }
+  });
+  useEffect(() => { try { localStorage.setItem("ymh.scene.layout", layout); } catch { /* ignore */ } }, [layout]);
 
   const rows = useMemo(() => state.projects.map((project) => {
     const todos = state.todos.filter((t) => t.projectId === project.id);
@@ -42,7 +46,13 @@ export function ScenePage({ state, act, notify, onOpenProject, onOpenTerminal }:
         kicker="SCENE"
         title="场景"
         subtitle={`${state.projects.length} 个项目 · 每个项目一份执行配置；Chat 派活时按这里推荐项目 / Agent / 执行方式`}
-        actions={<span className="tiny muted">全局默认 worktree：{state.settings.worktreeMode || "auto"}</span>}
+        actions={<div className="row gap8">
+          <div className="view-switch" role="group" aria-label="场景视图">
+            <button className={layout === "cards" ? "on" : ""} onClick={() => setLayout("cards")} title="卡片视图">▦ 卡片</button>
+            <button className={layout === "list" ? "on" : ""} onClick={() => setLayout("list")} title="列表视图">☰ 列表</button>
+          </div>
+          <span className="tiny muted">全局默认 worktree：{state.settings.worktreeMode || "auto"}</span>
+        </div>}
       />
 
       <div className="project-overview scene-overview-bar">
@@ -54,7 +64,7 @@ export function ScenePage({ state, act, notify, onOpenProject, onOpenTerminal }:
 
       {state.projects.length === 0 ? (
         <EmptyState compact title="还没有项目" desc="先添加一个本地项目，执行配置会按项目保存。" />
-      ) : (
+      ) : layout === "cards" ? (
         <div className="scene-overview-grid">
           {rows.map((row) => (
             <article className={`panel scene-card ${row.configured ? "" : "empty"}`} key={row.project.id} data-project-id={row.project.id}>
@@ -86,6 +96,36 @@ export function ScenePage({ state, act, notify, onOpenProject, onOpenTerminal }:
                 <span className="tiny faint">{row.terminals} 终端 · {row.failed ? "有失败" : "正常"}</span>
               </footer>
             </article>
+          ))}
+        </div>
+      ) : (
+        <div className="scene-list-rows">
+          {rows.map((row) => (
+            <div className={`panel scene-list-item ${row.configured ? "" : "empty"}`} key={row.project.id} data-project-id={row.project.id}>
+              <div className="scene-list-main">
+                <div className={`project-mark ${row.project.color}`}>{row.project.name.trim().slice(0, 1).toUpperCase() || "P"}</div>
+                <div className="scene-list-title">
+                  <div className="row gap6 wrap">
+                    <b>{row.project.name}</b>
+                    <span className="tag mono">@{row.project.alias}</span>
+                    <span className={`tag ${row.configured ? "ok" : ""}`}>{row.configured ? "已配置" : "未配置"}</span>
+                  </div>
+                  <span className="mono tiny faint ellipsis" title={row.project.path}>{row.project.path}</span>
+                </div>
+              </div>
+              <div className="scene-list-stats">
+                <span className={row.activeRuns ? "run" : ""}><b>{row.activeRuns}</b>运行</span>
+                <span><b>{row.activeTerms}</b>终端</span>
+                <span><b>{row.open}</b>未完成</span>
+                <span className={row.failed ? "bad" : ""}><b>{row.failed}</b>失败</span>
+              </div>
+              <span className="scene-list-note tiny faint">{row.text ? row.text.replace(/\s+/g, " ").slice(0, 56) : "未填写执行配置"}</span>
+              <div className="scene-card-foot">
+                <button className="btn tiny-btn primary" onClick={() => setEditing(row.project)}>编辑配置</button>
+                <button className="btn tiny-btn" onClick={() => void onOpenProject(row.project.id)}>打开项目</button>
+                <button className="btn tiny-btn" onClick={() => onOpenTerminal(row.project.path)}>终端</button>
+              </div>
+            </div>
           ))}
         </div>
       )}
