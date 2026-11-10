@@ -36,6 +36,15 @@ type SearchHit = { kind: string; id: string; title: string; status?: string; at?
 
 function emptyPane(): Pane { return { tabs: [], active: null }; }
 function statusLabel(status: string) { return status === "reviewed" ? "已审核" : status === "stale" ? "已过期" : "草稿"; }
+/** 阅读模式目录：只取 h2/h3，按文档顺序编号（与预览 DOM 里的 h2,h3 顺序一致）。 */
+function mdHeadings(text: string) {
+  const out: { text: string; level: number }[] = [];
+  for (const match of String(text || "").matchAll(/^(#{2,3})\s+(.+)$/gm)) {
+    const text2 = match[2].replace(/[*_`~]/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").trim();
+    if (text2) out.push({ text: text2, level: match[1].length });
+  }
+  return out;
+}
 function dreamKindLabel(kind: string) {
   return kind === "missing-citation" ? "缺少引用" : kind === "stale-draft" ? "草稿放了 7 天" : kind === "duplicate-title" ? "标题重复" : kind;
 }
@@ -141,6 +150,11 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const [rejectReason, setRejectReason] = useState("");
   const [dreamOpen, setDreamOpen] = useState(false);
   const [dreamIssues, setDreamIssues] = useState<{ key: string; kind: string; pageId: string; title: string }[]>([]);
+  const [vaultPrompt, setVaultPrompt] = useState<{ mode: "create" | "rename"; path: string; value: string } | null>(null);
+  const [batch, setBatch] = useState<"pages" | "sources" | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [tocActive, setTocActive] = useState(-1);
+  const previewRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [askLoading, setAskLoading] = useState(false);
   const [docs, setDocs] = useState<Record<string, Doc>>({});
   const [left, setLeft] = useState<Pane>(emptyPane);
@@ -214,6 +228,26 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   }, [enabled, invoke]);
 
   useEffect(() => { void refresh(); void refreshVault(); }, [refresh, refreshVault]);
+
+  // 阅读模式目录：跟随预览滚动高亮（h2/h3 顺序与 mdHeadings 一致）
+  useEffect(() => {
+    if (mode !== "preview" || !activeDoc) { setTocActive(-1); return; }
+    const el = previewRefs.current[focus] || previewRefs.current.left || previewRefs.current.right;
+    if (!el) return;
+    const headings = [...el.querySelectorAll<HTMLElement>("h2,h3")];
+    const onScroll = () => {
+      const edge = el.getBoundingClientRect().top + 28;
+      let index = -1;
+      headings.forEach((heading, i) => { if (heading.getBoundingClientRect().top <= edge) index = i; });
+      setTocActive(index);
+    };
+    onScroll();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [mode, activeDoc?.id, activeDoc?.content, focus, split]);
+
+  // 切 tab 时退出批量选择，避免把上一种类型的选中带到另一个列表
+  useEffect(() => { setBatch(null); setPicked(new Set()); }, [tab]);
 
   const loadPage = useCallback(async (pageId: string) => {
     const existing = docs[pageId];
@@ -636,6 +670,77 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     } catch (err) { fail(err); } finally { setHistoryBusy(false); }
   };
 
+  const submitVaultPrompt = async () => {
+    const draft = vaultPrompt;
+    if (!draft || !draft.value.trim()) return;
+    setBusy(true);
+    try {
+      if (draft.mode === "create") {
+        const file = await invoke("wiki.vault.create", { path: draft.value.trim(), content: "" });
+        setVaultPrompt(null);
+        await refreshVault();
+        if (file?.path) await openVaultFile(file.path);
+        setNotice("已创建本地 Markdown");
+      } else {
+        const file = await invoke("wiki.vault.rename", { path: draft.path, nextPath: draft.value.trim() });
+        setVaultPrompt(null);
+        await refreshVault();
+        if (file?.path && activeDoc?.local && activeDoc.localPath === draft.path) await openVaultFile(file.path);
+        setNotice("已重命名本地文件");
+      }
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const deleteVaultFile = async (file: { path: string; title: string }) => {
+    if (!window.confirm(`删除本地文件「${file.path}」？不会进 Wiki 回收站，无法撤销。`)) return;
+    setBusy(true);
+    try {
+      await invoke("wiki.vault.delete", { path: file.path });
+      const docId = `vault:${file.path}`;
+      setDocs((current) => { const next = { ...current }; delete next[docId]; return next; });
+      const strip = (p: Pane) => ({ tabs: p.tabs.filter((x) => x !== docId), active: p.active === docId ? null : p.active });
+      setLeft(strip); setRight(strip);
+      await refreshVault();
+      setNotice("已删除本地文件");
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const togglePick = (id: string) => {
+    setPicked((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const batchIds = (kind: "pages" | "sources") => (kind === "pages" ? filteredPages : filteredSources).map((item) => item.id);
+
+  const batchDeletePicked = async () => {
+    if (!batch || !picked.size) return;
+    if (!window.confirm(`把选中的 ${picked.size} 个${batch === "pages" ? "页面" : "资料"}移入回收站？`)) return;
+    setBusy(true);
+    try {
+      for (const id of picked) {
+        if (batch === "pages") await invoke("wiki.deletePage", { id });
+        else await invoke("wiki.deleteSource", { id });
+      }
+      setNotice(`已移入回收站 ${picked.size} 项`);
+      setPicked(new Set());
+      await refresh();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const batchAcceptPicked = async () => {
+    if (!picked.size) return;
+    setBusy(true);
+    try {
+      for (const id of picked) await invoke("wiki.review", { id, decision: "accept" });
+      setNotice(`已接受 ${picked.size} 个页面`);
+      setPicked(new Set());
+      await refresh();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
   const importSource = async () => {
     if (!sourceDraft) return;
     setBusy(true);
@@ -895,7 +1000,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
               </div>
             </div>
             {mode === "preview" ? (
-              <div className="notes-preview markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(wikiMarkdown(doc.content)) }} onClick={(e) => {
+              <div className="notes-preview markdown-body" ref={(el) => { previewRefs.current[which] = el; }} dangerouslySetInnerHTML={{ __html: renderMarkdown(wikiMarkdown(doc.content)) }} onClick={(e) => {
                 const anchor = (e.target as HTMLElement).closest("a");
                 const href = anchor?.getAttribute("href") || "";
                 if (!href) return;
@@ -1107,21 +1212,27 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
     try { setTagPages((await invoke("wiki.byTag", { tag: key })) || []); } catch { setTagPages([]); }
   };
 
-  const pageRow = (p: PageSummary) => (
-    <div key={p.id} className={`notes-row ${activeDoc?.id === p.id ? "on" : ""}`}>
-      <button className={`notes-file ${activeDoc?.id === p.id ? "on" : ""}`} onClick={() => void openPage(p.id)} title={p.title}>
-        <span className={`notes-status-dot ${p.status}`} />
-        <span className="notes-file-main">
-          <span className="ellipsis">{p.title}</span>
-          <span className="notes-file-sub">{statusLabel(p.status)} · {timeAgo(p.updatedAt)}</span>
-        </span>
-      </button>
-      <span className="notes-row-actions">
-        <button className="link tiny" title={pins.includes(p.id) ? "取消收藏" : "收藏 / 置顶"} onClick={(e) => { e.stopPropagation(); void pinPage(p.id); }}>{pins.includes(p.id) ? "★" : "☆"}</button>
-        <button className="link tiny" title="删除页面" onClick={(e) => { e.stopPropagation(); void deletePage({ id: p.id, title: p.title }); }}>删除</button>
-      </span>
-    </div>
-  );
+  const pageRow = (p: PageSummary) => {
+    const picking = batch === "pages";
+    const on = picked.has(p.id);
+    return (
+      <div key={p.id} className={`notes-row ${activeDoc?.id === p.id ? "on" : ""} ${on ? "picked" : ""}`}>
+        <button className={`notes-file ${activeDoc?.id === p.id ? "on" : ""}`} onClick={() => (picking ? togglePick(p.id) : void openPage(p.id))} title={p.title}>
+          {picking ? <span className={`notes-pick ${on ? "on" : ""}`} aria-hidden /> : <span className={`notes-status-dot ${p.status}`} />}
+          <span className="notes-file-main">
+            <span className="ellipsis">{p.title}</span>
+            <span className="notes-file-sub">{statusLabel(p.status)} · {timeAgo(p.updatedAt)}</span>
+          </span>
+        </button>
+        {!picking && (
+          <span className="notes-row-actions">
+            <button className="link tiny" title={pins.includes(p.id) ? "取消收藏" : "收藏 / 置顶"} onClick={(e) => { e.stopPropagation(); void pinPage(p.id); }}>{pins.includes(p.id) ? "★" : "☆"}</button>
+            <button className="link tiny" title="删除页面" onClick={(e) => { e.stopPropagation(); void deletePage({ id: p.id, title: p.title }); }}>删除</button>
+          </span>
+        )}
+      </div>
+    );
+  };
 
   const timeCutoff = searchTime === "7d" ? Date.now() - 7 * 86400e3 : searchTime === "30d" ? Date.now() - 30 * 86400e3 : 0;
   const filteredHits = searchHits.filter((hit) => (searchKind === "all" || hit.kind === searchKind)
@@ -1244,6 +1355,29 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
               )}
             <div className="row gap6" style={{ justifyContent: "flex-end" }}>
               <button className="btn tiny-btn" onClick={() => setDreamOpen(false)}>关闭</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {vaultPrompt && (
+        <div className="modal-mask" role="dialog" aria-modal="true" aria-label={vaultPrompt.mode === "create" ? "新建 Markdown" : "重命名 Markdown"}>
+          <div className="modal wiki-vault-prompt">
+            <h3>{vaultPrompt.mode === "create" ? "新建 Markdown" : "重命名 Markdown"}</h3>
+            <input
+              autoFocus
+              className="notes-source-title"
+              value={vaultPrompt.value}
+              placeholder="文件名，可含子目录（如 notes/foo）"
+              onChange={(e) => setVaultPrompt({ ...vaultPrompt, value: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); void submitVaultPrompt(); }
+                if (e.key === "Escape") { e.preventDefault(); setVaultPrompt(null); }
+              }}
+            />
+            <p className="tiny muted">保存为 `.md`；重命名会移动文件，Wiki 里的资料记录不受影响。</p>
+            <div className="row gap6" style={{ justifyContent: "flex-end" }}>
+              <button className="btn tiny-btn" onClick={() => setVaultPrompt(null)}>取消</button>
+              <button className="btn tiny-btn primary" onClick={() => void submitVaultPrompt()} disabled={busy || !vaultPrompt.value.trim()}>{vaultPrompt.mode === "create" ? "创建" : "重命名"}</button>
             </div>
           </div>
         </div>
@@ -1373,6 +1507,22 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
             </div>
           )}
           {filteredHits.length > 0 && <div className="notes-search-results">{filteredHits.slice(0, 12).map((hit) => <button key={hit.kind + hit.id} onClick={() => void openHit(hit)}><b>{markText(hit.title, query)}</b><span>{hit.kind}</span><em>{markText(hit.snippet, query)}</em></button>)}</div>}
+          {(tab === "pages" || tab === "sources") && (
+            <div className="notes-batch-bar">
+              {batch === tab ? (
+                <>
+                  <span className="notes-batch-count">{picked.size} 已选</span>
+                  <button className="link tiny" onClick={() => setPicked(new Set(batchIds(tab)))}>全选</button>
+                  <button className="link tiny" onClick={() => setPicked(new Set())}>清除</button>
+                  {tab === "pages" && <button className="link tiny" onClick={() => void batchAcceptPicked()} disabled={!picked.size || busy}>批量接受</button>}
+                  <button className="link tiny" onClick={() => void batchDeletePicked()} disabled={!picked.size || busy}>批量删除</button>
+                  <button className="link tiny" onClick={() => { setBatch(null); setPicked(new Set()); }}>退出</button>
+                </>
+              ) : (
+                <button className="link tiny" onClick={() => { setBatch(tab); setPicked(new Set()); }}>批量选择</button>
+              )}
+            </div>
+          )}
           <div className="notes-tree">
             {tab === "pages" && !tagFilter && pinnedPages.length > 0 && (
               <>
@@ -1394,18 +1544,24 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
               </>
             )}
             {tab === "pages" && !tagFilter && restPages.map(pageRow)}
-            {tab === "sources" && filteredSources.map((s) => (
-              <div key={s.id} className="notes-row">
-                <button className="notes-file" onClick={() => void openSource(s.id)}>
-                  <FileTextIcon size={12} className="notes-source-icon" />
-                  <span className="ellipsis">{s.title}</span>
-                  <em title="被引用次数">{s.citations || 0}</em>
-                </button>
-                <span className="notes-row-actions">
-                  <button className="link tiny" title="删除资料" onClick={(e) => { e.stopPropagation(); void deleteSource({ id: s.id, title: s.title }); }}>删除</button>
-                </span>
-              </div>
-            ))}
+            {tab === "sources" && filteredSources.map((s) => {
+              const picking = batch === "sources";
+              const on = picked.has(s.id);
+              return (
+                <div key={s.id} className={`notes-row ${on ? "picked" : ""}`}>
+                  <button className="notes-file" onClick={() => (picking ? togglePick(s.id) : void openSource(s.id))}>
+                    {picking ? <span className={`notes-pick ${on ? "on" : ""}`} aria-hidden /> : <FileTextIcon size={12} className="notes-source-icon" />}
+                    <span className="ellipsis">{s.title}</span>
+                    <em title="被引用次数">{s.citations || 0}</em>
+                  </button>
+                  {!picking && (
+                    <span className="notes-row-actions">
+                      <button className="link tiny" title="删除资料" onClick={(e) => { e.stopPropagation(); void deleteSource({ id: s.id, title: s.title }); }}>删除</button>
+                    </span>
+                  )}
+                </div>
+              );
+            })}
             {tab === "review" && reviews.map((p) => (
               <div key={p.id} className="notes-row">
                 <button className="notes-file" onClick={() => void openPage(p.id)}>
@@ -1415,18 +1571,29 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                 </button>
                 <span className="notes-row-actions">
                   <button className="link tiny" title="接受" onClick={(e) => { e.stopPropagation(); void reviewPage(p.id, "accept"); }}>接受</button>
-                  <button className="link tiny" title="退回" onClick={(e) => { e.stopPropagation(); void reviewPage(p.id, "reject"); }}>退回</button>
+                  <button className="link tiny" title="退回" onClick={(e) => { e.stopPropagation(); setRejectTarget({ id: p.id, title: p.title }); setRejectReason(""); }}>退回…</button>
                 </span>
               </div>
             ))}
             {tab === "vault" && vault.path && (
               <>
-                <div className="notes-sidebar-head"><span className="ellipsis" title={vault.path}>{vault.path.split(/[\\/]/).pop() || vault.path}</span><span><button onClick={() => void refreshVault()}>刷新</button><button onClick={() => void pickLocalFolder()}>更换</button></span></div>
+                <div className="notes-sidebar-head"><span className="ellipsis" title={vault.path}>{vault.path.split(/[\\/]/).pop() || vault.path}</span><span><button onClick={() => setVaultPrompt({ mode: "create", path: "", value: "" })}>新建</button><button onClick={() => void refreshVault()}>刷新</button><button onClick={() => void pickLocalFolder()}>更换</button></span></div>
                 {vault.error && <div className="notes-empty-list">{vault.error}</div>}
                 {vaultGroups.map(([folder, files]) => (
                   <div key={folder || "__root"} className="notes-vault-group">
                     <div className="notes-folder-label">{folder || "根目录"} <em>{files.length}</em></div>
-                    {files.map((f) => <button key={f.path} className={`notes-file ${activeDoc?.local && activeDoc.localPath === f.path ? "on" : ""}`} title={f.path} onClick={() => void openVaultFile(f.path)}><FileTextIcon size={12} className="notes-source-icon" /><span className="ellipsis">{f.title}</span></button>)}
+                    {files.map((f) => (
+                      <div key={f.path} className="notes-vault-row">
+                        <button className={`notes-file ${activeDoc?.local && activeDoc.localPath === f.path ? "on" : ""}`} title={f.path} onClick={() => void openVaultFile(f.path)}>
+                          <FileTextIcon size={12} className="notes-source-icon" />
+                          <span className="ellipsis">{f.title}</span>
+                        </button>
+                        <span className="notes-row-actions">
+                          <button className="link tiny" title="重命名" onClick={(e) => { e.stopPropagation(); setVaultPrompt({ mode: "rename", path: f.path, value: f.path.replace(/\.md$/i, "") }); }}>改名</button>
+                          <button className="link tiny" title="删除本地文件" onClick={(e) => { e.stopPropagation(); void deleteVaultFile(f); }}>删除</button>
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 ))}
                 {filteredVaultFiles.length === 0 && !vault.error && <div className="notes-empty-list">{query ? "没有匹配的本地文件。" : "目录里还没有 Markdown 文件。"}</div>}
@@ -1535,6 +1702,26 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                   <span>更新</span><b>{timeAgo(activeDoc.updatedAt)}</b>
                 </div>
               </div>
+              {mode === "preview" && (() => {
+                const heads = mdHeadings(activeDoc.content);
+                if (!heads.length) return null;
+                return (
+                  <div className="notes-meta-block notes-toc">
+                    <div className="notes-meta-title">本页目录 <em>{heads.length}</em></div>
+                    {heads.map((heading, index) => (
+                      <button
+                        key={`${heading.level}-${index}`}
+                        className={`notes-toc-link level-${heading.level} ${tocActive === index ? "on" : ""}`}
+                        title={heading.text}
+                        onClick={() => {
+                          const el = previewRefs.current[focus] || previewRefs.current.left || previewRefs.current.right;
+                          el?.querySelectorAll<HTMLElement>("h2,h3")[index]?.scrollIntoView({ block: "start", behavior: "smooth" });
+                        }}
+                      >{heading.text}</button>
+                    ))}
+                  </div>
+                );
+              })()}
               <div className="notes-meta-block">
                 <div className="notes-meta-title">状态</div>
                 <div className="notes-meta-row">

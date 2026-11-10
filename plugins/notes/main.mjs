@@ -1125,6 +1125,52 @@ export async function activate(context) {
     await persist();
     return readVaultFile(vaultRel(full));
   });
+  ctx.api.handle("wiki.vault.create", async ({ path: relPath, content = "" } = {}) => {
+    const clean = String(relPath || "").trim().replace(/^\/+/, "");
+    if (!clean) throw new Error("需要文件名");
+    const rel = /\.md$/i.test(clean) ? clean : `${clean}.md`;
+    const { full } = withinVault(rel);
+    const exists = await fs.stat(full).then(() => true).catch(() => false);
+    if (exists) throw new Error("同名文件已存在");
+    await fs.mkdir(path.dirname(full), { recursive: true });
+    const safeRel = vaultRel(full);
+    const title = vaultTitle("", safeRel);
+    await fs.writeFile(full, String(content || `# ${title}\n\n`), "utf8");
+    vaultCache = null;
+    addLog("vault.create", safeRel);
+    await persist();
+    return readVaultFile(safeRel);
+  });
+  ctx.api.handle("wiki.vault.rename", async ({ path: relPath, nextPath } = {}) => {
+    const from = withinVault(relPath).full;
+    if (!/\.md$/i.test(from)) throw new Error("只支持 Markdown 文件");
+    const clean = String(nextPath || "").trim().replace(/^\/+/, "");
+    if (!clean) throw new Error("需要新文件名");
+    const rel = /\.md$/i.test(clean) ? clean : `${clean}.md`;
+    const { full: to } = withinVault(rel);
+    if (to === from) throw new Error("新文件名没有变化");
+    const exists = await fs.stat(to).then(() => true).catch(() => false);
+    if (exists) throw new Error("目标文件已存在");
+    await fs.mkdir(path.dirname(to), { recursive: true });
+    await fs.rename(from, to);
+    vaultCache = null;
+    const safeRel = vaultRel(to);
+    addLog("vault.rename", `${vaultRel(from)} → ${safeRel}`);
+    await persist();
+    return readVaultFile(safeRel);
+  });
+  ctx.api.handle("wiki.vault.delete", async ({ path: relPath } = {}) => {
+    if (!String(relPath || "").trim()) throw new Error("缺少文件路径");
+    const { full } = withinVault(relPath);
+    if (!/\.md$/i.test(full)) throw new Error("只支持 Markdown 文件");
+    const exists = await fs.stat(full).then(() => true).catch(() => false);
+    if (!exists) throw new Error("文件不存在");
+    await fs.rm(full, { force: false });
+    vaultCache = null;
+    addLog("vault.delete", vaultRel(full));
+    await persist();
+    return true;
+  });
   ctx.api.handle("wiki.vault.reveal", async ({ path: relPath } = {}) => {
     const { full } = withinVault(relPath);
     await ctx.fs.reveal(full);

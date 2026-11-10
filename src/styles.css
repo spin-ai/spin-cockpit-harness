@@ -3039,3 +3039,27 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .notes-confidence{display:inline-flex;align-items:center;gap:5px;font-size:10px;color:var(--faint)}
 .notes-confidence select{height:22px;border:1px solid var(--border);border-radius:5px;background:var(--page-canvas);color:var(--fg-2);font-size:10.5px;padding:0 4px;outline:none}
 .notes-confidence select:focus{border-color:var(--brand-line)}
+
+/* 本地目录行操作 / 批量选择 / 阅读目录 / 新建重命名弹窗 */
+.notes-vault-row{display:flex;align-items:center;gap:6px;border-radius:6px}
+.notes-vault-row .notes-file{flex:1;min-width:0}
+.notes-vault-row:hover{background:var(--page-canvas)}
+.notes-vault-row:hover .notes-row-actions{display:flex}
+.notes-vault-row .notes-row-actions{display:none;gap:8px;padding-right:6px;flex:none}
+.notes-vault-row .notes-row-actions .link.tiny{font-size:10.5px;color:var(--faint)}
+.notes-vault-row .notes-row-actions .link.tiny:hover{color:var(--fg)}
+.notes-batch-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 6px 4px;font-size:10.5px;color:var(--faint)}
+.notes-batch-bar .link.tiny{font-size:10.5px;color:var(--faint)}
+.notes-batch-bar .link.tiny:hover{color:var(--fg)}
+.notes-batch-bar .link.tiny:disabled{opacity:.4;cursor:default}
+.notes-batch-count{color:var(--fg-2);font-variant-numeric:tabular-nums}
+.notes-pick{flex:none;display:grid;place-items:center;width:14px;height:14px;border:1px solid var(--border-strong);border-radius:4px;background:var(--surface)}
+.notes-pick.on{background:var(--brand);border-color:var(--brand)}
+.notes-pick.on::after{content:"";width:4px;height:7px;border:solid var(--surface);border-width:0 1.5px 1.5px 0;transform:rotate(45deg) translate(-1px,-1px)}
+.notes-row.picked{background:var(--brand-soft)}
+.notes-toc{max-height:34vh;overflow:auto}
+.notes-toc-link{display:block;width:100%;text-align:left;border:0;border-radius:5px;background:transparent;color:var(--muted);font-size:11px;line-height:1.45;padding:4px 7px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notes-toc-link:hover{background:var(--surface-hover);color:var(--fg)}
+.notes-toc-link.on{background:var(--brand-soft);color:var(--fg)}
+.notes-toc-link.level-3{padding-left:18px;color:var(--faint)}
+.notes-vault-prompt{width:min(440px,92vw);display:flex;flex-direction:column;gap:10px}

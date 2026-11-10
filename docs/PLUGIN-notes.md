@@ -133,6 +133,9 @@ wiki.vault.pick
 wiki.vault.open
 wiki.vault.file
 wiki.vault.save
+wiki.vault.create
+wiki.vault.rename
+wiki.vault.delete
 wiki.vault.reveal
 wiki.vault.importSource
 ```
@@ -273,7 +276,8 @@ Wiki
 - **页面**：标题、draft/reviewed/stale
 - **资料**：source 列表、引用数
 - **审核**：待审核 draft
-- **本地**：打开 / 更换本地 Markdown 目录，按文件夹列出 `.md`；点击直接编辑并写回磁盘
+- **本地**：打开 / 更换本地 Markdown 目录，按文件夹列出 `.md`；点击直接编辑并写回磁盘；支持新建 / 重命名 / 删除（`wiki.vault.create/rename/delete`，沿用 mtime 冲突保护）
+- **批量**：页面 / 资料列表可「批量选择」，支持全选、批量接受、批量删除
 - 搜索：页面 / source / 本地文件名
 - 最近 wiki log
 
@@ -283,6 +287,7 @@ Wiki
 - 阅读 / CodeMirror 编辑
 - `[[Page]]` 内部链接
 - 分屏 + 可拖拽比例
+- 阅读模式右侧「本页目录」：h2 / h3，滚动高亮，点击跳转
 - 页面状态 / citations 数
 - 编辑模式可直接改标题；保存时同时写回 title / summary
 
