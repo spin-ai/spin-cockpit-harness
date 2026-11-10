@@ -294,6 +294,60 @@ r = await run(`
 check("改标题后 slug 更新并同步双链（代码块不改）", r.title === "rename-new" && /^rename-new/.test(r.slug) && r.renamedLinks >= 1 && r.linkerLinked === true && r.codeKept === true, JSON.stringify(r));
 check("confidence 可设置", r.confidence === "high", JSON.stringify({ confidence: r.confidence }));
 
+// ── 本地目录写操作 + 阅读目录 + 批量操作 ─────────────────
+r = await run(`
+  const call = async (method, args) => { try { return { ok: true, value: (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method, args })).result }; } catch (e) { return { ok: false, error: String(e?.message || e) }; } };
+  const created = await call("wiki.vault.create", { path: "e2e-dir/新笔记", content: "# 新笔记\\n\\n正文\\n" });
+  const list1 = (await call("wiki.vault.get")).value.files.map((f) => f.path);
+  const renamed = await call("wiki.vault.rename", { path: created.value.path, nextPath: "e2e-dir/改名后" });
+  const list2 = (await call("wiki.vault.get")).value.files.map((f) => f.path);
+  await call("wiki.vault.delete", { path: renamed.value.path });
+  const list3 = (await call("wiki.vault.get")).value.files.map((f) => f.path);
+  const page = (await call("wiki.createPage", { title: "toc-page" })).value;
+  await call("wiki.savePage", { id: page.id, content: "# toc-page\\n\\n## 第一节\\n\\n内容\\n\\n### 小节\\n\\n## 第二节\\n\\n内容\\n" });
+  await call("wiki.createPage", { title: "batch-a" });
+  await call("wiki.createPage", { title: "batch-b" });
+  return {
+    created: created.value?.path, has1: list1.some((p) => p.endsWith("新笔记.md")),
+    renamed: renamed.value?.path, has2: list2.some((p) => p.endsWith("改名后.md")),
+    has3: list3.some((p) => p.endsWith("改名后.md")),
+  };
+`);
+check("本地目录可新建 / 重命名 / 删除 .md", r.has1 && r.has2 && r.has3 === false, JSON.stringify(r));
+
+r = await run(`
+  const pagesTab = [...document.querySelectorAll(".notes-wiki-tabs button")].find((b) => b.textContent.includes("页面"));
+  pagesTab?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 400));
+  document.querySelector('.page-header-actions [title="刷新"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  const row = await window.__wait(() => [...document.querySelectorAll(".notes-row")].find((b) => b.textContent.includes("toc-page")));
+  row?.querySelector(".notes-file")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  const toc = await window.__wait(() => document.querySelector(".notes-toc"));
+  return { tocCount: toc ? toc.querySelectorAll(".notes-toc-link").length : 0, row: Boolean(row), toc: Boolean(toc) };
+`);
+check("阅读模式目录列出 h2/h3", r.tocCount === 3, JSON.stringify({ tocCount: r.tocCount }));
+
+r = await run(`
+  document.querySelector('.page-header-actions [title="刷新"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await window.__wait(() => [...document.querySelectorAll(".notes-row")].some((b) => b.textContent.includes("batch-a")), 5000);
+  const batchBtn = [...document.querySelectorAll(".notes-batch-bar .link")].find((b) => b.textContent.includes("批量选择"));
+  if (!batchBtn) return { error: "no batch toggle" };
+  batchBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 300));
+  for (const title of ["batch-a", "batch-b"]) {
+    const row = [...document.querySelectorAll(".notes-row")].find((b) => b.textContent.includes(title));
+    row?.querySelector(".notes-file")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+  await new Promise((r) => setTimeout(r, 300));
+  const del = [...document.querySelectorAll(".notes-batch-bar .link")].find((b) => b.textContent.includes("批量删除"));
+  if (!del) return { error: "no batch delete" };
+  del.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 1800));
+  const titles = (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" })).result.pages.map((p) => p.title);
+  return { gone: !titles.includes("batch-a") && !titles.includes("batch-b") };
+`);
+check("批量选择 + 批量删除页面", r.gone === true, JSON.stringify(r));
+
 ws.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");
 process.exit(fails ? 1 : 0);
