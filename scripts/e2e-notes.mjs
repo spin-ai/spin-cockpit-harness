@@ -155,6 +155,32 @@ check("整理：弱标题改成正文 H1 + 大纲四段 + 索引",
   JSON.stringify({ titles: r.titles, headings: r.headings }));
 check("整理幂等（第二次 renamed/updated 均为 0）", r.renamedAgain === 0 && r.updatedAgain === 0, JSON.stringify({ renamed: r.renamedAgain, updated: r.updatedAgain }));
 
+// ── reviewed 保护 + Agent 写入必须带 citation ─────────────────
+r = await run(`
+  const call = async (method, args) => { try { return { ok: true, value: (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method, args })).result }; } catch (e) { return { ok: false, error: String(e?.message || e) }; } };
+  const list = (await window.harness.action("pluginInvoke", { pluginId: "ai.cockpit.notes", method: "wiki.list" })).result;
+  const sourceId = list.sources[0]?.id;
+  const created = (await call("wiki.createPage", { title: "reviewed-guard" })).value;
+  await call("wiki.savePage", { id: created.id, content: "# reviewed-guard\\n\\n原始正文\\n" });
+  await call("wiki.review", { id: created.id, decision: "accept" });
+  const noCite = await call("wiki.upsertDraft", { title: "reviewed-guard", content: "# 改坏\\n", agent: true });
+  const overwrite = await call("wiki.upsertDraft", { title: "reviewed-guard", content: "# 改坏\\n", sourceIds: [sourceId], agent: true });
+  const badId = await call("wiki.upsertDraft", { title: "reviewed-guard", content: "# 改坏\\n", sourceIds: ["nope"], agent: true });
+  const fresh = await call("wiki.upsertDraft", { title: "agent-draft-ok", content: "# ok\\n", sourceIds: [sourceId], agent: true });
+  const after = (await call("wiki.getPage", { id: created.id })).value;
+  const human = await call("wiki.savePage", { id: created.id, content: "# reviewed-guard\\n\\n人工补充\\n" });
+  const afterHuman = (await call("wiki.getPage", { id: created.id })).value;
+  return {
+    noCite: noCite.error || "", overwrite: overwrite.error || "", badId: badId.error || "",
+    freshOk: fresh.value?.status === "draft", content: after.content, status: after.status,
+    humanStatus: human.value?.status, reopen: afterHuman.reopenReason || "", reviewedAt: afterHuman.reviewedAt,
+  };`);
+check("Agent 无 source_ids 被拒", /source_ids/.test(r.noCite), r.noCite);
+check("Agent 覆盖 reviewed 被拒且正文不变", /已审核|reviewed/.test(r.overwrite) && r.content.includes("原始正文") && r.status === "reviewed", JSON.stringify({ err: r.overwrite, status: r.status }));
+check("Agent 无效 source_ids 被拒", /无效/.test(r.badId), r.badId);
+check("Agent 带有效 source 可以新建 draft", r.freshOk === true);
+check("人工编辑 reviewed 后回 draft 且标记待重审", r.humanStatus === "draft" && r.reopen === "edited-after-review" && r.reviewedAt == null, JSON.stringify({ status: r.humanStatus, reopen: r.reopen }));
+
 ws.close();
 console.log(fails ? `${fails} 项失败` : "全部通过");
 process.exit(fails ? 1 : 0);

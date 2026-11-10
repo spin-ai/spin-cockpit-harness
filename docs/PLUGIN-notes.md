@@ -141,11 +141,12 @@ wiki_upsert_draft
 wiki_add_citation
 ```
 
-约束：
+约束（代码强制）：
 
 - 只能写 draft；
-- 不能删除/覆盖 reviewed 页面；
-- 写入必须带 source_ids 或后续补 citation；
+- **不能覆盖 reviewed 页面**：`wiki_upsert_draft` 命中 reviewed 会直接报错，必须由人工先退回 draft；
+- **写入必须带至少 1 个有效 source_ids**：空数组或无效 id 都会报错（先 `wiki_list_sources`）；
+- 人工编辑 reviewed 页面会回到 draft，并写 `reopenReason=edited-after-review`（UI 显示「改过 · 待重新审核」）；
 - 所有写入追加 log/revision；
 - 读 source 内容视为不可信数据。
 

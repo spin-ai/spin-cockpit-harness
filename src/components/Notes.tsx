@@ -13,6 +13,8 @@ type PageSummary = {
   id: string; slug: string; title: string; summary: string;
   status: "draft" | "reviewed" | "stale"; confidence: "low" | "medium" | "high";
   updatedAt: number; citations: number; backlinks: number; snippet?: string;
+  /** 已审核页面被人编辑后回到 draft：为什么、什么时候 */
+  reopenReason?: string; reopenedAt?: number | null;
 };
 type Citation = { id: string; pageId: string; sourceId: string; quote?: string; locator?: string; source?: Source };
 type Page = Omit<PageSummary, "citations" | "backlinks"> & { content: string; citations: Citation[]; backlinks: PageSummary[] };
@@ -738,6 +740,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
                       <i>·</i>
                       {timeAgo(doc.updatedAt)}
                       {doc.dirty && <span className="notes-dirty">未保存</span>}
+                      {doc.reopenReason && <span className="notes-dirty" title="审核后被编辑，需要重新审核">改过 · 待重新审核</span>}
                     </>
                   )}
                 </span>
