@@ -1202,6 +1202,8 @@ function startWikiMcpServer() {
       else if (name === "wiki_read_page") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: args.id });
       else if (name === "wiki_upsert_draft") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.upsertDraft", { title: args.title, content: args.content, summary: args.summary, sourceIds: args.source_ids || [] });
       else if (name === "wiki_add_citation") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.addCitation", { pageId: args.page, sourceId: args.source, quote: args.quote, locator: args.locator });
+      else if (name === "wiki_update_citation") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.updateCitation", { pageId: args.page, citationId: args.citation_id, quote: args.quote, locator: args.locator });
+      else if (name === "wiki_remove_citation") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.removeCitation", { pageId: args.page, citationId: args.citation_id });
       else throw new Error(`unknown wiki tool: ${name}`);
       return send(200, { ok: true, result });
     } catch (err) { return send(400, { ok: false, error: String(err?.message || err).slice(0, 1000) }); }

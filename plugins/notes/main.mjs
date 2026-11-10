@@ -343,6 +343,23 @@ async function load() {
   }
 }
 
+/** 历史脏数据：旧版 addCitation 可能把 source 标题写进 sourceId。启动时归一成真实 id（幂等）。 */
+async function repairCitations() {
+  const byTitle = new Map(data.sources.map((s) => [String(s.title || "").toLowerCase(), s.id]));
+  let fixed = 0;
+  for (const cite of data.citations) {
+    if (data.sources.some((s) => s.id === cite.sourceId)) continue;
+    const realId = byTitle.get(String(cite.sourceId || "").toLowerCase());
+    if (!realId) continue;
+    cite.sourceId = realId;
+    fixed += 1;
+  }
+  if (fixed) {
+    addLog("citation.repair", `fixed ${fixed} citations`);
+    await persist();
+  }
+}
+
 async function persist() {
   await fs.mkdir(pageDir(), { recursive: true });
   await fs.mkdir(sourceDir(), { recursive: true });
@@ -601,6 +618,7 @@ async function command(name) {
 export async function activate(context) {
   ctx = context;
   await load();
+  await repairCitations();
 
   ctx.api.handle("wiki.status", async () => ({ pages: data.pages.length, sources: data.sources.length, drafts: data.pages.filter((p) => p.status === "draft").length, stale: data.pages.filter((p) => p.status === "stale").length, vaultPath: data.vaultPath }));
   ctx.api.handle("wiki.list", async () => ({
@@ -917,9 +935,38 @@ export async function activate(context) {
     const page = data.pages.find((p) => p.id === pageId || p.slug === pageId || p.title.toLowerCase() === String(pageId || "").toLowerCase());
     const source = data.sources.find((s) => s.id === sourceId || s.title.toLowerCase() === String(sourceId || "").toLowerCase());
     if (!page || !source) throw new Error("page/source not found");
-    const existing = data.citations.find((c) => c.pageId === page.id && c.sourceId === sourceId);
-    if (!existing) data.citations.push({ id: id("cite"), pageId: page.id, sourceId, quote: String(quote).slice(0, 1000), locator: String(locator).slice(0, 200), createdAt: now() });
+    // 始终存真实 source.id：source 参数允许传标题，旧实现会把标题写进 sourceId
+    const existing = data.citations.find((c) => c.pageId === page.id && c.sourceId === source.id);
+    if (existing) {
+      if (quote) existing.quote = String(quote).slice(0, 1000);
+      if (locator) existing.locator = String(locator).slice(0, 200);
+    } else {
+      data.citations.push({ id: id("cite"), pageId: page.id, sourceId: source.id, quote: String(quote).slice(0, 1000), locator: String(locator).slice(0, 200), createdAt: now() });
+    }
     page.updatedAt = now();
+    addLog("citation.add", `${page.title} ← ${source.title}`);
+    await persist();
+    return pageView(page);
+  });
+  ctx.api.handle("wiki.updateCitation", async ({ pageId, citationId, quote, locator } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    const cite = data.citations.find((c) => c.pageId === page.id && c.id === citationId);
+    if (!cite) throw new Error("引用不存在");
+    if (typeof quote === "string") cite.quote = quote.slice(0, 1000);
+    if (typeof locator === "string") cite.locator = locator.slice(0, 200);
+    page.updatedAt = now();
+    await persist();
+    return pageView(page);
+  });
+  ctx.api.handle("wiki.removeCitation", async ({ pageId, citationId } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    const before = data.citations.length;
+    data.citations = data.citations.filter((c) => !(c.pageId === page.id && c.id === citationId));
+    if (data.citations.length === before) throw new Error("引用不存在");
+    page.updatedAt = now();
+    addLog("citation.remove", page.title);
     await persist();
     return pageView(page);
   });
