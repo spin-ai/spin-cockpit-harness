@@ -3070,3 +3070,4 @@ button.kv-hit:hover{border-color:var(--border-strong)}
 .kv-engine-foot .tiny{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .kv-engine-tag{font-size:10px;color:var(--brand);background:var(--brand-soft);border-radius:999px;padding:0 5px;margin-right:2px}
 .kv-extra-form{display:flex;flex-direction:column;gap:6px;padding:8px 0 2px}
+.kv-hint{color:var(--faint)}
