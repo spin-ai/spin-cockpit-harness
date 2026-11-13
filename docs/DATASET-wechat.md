@@ -155,7 +155,7 @@ manifest.json            统计：会话、条数、时间范围、跳过/去重
 
 ## 当数据集用
 
-- 人像：`人像 → 导入 → 选择文件…` 选 `dataset.json`（抽取结果全进待确认）；或
+- 人物：`人物 → 导入聊天记录 → 选择文件…` 选 `dataset.json`（抽取结果全进待确认）；或
   `personaImport({ text: <dataset.json 内容>, selfName: "我" })`
 - 知识库检索：`知识库 → 文档 → 粘贴文本`，贴一段记录即可被检索与引用
 - Agent：通过 `persona_lookup` / `knowledge_search` 使用
@@ -175,3 +175,27 @@ npm run import:wechat -- --db message_0.db --key <hex>
 
 - `datasets/**` 永不入库（`.gitignore`）；微信原始库只读，不复制、不移动
 - 不要把导出结果放进 release 或分享；用完建议删除中间文件
+
+## 人像补充：关系网络 + 本人人设卡
+
+```bash
+# 先退出 App，避免两个进程同时写 persona.db
+node scripts/enrich-persona.mjs --self 我
+node scripts/enrich-persona.mjs --dry-run    # 只看会加多少条
+```
+
+做两件事：
+
+1. **关系网络**（`relations`，幂等：按 `from|to|type` 去重）
+   - `私聊`：本人 ↔ 私聊对象，强度 `0.5 + 消息数/500`（上限 0.95）
+   - `同群`：本人 ↔ 群内活跃成员（每群最多 30 人，强度 `0.15 + 该人发言/200`）；
+     成员数 ≤15 的小群再补成员两两弱边（0.2），让网络不是只有「我」一个中心
+   - 明确角色句式（`X 是我的老板 / 同事 / 家人…`）→ 双向边，强度 0.8
+   - 数据来源：`contact.db`（`contact` / `chat_room` / `chatroom_member`）+ 已生成的数据集发言量
+
+2. **本人人设卡字段**（写 `observations`，按 `person|field|value` 去重，直接 `confirmed`）
+   - 只取「本人发言」（含文件传输助手），按句式抽 `identity / role / situation /
+     capability / taboo / traits / value / goal / decision / conflict / stress /
+     commitment / communication / constraint`
+   - 每条都带 `source_ref = <会话>#<消息序号>` 与原话 `quote`，可回溯
+   - 完整度 = 覆盖的卡片字段数 / 15；本人从 34% → 55%，跨过 50% 就显示「人设卡就绪」
