@@ -125,7 +125,7 @@ export function createMemory({ dir }) {
 
     // ── 注入：L4 只放目录与结论，超预算做减法 ─────────────────────
     inject({ maxChars = 12000 } = {}) {
-      const budget = Math.max(1500, Number(maxChars) || 12000);
+      const budget = Math.max(800, Number(maxChars) || 12000);
       const l4 = rows("SELECT * FROM entries WHERE layer='L4' AND status='active' ORDER BY updated_at DESC").map(entryRow);
       const others = rows("SELECT * FROM entries WHERE layer!='L4' AND status='active' ORDER BY layer, updated_at DESC").map(entryRow);
       const head = "## 记忆（L4 目录 / 结论）";
@@ -134,7 +134,8 @@ export function createMemory({ dir }) {
       let dropped = 0;
       for (const e of l4) {
         const line = `\n- ${e.title}${e.body ? `：${e.body.replace(/\s+/g, " ").slice(0, 160)}` : ""}`;
-        if (used + line.length > budget - 600) { dropped += 1; continue; }
+        // 至少给 L4 留出预算的一半，避免小预算时一条都进不去
+        if (used + line.length > Math.max(head.length + 200, budget - 600)) { dropped += 1; continue; }
         out += line; used += line.length;
       }
       // 还有预算时补少量 L3（页面结论），只给标题与链接

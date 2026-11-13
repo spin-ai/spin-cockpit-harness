@@ -77,7 +77,8 @@ export function createImGateway({ dir, settings, onMessage, onLog = () => {} }) 
       if (!res.ok) throw new Error(`webhook ${res.status}`);
       return { sent: true, via: "webhook" };
     }
-    throw new Error("没有可用的出站通道（配置 Telegram token 或 webhook）");
+    // 没有出站通道不是错误：入站回执可选，调用方自己决定是否提示
+    return { sent: false, reason: "no-channel" };
   }
 
   async function pollOnce() {
