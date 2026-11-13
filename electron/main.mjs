@@ -1242,7 +1242,12 @@ function startWikiMcpServer() {
       else if (name === "memory_inject") result = memory().inject({ maxChars: args.max_chars || 12000 });
       else if (name === "memory_search") result = transcriptSearch(args.query, args.limit || 8);
       else if (name === "memory_note_write") result = memory().noteAdd({ body: args.body, sourceKind: args.source_kind || "transcript", sourceRef: args.source_ref || "" });
-      else if (name === "persona_lookup") result = persona().ask({ question: args.question });
+      else if (name === "persona_lookup") {
+        const answer = persona().ask({ question: args.question });
+        // 点名到人时顺带给出人设卡注入片段，Agent 才能「像他那样」判断
+        const who = answer.found ? persona().peopleList().find((p) => !p.isSelf && String(args.question || "").includes(p.name)) : null;
+        result = who ? { ...answer, card: persona().inject({ personId: who.id, maxChars: 2000 }).markdown } : answer;
+      }
       else if (name === "knowledge_search") result = knowledge().search(String(args.query || ""), { limit: Number(args.limit) || 8 });
       else if (name === "knowledge_ask") result = await knowledge().ask(String(args.question || ""), { limit: 6 });
       else throw new Error(`unknown wiki tool: ${name}`);
@@ -2434,7 +2439,7 @@ function memory() {
   if (!memoryStore) memoryStore = createMemory({ dir: path.join(app.getPath("userData"), "memory") });
   return memoryStore;
 }
-/** 人像记忆：独立 persona.db。 */
+/** 人物建模：独立 persona.db。 */
 let personaStore = null;
 function persona() {
   if (!personaStore) personaStore = createPersona({ dir: path.join(app.getPath("userData"), "persona") });
@@ -2623,13 +2628,14 @@ const actions = {
     if (!name) throw new Error("缺少引擎名");
     return knowledge().removeEngine(String(name));
   },
-  knowledgeSearch: async ({ query, limit, kb } = {}) => {
+  knowledgePreview: async ({ id, maxChars } = {}) => knowledge().preview(String(id || ""), { maxChars }),
+  knowledgeSearch: async ({ query, limit, kb, docIds } = {}) => {
     if (!query) return { hits: [], ftsCount: 0, vecCount: 0 };
-    return knowledge().search(String(query), { limit: Number(limit) || 8, kb });
+    return knowledge().search(String(query), { limit: Number(limit) || 8, kb, docIds: Array.isArray(docIds) ? docIds : undefined });
   },
-  knowledgeAsk: async ({ question, limit, kb } = {}) => {
+  knowledgeAsk: async ({ question, limit, kb, docIds } = {}) => {
     if (!question) throw new Error("缺少 question");
-    return knowledge().ask(String(question), { limit: Number(limit) || 6, kb });
+    return knowledge().ask(String(question), { limit: Number(limit) || 6, kb, docIds: Array.isArray(docIds) ? docIds : undefined });
   },
   knowledgeIngest: async ({ engine } = {}) => {
     const res = await dialog.showOpenDialog(win, {
@@ -2695,6 +2701,13 @@ const actions = {
   memoryEntryUpsert: async (args) => memory().entryUpsert(args || {}),
   memoryEntryList: async ({ layer, status } = {}) => memory().entryList({ layer, status }),
   memoryEntryArchive: async ({ id } = {}) => memory().entryArchive({ id }),
+  memoryEntrySources: async ({ id } = {}) => memory().entrySources({ id }),
+  memoryEntryDemote: async ({ id } = {}) => memory().entryDemote({ id }),
+  memoryNoteBulk: async ({ ids = [], status = "verified" } = {}) => {
+    const out = [];
+    for (const id of ids) { try { out.push(memory().noteSetStatus({ id, status })); } catch { /* ignore */ } }
+    return out;
+  },
   memoryTranscriptSearch: async ({ query, limit } = {}) => transcriptSearch(query, limit),
   memoryDream: async () => {
     let pages = [];
@@ -2723,7 +2736,7 @@ const actions = {
     return { ...res, applied };
   },
 
-  // ── 人像记忆 ─────────────────────────────────────────────────
+  // ── 人物建模 ─────────────────────────────────────────────────
   personaStats: async () => persona().stats(),
   personaPending: async ({ limit } = {}) => persona().pending({ limit }),
   personaResolve: async ({ id, accept = false, sensitive } = {}) => {
@@ -2732,6 +2745,10 @@ const actions = {
     return res;
   },
   personaProfile: async ({ personId } = {}) => persona().profile({ personId }),
+  personaPeople: async () => persona().peopleList(),
+  personaCard: async ({ personId } = {}) => persona().card({ personId }),
+  personaInject: async ({ personId, maxChars } = {}) => persona().inject({ personId, maxChars }),
+  personaDrift: async ({ personId, limit } = {}) => persona().drift({ personId, limit }),
   personaTimeline: async ({ personId, field } = {}) => persona().timeline({ personId, field }),
   personaAsk: async ({ question } = {}) => persona().ask({ question }),
   personaMerge: async ({ keepId, aliasIds } = {}) => persona().merge({ keepId, aliasIds }),

@@ -62,6 +62,7 @@ export function createKnowledge({
    * @param {{ limit?: number, kb?: string, mode?: "hybrid"|"fts" }} [opts]
    */
   async function search(query, opts = {}) {
+    const docIds = Array.isArray(opts.docIds) ? opts.docIds.filter(Boolean) : null;
     let queryVec = null;
     let degraded = null;
     if ((opts.mode || "hybrid") !== "fts") {
@@ -82,8 +83,8 @@ export function createKnowledge({
    * @param {string} question
    * @param {{ limit?: number, kb?: string, model?: string }} [opts]
    */
-  async function ask(question, { limit = 6, kb, model = MODELS.fast } = {}) {
-    const { hits, degraded } = await search(question, { limit, kb });
+  async function ask(question, { limit = 6, kb, model = MODELS.fast, docIds } = {}) {
+    const { hits, degraded } = await search(question, { limit, kb, docIds });
     if (!hits.length) {
       return { answer: "材料里没有找到相关内容。", citations: [], hits: [], found: false, degraded };
     }
@@ -109,6 +110,7 @@ export function createKnowledge({
       const h = hits[n - 1];
       return {
         ref: n,
+        title: h.title || (db.prepare("SELECT title FROM documents WHERE id=?").get(h.doc_id)?.title ?? ""),
         doc_id: h.doc_id,
         chunk_id: h.chunk_id,
         page_no: h.page_no,
@@ -128,9 +130,34 @@ export function createKnowledge({
     };
   }
 
+  /** 文档解析预览：按页给出片段；缺口页标 warn（多是纯图/扫描件未识别） */
+  function preview(docId, { maxChars = 4000 } = {}) {
+    const doc = db.prepare("SELECT id, title, uri, parser, pages_total, status, indexed_at, error_text FROM documents WHERE id = ?").get(docId);
+    if (!doc) return null;
+    const rows = db.prepare("SELECT page_no, heading, text FROM chunks WHERE doc_id = ? ORDER BY COALESCE(page_no,0), COALESCE(char_start,0)").all(docId);
+    const byPage = new Map();
+    for (const r of rows) {
+      const page = Number(r.page_no || 1);
+      if (!byPage.has(page)) byPage.set(page, { page_no: page, heading: r.heading || "", text: "" });
+      const slot = byPage.get(page);
+      if (r.heading && !slot.heading) slot.heading = r.heading;
+      slot.text = `${slot.text}${slot.text ? "\n" : ""}${r.text || ""}`.slice(0, maxChars);
+    }
+    const total = Math.max(Number(doc.pages_total) || 0, ...byPage.keys(), 1);
+    const pages = [];
+    for (let i = 1; i <= total; i += 1) {
+      const hit = byPage.get(i);
+      pages.push(hit
+        ? { page_no: i, heading: hit.heading, text: hit.text, warn: !hit.text.trim() }
+        : { page_no: i, heading: "", text: "", warn: true });
+    }
+    return { doc, pages, chunks: rows.length };
+  }
+
   return {
     root,
     db,
+    preview,
     filesDir,
     hasKey: Boolean(key),
     status: () => stats(db),

@@ -674,6 +674,17 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
     return <div className="notes-page notes-disabled"><div className="notes-disabled-card"><b>知识库插件未启用</b><p>在「设置 → 插件」启用内置知识库。</p></div></div>;
   }
 
+  const tabsBar = (
+    <div className="notes-wiki-tabs">
+      <button className={tab === "pages" ? "on" : ""} onClick={() => setTab("pages")}>页面</button>
+      <button className={tab === "sources" ? "on" : ""} onClick={() => setTab("sources")}>资料</button>
+      <button className={tab === "docs" ? "on" : ""} onClick={() => setTab("docs")}>文档</button>
+      <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>审核{reviews.length ? `·${reviews.length}` : ""}</button>
+      <button className={tab === "vault" ? "on" : ""} onClick={() => setTab("vault")}>本地</button>
+      <button className={tab === "trash" ? "on" : ""} onClick={() => setTab("trash")}>回收站</button>
+    </div>
+  );
+
   const renderPane = (which: "left" | "right") => {
     const current = which === "left" ? left : right;
     const doc = current.active ? docs[current.active] : null;
@@ -1070,7 +1081,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
           </div>
         </div>
       )}
-      <PageHeader
+      {tab !== "docs" && <PageHeader
         kicker="本地知识库"
         title="知识库"
         subtitle={(
@@ -1118,23 +1129,22 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
             <button className="icon-btn" onClick={() => void refresh()} title="刷新" aria-label="刷新"><RefreshIcon size={13} /></button>
           </>
         )}
-      />
+      />}
       {(error || notice) && (
         <div className={`notes-banner ${error ? "error" : ""}`}>
           <span className="ellipsis">{error || notice}</span>
           <button className="notes-banner-x" onClick={() => { setError(""); setNotice(""); }} aria-label="关闭提示">×</button>
         </div>
       )}
-      <div className="notes-layout">
+      {tab === "docs" && (
+        <div className="notes-docs-page">
+          {tabsBar}
+          <Knowledge act={act} onOpenPage={(id) => { setTab("pages"); void openPage(id); }} />
+        </div>
+      )}
+      <div className="notes-layout" style={tab === "docs" ? { display: "none" } : undefined}>
         <aside className="notes-sidebar">
-          <div className="notes-wiki-tabs">
-            <button className={tab === "pages" ? "on" : ""} onClick={() => setTab("pages")}>页面</button>
-            <button className={tab === "sources" ? "on" : ""} onClick={() => setTab("sources")}>资料</button>
-            <button className={tab === "docs" ? "on" : ""} onClick={() => setTab("docs")}>文档</button>
-            <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>审核{reviews.length ? `·${reviews.length}` : ""}</button>
-            <button className={tab === "vault" ? "on" : ""} onClick={() => setTab("vault")}>本地</button>
-            <button className={tab === "trash" ? "on" : ""} onClick={() => setTab("trash")}>回收站</button>
-          </div>
+          {tabsBar}
           {tab !== "docs" && <div className="notes-search-wrap">
             <SearchIcon size={12} className="notes-search-icon" />
             <input
