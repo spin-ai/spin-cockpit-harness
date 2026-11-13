@@ -42,11 +42,12 @@ function draftOf(engine: Engine | null): Draft {
 }
 
 /** 知识（资料）：导入 PDF / Office / 网页，页级引用问答，和页面共用一次搜索 */
-export function Knowledge({ act, onOpenPage, onOpenWiki }: {
+export function Knowledge({ act, onOpenPage, embedded = false }: {
   act: Act;
-  /** 命中页面：带着页面 id 切到「知识库」 */
+  /** 命中页面：直接在当前知识库里打开 */
   onOpenPage?: (id: string) => void;
-  onOpenWiki?: () => void;
+  /** 嵌进知识库时不再重复页头与外边距 */
+  embedded?: boolean;
 }) {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [hits, setHits] = useState<Hit[]>([]);
@@ -228,18 +229,17 @@ export function Knowledge({ act, onOpenPage, onOpenWiki }: {
   const usesCloudKey = selected?.name === "mineru_cloud";
   const isExtra = Boolean(selected && !["simple", "builtin", "mineru", "mineru_cloud", "paddleocr_vl", "paddleocr_vl_cloud", "custom"].includes(selected.name));
 
-  return (
-    <div className="notes-page kv-page">
-      <PageHeader
+  const body = (
+    <div className={embedded ? "kv-embedded" : "notes-page kv-page"}>
+      {!embedded && <PageHeader
         kicker="MATERIALS"
         title="资料"
-        subtitle={<div className="notes-stats"><span><b>{docs.length}</b> 资料</span><span><b>{docs.filter((d) => d.status === "ready").length}</b> 已索引</span><span><b>{engines.filter((e) => e.available).length}</b> 引擎可用</span><span className="kv-hint">原始材料只读；页面在「知识库」</span></div>}
+        subtitle={<div className="notes-stats"><span><b>{docs.length}</b> 资料</span><span><b>{docs.filter((d) => d.status === "ready").length}</b> 已索引</span><span><b>{engines.filter((e) => e.available).length}</b> 引擎可用</span></div>}
         actions={<>
           <button className="btn primary" onClick={() => void ingest()} disabled={busy}>＋ 导入资料</button>
-          <button className="btn" onClick={onOpenWiki} title="整理后的页面在知识库">打开知识库</button>
           <button className="icon-btn" onClick={() => void load()} title="刷新">↻</button>
         </>}
-      />
+      />}
       {(error || notice) && (
         <div className={`notes-banner ${error ? "error" : ""}`}>
           <span className="ellipsis">{error || notice}</span>
@@ -462,4 +462,5 @@ export function Knowledge({ act, onOpenPage, onOpenWiki }: {
       </div>
     </div>
   );
+  return body;
 }

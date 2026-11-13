@@ -3,6 +3,7 @@ import type { State } from "../types";
 import { renderMarkdown } from "../markdown";
 import { ChevronDownIcon, ChevronRightIcon, FileTextIcon, FolderOpenIcon, RefreshIcon, SearchIcon, SparkleIcon } from "./Icons";
 import { NotesEditor } from "./NotesEditor";
+import { Knowledge } from "./Knowledge";
 import { PageHeader } from "./PageHeader";
 import { RowMenu } from "./RowMenu";
 
@@ -22,7 +23,7 @@ type VaultInfo = { path: string; files: VaultFile[]; indexedAt?: number; error?:
 type GraphData = { nodes: { id: string; title: string; kind: "page" | "source" | "file"; links: number }[]; edges: { source: string; target: string; kind: string }[] };
 type Doc = Page & { dirty: boolean; local?: boolean; localPath?: string; mtime?: number };
 type Pane = { tabs: string[]; active: string | null };
-type Tab = "pages" | "sources" | "review" | "vault" | "trash";
+type Tab = "pages" | "sources" | "docs" | "review" | "vault" | "trash";
 type SourceDraft = { title: string; content: string; url: string; mode: "text" | "url" | "file" };
 type MemoryData = { markdown: string; pageCount: number; chars: number };
 type TrashItem = { id: string; kind: "page" | "source"; title: string; deletedAt: number };
@@ -60,8 +61,10 @@ function wikiMarkdown(text: string) {
   }).replace(/(^|\s)#([\p{L}\p{N}_-]{1,40})/gu, "$1[#$2](#tag/$2)");
 }
 
-export function Notes({ state, act, onOpenTodo, openRequest }: {
+export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   state: State; act: Act; onOpenTodo?: (id: string) => void; openRequest?: { path: string; n: number } | null;
+  /** 从「资料（知识库 → 文档）」入口进来时直接打开对应 tab */
+  initialTab?: Tab;
 }) {
   const plugin = (state.plugins || []).find((p) => p.id === PLUGIN_ID);
   const enabled = Boolean(plugin?.enabled);
@@ -77,7 +80,8 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
   const [quickBusy, setQuickBusy] = useState(false);
   const [log, setLog] = useState<{ id: string; kind: string; text: string; at: number }[]>([]);
   const [vault, setVault] = useState<VaultInfo>({ path: "", files: [] });
-  const [tab, setTab] = useState<Tab>("pages");
+  const [tab, setTab] = useState<Tab>(initialTab || "pages");
+  useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
   const [query, setQuery] = useState("");
   const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
   const [searchStatus, setSearchStatus] = useState("all");
@@ -1126,6 +1130,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
           <div className="notes-wiki-tabs">
             <button className={tab === "pages" ? "on" : ""} onClick={() => setTab("pages")}>页面</button>
             <button className={tab === "sources" ? "on" : ""} onClick={() => setTab("sources")}>资料</button>
+            <button className={tab === "docs" ? "on" : ""} onClick={() => setTab("docs")}>文档</button>
             <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>审核{reviews.length ? `·${reviews.length}` : ""}</button>
             <button className={tab === "vault" ? "on" : ""} onClick={() => setTab("vault")}>本地</button>
             <button className={tab === "trash" ? "on" : ""} onClick={() => setTab("trash")}>回收站</button>
@@ -1282,7 +1287,9 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
         </aside>
 
         <main className="notes-main">
-          {memoryOpen ? (
+          {tab === "docs" ? (
+            <div className="notes-docs"><Knowledge embedded act={act} onOpenPage={(id) => { setTab("pages"); void openPage(id); }} /></div>
+          ) : memoryOpen ? (
             <div className="notes-memory">
               <div className="notes-memory-head"><b>Memory</b><span>{memory?.pageCount || 0} pages · {memory?.chars || 0} chars</span><button className="btn tiny-btn" onClick={() => void dream()} disabled={busy}>Dream</button></div>
               <div className="notes-preview markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(wikiMarkdown(memory?.markdown || "还没有 Memory 索引。")) }} onClick={(e) => {
