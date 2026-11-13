@@ -3074,3 +3074,4 @@ button.kv-hit:hover{border-color:var(--border-strong)}
 .notes-docs{flex:1;min-height:0;overflow:auto;padding:14px 16px 18px}
 .kv-embedded{display:flex;flex-direction:column;gap:12px}
 .kv-embedded .kv-grid{grid-template-columns:minmax(0,1fr) 260px;gap:14px;overflow:visible}
+.kv-paste{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);padding:10px 12px}

@@ -1475,6 +1475,14 @@ const SETTINGS_SPEC = {
   maxConcurrentRuns: { kind: "number", min: 0, max: 20, fallback: 0 },
   approvalPolicy: { kind: "enum", values: ["ask", "allow", "deny"], fallback: "ask" },
   dshEnv: { kind: "string", max: 4000 },
+  // 即时通信（gateway 每次读取 settings 决定是否 listen）
+  imEnabled: { kind: "boolean" },
+  imTelegramToken: { kind: "string", max: 500 },
+  imTelegramAllow: { kind: "string", max: 500 },
+  imWebhookUrl: { kind: "string", max: 1000 },
+  imWebhookToken: { kind: "string", max: 500 },
+  imInboundPort: { kind: "number", min: 0, max: 65535, fallback: 0 },
+  imAllowIds: { kind: "string", max: 1000 },
   dshBinary: { kind: "string", fallback: "", max: 500 },
   dshHome: { kind: "string", fallback: "", max: 1000 },
   model: { kind: "string", fallback: "", max: 200 },
@@ -2471,11 +2479,22 @@ function startImGateway() {
           return res;
         }
       }
-      // 2) 普通消息：进入同一套会话（没有任务就新建）
-      const res = await actions.send({ text, projectId: null });
-      const todoId = res?.todoId || null;
+      // 2) 普通消息：进入同一套会话。没有可用 Agent 时也落成「待执行」任务，不假装已经处理
+      let res = null;
+      try { res = await actions.send({ text, projectId: null }); } catch (err) { res = { mode: "error", error: String(err?.message || err) }; }
+      let todoId = res?.todoId || null;
+      if (!todoId && res?.mode === "error") {
+        const queued = actions.createTodo({ title: String(text).slice(0, 120), desc: `来自 IM ${chatId}`, agentId: null });
+        todoId = queued?.id || null;
+        res = { mode: "queued", todoId, threadId: queued ? threadForTodo(queued).id : null };
+      }
       if (todoId) { imSessions[chatId] = todoId; saveImSessions(); }
-      await imGateway.send("收到，已排进任务队列。桌面不在线时消息会留在 IM 队列，下次启动继续处理。", { to: chatId });
+      try {
+        await imGateway.send(
+          todoId ? "收到，已排进任务队列。桌面不在线时消息会留在 IM 队列，下次启动继续处理。" : "收到，但没有可执行的 Agent，已记录在待处理里等你派活。",
+          { to: chatId },
+        );
+      } catch { /* 没有出站通道不算失败 */ }
       return res;
     },
   });
@@ -2493,7 +2512,7 @@ async function imNotifyRun(todo, run, handle) {
   const result = [...texts].reverse().find((m) => m.role === "agent" && m.kind === "text")?.content || "";
   const steps = texts.filter((m) => m.role === "tool").map((m) => String(m.content).split("\n")[0]);
   try {
-    await imGateway.send(formatImCard({ title: todo.title, result, steps, branch: run.branch || "", runId: run.id, agent: agentOf(todo)?.name || "" }), { to: chatId });
+    await imGateway.send(formatImCard({ title: todo.title, result, steps, branch: run.branch || "", runId: run.id, agent: store.state.agents.find((a) => a.id === run.agentId)?.name || "" }), { to: chatId });
   } catch (err) { console.warn(`[im] notify failed: ${String(err?.message || err)}`); }
   void handle;
 }
@@ -2628,17 +2647,35 @@ const actions = {
     }
     return { added, engine: engine || "auto" };
   },
+  /** 粘贴一段文本/网页正文进资料库（也方便脚本与 Agent 自测） */
+  knowledgeIngestText: async ({ title, text, url } = {}) => {
+    const body = String(text || "").trim();
+    if (!body) throw new Error("内容不能为空");
+    return knowledge().ingestText({
+      title: String(title || "粘贴的资料").slice(0, 120),
+      markdown: body,
+      uri: String(url || `paste:${Date.now()}`),
+    });
+  },
   knowledgeRemove: async ({ id } = {}) => {
-    const res = knowledge().remove(String(id || ""));
+    const docId = String(id || "");
+    const doc = knowledge().listDocuments({ limit: 1000 }).find((d) => d.id === docId) || null;
+    const res = knowledge().remove(docId);
     // 删除资料时：引用过它的知识库页面标为过期（不删内容，等人工复核）
     let staled = 0;
     try {
       const pages = (await pluginHost.invoke("ai.cockpit.notes", "wiki.list", {})).pages || [];
+      const keys = [doc?.uri, doc?.title].filter(Boolean).map(String);
       for (const page of pages) {
         const cites = page.citations || [];
         if (!cites.length) continue;
         const full = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: page.id });
-        const dead = (full?.citations || []).some((c) => c.source?.uri && String(c.source.uri).includes(String(id)));
+        // 引用里记的是 source 的 uri/标题；匹配文档 uri 或标题（旧实现拿 doc id 去比 uri，永远不命中）
+        const dead = (full?.citations || []).some((c) => {
+          const uri = String(c.source?.uri || "");
+          const title = String(c.source?.title || "");
+          return keys.some((k) => (uri && uri === k) || (title && title === k) || (uri && uri.endsWith(`/${k}`)));
+        });
         if (dead && page.status !== "stale") {
           await pluginHost.invoke("ai.cockpit.notes", "wiki.savePage", { id: page.id, title: page.title, content: full.content, summary: full.summary, status: "stale" });
           staled += 1;
@@ -2759,10 +2796,12 @@ const actions = {
             { role: "system", content: "只根据候选页面回答；每段结论后用 [[页面标题]] 标注出处；没有依据就直接说「知识库里没有」，不要编造。" },
             { role: "user", content: `候选页面：\n${context}\n\n问题：${question}` },
           ], { key, maxTokens: 900 });
+          // 只有回答里真正引用了页面才算 found；否则当成「没有依据」，避免把无出处的回答当结论
+          const cited = pages.filter((p) => res.text.includes(`[[${p.title}`));
           return {
-            found: true,
-            answer: res.text,
-            citations: pages.map((p) => ({ id: p.id, title: p.title })),
+            found: cited.length > 0,
+            answer: cited.length ? res.text : `知识库里没有能支撑这个问题的内容。\n\n${res.text}`,
+            citations: cited.map((p) => ({ id: p.id, title: p.title })),
             via: "model",
             model: res.model,
           };
@@ -2806,6 +2845,12 @@ const actions = {
       for (const thread of store.state.threads) if (!thread.todoId && !thread.agentId) thread.agentId = next.defaultAgentId || null;
     }
     if ("maxConcurrentRuns" in next) tick();
+    // IM 配置改了要重启网关：启动时若 disabled，之后改设置不会自动 listen
+    if (Object.keys(next).some((k) => k.startsWith("im"))) {
+      try { imGateway?.stop(); } catch { /* ignore */ }
+      imGateway = null;
+      try { startImGateway(); } catch (err) { console.warn(`[im] restart failed: ${String(err?.message || err)}`); }
+    }
     return store.state.settings;
   },
   resetSettings: () => {
@@ -2814,6 +2859,7 @@ const actions = {
     return store.state.settings;
   },
   openQuickCapture: () => { openQuickCapture(); return true; },
+  imStatus: () => (imGateway ? imGateway.status() : { enabled: false }),
   openDataDir: () => shell.openPath(app.getPath("userData")),
   exportData: async () => {
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");

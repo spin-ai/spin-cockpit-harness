@@ -1135,7 +1135,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
             <button className={tab === "vault" ? "on" : ""} onClick={() => setTab("vault")}>本地</button>
             <button className={tab === "trash" ? "on" : ""} onClick={() => setTab("trash")}>回收站</button>
           </div>
-          <div className="notes-search-wrap">
+          {tab !== "docs" && <div className="notes-search-wrap">
             <SearchIcon size={12} className="notes-search-icon" />
             <input
               className="notes-search"
@@ -1145,7 +1145,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               placeholder="搜索页面 / 资料 / 本地"
             />
             {query && <button className="notes-search-clear" title="清除（Esc）" onClick={() => { setQuery(""); void search(""); }}>×</button>}
-          </div>
+          </div>}
           {(searchStatus !== "all" || searchKind !== "all" || searchTime !== "all" || searchHits.length > 0) && (
             <div className="notes-search-filters">
               <select value={searchKind} onChange={(e) => setSearchKind(e.target.value)}>

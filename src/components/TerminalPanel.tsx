@@ -733,7 +733,8 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
             {t.kind === "preview"
               ? (t.rel ? <FileVisual name={t.title} size={12} /> : <EyeIcon size={12} className="term-tab-icon" />)
               : <span className={`dot ${t.attention ? "amber" : t.taskId ? "green" : "slate"}`} />}
-            {(state.terminals || []).some((rec) => rec.stalled && (rec.cwd === t.cwd || rec.todoId === t.taskId)) && (
+            {(state.terminals || []).some((rec) => rec.stalled && rec.status === "running"
+              && (rec.todoId && t.taskId ? rec.todoId === t.taskId : rec.cwd === t.cwd)) && (
               <span className="term-stalled" title="这个终端 5 分钟没有新输出，可能卡住了">⚠</span>
             )}
             {renaming === t.id ? (

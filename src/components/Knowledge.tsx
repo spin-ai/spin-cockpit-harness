@@ -57,6 +57,9 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
   const [ask, setAsk] = useState<{ answer: string; citations: Cite[]; found: boolean; degraded?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [pasting, setPasting] = useState(false);
+  const [pasteTitle, setPasteTitle] = useState("");
+  const [pasteText, setPasteText] = useState("");
   const [notice, setNotice] = useState("");
   const [engineState, setEngineState] = useState<EngineState | null>(null);
   const [selectedEngine, setSelectedEngine] = useState<string>("");
@@ -127,6 +130,16 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
         failure?.message ? `失败：${failure.message}` : "",
         warnings.length ? `路由：${warnings.join("；")}` : "",
       ].filter(Boolean).join(" · "));
+      await load();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const ingestText = async () => {
+    setBusy(true);
+    try {
+      await act("knowledgeIngestText", { title: pasteTitle || "粘贴的资料", text: pasteText });
+      setNotice("已存入资料库");
+      setPasting(false); setPasteText(""); setPasteTitle("");
       await load();
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
@@ -237,6 +250,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
         subtitle={<div className="notes-stats"><span><b>{docs.length}</b> 资料</span><span><b>{docs.filter((d) => d.status === "ready").length}</b> 已索引</span><span><b>{engines.filter((e) => e.available).length}</b> 引擎可用</span></div>}
         actions={<>
           <button className="btn primary" onClick={() => void ingest()} disabled={busy}>＋ 导入资料</button>
+          <button className="btn" onClick={() => setPasting(true)} disabled={busy}>粘贴文本</button>
           <button className="icon-btn" onClick={() => void load()} title="刷新">↻</button>
         </>}
       />}
@@ -244,6 +258,17 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
         <div className={`notes-banner ${error ? "error" : ""}`}>
           <span className="ellipsis">{error || notice}</span>
           <button className="notes-banner-x" onClick={() => { setError(""); setNotice(""); }}>×</button>
+        </div>
+      )}
+      {pasting && (
+        <div className="kv-block kv-paste">
+          <div className="notes-meta-title">粘贴文本</div>
+          <input className="kv-input" value={pasteTitle} placeholder="标题（可选）" onChange={(e) => setPasteTitle(e.target.value)} />
+          <textarea className="kv-ask" rows={5} value={pasteText} placeholder="粘贴网页正文 / Markdown / 报告，索引后可被检索与引用" onChange={(e) => setPasteText(e.target.value)} />
+          <div className="row gap6">
+            <button className="btn tiny-btn" onClick={() => { setPasting(false); setPasteText(""); }}>取消</button>
+            <button className="btn tiny-btn primary" disabled={busy || !pasteText.trim()} onClick={() => void ingestText()}>存入资料库</button>
+          </div>
         </div>
       )}
       <div className="kv-grid">
