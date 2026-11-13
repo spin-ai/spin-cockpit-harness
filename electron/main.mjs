@@ -1242,6 +1242,8 @@ function startWikiMcpServer() {
       else if (name === "memory_inject") result = memory().inject({ maxChars: args.max_chars || 12000 });
       else if (name === "memory_search") result = transcriptSearch(args.query, args.limit || 8);
       else if (name === "memory_note_write") result = memory().noteAdd({ body: args.body, sourceKind: args.source_kind || "transcript", sourceRef: args.source_ref || "" });
+      else if (name === "memory_entry_write") result = memory().entryUpsert({ layer: args.layer || "L4", title: args.title, body: args.body || "", sources: args.sources || [] });
+      else if (name === "memory_promote_note") result = memory().promoteNote({ id: args.id, layer: args.layer || "L4" });
       else if (name === "persona_lookup") {
         const answer = persona().ask({ question: args.question });
         // 点名到人时顺带给出人设卡注入片段，Agent 才能「像他那样」判断
@@ -2702,6 +2704,15 @@ const actions = {
   memoryEntryList: async ({ layer, status } = {}) => memory().entryList({ layer, status }),
   memoryEntryArchive: async ({ id } = {}) => memory().entryArchive({ id }),
   memoryEntrySources: async ({ id } = {}) => memory().entrySources({ id }),
+  memoryEntryRestore: async ({ id } = {}) => memory().entryRestore({ id }),
+  memoryEntryArchived: async ({ limit } = {}) => memory().entryArchived({ limit }),
+  memoryEntrySearch: async ({ query, limit } = {}) => memory().entrySearch({ query, limit }),
+  memoryPromoteNote: async ({ id, layer } = {}) => memory().promoteNote({ id, layer }),
+  memoryDreamConfig: async ({ patch } = {}) => memory().dreamConfig({ patch }),
+  memorySetInjectBudget: async ({ maxChars } = {}) => memory().setInjectBudget({ maxChars }),
+  memoryInjectBudget: async () => memory().currentInjectBudget(),
+  memoryExport: async () => ({ markdown: memory().exportMarkdown() }),
+  memoryDreamStatus: async () => memory().dreamConfig({}),
   memoryEntryDemote: async ({ id } = {}) => memory().entryDemote({ id }),
   memoryNoteBulk: async ({ ids = [], status = "verified" } = {}) => {
     const out = [];
@@ -4903,5 +4914,6 @@ app.on("before-quit", () => {
     const term = terminals.get(id);
     if (term) { try { term.kill(); } catch { /* ignore */ } }
   }
-  try { store.flush(); } catch { /* ignore */ }
+  // 退出前把内存状态写完并合并 WAL，再关闭连接（node:sqlite）
+  try { store?.close?.(); } catch { /* ignore */ }
 });

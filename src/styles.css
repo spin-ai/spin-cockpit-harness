@@ -3262,3 +3262,7 @@ button.kv-hit:hover{border-color:var(--border-strong)}
 .notes-docs-page>.notes-wiki-tabs{width:fit-content;margin:0}
 .notes-docs-page .kv-page{height:auto;padding:0;overflow:visible}
 .notes-docs-page .pr-grid{overflow:visible}
+.pr-dreamcfg{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:4px 0 6px;border-bottom:1px solid var(--border);margin-bottom:4px}
+.pr-dreamcfg label{display:inline-flex;align-items:center;gap:4px}
+.pr-cfg-num{width:74px;height:24px;padding:0 6px;font-size:11px}
+.pr-budget-edit{display:inline-flex;align-items:center;gap:4px;margin-top:2px}

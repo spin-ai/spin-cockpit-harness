@@ -8,7 +8,7 @@
 |---|---|---|
 | 知识索引（已存在，本轮接前端） | `userData/knowledge/kb.db` | 左栏「知识」 |
 | 记忆 / note / Dream | `userData/memory/mem.db` | 左栏「记忆」 |
-| 人像记忆 | `userData/persona/persona.db` | 左栏「人像」 |
+| 人物建模 | `userData/persona/persona.db` | 左栏「人物」 |
 | IM 会话映射 | `userData/im/sessions.json` | 设置 → 即时通信 |
 
 ## 1. 知识（资料 + 页面）
@@ -36,12 +36,22 @@
   接受后由 `applyMemorySuggestion()` 执行（建 draft / 生成页面 / 标 stale / 归档条目），拒绝写 `rejects`。
 - 回查：`memoryTranscriptSearch` 只读检索消息 / run / 事件，带时间与 thread/run id；Agent 通过 `memory_search` 使用。
 
-## 4. 人像（Persona）
+## 4. 人物（Persona / 人物建模）
 
 - `electron/persona/index.mjs`：导入聊天导出（文本 `时间 说话人` / `说话人: 内容`、JSON 导出）→ 规则抽取（偏好 / 硬约束 / 目标 / 事件 / 立场 / 关系）。
 - 所有抽取结果 **pending**，确认才生效；拒绝留痕不重复打扰；无来源不能确认；敏感项单独标记。
 - 三层：本人 / 他人 / 关系；群聊标记 `groupOnly`，不把群内互动当亲密关系。
 - 时间线按字段给出演变，矛盾值标 `conflict`。
+- **字段分五组**（`FIELD_GROUPS`）：基本信息 / 性格与价值观 / 处事方式 / 说话风格 / 其他事实。
+  处事（`decision` `conflict` `stress` `commitment` `communication`）与说话风格（`style` `voice`）是后补的：
+  只靠偏好、立场这类陈述性事实回答不了「他大概率会怎么反应 / 怎么说」。旧库不用迁移，新字段只是多几类观察。
+- **人物卡** `personaCard`：一句话概括 + 分节 + 每节证据（quote / 来源 / 时间 / 支撑条数 / 置信级别）。
+  一句话只用已确认观察拼，不调模型；敏感观察不进卡，只报数量。
+- **注入预览** `personaInject`：按「处事 > 性格 > 说话风格 > 基本信息 > 其他事实」拼 Markdown，超出预算逐条裁剪并报 `dropped`；敏感项永不注入。
+- **变化与矛盾** `personaDrift`：只有「新说法取代旧说法」的字段（身份 / 角色 / 处境 / 价值观 / 目标）判漂移与矛盾；
+  处事类多条观察是互补的面，不判为矛盾。
+- **列表** `personaPeople`：每人带已确认 / 待确认计数与人设卡完整度（按 15 类字段覆盖率，事实类不计入）。
+- 角色卡导出（菜单项「导出角色卡 JSON」）字段对齐 Character Card V2（`description` / `personality` / `mes_example`），方便和外部生态互换。
 - 决策辅助（`personaAsk`）：该找谁 / 会怎么反应 / 关系网络 / 影响谁；没证据时返回 `found:false` 并摊开可用关系，不猜。
 - Agent 通过 `persona_lookup` 使用。
 
