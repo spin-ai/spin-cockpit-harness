@@ -15,11 +15,14 @@ import { ChatIcon, FilesIcon, ListIcon, TerminalIcon } from "./components/Icons"
 import { Settings } from "./components/Settings";
 import { Guide } from "./components/Guide";
 import { Notes } from "./components/Notes";
+import { Knowledge } from "./components/Knowledge";
+import { Memory } from "./components/Memory";
+import { Persona } from "./components/Persona";
 import { ScenePage } from "./components/ScenePage";
 import { requestTerminalAdopt, requestTerminalAt } from "./terminal-events";
 import { THEMES, isDarkTheme, resolveTheme } from "./themes";
 
-type View = "workspace" | "scene" | "projects" | "stats" | "hosts" | "git" | "settings" | "guide" | "notes";
+type View = "workspace" | "scene" | "projects" | "stats" | "hosts" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona";
 type PaneId = "todo" | "chat" | "terminal" | "files";
 const COLLAPSED_PANE_W = 34;
 
@@ -355,6 +358,9 @@ export default function App() {
       { id: "view-stats", label: "统计", group: "导航", run: () => setView("stats") },
       { id: "view-hosts", label: "主机", group: "导航", run: () => setView("hosts") },
       { id: "view-git", label: "Git / 源码管理", group: "导航", run: () => setView("git") },
+      { id: "view-knowledge", label: "知识（资料 / 引用问答）", group: "导航", run: () => setView("knowledge") },
+      { id: "view-memory", label: "记忆（四层 / Dream）", group: "导航", run: () => setView("memory") },
+      { id: "view-persona", label: "人像（画像 / 决策辅助）", group: "导航", run: () => setView("persona") },
       { id: "quick-capture", label: "快速记录到知识库", hint: "⌘⇧K", group: "任务", run: () => void act("openQuickCapture") },
       { id: "new-thread", label: "新建会话", hint: "⌘N", group: "任务", run: () => void newThread() },
       { id: "new-task", label: "新建任务", hint: "⌘⇧N", group: "任务", run: () => dispatchInWorkspace(() => new Event("harness:new-task")) },
@@ -549,6 +555,9 @@ export default function App() {
         {view === "settings" && <div className="wide settings-wide"><Settings state={state} act={act} notify={notify} /></div>}
         {view === "guide" && <div className="wide guide-wiki-wide"><Guide pageId={guidePage} /></div>}
         {view === "notes" && <div className="wide"><Notes state={state} act={act} onOpenTodo={selectTodo} openRequest={notesOpenReq} /></div>}
+        {view === "knowledge" && <div className="wide"><Knowledge act={act} onOpenPage={() => setView("notes")} /></div>}
+        {view === "memory" && <div className="wide"><Memory act={act} /></div>}
+        {view === "persona" && <div className="wide"><Persona act={act} /></div>}
       </div>
 
       <CommandPalette open={paletteOpen} state={state} onClose={() => setPaletteOpen(false)} commands={commands} />

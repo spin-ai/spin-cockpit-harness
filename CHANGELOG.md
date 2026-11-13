@@ -6,6 +6,7 @@
 
 ### Added
 
+- **知识解析引擎注册与路由（K1）**：借鉴 WeKnora `EngineRegistration` / `NewReader`，新增 `electron/knowledge/engines/`（注册表、路由、独立超时、统一 `Page[]` 归一化）；接入自建 MinerU（V1 + legacy）、MinerU Cloud、自建 PaddleOCR-VL、PaddleOCR-VL Cloud，以及 `custom` / `extras` 自研 HTTP 引擎；知识页新增引擎状态、默认引擎、端点/密钥/超时配置；`npm run knowledge:engines:selftest`
 - Super Agent / Mission 模式：主管 Agent（`role=supervisor`）、Plan Card 人工审批、child Todo + Delegation + worker run、Mission 面板与收件箱
 - Mission MCP：`electron/mcp-bridge.mjs`（stdio ↔ Main HTTP）+ `mission_plan` / `task_delegate` / `task_review` / `task_steer` / `task_retry` / `mission_finish`
 - Mission 调度：worktree 并行、依赖 `blockedBy`、Supervisor/子任务并发上限、Mission 时长预算、取消级联、重启恢复
@@ -32,6 +33,19 @@
 - **快速记录独立小窗**：`⌘⇧K` 不切主窗口，剪贴板预填，直接存为 draft
 - **统计 / 设置 / 数据迁移**：统计按 runtime 分组；设置增加 worktree 默认与 Runtime 视图；新增 `scenes` / `terminals` 表与 run 的 runtime / worktree_cleaned 迁移
 
+### Added
+
+- **知识视图**：`src/components/Knowledge.tsx` 接上已有知识索引——导入 PDF/Office/EPUB/网页、一条查询同时返回资料与页面、带页码引用的问答；删除资料会把引用它的页面标 stale；新增 MCP 工具 `knowledge_search` / `knowledge_ask`
+- **记忆四层 + Dream 五动作**：`electron/memory`（L1–L4 / note / suggestions / rejects），run 启动按预算注入 L4 并可查看「本次注入」；Dream 产出 校正/构建/补洞/晋升/剪枝 建议，接受即执行、拒绝不再打扰；新增 MCP `memory_inject` / `memory_search` / `memory_note_write`
+- **人像记忆**：`electron/persona` 导入聊天导出 → 规则抽取进待确认 → 三层画像 / 时间线 / 冲突标记 / 决策辅助（无证据返回未知 + 可用关系）+ MCP `persona_lookup`
+- **即时通信网关**：`electron/im`（Telegram 长轮询 + 飞书/微信 webhook 出入站），消息进入同一套会话，结果三段式回传、审批用数字回复；设置新增「即时通信」分区
+- **`wiki.ask` 走模型**：有 Ark key 时用知识库页面作候选集生成带引用答案，失败自动回落到检索式
+
+### Fixed
+
+- 终端 5 分钟无输出标记 `stalled` 并在标签显示 ⚠；手工终端接入任务可选择保持目录或切到 worktree
+- `dshEnv`（含 API key）改用 `safeStorage` 加密存储，启动时自动迁移明文
+
 ### Changed
 
 - **Chat 可编辑已发送消息**：用户气泡 hover 出「复制 / 编辑」；编辑后 `⌘Enter` 保存并发送 —— 任务没在跑则按新文本重发（新 run `trigger=edit`，消息重新绑定），正在跑则作为纠偏投递；顺手修掉 `regenerate` 没用上 `lastUser` 导致重跑 prompt 为空的问题
@@ -47,6 +61,7 @@
 - 预览 Surface 补齐后退 / 前进 / 停止 / 硬刷新 / 缩放 / 页内查找 / DevTools / 外部打开 / 设备宽度
 - LLM Wiki：停笔 1s 自动保存；删除页面 / 资料进回收站，可恢复或彻底删除；`⌘⇧K` 全局快速记录；中文按字模糊搜索；`#标签` 补全
 - **Wiki 视觉收口**：页面改用 `PageHeader`，低频动作收进 `⋯`；左栏 / 编辑面 / 右栏合成一个主面（hairline 分栏）；编辑器改无衬线单栏 660px、隐藏行号、取消整行高亮；字数与保存状态下沉到底部状态条；右栏统一中文标签与 tabular 数字；图谱按 页面 / 资料 / 文件 分级着色
+- **Wiki 页头找回常用动作**：导入资料 / 生成 Wiki / 整理 Wiki / 问 Wiki 回到页头直接可见，`⋯` 只留本地目录 / 图谱 / 记忆 / 分屏 / 导出（仍只有一个 primary）
 - **全站视觉收口**：语义色 / 中性色 / 圆角全部改走 Design System token（`--green/--amber/--red/--purple`、`--radius-*`、`--surface-hover`、`--faint`），暗色不再单独硬编码；选中与运行色从蓝色收成中性 `--brand`；`.page-head` 标题统一 22px；按 CDP 文本审计把 13 处内容型中文提到 ≥11.5px
 - **Chat 思考与工具可读**：`tool_call` 消息首行改成 `Bash · 完成 · ls -1`（状态中文化、带命令/路径），把 `tool_call_update.content` 里的输出并入正文；思考过程（`agent_thought_chunk`）从折叠工具组拆成独立「思考」块，默认两行可展开
 - **Chat 详情面板可拖选**：展开后冻结计时、历史行按 10s 粒度刷新，展开时把面板带进视野 —— 拖选文字不再被每秒重渲染打断

@@ -223,6 +223,7 @@ npm run pack:system
 - [docs/ARCH-multi-agent-workspace.md](docs/ARCH-multi-agent-workspace.md)（4+1 视图）
 - [docs/ARCH-super-agent.md](docs/ARCH-super-agent.md)（Super Agent：Mission / Delegation / MCP / 迁移与验证）
 - [docs/USAGE-super-agent.md](docs/USAGE-super-agent.md)（Super Agent 使用说明：准备 Agent / 审批计划 / 子任务 / 恢复）
+- [docs/ARCH-persona-suite.md](docs/ARCH-persona-suite.md)（人像记忆 / 决策评估 / PKM / 多智能体终端 / IM 网关：宿主改造、接口契约、里程碑）
 - [docs/ARCH-plugins.md](docs/ARCH-plugins.md)（插件宿主：manifest / 权限 / utilityProcess / API / 执行器 / UI）
 - [docs/PLUGIN-notes.md](docs/PLUGIN-notes.md)（原生 LLM Wiki：Source / Page / Citation / Review / Graph）
 - [docs/ARCH-chat-thread.md](docs/ARCH-chat-thread.md)（CHAT 单会话模型：thread / send 状态机 / 迁移）

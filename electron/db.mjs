@@ -53,6 +53,13 @@ export const DEFAULT_SETTINGS = {
   previewHomeUrl: "http://localhost:5173/",
   elementScreenshots: true,
   contextDetail: "standard",      // compact | standard
+  imEnabled: false,
+  imTelegramToken: "",
+  imTelegramAllow: "",
+  imWebhookUrl: "",
+  imWebhookToken: "",
+  imInboundPort: 0,
+  imAllowIds: "",
   superAgentEnabled: true,
   maxSupervisorRuns: 1,
   maxMissionChildren: 4,

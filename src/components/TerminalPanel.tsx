@@ -333,14 +333,24 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
 
   const attachToTask = useCallback(async () => {
     if (!activeTab || !activePane?.terminalId || !todo) return;
+    // 手工终端接入任务：默认保持当前目录；需要跟随 worktree 时再切过去（只影响后续 run）
+    const branch = [...state.runs].reverse().find((r) => r.todoId === todo.id && r.branch)?.branch || "";
+    const moveToWorktree = branch
+      ? window.confirm(`接入 ${todo.key} 后要切到它的 worktree 吗？\n\n确定 = 切换到 worktree（${branch}）\n取消 = 保持当前目录 ${activePane.cwd || ""}`)
+      : false;
     try {
-      await window.harness.action("attachTerminalToTask", { terminalId: activePane.terminalId, todoId: todo.id });
+      await window.harness.action("attachTerminalToTask", {
+        terminalId: activePane.terminalId,
+        todoId: todo.id,
+        keepCwd: !moveToWorktree,
+        branch: moveToWorktree ? branch : null,
+      });
       patchTab(activeTab.id, { taskId: todo.id, title: `${todo.key} ${todo.title}` });
-      window.dispatchEvent(new CustomEvent("harness:toast", { detail: `终端已接入 ${todo.key}` }));
+      window.dispatchEvent(new CustomEvent("harness:toast", { detail: `终端已接入 ${todo.key}${moveToWorktree ? ` · 切到 ${branch}` : " · 保持当前目录"}` }));
     } catch (err) {
       window.dispatchEvent(new CustomEvent("harness:toast", { detail: String((err as Error)?.message || err) }));
     }
-  }, [activeTab, activePane?.terminalId, todo, patchTab]);
+  }, [activeTab, activePane?.terminalId, activePane?.cwd, todo, patchTab]);
 
   // 预览是终端的一个标签页：已存在就导航 + 激活，否则新建
   const openPreview = useCallback((url: string) => {
@@ -723,6 +733,9 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
             {t.kind === "preview"
               ? (t.rel ? <FileVisual name={t.title} size={12} /> : <EyeIcon size={12} className="term-tab-icon" />)
               : <span className={`dot ${t.attention ? "amber" : t.taskId ? "green" : "slate"}`} />}
+            {(state.terminals || []).some((rec) => rec.stalled && (rec.cwd === t.cwd || rec.todoId === t.taskId)) && (
+              <span className="term-stalled" title="这个终端 5 分钟没有新输出，可能卡住了">⚠</span>
+            )}
             {renaming === t.id ? (
               <input
                 className="term-rename"

@@ -71,6 +71,9 @@ export interface TerminalRecord {
   cwd: string; kind: "agent" | "shell"; title: string;
   status: "running" | "exited" | "closed" | "detached" | "failed";
   exitCode: number | null; tail: string; createdAt: number; endedAt: number | null;
+  /** 长时间无输出（主进程判定，5 分钟） */
+  stalled?: boolean;
+  idleMs?: number;
 }
 export interface RuntimeView {
   id: string; hostId: string; hostName: string; cli: string; label: string;
@@ -165,6 +168,14 @@ export interface Settings {
   maxMissionChildren?: number;
   missionBudgetMinutes?: number;
   worktreeMode?: WorktreeMode;
+  /** 即时通信网关（手机继续处理） */
+  imEnabled?: boolean;
+  imTelegramToken?: string;
+  imTelegramAllow?: string;
+  imWebhookUrl?: string;
+  imWebhookToken?: string;
+  imInboundPort?: number;
+  imAllowIds?: string;
 }
 export interface State {
   hosts: Host[]; agents: Agent[]; todos: Todo[]; runs: Run[]; threads: Thread[]; messages: Message[];
