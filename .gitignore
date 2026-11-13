@@ -42,3 +42,6 @@ docs/assets/article/
 
 # 生成的文档产物（由 scripts/build-docs-html.py 生成）
 docs/REQ-multi-agent-workspace.html
+
+# 聊天数据集（私人数据，永不入库）
+datasets/
