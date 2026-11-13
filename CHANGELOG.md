@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed
+- **资料列表在任何操作后不再重排**：`listDocuments` 原来按 `COALESCE(indexed_at, created_at)` 排序，而「重新解析 / 换引擎」会刷新 `indexed_at`，于是被操作的那份资料会突然跳到最前面；现在按导入时间排序（`created_at` + `rowid` 兜底），操作只更新索引状态、不再影响顺序
+- **勾选集会自动清理已删除的资料**：删除后 `checked` 里残留的 id 会让「只基于勾选的 N 份资料」虚高，现在 `load()` 时对齐现有资料，预览中的资料被删也会退回提问视图
+
 ### Changed
 - **主库换引擎**：`harness.db` 从 `sql.js`（WASM，每次 persist 整库 `export()` + 写盘）换成内置 `node:sqlite` + WAL；写入走事务与 prepared statement 缓存，`undefined` / `boolean` 参数统一归一化。4720 行的一份库，落盘 p50 **26.8ms → 7.3ms**（`npm run db:bench`）
 - **落盘不再可能杀主进程**：`persist()` 定时器内写失败会 rollback + 记日志，下一次 persist 重试；退出时 `flush()` 会把 WAL 合并回主文件再 `close()`，`导出数据库备份` 仍然是单文件
@@ -11,6 +15,7 @@
 - 新增 `npm run db:selftest`（往返 / 参数归一化 / WAL 合并 / 单文件备份 5 项）与 `npm run db:bench`（sql.js vs node:sqlite 落盘对比）
 
 ### Added
+- **人物建模**：新增 `electron/persona/model.mjs` + `personaModel` —— 从聊天记录算可观测特征（话量/句长/回复时延/提问与礼貌用语/笑声与表情/活跃时段/高频词/群私聊结构/最常互动的人），带证据原话写入 observations；可选 Ark 生成人设卡草稿（写入 pending）；人物页新增「建模」按钮
 - **记忆工具补齐**：条目搜索 / 降级（修正方向 L4→L3→L2→L1）/ 过期-恢复 / 来源查看 / note 晋升 / 批量验证 / 注入预算可调（持久化）/ Dream 可关闭且限制单次建议数 / 整库导出 Markdown；MCP 新增 `memory_entry_write`、`memory_promote_note`
 - **人物（原「人像」）改成人物建模页**：左栏人物列表常驻、中间是唯一人设卡、右栏是复核队列 / 变化与矛盾 / 注入预览 / 决策辅助；主 CTA 从「导入聊天记录」改成「确认待确认」，导入收进次级入口
 - **人物字段扩到五组**：新增处事方式（`decision` `conflict` `stress` `commitment` `communication`）与说话风格（`style` `voice`）——旧字段全是陈述性事实，回答不了「他会怎么反应 / 怎么说」；旧库不用迁移

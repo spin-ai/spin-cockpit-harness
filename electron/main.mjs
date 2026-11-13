@@ -16,6 +16,7 @@ import { createKnowledge } from "./knowledge/index.mjs";
 import { chat as arkChat, resolveArkKey as resolveArkKeyFor } from "./knowledge/ark.mjs";
 import { createMemory } from "./memory/index.mjs";
 import { createPersona } from "./persona/index.mjs";
+import { computeFeatures, describePerson, modelCard } from "./persona/model.mjs";
 import { createImGateway, formatImCard, formatApprovalCard } from "./im/gateway.mjs";
 import { prepareWorktree, removeWorktree, repoRoot } from "./worktree.mjs";
 import { pickElement, cancelPick, detachPreview } from "./preview.mjs";
@@ -2765,6 +2766,94 @@ const actions = {
   personaMerge: async ({ keepId, aliasIds } = {}) => persona().merge({ keepId, aliasIds }),
   personaRemove: async ({ personId, from, to, sourcePrefix } = {}) => persona().remove({ personId, from, to, sourcePrefix }),
   personaConflicts: async () => persona().detectConflicts(),
+  /**
+   * 人物建模：把聊天记录算成可观测特征（话量/句长/回复速度/语气/话题/活跃时段），
+   * 可选再让模型写一版人设卡草稿。写入 observations 默认 pending，带证据原话。
+   */
+  personaModel: async ({ limit = 40, useModel = false, modelTop = 8, minMessages = 20, autoConfirm = true } = {}) => {
+    const candidates = [
+      path.join(__dirname, "..", "datasets", "wechat"),   // 开发：仓库根
+      path.join(process.cwd(), "datasets", "wechat"),
+      path.join(app.getAppPath(), "..", "datasets", "wechat"),
+    ];
+    const rootDs = candidates.find((p) => fs.existsSync(p));
+    if (!rootDs) throw new Error(`没有数据集目录（找过：${candidates.join(" / ")}）`);
+    // 1) 汇总：人 → 该人所有发言
+    const byPerson = new Map();
+    for (const chat of fs.readdirSync(rootDs)) {
+      const file = path.join(rootDs, chat, "dataset.json");
+      if (!fs.existsSync(file)) continue;
+      let list = [];
+      try { list = JSON.parse(fs.readFileSync(file, "utf8")); } catch { continue; }
+      for (const m of list) {
+        const who = String(m.from || "").trim();
+        if (!who || who === "我") continue;
+        if (!byPerson.has(who)) byPerson.set(who, []);
+        byPerson.get(who).push({ ...m, chat });
+      }
+    }
+    const contextByChat = new Map();
+    for (const chat of fs.readdirSync(rootDs)) {
+      const file = path.join(rootDs, chat, "dataset.json");
+      if (!fs.existsSync(file)) continue;
+      try { contextByChat.set(chat, JSON.parse(fs.readFileSync(file, "utf8"))); } catch { /* ignore */ }
+    }
+    // 2) 只建模库里已有的人，按发言量取前 limit 个
+    const people = persona().people();
+    const known = new Map(people.map((p) => [p.name, p]));
+    const targets = [...byPerson.entries()]
+      .filter(([name, msgs]) => known.has(name) && msgs.length >= minMessages)
+      .sort((a, b) => b[1].length - a[1].length)
+      .slice(0, Math.max(1, Number(limit) || 40));
+
+    let added = 0;
+    const byField = {};
+    const modelled = [];
+    for (const [name, msgs] of targets) {
+      const person = known.get(name);
+      const chats = [...new Set(msgs.map((m) => m.chat).filter(Boolean))];
+      const context = chats.flatMap((c) => contextByChat.get(c) || []);
+      const f = computeFeatures(msgs, name, context);
+      if (!f) continue;
+      for (const d of describePerson(name, f)) {
+        const res = persona().addObservation({
+          personId: person.id, person: name, field: d.field, value: d.value,
+          quote: d.quote, sourceKind: "model", sourceRef: `chat:${msgs[0]?.chat || ""}`,
+          // 统计类结论（话量/时延/话题）可直接生效；它们是数出来的，不是推断
+          status: autoConfirm ? "confirmed" : "pending",
+        });
+        if (res) { added += 1; byField[d.field] = (byField[d.field] || 0) + 1; }
+      }
+      modelled.push({ name, count: f.count, medianLen: f.medianLen });
+    }
+
+    // 3) 可选：模型写人设卡草稿（只给 top N，且有 key）
+    let modelCards = 0;
+    if (useModel) {
+      for (const [name, msgs] of targets.slice(0, Math.max(1, Number(modelTop) || 8))) {
+        const person = known.get(name);
+        const f = computeFeatures(msgs, name);
+        const card = await modelCard({ name, features: f, relation: person.relation || "" }).catch(() => null);
+        if (!card) continue;
+        modelCards += 1;
+        const push = (field, value) => {
+          const res = persona().addObservation({
+            personId: person.id, person: name, field, value: String(value).slice(0, 120),
+            quote: (card.evidence || []).slice(0, 2).join(" / "), sourceKind: "model",
+            sourceRef: `chat:${msgs[0]?.chat || ""}`, confidence: 0.55,
+          });
+          if (res) { added += 1; byField[field] = (byField[field] || 0) + 1; }
+        };
+        (card.traits || []).slice(0, 4).forEach((t) => push("traits", t));
+        (card.communication || []).slice(0, 3).forEach((t) => push("communication", t));
+        (card.topics || []).slice(0, 3).forEach((t) => push("situation", `常聊话题：${t}`));
+        if (card.oneLiner) push("style", card.oneLiner);
+      }
+    }
+
+    store.addEvent("persona.model", `persona.model people=${modelled.length} added=${added} model=${modelCards}`);
+    return { people: modelled.length, added, byField, modelCards, sample: modelled.slice(0, 5) };
+  },
   personaImportPick: async () => {
     const res = await dialog.showOpenDialog(win, {
       properties: ["openFile", "multiSelections"],
