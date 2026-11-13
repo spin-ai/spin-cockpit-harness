@@ -137,6 +137,12 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
       setQuickOpen(true);
     };
     window.addEventListener("harness:quick-capture", onQuick);
+    // 从「资料」页点页面命中：带着 id 直接打开
+    const onOpenPage = (evt: Event) => {
+      const id = (evt as CustomEvent).detail;
+      if (typeof id === "string" && id) void openPage(id);
+    };
+    window.addEventListener("harness:open-wiki-page", onOpenPage);
     return () => window.removeEventListener("harness:quick-capture", onQuick);
   }, []);
 
@@ -1101,6 +1107,7 @@ export function Notes({ state, act, onOpenTodo, openRequest }: {
               <button onClick={() => { setGraph(false); void openMemory(); }}>{memoryOpen ? "关闭记忆" : "记忆"}</button>
               <button onClick={toggleSplit}>{split ? "取消分屏" : "分屏"}</button>
               <div className="row-menu-label">导出</div>
+              <button onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: "knowledge" }))}>打开资料库…</button>
               <button onClick={() => void exportMarkdown()} disabled={busy || pages.length === 0}>导出 Markdown…</button>
               <button onClick={() => void exportPdf()} disabled={!activeDoc}>导出当前页 PDF…</button>
             </RowMenu>

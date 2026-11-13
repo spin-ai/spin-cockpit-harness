@@ -358,7 +358,7 @@ export default function App() {
       { id: "view-stats", label: "统计", group: "导航", run: () => setView("stats") },
       { id: "view-hosts", label: "主机", group: "导航", run: () => setView("hosts") },
       { id: "view-git", label: "Git / 源码管理", group: "导航", run: () => setView("git") },
-      { id: "view-knowledge", label: "知识（资料 / 引用问答）", group: "导航", run: () => setView("knowledge") },
+      { id: "view-knowledge", label: "资料（PDF / Office 引用问答）", group: "导航", run: () => setView("knowledge") },
       { id: "view-memory", label: "记忆（四层 / Dream）", group: "导航", run: () => setView("memory") },
       { id: "view-persona", label: "人像（画像 / 决策辅助）", group: "导航", run: () => setView("persona") },
       { id: "quick-capture", label: "快速记录到知识库", hint: "⌘⇧K", group: "任务", run: () => void act("openQuickCapture") },
@@ -555,7 +555,7 @@ export default function App() {
         {view === "settings" && <div className="wide settings-wide"><Settings state={state} act={act} notify={notify} /></div>}
         {view === "guide" && <div className="wide guide-wiki-wide"><Guide pageId={guidePage} /></div>}
         {view === "notes" && <div className="wide"><Notes state={state} act={act} onOpenTodo={selectTodo} openRequest={notesOpenReq} /></div>}
-        {view === "knowledge" && <div className="wide"><Knowledge act={act} onOpenPage={() => setView("notes")} /></div>}
+        {view === "knowledge" && <div className="wide"><Knowledge act={act} onOpenWiki={() => setView("notes")} onOpenPage={(id) => { setView("notes"); window.setTimeout(() => window.dispatchEvent(new CustomEvent("harness:open-wiki-page", { detail: id })), 90); }} /></div>}
         {view === "memory" && <div className="wide"><Memory act={act} /></div>}
         {view === "persona" && <div className="wide"><Persona act={act} /></div>}
       </div>

@@ -42,7 +42,12 @@ function draftOf(engine: Engine | null): Draft {
 }
 
 /** 知识（资料）：导入 PDF / Office / 网页，页级引用问答，和页面共用一次搜索 */
-export function Knowledge({ act, onOpenPage }: { act: Act; onOpenPage?: (id: string) => void }) {
+export function Knowledge({ act, onOpenPage, onOpenWiki }: {
+  act: Act;
+  /** 命中页面：带着页面 id 切到「知识库」 */
+  onOpenPage?: (id: string) => void;
+  onOpenWiki?: () => void;
+}) {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [hits, setHits] = useState<Hit[]>([]);
   const [pages, setPages] = useState<WikiHit[]>([]);
@@ -226,11 +231,12 @@ export function Knowledge({ act, onOpenPage }: { act: Act; onOpenPage?: (id: str
   return (
     <div className="notes-page kv-page">
       <PageHeader
-        kicker="KNOWLEDGE"
-        title="知识"
-        subtitle={<div className="notes-stats"><span><b>{docs.length}</b> 资料</span><span><b>{docs.filter((d) => d.status === "ready").length}</b> 已索引</span><span><b>{engines.filter((e) => e.available).length}</b> 引擎可用</span></div>}
+        kicker="MATERIALS"
+        title="资料"
+        subtitle={<div className="notes-stats"><span><b>{docs.length}</b> 资料</span><span><b>{docs.filter((d) => d.status === "ready").length}</b> 已索引</span><span><b>{engines.filter((e) => e.available).length}</b> 引擎可用</span><span className="kv-hint">原始材料只读；页面在「知识库」</span></div>}
         actions={<>
           <button className="btn primary" onClick={() => void ingest()} disabled={busy}>＋ 导入资料</button>
+          <button className="btn" onClick={onOpenWiki} title="整理后的页面在知识库">打开知识库</button>
           <button className="icon-btn" onClick={() => void load()} title="刷新">↻</button>
         </>}
       />
