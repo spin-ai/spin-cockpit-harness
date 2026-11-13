@@ -46,6 +46,12 @@ export function Memory({ act }: { act: Act }) {
   const [tab, setTab] = useState<"notes" | "dream">("notes");
   const [openInjectId, setOpenInjectId] = useState<string>("");
   const [srcFilter, setSrcFilter] = useState("");
+  const [archived, setArchived] = useState<Entry[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
+  const [dreamCfg, setDreamCfg] = useState<{ enabled: boolean; maxSuggestions: number }>({ enabled: true, maxSuggestions: 40 });
+  const [budgetDraft, setBudgetDraft] = useState<string>("");
+  const [entryQuery, setEntryQuery] = useState("");
+  const [entryHits, setEntryHits] = useState<Entry[]>([]);
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<Hit[]>([]);
   const [draft, setDraft] = useState("");
@@ -67,6 +73,10 @@ export function Memory({ act }: { act: Act }) {
         act("memoryInject", { maxChars: 12000 }),
       ]);
       setOverview(ov); setEntries(list || []); setNotes(ns || []); setSugs(ss || []); setInject(inj);
+      if (!budgetDraft) setBudgetDraft(String(inj?.budget || 12000));
+      const [arc, cfg] = await Promise.all([act("memoryEntryArchived", { limit: 100 }), act("memoryDreamStatus")]);
+      setArchived(arc || []);
+      if (cfg) setDreamCfg({ enabled: Boolean(cfg.enabled), maxSuggestions: Number(cfg.maxSuggestions) || 40 });
     } catch (err) { fail(err); }
   }, [act, layer]);
 
@@ -144,6 +154,40 @@ export function Memory({ act }: { act: Act }) {
 
   const shownNotes = srcFilter ? notes.filter((n) => n.sourceKind === srcFilter) : notes;
   const shownEntries = srcFilter ? entries.filter((e) => (e.sourceRefs || []).some((r) => String(r).startsWith(srcFilter))) : entries;
+  const restore = async (entry: Entry) => {
+    try { await act("memoryEntryRestore", { id: entry.id }); setNotice("已恢复"); await load(); } catch (err) { fail(err); }
+  };
+  const promoteNote = async (id: string) => {
+    try {
+      const res = await act("memoryPromoteNote", { id, layer: "L4" });
+      setNotice(`已晋升为结论条目：${res?.entry?.title || ""}`);
+      await load();
+    } catch (err) { fail(err); }
+  };
+  const saveBudget = async () => {
+    const n = Number(budgetDraft) || 12000;
+    try { await act("memorySetInjectBudget", { maxChars: n }); setNotice(`注入预算改为 ${n} 字符`); await load(); } catch (err) { fail(err); }
+  };
+  const saveDreamCfg = async (patch: Partial<{ enabled: boolean; maxSuggestions: number }>) => {
+    try {
+      const next = await act("memoryDreamConfig", { patch: { ...dreamCfg, ...patch } });
+      if (next) setDreamCfg({ enabled: Boolean(next.enabled), maxSuggestions: Number(next.maxSuggestions) || 40 });
+      setNotice(`Dream 已${next?.enabled ? "开启" : "关闭"} · 单次最多 ${next?.maxSuggestions} 条建议`);
+    } catch (err) { fail(err); }
+  };
+  const exportMemory = async () => {
+    try {
+      const res = await act("memoryExport");
+      await navigator.clipboard?.writeText(res?.markdown || "");
+      setNotice("已复制整份记忆 Markdown");
+    } catch (err) { fail(err); }
+  };
+  const searchEntries = async (value: string) => {
+    setEntryQuery(value);
+    if (!value.trim()) { setEntryHits([]); return; }
+    try { setEntryHits((await act("memoryEntrySearch", { query: value, limit: 30 })) || []); } catch { setEntryHits([]); }
+  };
+
   const budgetPct = inject ? Math.min(100, Math.round((inject.chars / Math.max(1, inject.budget)) * 100)) : 0;
   const included = useMemo(() => (inject?.items || []).filter((i) => i.included), [inject]);
   const cut = useMemo(() => (inject?.items || []).filter((i) => !i.included), [inject]);
@@ -206,6 +250,12 @@ export function Memory({ act }: { act: Act }) {
             <button className={`pr-layer slim ${tab === "dream" ? "on" : ""}`} onClick={() => setTab("dream")}>
               <span className="pr-layer-name">Dream 建议<em>{sugs.length}</em></span>
             </button>
+            <button className={`pr-layer slim ${showArchived ? "on" : ""}`} onClick={() => setShowArchived((v) => !v)}>
+              <span className="pr-layer-name">已过期 / 归档<em>{archived.length}</em></span>
+            </button>
+            <button className="pr-layer slim" onClick={() => void exportMemory()}>
+              <span className="pr-layer-name">导出记忆（Markdown）</span>
+            </button>
           </div>
         </aside>
 
@@ -237,6 +287,22 @@ export function Memory({ act }: { act: Act }) {
             {shownEntries.length === 0 && (
               <EmptyState compact mark="◍" title={`「${layerMeta.name}」还是空的`} desc={layer === "L4" ? "接受 Dream 的「晋升」建议会写到这里，也可以手动添加。" : "条目只由 Dream 建议或人工写入。"} />
             )}
+            {showArchived && (
+              <div className="pr-block">
+                <div className="pr-block-head">已过期 / 归档<em className="tiny faint">{archived.length}</em></div>
+                {archived.length === 0 && <p className="notes-meta-empty">没有归档条目。</p>}
+                {archived.map((e) => (
+                  <div key={e.id} className="pr-entry">
+                    <div className="pr-entry-head">
+                      <h3>{e.title}</h3>
+                      <button className="btn tiny-btn" onClick={() => void restore(e)}>恢复</button>
+                    </div>
+                    <div className="pr-entry-meta"><span className="kv-type">{e.layer}</span><span className="time">更新 {timeAgo(e.updatedAt)}</span></div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {shownEntries.map((e) => (
               <div className="pr-entry" key={e.id}>
                 <div className="pr-entry-head">
@@ -286,6 +352,24 @@ export function Memory({ act }: { act: Act }) {
               </span>
             </div>
 
+            <div className="pr-dreamcfg">
+              <label className="tiny faint">
+                <input type="checkbox" checked={dreamCfg.enabled} onChange={(e) => void saveDreamCfg({ enabled: e.target.checked })} /> 启用 Dream
+              </label>
+              <label className="tiny faint">
+                单次上限
+                <input
+                  className="kv-input pr-cfg-num"
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={dreamCfg.maxSuggestions}
+                  onChange={(e) => setDreamCfg({ ...dreamCfg, maxSuggestions: Number(e.target.value) || 1 })}
+                  onBlur={(e) => void saveDreamCfg({ maxSuggestions: Number(e.target.value) || 40 })}
+                />
+              </label>
+            </div>
+
             {tab === "notes" && (
               <>
                 {shownNotes.length === 0 && <p className="notes-meta-empty">队列已清空。下次运行 Dream 或导入后才会再出现。</p>}
@@ -297,6 +381,7 @@ export function Memory({ act }: { act: Act }) {
                       <span className="src">{n.sourceRef || "无来源"} · {timeAgo(n.createdAt)}</span>
                       <span className="row gap6">
                         <button className="btn tiny-btn" onClick={() => void resolveNote(n.id, "stale")}>拒绝</button>
+                        <button className="btn tiny-btn" onClick={() => void promoteNote(n.id)} title="晋升为结论条目">晋升</button>
                         <button className="btn tiny-btn ok" onClick={() => void resolveNote(n.id, "verified")}>验证</button>
                       </span>
                     </div>
@@ -342,6 +427,19 @@ export function Memory({ act }: { act: Act }) {
             <div className="pr-budget">
               <div className="pr-budget-bar"><i style={{ width: `${budgetPct}%` }} /></div>
               <span className="tiny faint">{inject?.chars || 0} / {inject?.budget || 12000} 字符 · 入选 {included.length} 条{cut.length ? ` · 被裁 ${cut.length} 条` : ""}</span>
+              <span className="pr-budget-edit">
+                <input
+                  className="kv-input pr-cfg-num"
+                  type="number"
+                  min={800}
+                  step={500}
+                  value={budgetDraft}
+                  onChange={(e) => setBudgetDraft(e.target.value)}
+                  onBlur={() => void saveBudget()}
+                  title="注入预算（字符）"
+                />
+                <span className="tiny faint">字符</span>
+              </span>
             </div>
             {[...included, ...cut].slice(0, 10).map((it) => (
               <div key={it.id} className={`pr-inj ${it.included ? "" : "cut"}`}>
@@ -355,6 +453,18 @@ export function Memory({ act }: { act: Act }) {
             ))}
             {!(inject?.items || []).length && <p className="notes-meta-empty">还没有可注入的条目。</p>}
             <p className="notes-meta-empty">点任意一条看入选 / 被裁原因。预算不足时按「结论 → 项目 → 事实」做减法。</p>
+          </div>
+
+          <div className="pr-block">
+            <div className="pr-block-head">搜条目</div>
+            <input className="notes-search" value={entryQuery} placeholder="搜记忆条目标题 / 正文" onChange={(e) => void searchEntries(e.target.value)} />
+            {entryHits.slice(0, 6).map((e) => (
+              <button key={e.id} className="pr-hit" onClick={() => { setLayer(e.layer); setNotice(`已切到「${LAYERS.find((l) => l.id === e.layer)?.name}」`); }}>
+                <span className="kv-type">{e.layer}</span>
+                <span className="pr-hit-main"><b className="ellipsis">{e.title}</b><p>{e.body.slice(0, 90)}</p></span>
+              </button>
+            ))}
+            {entryQuery && entryHits.length === 0 && <p className="notes-meta-empty">没有匹配条目。</p>}
           </div>
 
           <div className="pr-block">

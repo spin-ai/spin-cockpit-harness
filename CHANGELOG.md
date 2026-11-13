@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### Changed
+- **主库换引擎**：`harness.db` 从 `sql.js`（WASM，每次 persist 整库 `export()` + 写盘）换成内置 `node:sqlite` + WAL；写入走事务与 prepared statement 缓存，`undefined` / `boolean` 参数统一归一化。4720 行的一份库，落盘 p50 **26.8ms → 7.3ms**（`npm run db:bench`）
+- **落盘不再可能杀主进程**：`persist()` 定时器内写失败会 rollback + 记日志，下一次 persist 重试；退出时 `flush()` 会把 WAL 合并回主文件再 `close()`，`导出数据库备份` 仍然是单文件
+- `sql.js` 从 `dependencies` 移到 `devDependencies`（只给基准脚本用），打包裁剪规则与 `asarUnpack` 的 wasm 条目一并移除
+- 新增 `npm run db:selftest`（往返 / 参数归一化 / WAL 合并 / 单文件备份 5 项）与 `npm run db:bench`（sql.js vs node:sqlite 落盘对比）
+
+### Added
+- **记忆工具补齐**：条目搜索 / 降级（修正方向 L4→L3→L2→L1）/ 过期-恢复 / 来源查看 / note 晋升 / 批量验证 / 注入预算可调（持久化）/ Dream 可关闭且限制单次建议数 / 整库导出 Markdown；MCP 新增 `memory_entry_write`、`memory_promote_note`
+- **人物（原「人像」）改成人物建模页**：左栏人物列表常驻、中间是唯一人设卡、右栏是复核队列 / 变化与矛盾 / 注入预览 / 决策辅助；主 CTA 从「导入聊天记录」改成「确认待确认」，导入收进次级入口
+- **人物字段扩到五组**：新增处事方式（`decision` `conflict` `stress` `commitment` `communication`）与说话风格（`style` `voice`）——旧字段全是陈述性事实，回答不了「他会怎么反应 / 怎么说」；旧库不用迁移
+- **人物卡 / 注入 / 漂移**：新增 `personaPeople` `personaCard` `personaInject` `personaDrift` 四个动作；卡片每节带 quote 证据与置信级别，敏感观察不进卡也不进注入，注入按预算逐条裁剪
+- 左栏导航与文案统一用「人物」，避免和头像 / 人像摄影混淆
+
 ### Added
 - **微信 key 获取脚本**：`scripts/wechat-key-macos.sh` 串起「Frida Gadget + 调试副本」路线（clone → sip.prepare → keys.hunt → decrypt），`--dry-run` 先看命令、`--yes` 才执行；`docs/DATASET-wechat.md` 写清 hardened runtime/SIP 为什么挡住 lldb、以及三条路的取舍
 

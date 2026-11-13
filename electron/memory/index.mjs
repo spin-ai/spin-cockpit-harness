@@ -61,6 +61,10 @@ export function createMemory({ dir }) {
   const one = (sql, params = []) => db.prepare(sql).get(...params);
   const run = (sql, params = []) => db.prepare(sql).run(...params);
 
+  const metaGet = (k) => { try { return J(one("SELECT v FROM meta WHERE k=?", [k])?.v, null); } catch { return null; } };
+  const metaSet = (k, v) => run("INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", [k, JSON.stringify(v)]);
+  const DREAM = () => ({ enabled: true, maxSuggestions: 40, mergeWindowDays: 0, ...(metaGet("dream") || {}) });
+
   const noteRow = (r) => ({
     id: r.id, body: r.body, sourceKind: r.source_kind, sourceRef: r.source_ref,
     status: r.status, tags: J(r.tags, []), createdAt: r.created_at, updatedAt: r.updated_at,
@@ -123,6 +127,69 @@ export function createMemory({ dir }) {
     },
     entryArchive({ id } = {}) { run("UPDATE entries SET status='archived', updated_at=? WHERE id=?", [Date.now(), id]); return true; },
 
+    /** 回滚：标为过期的条目可以恢复 */
+    entryRestore({ id } = {}) {
+      run("UPDATE entries SET status='active', updated_at=? WHERE id=?", [Date.now(), id]);
+      return entryRow(one("SELECT * FROM entries WHERE id=?", [id]));
+    },
+    /** 已归档 / 已过期条目（可恢复），供「其它」视图 */
+    entryArchived({ limit = 100 } = {}) {
+      return rows("SELECT * FROM entries WHERE status='archived' ORDER BY updated_at DESC LIMIT ?", [limit]).map(entryRow);
+    },
+    /** 搜条目（标题 + 正文），记忆页内检索用 */
+    entrySearch({ query, limit = 30 } = {}) {
+      const q = String(query || "").trim();
+      if (!q) return [];
+      return rows("SELECT * FROM entries WHERE status='active' AND (title LIKE ? OR body LIKE ?) ORDER BY updated_at DESC LIMIT ?", [`%${q}%`, `%${q}%`, limit]).map(entryRow);
+    },
+    /** 晋升高置信 note：写 L4 结论条目，并把 note 标记为已验证（可追溯到 note id） */
+    promoteNote({ id, layer = "L4" } = {}) {
+      const note = one("SELECT * FROM notes WHERE id=?", [id]);
+      if (!note) throw new Error("观察不存在");
+      if (note.status === "rejected") throw new Error("已拒绝的观察不能晋升");
+      const entry = this.entryUpsert({
+        layer,
+        title: String(note.body).replace(/\s+/g, " ").slice(0, 60),
+        body: String(note.body).slice(0, 800),
+        sources: [note.sourceRef || note.id],
+      });
+      run("UPDATE notes SET status='verified', updated_at=? WHERE id=?", [Date.now(), id]);
+      return { entry, note: noteRow(one("SELECT * FROM notes WHERE id=?", [id])) };
+    },
+    /** Dream 配置：可关闭、限制建议条数 */
+    dreamConfig({ patch } = {}) {
+      const next = { ...DREAM(), ...(patch || {}) };
+      metaSet("dream", next);
+      return next;
+    },
+    setInjectBudget({ maxChars } = {}) {
+      const n = Math.max(800, Math.min(60000, Number(maxChars) || 12000));
+      metaSet("injectBudget", n);
+      return n;
+    },
+    currentInjectBudget() { return Number(metaGet("injectBudget")) || 12000; },
+    /** 导出全部记忆（Markdown），用于备份 / 迁移 */
+    exportMarkdown() {
+      const lines = [`# 记忆导出 ${new Date().toISOString()}`, ""];
+      for (const layer of LAYERS) {
+        const list = rows("SELECT * FROM entries WHERE layer=? AND status='active' ORDER BY updated_at DESC", [layer]).map(entryRow);
+        if (!list.length) continue;
+        lines.push(`## ${layer}`, "");
+        for (const e of list) {
+          lines.push(`### ${e.title}`);
+          if (e.body) lines.push(e.body);
+          if (e.sourceRefs?.length) lines.push(`\n来源：${e.sourceRefs.join(" / ")}`);
+          lines.push("");
+        }
+      }
+      const verifiedNotes = rows("SELECT * FROM notes WHERE status='verified' ORDER BY updated_at DESC LIMIT 200").map(noteRow);
+      if (verifiedNotes.length) {
+        lines.push("## 已验证观察", "");
+        for (const n of verifiedNotes) lines.push(`- ${n.body}${n.sourceRef ? `（${n.sourceRef}）` : ""}`);
+      }
+      return lines.join("\n");
+    },
+
     /** 条目来源：sources 里保存的 id/链接，原样返回给 UI 展示 */
     entrySources({ id } = {}) {
       const row = one("SELECT * FROM entries WHERE id=?", [id]);
@@ -133,14 +200,16 @@ export function createMemory({ dir }) {
       const row = one("SELECT * FROM entries WHERE id=?", [id]);
       if (!row) throw new Error("条目不存在");
       const idx = LAYERS.indexOf(row.layer);
-      const next = LAYERS[Math.min(LAYERS.length - 1, idx + 1)];
+      // LAYERS = [L1, L2, L3, L4]：降级是往「更原始」走，索引减一
+      const next = LAYERS[Math.max(0, idx - 1)];
       run("UPDATE entries SET layer=?, updated_at=? WHERE id=?", [next, Date.now(), id]);
       return entryRow(one("SELECT * FROM entries WHERE id=?", [id]));
     },
 
     // ── 注入：L4 只放目录与结论，超预算做减法 ─────────────────────
-    inject({ maxChars = 12000 } = {}) {
-      const budget = Math.max(800, Number(maxChars) || 12000);
+    inject({ maxChars } = {}) {
+      const stored = Number(metaGet("injectBudget")) || 12000;
+      const budget = Math.max(800, Number(maxChars) || stored);
       const l4 = rows("SELECT * FROM entries WHERE layer='L4' AND status='active' ORDER BY updated_at DESC").map(entryRow);
       const others = rows("SELECT * FROM entries WHERE layer!='L4' AND status='active' ORDER BY layer, updated_at DESC").map(entryRow);
       const head = "## 记忆（L4 目录 / 结论）";
@@ -174,9 +243,12 @@ export function createMemory({ dir }) {
 
     // ── Dream：五种动作，只产建议 ─────────────────────────────────
     dreamScan({ pages = [], sources = [], noteStats = null } = {}) {
+      const cfg = DREAM();
+      if (!cfg.enabled) return [];
       const rejected = new Set(rows("SELECT sig FROM rejects").map((r) => r.sig));
       const knownSigs = new Set(rows("SELECT sig FROM suggestions WHERE status IN ('pending','accepted')").map((r) => r.sig));
       const add = (action, title, detail, targetKind, targetId, sourcesArr = []) => {
+        if (created.length >= cfg.maxSuggestions) return null;
         const sig = `${action}:${targetKind}:${targetId}:${title}`;
         if (rejected.has(sig) || knownSigs.has(sig)) return null;
         const id = uid("s");

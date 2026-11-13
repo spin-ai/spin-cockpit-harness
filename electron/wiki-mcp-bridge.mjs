@@ -15,7 +15,9 @@ const tools = [
   { name: "memory_inject", description: "读取本次该注入的 L4 记忆（预算内，超了做减法）。", inputSchema: { type: "object", properties: { max_chars: { type: "number" } } } },
   { name: "memory_search", description: "只读检索历史会话 / 运行 / 事件（transcript），带时间、run、会话 id。", inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] } },
   { name: "memory_note_write", description: "记录一条未验证观察（独立对象，不进页面审核流）。必须给来源。", inputSchema: { type: "object", properties: { body: { type: "string" }, source_kind: { type: "string" }, source_ref: { type: "string" } }, required: ["body"] } },
-  { name: "persona_lookup", description: "查人像画像（本人 / 他人 / 关系），返回带来源的结论；没有依据返回 found=false。", inputSchema: { type: "object", properties: { question: { type: "string" } }, required: ["question"] } },
+  { name: "memory_entry_write", description: "写一条记忆条目（L4 结论 / L3 项目 / L2 事实 / L1 原始）。带 sources 便于追溯。", inputSchema: { type: "object", properties: { layer: { type: "string" }, title: { type: "string" }, body: { type: "string" }, sources: { type: "array", items: { type: "string" } } }, required: ["title"] } },
+  { name: "memory_promote_note", description: "把已验证观察晋升为记忆条目（note → 条目，可追溯到 note id）。", inputSchema: { type: "object", properties: { id: { type: "string" }, layer: { type: "string" } }, required: ["id"] } },
+  { name: "persona_lookup", description: "查人物画像（本人 / 他人 / 关系），返回带来源的结论；没有依据返回 found=false。", inputSchema: { type: "object", properties: { question: { type: "string" } }, required: ["question"] } },
   { name: "knowledge_search", description: "检索知识库资料（PDF/Office/网页等），返回页/段级命中。", inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] } },
   { name: "knowledge_ask", description: "只基于知识库资料回答，带引用；没有依据明确说材料里没有。", inputSchema: { type: "object", properties: { question: { type: "string" } }, required: ["question"] } },
 ];
