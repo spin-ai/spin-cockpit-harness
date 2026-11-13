@@ -23,7 +23,7 @@
     "bundle:dsh": "node scripts/bundle-dsh.mjs",
     "bundle:dsh:optional": "node scripts/bundle-dsh.mjs --optional",
     "smoke:dsh": "node scripts/smoke-dsh.mjs",
-    "postinstall": "electron-builder install-app-deps",
+    "postinstall": "electron-builder install-app-deps && node scripts/fix-pty-perms.mjs",
     "typecheck": "tsc --noEmit",
     "verify:mission": "node scripts/verify-mission.mjs",
     "verify:plugins": "node scripts/verify-plugins.mjs",
@@ -39,7 +39,8 @@
     "verify:wade": "node scripts/verify-wade.mjs",
     "knowledge:selftest": "ELECTRON_RUN_AS_NODE=1 electron scripts/knowledge-selftest.mjs",
     "knowledge:selftest:ark": "ELECTRON_RUN_AS_NODE=1 electron scripts/knowledge-selftest.mjs --ark",
-    "knowledge:engines:selftest": "node scripts/knowledge-engines-selftest.mjs"
+    "knowledge:engines:selftest": "node scripts/knowledge-engines-selftest.mjs",
+    "verify:pty": "node scripts/verify-pty.mjs"
   },
   "dependencies": {
     "adm-zip": "^0.6.1",
@@ -177,7 +178,8 @@
     "electronLanguages": [
       "en",
       "zh_CN"
-    ]
+    ],
+    "afterPack": "scripts/after-pack.cjs"
   },
   "description": "Cockpit Harness — a local-first multi-agent cockpit: Chat → tasks, terminal panes, agent runs, review and confirmation.",
   "license": "MIT",

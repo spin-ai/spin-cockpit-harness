@@ -128,6 +128,22 @@ export const TESTS = [
     },
   },
   {
+    id: "TERM-01",
+    group: "TERMINAL",
+    title: "创建 pty 终端：spawn-helper 可执行（防 posix_spawnp failed）",
+    async fn(ctx) {
+      const res = await ctx.ev(`(async()=>{
+        try {
+          const t = await window.harness.createTerminal("", {});
+          await new Promise((r)=>setTimeout(r,400));
+          await window.harness.closeTerminal(t.id).catch(()=>{});
+          return { ok: true, id: t?.id || "" };
+        } catch (e) { return { ok: false, error: String(e?.message || e) }; }
+      })()`);
+      assert(res?.ok, `终端创建失败：${res?.error || "unknown"}（多为 node-pty spawn-helper 缺少 +x；运行 node scripts/fix-pty-perms.mjs）`);
+    },
+  },
+  {
     id: "THEME-01",
     group: "THEME",
     title: "13 套主题：data-theme / data-mode / 终端配色",

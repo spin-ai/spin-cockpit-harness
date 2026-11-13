@@ -42,6 +42,7 @@
 - **`wiki.ask` 走模型**：有 Ark key 时用知识库页面作候选集生成带引用答案，失败自动回落到检索式
 
 ### Fixed
+- 修复：终端创建报 `posix_spawnp failed` —— `node-pty` 的 `spawn-helper` 丢失执行位（644）；新增 `scripts/fix-pty-perms.mjs`（postinstall + electron-builder afterPack 都会修）、`npm run verify:pty` 体检，并在 E2E 增加 TERM-01 用例防回归
 - 修复：`knowledgeIngestText` 传错字段（text→markdown）导致粘贴资料 0 chunk、搜不到
 - 修复：删除资料时页面标过期用 doc id 比 uri，永远不命中；改为按文档 uri/标题匹配
 - 修复：`wiki.ask` 模型回答没有 `[[页面]]` 时仍报 found=true，现按引用判定
