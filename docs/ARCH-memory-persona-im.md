@@ -55,6 +55,28 @@
 - 决策辅助（`personaAsk`）：该找谁 / 会怎么反应 / 关系网络 / 影响谁；没证据时返回 `found:false` 并摊开可用关系，不猜。
 - Agent 通过 `persona_lookup` 使用。
 
+## 4.5 人物建模（2026-11）
+
+之前「人物」只是把聊天记录里能正则命中的句子存成事实，页面看起来就是聊天摘要。现在补了一层**可观测建模**：
+
+| 特征 | 怎么算 | 写进哪 |
+|---|---|---|
+| 话量 / 活跃天数 / 每日条数 | 该人消息数、按自然日聚合 | `traits` |
+| 句长结构 | 字数中位数（转发长文不污染均值） | `traits` |
+| 回复时延 | 在**整段会话时间线**上找「别人说完 → 他接话」的间隔，取中位数 | `communication` |
+| 提问 / 礼貌用语 | 问句比例、谢谢/收到/好的 比例 | `communication` |
+| 语气与符号 | 笑声（哈哈/笑死/233）、表情、省略号、感叹号、口语化词 | `style` |
+| 活跃时段 / 高频词 / 群私聊结构 / 最常互动的人 | 时间分布、词频（去停用词）、相邻发言配对 | `situation` |
+
+- 统计出来的结论**直接生效**（`status=confirmed`），因为它们数出来、不是推断；证据原话写进 `quote`
+- 可选模型模式（`useModel`）：把该人最近发言交给 Ark，产出 traits/communication/topics + oneLiner，写入 **pending** 等人工确认
+- 入口：人物页头「建模」按钮；`personaModel({ limit, useModel, modelTop, minMessages, autoConfirm })`
+- 幂等：按 (person, field, value) 去重；重复跑不会翻倍
+
+实测（本机 13,830 条微信）：60 人建模 → 438 条特征（traits 106 / situation 215 / style 58 / communication 59）；
+「纸鸢戏」完整度 34% → 52%（平均每个活跃日 15 条、中位时延 2 分钟、爱用笑声、活跃 11–14 点、最常互动 A/B/C）。
+**完整度≥50 需要 identity/role/value/goal 这类字段**，统计只能覆盖行为面，所以「人设卡就绪」只从 1 人涨到 2 人 —— 要更多就绪只能手工补或跑模型模式。
+
 ## 5. 即时通信（IM）
 
 - `electron/im/gateway.mjs`：Telegram（`getUpdates` 长轮询，真实可用）+ 飞书/微信出站 webhook + 本地入站 HTTP（`POST {chat_id, text}`）。

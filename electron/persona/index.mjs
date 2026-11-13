@@ -1,5 +1,5 @@
 /**
- * 人像记忆：从聊天导出里抽「人 / 关系 / 偏好 / 约束 / 事件」，默认进待确认。
+ * 人物建模：从聊天导出里抽「人 / 关系 / 偏好 / 约束 / 事件 / 处事方式 / 说话风格」，默认进待确认。
  *
  * 独立库：`userData/persona/persona.db`（node:sqlite，可删可重建）。
  * 规则（对齐需求）：
@@ -12,7 +12,34 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-const FIELDS = ["identity", "preference", "value", "constraint", "goal", "situation", "event", "stance", "relation"];
+/**
+ * 字段分组：从「陈述性事实」扩到「性格 + 处事 + 说话风格」。
+ * 旧字段全部保留（已有库不用迁移），新字段只是多几类观察。
+ */
+export const FIELD_GROUPS = {
+  basic: ["identity", "role", "situation", "capability", "taboo"],
+  character: ["traits", "value", "goal"],
+  behavior: ["decision", "conflict", "stress", "commitment", "communication"],
+  voice: ["style", "voice"],
+  facts: ["preference", "constraint", "stance", "event", "relation"],
+};
+const FIELDS = [...new Set(Object.values(FIELD_GROUPS).flat())];
+/**
+ * 只有这些字段是「新说法取代旧说法」的：用于冲突检测与漂移。
+ * 处事/沟通类的多条观察是互补的面，不是矛盾（「不接受电话」+「偏好文字」并不冲突），
+ * 所以不做单值判定 —— 宁可漏，也不要给人贴错标签。
+ */
+const SINGLE_VALUED = ["identity", "role", "situation", "value", "goal"];
+/** 人设卡完整度只看这几组：事实类不计入，避免「聊得多 = 建模好」 */
+const CARD_FIELDS = [...FIELD_GROUPS.basic, ...FIELD_GROUPS.character, ...FIELD_GROUPS.behavior, ...FIELD_GROUPS.voice];
+
+const FIELD_LABEL = {
+  identity: "身份", role: "角色 / 职务", situation: "处境", capability: "擅长 / 短板", taboo: "雷区",
+  traits: "性格", value: "价值观", goal: "目标 / 动机",
+  decision: "决策依据", conflict: "冲突处理", stress: "压力反应", commitment: "承诺可靠性", communication: "沟通方式",
+  style: "说话习惯", voice: "语气样本",
+  preference: "偏好", constraint: "硬约束", stance: "立场", event: "事件", relation: "关系",
+};
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
@@ -43,6 +70,8 @@ CREATE INDEX IF NOT EXISTS obs_person ON observations(person_id, field);
 
 const uid = (p) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const J = (v, f) => { try { return v ? JSON.parse(v) : f; } catch { return f; } };
+/** 新字段的默认置信度：说话风格最弱（单条消息就能触发） */
+const BASE_CONFIDENCE = { style: 0.5, voice: 0.65, traits: 0.52, taboo: 0.55 };
 const hash = (text) => {
   let h = 5381;
   for (let i = 0; i < text.length; i += 1) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
@@ -115,7 +144,61 @@ function extractFacts(messages, { selfName = "" } = {}) {
     if (event) push(subject, "event", event[0], text, m.at);
     const stance = text.match(/(支持|反对|倾向|担心|不看好)([^，。！？;]{0,30})/);
     if (stance) push(subject, "stance", `${stance[1]}${stance[2] || ""}`.trim(), text, m.at);
+
+    // ── 基本信息：角色与能力只认带职称/明确自述的句子 ──
+    const role = text.match(/(?:我是|现在是|现任|负责的是?|带领?)([^，。！？;\s]{2,16}?(?:负责人|经理|总监|主管|VP|工程师|设计师|产品))[^，。！？;]?/);
+    if (role) push(subject, "role", role[1], text, m.at);
+    const cap = text.match(/(不擅长|擅长|不太懂|不懂|熟悉)([^，。！？;]{2,16})/);
+    if (cap) push(subject, "capability", `${cap[1]}${cap[2].trim()}`, text, m.at);
+
+    // ── 处事方式：只认明确的说法，单条消息不足以下结论（由 support 计数兜底）──
+    const decision = text.match(/(?:看|凭|靠)(数据|直觉|感觉|经验|指标|证据)/);
+    if (decision) push(subject, "decision", `依赖${decision[1]}`, text, m.at);
+    if (/(拍板|当场定|直接定|一句话的事)/.test(text)) push(subject, "decision", "拍板快", text, m.at);
+    if (/(等|要)(老板|领导|上级|上面|VP|老周)[^，。！？;]{0,8}(定|拍|批|签)/.test(text)) push(subject, "decision", "关键决定要上级拍板", text, m.at);
+    const conflict = text.match(/(不跟你争|不争这个|你定吧|你们定|都行|随便|这事我不掺和|先放着|听你的|我不同意|必须按|一起看看)/);
+    if (conflict) {
+      const map = {
+        不跟你争: "回避争执", 不争这个: "回避争执", 你定吧: "回避决策", 你们定: "回避决策", 都行: "回避决策",
+        随便: "回避决策", 这事我不掺和: "回避冲突", 先放着: "拖延处理", 听你的: "顺应对方",
+        我不同意: "直接表达反对", 必须按: "坚持己见", 一起看看: "倾向协作",
+      };
+      push(subject, "conflict", map[conflict[1]] || conflict[1], text, m.at);
+    }
+    const stress = text.match(/(这周先别找我|别找我|忙不过来|处理不完|做不完|焦头烂额)/);
+    if (stress) push(subject, "stress", "承压时会收窄沟通面", text, m.at);
+    const promise = text.match(/(答应你的|我记着)/);
+    if (promise) push(subject, "commitment", "答应了会做", text, m.at);
+    if (/(下个?迭代|排期|下周给|尽快给)/.test(text)) push(subject, "commitment", "承诺要落到排期才算数", text, m.at);
+    if (/(别给我打(?:电话|语音))/i.test(text)) push(subject, "communication", "不接受电话 / 语音", text, m.at);
+    if (/(发文字|文字说|看文字)/.test(text)) push(subject, "communication", "偏好文字", text, m.at);
+    if (/(开个会|开会)/.test(text)) push(subject, "communication", "常用会议沟通", text, m.at);
+    if (/(发邮件|走邮件)/.test(text)) push(subject, "communication", "偏好邮件", text, m.at);
+    const taboo = text.match(/(别跟我提|别问|别提|不想聊|不要问)/);
+    if (taboo) push(subject, "taboo", `不愿谈：${text.slice(text.indexOf(taboo[1]) + taboo[1].length, text.indexOf(taboo[1]) + taboo[1].length + 12).trim()}`, text, m.at);
+
+    // ── 说话风格：每条消息都能算一个标签，去重后就是口癖 ──
+    if (/结论先行|直接说结论|先说结论/.test(text)) push(subject, "style", "习惯结论先行", text, m.at);
+    if (/(?:^|[，。])(?:[一两三]是|[一两三]条|[一两三]点|首先)/.test(text)) push(subject, "style", "习惯分条编号", text, m.at);
+    if (/——/.test(text)) push(subject, "style", "用破折号断句", text, m.at);
+    if (/\p{Extended_Pictographic}/u.test(text)) push(subject, "style", "会用表情", text, m.at);
+    if (/(可能|也许|大概|应该是)/.test(text)) push(subject, "style", "说话留余地", text, m.at);
   }
+
+  // 语气样本：每人取 2 条较长、带人称或标点的原话，注入时用来「像他那样说」
+  const voice = new Map();
+  for (const m of messages) {
+    const text = String(m.text || "").trim();
+    if (text.length < 16 || text.length > 90) continue;
+    if (!/[，。！？,.]/.test(text)) continue;
+    const self = selfName && (m.speaker === selfName || m.speaker.includes(selfName));
+    const subject = self ? "__self__" : m.speaker;
+    const list = voice.get(subject) || [];
+    if (list.length >= 2) continue;
+    list.push({ speaker: subject, field: "voice", value: text.slice(0, 24), quote: text.slice(0, 240), at: m.at, sensitive: false });
+    voice.set(subject, list);
+  }
+  facts.push(...[...voice.values()].flat());
   return facts;
 }
 
@@ -150,9 +233,159 @@ export function createPersona({ dir }) {
     return personRow(one("SELECT * FROM people WHERE id=?", [id]));
   }
 
+  const nameOfId = (id) => {
+    if (id === "__self__") return personRow(one("SELECT * FROM people WHERE is_self=1 LIMIT 1") || {})?.name || "本人";
+    return personRow(one("SELECT * FROM people WHERE id=?", [id]) || {})?.name || id;
+  };
+  const levelOf = (n) => (n >= 4 ? "高" : n >= 2 ? "中" : n ? "低" : "无");
+
+  /**
+   * 人物卡：把已确认观察整理成「一句话 + 分节 + 每节证据」。
+   * UI 和注入共用同一份数据，避免页面上写一套、注入里另一套。
+   */
+  function cardOf(personId) {
+    const person = personRow(one("SELECT * FROM people WHERE id=?", [personId]));
+    if (!person) throw new Error("人物不存在");
+    const obs = rows(
+      "SELECT * FROM observations WHERE person_id=? AND status='confirmed' ORDER BY confidence DESC, COALESCE(valid_from, created_at) DESC",
+      [personId],
+    ).map(obsRow);
+    // 敏感项不进人设卡，也不进注入：只报数量，避免「默认不注入」变成一句空话
+    const sensitive = obs.filter((o) => o.sensitive).length;
+    const safe = obs.filter((o) => !o.sensitive);
+    const byField = {};
+    for (const o of safe) (byField[o.field] ||= []).push(o);
+    const support = (f) => (byField[f] || []).length;
+    const rowOf = (f) => ({
+      field: f, label: FIELD_LABEL[f] || f,
+      values: (byField[f] || []).map((o) => o.value),
+      support: support(f), level: levelOf(support(f)),
+      conflict: (byField[f] || []).find((o) => o.conflict)?.conflict || null,
+      evidence: (byField[f] || []).slice(0, 6).map((o) => ({
+        id: o.id, value: o.value, quote: o.quote, sourceKind: o.sourceKind,
+        sourceRef: o.sourceRef, at: o.validFrom || o.createdAt, confidence: o.confidence, conflict: o.conflict,
+      })),
+    });
+    const section = (id, title, fields) => ({ id, title, rows: fields.map(rowOf).filter((r) => r.support > 0) });
+    const sections = [
+      section("basic", "基本信息", FIELD_GROUPS.basic),
+      section("character", "性格与价值观", FIELD_GROUPS.character),
+      section("behavior", "处事方式", FIELD_GROUPS.behavior),
+      section("voice", "说话风格", FIELD_GROUPS.voice),
+      section("facts", "其他事实", FIELD_GROUPS.facts.filter((f) => f !== "relation")),
+    ].filter((s) => s.rows.length > 0);
+
+    const rels = rows("SELECT * FROM relations WHERE status='confirmed' AND (from_id=? OR to_id=?)", [person.id, person.id]);
+    const network = rels.map((r) => ({
+      id: r.id,
+      name: nameOfId(r.from_id === person.id ? r.to_id : r.from_id),
+      type: r.type || "",
+      strength: r.strength,
+      at: r.created_at,
+    }));
+
+    // 一句话概括：只用已确认的观察，不靠模型编
+    const pick = (f) => (byField[f] || [])[0]?.value || "";
+    const bits = [pick("traits"), pick("decision"), pick("conflict"), pick("communication"), pick("value"), pick("preference")].filter(Boolean);
+    const oneLiner = bits.length ? `${[...new Set(bits)].slice(0, 3).join("；")}。` : "";
+
+    const covered = CARD_FIELDS.filter((f) => support(f) > 0).length;
+    const completeness = Math.min(100, Math.round((covered / CARD_FIELDS.length) * 100) + Math.min(8, Math.floor(safe.length / 6)));
+    const pending = one("SELECT COUNT(*) n FROM observations WHERE person_id=? AND status='pending'", [person.id]).n;
+
+    return {
+      person, sections, network, oneLiner, completeness,
+      counts: { confirmed: safe.length, pending, sensitive, fields: covered, total: CARD_FIELDS.length },
+      empty: obs.length === 0,
+    };
+  }
+
   return {
     dir,
     fields: FIELDS,
+    fieldGroups: FIELD_GROUPS,
+
+    /** 左栏列表：带已确认 / 待确认计数与人设卡完整度 */
+    peopleList() {
+      return rows("SELECT * FROM people ORDER BY is_self DESC, updated_at DESC").map(personRow).map((p) => {
+        const covered = new Set(
+          rows("SELECT DISTINCT field FROM observations WHERE person_id=? AND status='confirmed'", [p.id])
+            .map((r) => r.field).filter((f) => CARD_FIELDS.includes(f)),
+        );
+        const confirmed = one("SELECT COUNT(*) n FROM observations WHERE person_id=? AND status='confirmed'", [p.id]).n;
+        const pending = one("SELECT COUNT(*) n FROM observations WHERE person_id=? AND status='pending'", [p.id]).n;
+        const lastAt = one("SELECT MAX(updated_at) t FROM observations WHERE person_id=?", [p.id]).t || p.updatedAt;
+        return {
+          ...p, confirmed, pending, lastAt,
+          completeness: Math.min(100, Math.round((covered.size / CARD_FIELDS.length) * 100) + Math.min(8, Math.floor(confirmed / 6))),
+        };
+      });
+    },
+
+    /** 人物卡：一句话 + 分节 + 每节证据 */
+    card({ personId } = {}) {
+      return cardOf(personId);
+    },
+
+    /** 注入预览：分节 + 预算裁剪；敏感项永不注入 */
+    inject({ personId, maxChars = 6000 } = {}) {
+      const card = cardOf(personId);
+      const budget = Math.max(400, Number(maxChars) || 6000);
+      const head = [`## ${card.person.name}${card.person.relation ? `（${card.person.relation}）` : ""}`];
+      if (card.oneLiner) head.push(`- 一句话：${card.oneLiner}`);
+      // 优先级：处事方式 > 性格 > 说话风格 > 基本信息 > 事实；敏感项永不进
+      const order = ["behavior", "character", "voice", "basic", "facts"];
+      const lines = [];
+      let dropped = 0;
+      const push = (text) => {
+        const next = [...head, ...lines, text].join("\n");
+        if (next.length > budget) { dropped += 1; return; }
+        lines.push(text);
+      };
+      for (const id of order) {
+        const sec = card.sections.find((s) => s.id === id);
+        if (!sec) continue;
+        push(`### ${sec.title}`);
+        for (const row of sec.rows) {
+          if (row.field === "voice") {
+            const sample = row.evidence[0]?.quote;
+            if (sample) push(`- 语气样本：「${sample.slice(0, 60)}」`);
+            continue;
+          }
+          if (row.field === "style") {
+            push(`- 说话习惯：${[...new Set(row.values)].slice(0, 4).join(" / ")}`);
+            continue;
+          }
+          const tail = row.support >= 4 ? "" : `（依据 ${row.support} 条${row.support < 2 ? "，置信低" : ""}）`;
+          const value = [...new Set(row.values)].slice(0, 2).join(" / ");
+          push(`- ${row.label}：${value}${tail}`);
+        }
+      }
+      for (const n of card.network.slice(0, 4)) push(`- 关系：${n.name}${n.type ? `（${n.type}）` : ""}`);
+      if (card.counts.sensitive) push(`- 禁区：${card.counts.sensitive} 条敏感事实，已排除`);
+      const markdown = [...head, ...lines].join("\n");
+      return { markdown, chars: markdown.length, budget, dropped };
+    },
+
+    /** 变化与矛盾：同字段值变化 + 冲突；给右栏「漂移」用 */
+    drift({ personId, limit = 8 } = {}) {
+      const obs = rows("SELECT * FROM observations WHERE person_id=? AND status='confirmed'", [personId]).map(obsRow);
+      const byField = {};
+      for (const o of obs) (byField[o.field] ||= []).push(o);
+      const out = [];
+      for (const [field, list] of Object.entries(byField)) {
+        if (!SINGLE_VALUED.includes(field)) continue;
+        const sorted = [...list].sort((a, b) => (a.validFrom || a.createdAt) - (b.validFrom || b.createdAt));
+        const from = sorted[0];
+        const to = sorted[sorted.length - 1];
+        if (sorted.length >= 2 && from.value !== to.value) {
+          out.push({ kind: "drift", field, label: FIELD_LABEL[field] || field, from: from.value, to: to.value, at: to.validFrom || to.createdAt });
+        }
+        const bad = [...sorted].reverse().find((o) => o.conflict);
+        if (bad) out.push({ kind: "conflict", field, label: FIELD_LABEL[field] || field, value: bad.value, note: bad.conflict, at: bad.updatedAt || bad.createdAt });
+      }
+      return out.sort((a, b) => b.at - a.at).slice(0, limit);
+    },
 
     /** 导入聊天导出 / 文档：去重、抽事实、全部进 pending */
     import({ text, format = "auto", kind = "chat", title = "chat export", selfName = "" } = {}) {
@@ -178,7 +411,7 @@ export function createPersona({ dir }) {
         if (exists) continue;
         run("INSERT INTO observations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
           uid("o"), person?.id || null, f.speaker === "__self__" ? "本人" : f.speaker, f.field, f.value,
-          f.at || null, null, 0.55, kind, `${id}:${messages.indexOf(messages.find((m) => m.text === f.quote))}`, f.quote,
+          f.at || null, null, BASE_CONFIDENCE[f.field] ?? 0.55, kind, `${id}:${messages.indexOf(messages.find((m) => m.text === f.quote))}`, f.quote,
           "pending", f.sensitive ? 1 : 0, null, Date.now(), Date.now(),
         ]);
         added += 1;
@@ -187,6 +420,22 @@ export function createPersona({ dir }) {
         }
       }
       return { deduped: false, importId: id, format: fmt, messages: messages.length, people: new Set(messages.map((m) => m.speaker)).size, added };
+    },
+
+    /** 建模写入用：按 (person, field, value) 去重，默认 pending */
+    addObservation({ personId, person, field, value, quote = "", sourceKind = "model", sourceRef = "", status = "pending", confidence = 0.7 } = {}) {
+      const text = String(value || "").trim();
+      if (!personId || !field || !text) return null;
+      const dup = one("SELECT id FROM observations WHERE person_id=? AND field=? AND value=?", [personId, field, text]);
+      if (dup) return null;
+      const id = uid("o");
+      const at = Date.now();
+      run("INSERT INTO observations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
+        id, personId, person || "", field, text, null, null, confidence,
+        sourceKind, sourceRef || null, String(quote || "").slice(0, 240),
+        status, 0, null, at, at,
+      ]);
+      return obsRow(one("SELECT * FROM observations WHERE id=?", [id]));
     },
 
     pending({ limit = 200 } = {}) {
@@ -203,7 +452,8 @@ export function createPersona({ dir }) {
     },
     /** 冲突检测：同人同字段不同值 → 标 conflict，不静默覆盖 */
     detectConflicts() {
-      const groups = rows("SELECT person_id, field, COUNT(DISTINCT value) n FROM observations WHERE status='confirmed' GROUP BY person_id, field HAVING n > 1");
+      const groups = rows("SELECT person_id, field, COUNT(DISTINCT value) n FROM observations WHERE status='confirmed' GROUP BY person_id, field HAVING n > 1")
+        .filter((g) => SINGLE_VALUED.includes(g.field));
       for (const g of groups) {
         const list = rows("SELECT * FROM observations WHERE person_id=? AND field=? AND status='confirmed' ORDER BY COALESCE(valid_from, created_at) DESC", [g.person_id, g.field]).map(obsRow);
         if (list.length < 2) continue;
@@ -289,9 +539,13 @@ export function createPersona({ dir }) {
       const wantImpact = /影响谁|影响到谁/.test(q);
 
       if (wantWho || wantReact) {
-        const related = person ? facts.filter((f) => f.personId === person.id && (f.field === "stance" || f.field === "preference" || f.field === "constraint")) : facts.filter((f) => f.field === "stance" && hit(f.value));
-        for (const f of related.slice(0, 6)) {
-          lines.push(`- ${f.person || nameOf(f.personId)} ${f.field === "stance" ? "的立场" : f.field === "preference" ? "的偏好" : "的约束"}：${f.value}`);
+        // 处置类字段正是「他会怎么反应」的依据，不能只读立场/偏好/约束
+        const reactFields = ["decision", "conflict", "stress", "commitment", "communication", "value", "traits", "stance", "preference", "constraint"];
+        const related = person
+          ? facts.filter((f) => f.personId === person.id && reactFields.includes(f.field))
+          : facts.filter((f) => (f.field === "stance" || f.field === "decision" || f.field === "conflict") && hit(f.value));
+        for (const f of related.slice(0, 8)) {
+          lines.push(`- ${f.person || nameOf(f.personId)} 的${FIELD_LABEL[f.field] || f.field}：${f.value}`);
           citations.push({ kind: "observation", id: f.id, quote: f.quote, source: f.sourceRef, at: f.validFrom || f.createdAt });
         }
       }
