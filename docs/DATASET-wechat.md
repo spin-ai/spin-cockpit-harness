@@ -28,6 +28,42 @@ macOS 上微信 4.x（xwechat）的库在：
 
 所以必须借助下面两种方式之一拿到 key 或导出文件。
 
+## key 到底怎么拿（三条路，按推荐顺序）
+
+### A1. Frida Gadget + 调试副本（SIP 保持开启，无需降级系统）★推荐
+
+原理：`task_for_pid` 对 hardened runtime 的应用会被 taskgated 拒绝（sudo 也不行），
+但**自己复制一份并 ad-hoc 重签**的副本不再受这个限制；在副本里注入 Frida Gadget，
+hook CommonCrypto 的 `CCCrypt`/`CCCryptorCreate`，就能拿到传给 SQLCipher 的 key。
+
+本仓库把它串成一条命令：
+
+```bash
+bash scripts/wechat-key-macos.sh --dry-run   # 先看会执行什么
+bash scripts/wechat-key-macos.sh --yes       # 真跑
+```
+
+它会：clone 开源工具 → `sip.prepare`（复制/注入/重签）→ `keys.hunt`（退出微信、启动调试副本、
+需重新扫码）→ `decrypt`（解出 `decrypted/`）→ 打印下一步导入命令。
+原 `/Applications/WeChat.app` 不会被修改；代价是微信要短暂退出并重新登录。
+
+### A2. 关 SIP + lldb（不推荐）
+
+```bash
+# 恢复模式里执行，然后重启；抓完再开回来
+csrutil disable
+sudo lldb -p "$(pgrep -x WeChat)" \
+  -o 'br set -n sqlite3_key' -o 'breakpoint command add -o "memory read $rdi" ' -o 'c'
+csrutil enable
+```
+风险高（系统安全降级、可能抓错参数），只在 A1 不可行时考虑。
+
+### A3. `key_info.db` 离线推导？——不行
+
+`LoginKeyInfoTable.key_info_data` 是 180 字节的加密封装（不是裸 key），
+解它需要的封装密钥同样来自运行时；公开工具（含 Windows 版）最终也都是走内存扫描。
+所以「只拷文件、不跑微信」拿不到 key。
+
 ## 方式 A：第三方工具解密（拿到 key 后直读）
 
 macOS 上可行的是「Frida Gadget + CommonCrypto 拦截」路线（会启动一个**调试副本**的微信，

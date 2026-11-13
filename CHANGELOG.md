@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- **微信 key 获取脚本**：`scripts/wechat-key-macos.sh` 串起「Frida Gadget + 调试副本」路线（clone → sip.prepare → keys.hunt → decrypt），`--dry-run` 先看命令、`--yes` 才执行；`docs/DATASET-wechat.md` 写清 hardened runtime/SIP 为什么挡住 lldb、以及三条路的取舍
 
 - **知识解析引擎注册与路由（K1）**：借鉴 WeKnora `EngineRegistration` / `NewReader`，新增 `electron/knowledge/engines/`（注册表、路由、独立超时、统一 `Page[]` 归一化）；接入自建 MinerU（V1 + legacy）、MinerU Cloud、自建 PaddleOCR-VL、PaddleOCR-VL Cloud，以及 `custom` / `extras` 自研 HTTP 引擎；知识页新增引擎状态、默认引擎、端点/密钥/超时配置；`npm run knowledge:engines:selftest`
 - Super Agent / Mission 模式：主管 Agent（`role=supervisor`）、Plan Card 人工审批、child Todo + Delegation + worker run、Mission 面板与收件箱
