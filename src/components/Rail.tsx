@@ -27,7 +27,6 @@ export function Rail({ view, onChange, notesEnabled = false, badges = {} }: { vi
     { id: "hosts", label: "主机" },
     { id: "git", label: "Git" },
     ...(notesEnabled ? [{ id: "notes" as View, label: "知识库" }] : []),
-    { id: "knowledge" as View, label: "资料" },
     { id: "memory" as View, label: "记忆" },
     { id: "persona" as View, label: "人像" },
   ];

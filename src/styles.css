@@ -3071,3 +3071,6 @@ button.kv-hit:hover{border-color:var(--border-strong)}
 .kv-engine-tag{font-size:10px;color:var(--brand);background:var(--brand-soft);border-radius:999px;padding:0 5px;margin-right:2px}
 .kv-extra-form{display:flex;flex-direction:column;gap:6px;padding:8px 0 2px}
 .kv-hint{color:var(--faint)}
+.notes-docs{flex:1;min-height:0;overflow:auto;padding:14px 16px 18px}
+.kv-embedded{display:flex;flex-direction:column;gap:12px}
+.kv-embedded .kv-grid{grid-template-columns:minmax(0,1fr) 260px;gap:14px;overflow:visible}
