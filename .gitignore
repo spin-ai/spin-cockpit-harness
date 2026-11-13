@@ -45,3 +45,6 @@ docs/REQ-multi-agent-workspace.html
 
 # 聊天数据集（私人数据，永不入库）
 datasets/
+
+# 本地工具运行时（微信 key/解密副本等，含敏感数据）
+.runtime/
