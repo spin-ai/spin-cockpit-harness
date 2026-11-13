@@ -19,7 +19,46 @@ macOS 上微信 4.x（xwechat）的库在：
 没有 key 读不出来，key 只有在微信进程内存里（或需要第三方工具从内存中提取）。所以本仓库的做法是：
 **先导出为 CSV / JSON / TXT，再规整成数据集**，导入链路本身已经打通并可验证。
 
-## 导出（任选一种，均为本地工具）
+## 本机实测结论（macOS 4.1.13）
+
+- 消息库是 SQLCipher 加密（文件头 `86 d3 29 05`），**没有 key 读不出来**
+- WeChat 是 **hardened runtime**（`flags=0x10000(runtime)`）+ 沙盒，SIP 已开启 →
+  **无法用 lldb 附加进程抓 key**；`key_info.db` 里的 `key_info_data` 也是加密封装
+- 微信自带只有「迁移/备份」：备份目录为空，迁移库只有任务元数据（无正文）
+
+所以必须借助下面两种方式之一拿到 key 或导出文件。
+
+## 方式 A：第三方工具解密（拿到 key 后直读）
+
+macOS 上可行的是「Frida Gadget + CommonCrypto 拦截」路线（会启动一个**调试副本**的微信，
+不改原 App；需要先退出当前微信）。例如开源项目 `wechat4-db-decrypt`：
+
+```bash
+# 只贴命令示意，请先自行阅读该项目的 README 与许可证
+uv run python -m wxexport.sip.prepare     # 生成可调试副本
+uv run python -m wxexport.keys.hunt       # 抓 key（会重启微信到调试副本）
+uv run python -m wxexport.decrypt         # 解密到 decrypted/
+```
+
+拿到 `decrypted/db_storage` 后（本仓库已支持直接读）：
+
+```bash
+npm run import:wechat -- --dir ~/Downloads/wechat4/decrypted/db_storage --self 我 --self-wxid wxid_xxx
+```
+
+脚本会自己解析 `session.db`（会话名）、`contact.db`（联系人备注）、
+`Name2Id`（发送人 id → wxid）、`Msg_<md5>` 表（`local_type=1` 文本、`49` 取 `<title>`），
+跳过图片/语音等压缩内容。
+
+## 方式 B：第三方导出成 CSV / JSON（不需要 key）
+
+部分工具（留痕 / WeChatMsg / 楼月）能直接导出 CSV/JSON/TXT，导出目录丢给脚本即可：
+
+```bash
+npm run import:wechat -- ~/Downloads/wechat-export --self 我
+```
+
+## 导出格式（任选一种，均为本地工具）
 
 | 方式 | 产物 | 说明 |
 |---|---|---|

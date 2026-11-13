@@ -13,7 +13,12 @@
  *
  * 用法：
  *   node scripts/import-wechat.mjs <导出目录或文件> [--out datasets/wechat] [--self 我] [--limit N] [--dry-run]
- *   node scripts/import-wechat.mjs --db message_0.db --key <hex> [--out datasets/wechat]
+ *   node scripts/import-wechat.mjs --dir <已解密的 db_storage 目录> [--self-wxid wxid_xxx] [--out datasets/wechat]
+ *   node scripts/import-wechat.mjs --dir ~/Downloads/wechat4/decrypted/db_storage --self 我 --self-wxid wxid_abc123
+
+说明：微信 4.x 的 message/*.db 是 SQLCipher 加密的，没有 key 读不出来；
+--dir 读的是「已解密」的库（node:sqlite 直接读，Msb_/Name2Id/contact 自动解析）；
+CSV/JSON/TXT/HTML 导出直接丢目录即可。 [--out datasets/wechat]
  *
  * 支持的输入：
  *   - MemoTrace / WeChatMsg 的 CSV（StrTalker, StrContent, CreateTime, IsSender, NickName, Remark…）
@@ -24,6 +29,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -160,6 +166,125 @@ function recordsFromHtml(text) {
   return recordsFromText(plain);
 }
 
+
+/**
+ * 读「已解密」的微信 4.x 库（node:sqlite，无需 sqlcipher）。
+ * 结构：message/message_*.db 里是 Msg_<md5(talker)> 表 + Name2Id；
+ * 字段：local_type / real_sender_id / create_time / message_content(或 compress_content)。
+ * 只取可读的文本类消息（1 文本，49 图文里的 <title>），其它类型跳过。
+ */
+function recordsFromDecryptedDir(dir) {
+  const { DatabaseSync } = nodeSqliteModule();
+  const files = [];
+  const walk = (base) => {
+    for (const name of fs.readdirSync(base)) {
+      const full = path.join(base, name);
+      const st = fs.statSync(full);
+      if (st.isDirectory()) walk(full);
+      else if (/\.db$/i.test(name) && !/-(wal|shm)$/i.test(name)) files.push(full);
+    }
+  };
+  walk(dir);
+
+  const out = [];
+  const sessions = new Map(); // username -> 会话展示名
+  const contacts = new Map(); // username -> 联系人展示名
+  // 先扫 session / contact 库拿展示名（读不到就退化成 username）
+  for (const file of files.filter((f) => /(session|contact)[^/]*\.db$/i.test(f))) {
+    const isContact = /contact/i.test(path.basename(file));
+    try {
+      const db = new DatabaseSync(file);
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name);
+      for (const t of tables) {
+        const cols = db.prepare(`PRAGMA table_info("${t}")`).all().map((c) => c.name);
+        const nameCol = cols.find((c) => /^(user_name|username|talker|str_talker|session_id)$/i.test(c))
+          || cols.find((c) => /user_name|username|talker|str_talker|session_id/i.test(c));
+        // 展示名：优先备注/昵称；注意排除 username 本身（name$ 会误匹配 user_name）
+        const dispCol = cols.find((c) => c !== nameCol && /^(remark|remark_name|nick_name|nickname|display_name|alias|name)$/i.test(c));
+        if (!nameCol) continue;
+        for (const row of db.prepare(`SELECT * FROM "${t}"`).all()) {
+          const key = String(row[nameCol] || "");
+          const label = String((dispCol && row[dispCol]) || key || "");
+          if (key && label) (isContact ? contacts : sessions).set(key, label);
+        }
+      }
+      db.close();
+    } catch { /* session 读不到就退化成表名 */ }
+  }
+
+  const md5Chat = new Map();
+  for (const [key, label] of sessions) {
+    md5Chat.set(crypto.createHash("md5").update(key).digest("hex"), label);
+  }
+
+  for (const file of files) {
+    if (/session[^/]*\.db$/i.test(file)) continue;
+    let db;
+    try { db = new DatabaseSync(file); } catch (err) { log(`跳过 ${path.basename(file)}：${String(err?.message || err).slice(0, 80)}`); continue; }
+    try {
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name);
+      // Name2Id：real_sender_id -> 用户名
+      const idMap = new Map();
+      for (const t of tables.filter((n) => /name2id/i.test(n))) {
+        const cols = db.prepare(`PRAGMA table_info("${t}")`).all().map((c) => c.name);
+        const idCol = cols.find((c) => /^id$|rowid|user_id/i.test(c));
+        const nameCol = cols.find((c) => /user_name|username|name/i.test(c));
+        if (!idCol || !nameCol) continue;
+        for (const row of db.prepare(`SELECT * FROM "${t}"`).all()) idMap.set(String(row[idCol]), String(row[nameCol] || ""));
+      }
+      for (const table of tables.filter((n) => /^Msg_/i.test(n))) {
+        const cols = db.prepare(`PRAGMA table_info("${table}")`).all().map((c) => c.name);
+        const typeCol = cols.find((c) => /local_type|type/i.test(c));
+        const senderCol = cols.find((c) => /real_sender_id|sender/i.test(c));
+        const timeCol = cols.find((c) => /create_time|createtime|time/i.test(c));
+        const textCol = cols.find((c) => /^(message_content|content|msg|str_content)$/i.test(c));
+        if (!timeCol || !textCol) continue;
+        const rows = db.prepare(`SELECT * FROM "${table}"`).all();
+        // 会话名：Msg_<md5(username)>，用 session 表里的 username 算 md5 对上
+        const suffix = table.replace(/^Msg_/i, "").toLowerCase();
+        const chat = md5Chat.get(suffix) || `会话_${suffix.slice(0, 8)}`;
+        for (const row of rows) {
+          const type = Number(row[typeCol] ?? 0);
+          let text = String(row[textCol] ?? "");
+          if (!text && row.compress_content) continue; // 压缩内容（图片/文件等）跳过
+          if (type === 49) {
+            const title = text.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
+            text = title ? `[链接/分享] ${title[1].trim()}` : "";
+          } else if (type !== 1 && type !== 10000 && type !== 3) {
+            // 其它类型（语音/视频/转账…）只在能读到文本时保留
+            if (!/[\u3400-\u9fff]|[a-zA-Z0-9]/.test(text)) continue;
+          }
+          if (!String(text).trim()) continue;
+          const senderId = idMap.get(String(row[senderCol] ?? "")) || "";
+          const selfWxid = flag("self-wxid") || "";
+          const isSelf = Boolean((selfWxid && senderId === selfWxid) || (!selfWxid && senderId && senderId === selfName));
+          const speakerName = isSelf
+            ? (selfName || contacts.get(senderId) || senderId || "我")
+            : (contacts.get(senderId) || senderId || "对方");
+          out.push({
+            chat,
+            at: toMs(row[timeCol]),
+            speaker: speakerName,
+            text: String(text).replace(/\u0000/g, "").trim(),
+            out: isSelf,
+          });
+        }
+      }
+    } catch { /* 单库失败不影响其它 */ }
+    finally { try { db.close(); } catch { /* ignore */ } }
+  }
+  return out;
+}
+
+/** Msg_ 表名是 md5(talker)：在 session.db 里没命中时，用 name2id 反查不到就留空 */
+function chatFromMd5Index() { return ""; }
+
+function nodeSqliteModule() {
+  const mod = process.getBuiltinModule ? process.getBuiltinModule("node:sqlite") : null;
+  if (!mod?.DatabaseSync) die("读已解密的库需要 Node 22+（内置 node:sqlite）");
+  return mod;
+}
+
 /** 加密库（SQLCipher）导出：需要本机有 sqlcipher 命令 */
 function recordsFromEncryptedDb(file, key) {
   let bin = "sqlcipher";
@@ -219,6 +344,14 @@ function safeName(name) {
 }
 
 function main() {
+  const decryptedDir = flag("dir");
+  if (decryptedDir) {
+    const dir = path.resolve(decryptedDir);
+    if (!fs.existsSync(dir)) die(`找不到目录：${dir}`);
+    const records = recordsFromDecryptedDir(dir);
+    if (!records.length) die("目录里没解析出消息（确认指向 db_storage 或含 message_*.db 的目录）");
+    return write(records, [dir]);
+  }
   if (dbPath) {
     if (!dbKey) die("加密库需要 --key <hex>（SQLCipher 的 raw key）");
     const records = recordsFromEncryptedDb(path.resolve(dbPath), dbKey);
