@@ -10,7 +10,16 @@ type Doc = {
   pages_total: number; status: string; indexed_at: number; error_code?: string | null; error_text?: string | null;
 };
 type Hit = { doc_id: string; title: string; page_no: number | null; heading: string | null; text: string; score?: number };
-type Cite = { index: number; title: string; page_no: number | null; locator: string };
+type Cite = {
+  ref: number;
+  doc_id: string;
+  chunk_id?: number;
+  page_no: number | null;
+  heading?: string | null;
+  quote?: string;
+  locator: string;
+  title?: string;
+};
 type WikiHit = { kind: string; id: string; title: string; snippet: string };
 type EngineConfig = Record<string, unknown> & {
   endpoint?: string; baseUrl?: string; apiKeySet?: boolean; tokenSet?: boolean; timeoutMs?: number;
@@ -57,6 +66,10 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
   const [ask, setAsk] = useState<{ answer: string; citations: Cite[]; found: boolean; degraded?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [preview, setPreview] = useState<{ doc: Doc; pages: { page_no: number; heading: string; text: string; warn: boolean }[]; chunks: number } | null>(null);
+  const [selectedCite, setSelectedCite] = useState<number | null>(null);
+  const [engineOpen, setEngineOpen] = useState(false);
   const [pasting, setPasting] = useState(false);
   const [pasteTitle, setPasteTitle] = useState("");
   const [pasteText, setPasteText] = useState("");
@@ -70,6 +83,35 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
   const [newEngine, setNewEngine] = useState({ name: "", endpoint: "", fileTypes: "pdf,docx" });
 
   const fail = (err: unknown) => setError(String((err as Error)?.message || err));
+
+  const docIds = () => (checked.size ? [...checked] : undefined);
+  const toggleDoc = (id: string) => setChecked((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const allChecked = docs.length > 0 && checked.size === docs.length;
+  const toggleAll = () => setChecked(allChecked ? new Set() : new Set(docs.map((d) => d.id)));
+
+  const openPreview = async (doc: Doc, page?: number) => {
+    try {
+      const res = await act("knowledgePreview", { id: doc.id });
+      if (!res) return;
+      setPreview({ doc: res.doc || doc, pages: res.pages || [], chunks: res.chunks || 0 });
+      if (page) {
+        window.setTimeout(() => {
+          document.querySelector(`#kv-page-${page}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+        }, 60);
+      }
+    } catch (err) { fail(err); }
+  };
+
+  const selectCitation = (c: Cite) => {
+    setSelectedCite(c.ref);
+    const doc = docs.find((d) => d.id === c.doc_id);
+    if (doc) void openPreview(doc, c.page_no || 1);
+    else setPreview((p) => p);
+  };
 
   const load = useCallback(async () => {
     try { setDocs((await act("knowledgeList", { limit: 200 })) || []); } catch (err) { fail(err); }
@@ -97,7 +139,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
     setQuery(value);
     if (!value.trim()) { setHits([]); setPages([]); return; }
     try {
-      const res = await act("knowledgeSearch", { query: value, limit: 12 });
+      const res = await act("knowledgeSearch", { query: value, limit: 12, docIds: docIds() });
       setHits(res?.hits || []);
       // 资料与页面同一次查询：页面走 wiki 搜索，结果标类型
       try {
@@ -108,10 +150,12 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
   };
 
   const runAsk = async () => {
-    if (!askQ.trim()) return;
-    setBusy(true); setAsk(null);
+    const question = askQ.trim();
+    if (!question) return;
+    setBusy(true); setAsk(null); setSelectedCite(null);
     try {
-      const res = await act("knowledgeAsk", { question: askQ.trim(), limit: 6 });
+      void runSearch(question);
+      const res = await act("knowledgeAsk", { question, limit: 6, docIds: docIds() });
       setAsk(res);
       if (res?.degraded === "no-key") setNotice("未配置 Ark key：只做了检索，不能生成回答");
     } catch (err) { fail(err); } finally { setBusy(false); }
@@ -243,17 +287,23 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
   const isExtra = Boolean(selected && !["simple", "builtin", "mineru", "mineru_cloud", "paddleocr_vl", "paddleocr_vl_cloud", "custom"].includes(selected.name));
 
   const body = (
-    <div className={embedded ? "kv-embedded" : "notes-page kv-page"}>
-      {!embedded && <PageHeader
-        kicker="MATERIALS"
-        title="资料"
-        subtitle={<div className="notes-stats"><span><b>{docs.length}</b> 资料</span><span><b>{docs.filter((d) => d.status === "ready").length}</b> 已索引</span><span><b>{engines.filter((e) => e.available).length}</b> 引擎可用</span></div>}
-        actions={<>
-          <button className="btn primary" onClick={() => void ingest()} disabled={busy}>＋ 导入资料</button>
-          <button className="btn" onClick={() => setPasting(true)} disabled={busy}>粘贴文本</button>
-          <button className="icon-btn" onClick={() => void load()} title="刷新">↻</button>
-        </>}
-      />}
+    <div className={embedded ? "kv-embedded pr-page" : "notes-page kv-page pr-page"}>
+      {!embedded && (
+        <PageHeader
+          kicker="MATERIALS"
+          title="资料"
+          subtitle={<div className="notes-stats">
+            <span><b>{docs.length}</b> 资料</span>
+            <span><b>{docs.filter((d) => d.status === "ready").length}</b> 已索引</span>
+            <span><b>{engines.filter((e) => e.available).length}</b> 引擎可用</span>
+          </div>}
+          actions={<>
+            <button className="btn primary" onClick={() => void ingest()} disabled={busy}>＋ 导入资料</button>
+            <button className="btn" onClick={() => setPasting(true)} disabled={busy}>粘贴文本</button>
+            <button className="icon-btn" onClick={() => void load()} title="刷新">↻</button>
+          </>}
+        />
+      )}
       {(error || notice) && (
         <div className={`notes-banner ${error ? "error" : ""}`}>
           <span className="ellipsis">{error || notice}</span>
@@ -271,217 +321,320 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
           </div>
         </div>
       )}
-      <div className="kv-grid">
-        <section className="kv-main">
-          <div className="notes-search-wrap">
-            <input
-              className="notes-search"
-              value={query}
-              placeholder="一条查询同时搜资料与页面"
-              onChange={(e) => void runSearch(e.target.value)}
-            />
+
+      <div className="pr-grid">
+        {/* 左：集合 + 资料（勾选决定检索范围） */}
+        <aside className="pr-col">
+          <div className="pr-block">
+            <div className="pr-block-head">集合<button className="icon-btn" onClick={() => void load()} title="刷新">↻</button></div>
+            <button className={`pr-coll ${checked.size === 0 ? "on" : ""}`} onClick={() => setChecked(new Set())}>
+              全部资料<em>{docs.length}</em>
+            </button>
+            {[...new Set(docs.map((d) => d.parser || "文本"))].slice(0, 4).map((kind) => {
+              const subset = docs.filter((d) => (d.parser || "文本") === kind);
+              const on = subset.length > 0 && subset.every((d) => checked.has(d.id));
+              return (
+                <button key={kind} className={`pr-coll ${on ? "on" : ""}`} onClick={() => setChecked(on ? new Set() : new Set(subset.map((d) => d.id)))}>
+                  {kind}<em>{subset.length}</em>
+                </button>
+              );
+            })}
           </div>
-          {ask && (
-            <div className="kv-answer">
-              <div className="kv-answer-head">
-                <b>{ask.found ? "基于资料的回答" : "材料里没有"}</b>
-                <span className="tiny faint">{ask.citations.length} 条引用{ask.degraded ? ` · ${ask.degraded}` : ""}</span>
+
+          <div className="pr-block">
+            <div className="pr-block-head">资料<button className="link tiny" onClick={toggleAll}>{allChecked ? "取消全选" : "全选"}</button></div>
+            <div className="pr-docs">
+              {docs.map((d) => (
+                <div key={d.id} className={`pr-doc ${preview?.doc.id === d.id ? "on" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={checked.has(d.id)}
+                    onChange={() => toggleDoc(d.id)}
+                    title="参与检索与引用"
+                  />
+                  <button className="pr-doc-main" onClick={() => void openPreview(d)} title={d.uri}>
+                    <b className="ellipsis">{d.title}</b>
+                    <span className="tiny faint">
+                      <span className="kv-engine-tag">{d.engine || d.parser || "builtin"}</span>
+                      {" · "}{d.pages_total || 1} 页 · {d.status}
+                    </span>
+                  </button>
+                  <RowMenu title="资料操作">
+                    <button onClick={() => void openPreview(d)}>查看解析预览</button>
+                    <button onClick={() => { setAskQ(`这份资料讲了什么？${d.title}`); void runAsk(); }}>就这份提问</button>
+                    <button onClick={() => void reparse(d)}>按当前默认重新解析</button>
+                    <button className="danger" onClick={() => void remove(d)}>删除</button>
+                  </RowMenu>
+                </div>
+              ))}
+              {docs.length === 0 && <p className="notes-meta-empty">还没有资料。导入 PDF / Word / Markdown / 网页。</p>}
+            </div>
+            <p className="notes-meta-empty">只有勾选的资料参与检索与引用；未勾选的仍可单独打开后提问。</p>
+          </div>
+        </aside>
+
+        {/* 中：唯一主面（提问 / 回答 / 解析预览 / 命中） */}
+        <section className="pr-main">
+          {preview ? (
+            <div className="pr-docview">
+              <div className="pr-docview-head">
+                <div>
+                  <h2>{preview.doc.title}</h2>
+                  <span className="tiny faint">
+                    {preview.doc.engine || preview.doc.parser} · {preview.doc.pages_total || preview.pages.length} 页 · {preview.doc.status} · {preview.chunks} 个片段
+                  </span>
+                </div>
+                <button className="link" onClick={() => setPreview(null)}>返回提问</button>
               </div>
-              <div className="kv-answer-body">{ask.answer}</div>
-              {ask.citations.length > 0 && (
-                <div className="kv-cites">
-                  {ask.citations.map((c) => <span key={`${c.index}-${c.title}`} className="kv-cite">[{c.index}] {c.title} · {c.locator || `p${c.page_no ?? 1}`}</span>)}
+              <div className="pr-pages">
+                {preview.pages.slice(0, 80).map((pg) => (
+                  <div key={pg.page_no} id={`kv-page-${pg.page_no}`} className={`pr-page ${pg.warn ? "warn" : ""}`}>
+                    <div className="pr-ph">p{pg.page_no}{pg.heading ? ` · ${pg.heading}` : ""}</div>
+                    <p>{pg.warn ? "该页只有图像，当前引擎未输出文本。可「按当前默认重新解析」或换 OCR 引擎。" : pg.text.slice(0, 900)}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="pr-ask">
+                <textarea
+                  className="pr-ask-input"
+                  rows={3}
+                  value={askQ}
+                  placeholder="问一个问题，只基于勾选的资料回答"
+                  onChange={(e) => setAskQ(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void runAsk(); } }}
+                />
+                <div className="pr-ask-row">
+                  <span className="tiny faint">只基于勾选的 {checked.size || docs.length} 份资料回答 · ⌘Enter 提问</span>
+                  <button className="link tiny" onClick={() => { setAskQ(""); setAsk(null); setHits([]); setPages([]); }}>清空</button>
+                  <button className="btn tiny-btn primary" onClick={() => void runAsk()} disabled={busy || !askQ.trim()}>{busy ? "检索中…" : "提问 ⌘Enter"}</button>
+                </div>
+              </div>
+
+              {ask && (
+                <div className="pr-answer">
+                  <div className="pr-answer-head">
+                    <b>{ask.found ? "基于资料的回答" : "材料里没有"}</b>
+                    <span className="tiny faint">{ask.citations.length} 条引用{ask.degraded ? ` · ${ask.degraded}` : ""}</span>
+                    <button className="link tiny" onClick={() => void navigator.clipboard?.writeText(ask.answer)}>复制</button>
+                  </div>
+                  <div className="pr-answer-body">{ask.answer.replace(/\[(\d+)\]/g, "")}</div>
+                  {ask.citations.length > 0 && (
+                    <div className="pr-cites-inline">
+                      {ask.citations.map((c) => (
+                        <button
+                          key={c.ref}
+                          className={`pr-cite ${selectedCite === c.ref ? "on" : ""}`}
+                          onClick={() => selectCitation(c)}
+                          title={`${c.title} · ${c.locator}`}
+                        >{c.ref}</button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="tiny faint">没有依据的部分会直接说「资料里没有」，不补全。</div>
                 </div>
               )}
-            </div>
-          )}
-          {!query && !ask && docs.length === 0 && (
-            <EmptyState mark="⌘" title="还没有资料" desc="导入 PDF / Word / Markdown / 网页，问答只基于这些材料，并给出页码出处。" action={<button className="btn primary" onClick={() => void ingest()} disabled={busy}>导入第一份资料</button>} />
-          )}
-          {(hits.length > 0 || pages.length > 0) && (
-            <div className="kv-hits">
-              {hits.map((h) => (
-                <div className="kv-hit" key={`${h.doc_id}-${h.page_no}-${h.text.slice(0, 12)}`}>
-                  <span className="kv-type">资料</span>
-                  <div>
-                    <b>{h.title}</b>
-                    <span className="kv-hit-loc">{h.heading ? `${h.heading} · ` : ""}p{h.page_no ?? 1}</span>
-                    <p>{h.text.slice(0, 220)}</p>
+
+              {(hits.length > 0 || pages.length > 0) && (
+                <div className="pr-block">
+                  <div className="pr-block-head">检索命中<span className="tiny faint">资料与页面同一次查询，结果标类型</span></div>
+                  <div className="pr-hits">
+                    {hits.map((h) => (
+                      <button
+                        key={`${h.doc_id}-${h.page_no}-${h.text.slice(0, 12)}`}
+                        className="pr-hit"
+                        onClick={() => {
+                          const doc = docs.find((d) => d.id === h.doc_id);
+                          if (doc) void openPreview(doc, h.page_no || 1);
+                        }}
+                      >
+                        <span className="kv-type">资料</span>
+                        <span className="pr-hit-main">
+                          <b className="ellipsis">{h.title}</b>
+                          <span className="pr-hit-loc">{h.heading ? `${h.heading} · ` : ""}p{h.page_no ?? 1}</span>
+                          <p>{h.text.slice(0, 220)}</p>
+                        </span>
+                      </button>
+                    ))}
+                    {pages.map((h) => (
+                      <button className="pr-hit" key={h.id} onClick={() => onOpenPage?.(h.id)}>
+                        <span className="kv-type page">页面</span>
+                        <span className="pr-hit-main"><b className="ellipsis">{h.title}</b><p>{h.snippet}</p></span>
+                      </button>
+                    ))}
                   </div>
+                  <p className="notes-meta-empty">答案与命中只来自勾选的资料；取消勾选后重新提问即可收窄范围。</p>
                 </div>
-              ))}
-              {pages.map((h) => (
-                <button className="kv-hit" key={h.id} onClick={() => onOpenPage?.(h.id)}>
-                  <span className="kv-type page">页面</span>
-                  <div><b>{h.title}</b><p>{h.snippet}</p></div>
-                </button>
-              ))}
-            </div>
-          )}
-          {!query && docs.length > 0 && (
-            <div className="kv-docs">
-              {docs.map((d) => {
-                const engine = d.engine || d.parser || "builtin";
-                return (
-                  <div className="kv-doc" key={d.id}>
-                    <span className={`kv-doc-dot ${d.status}`} />
-                    <div className="kv-doc-main">
-                      <b className="ellipsis" title={d.uri}>{d.title}</b>
-                      <span className="tiny faint">
-                        <span className="kv-engine-tag">{engine}</span>
-                        {" · "}{d.pages_total || 1} 页 · {d.status}
-                        {d.status === "failed" && d.error_text ? ` · ${d.error_text.slice(0, 60)}` : ""}
-                      </span>
-                    </div>
-                    <RowMenu title="资料操作">
-                      <button onClick={() => { setAskQ(`这份资料讲了什么？${d.title}`); void runAsk(); }}>就这份资料提问</button>
-                      <button onClick={() => void reparse(d)}>按当前默认重新解析</button>
-                      <button className="danger" onClick={() => void remove(d)}>删除</button>
-                    </RowMenu>
-                  </div>
-                );
-              })}
-            </div>
+              )}
+
+              {!ask && docs.length === 0 && (
+                <EmptyState
+                  mark="⌘"
+                  title="还没有资料"
+                  desc="导入 PDF / Word / Markdown / 网页，问答只基于这些材料，并给出页码出处。"
+                  action={<button className="btn primary" onClick={() => void ingest()} disabled={busy}>导入第一份资料</button>}
+                />
+              )}
+            </>
           )}
         </section>
-        <aside className="kv-side">
-          <div className="kv-block">
-            <div className="notes-meta-title">解析引擎</div>
-            <select
-              className="settings-control kv-engine-select"
-              value={engineState?.defaultEngine || "auto"}
-              disabled={engineBusy === "default"}
-              onChange={(e) => void setDefaultEngine(e.target.value)}
-            >
-              <option value="auto">自动路由（简单格式本地，其余按默认）</option>
-              {engines.map((engine) => (
-                <option key={engine.name} value={engine.name}>{engine.label}{engine.available ? "" : "（不可用）"}</option>
-              ))}
-            </select>
-            <div className="kv-engines">
-              {engines.map((engine) => {
-                const probed = probes[engine.name];
-                const available = probed ? probed.available : engine.available;
-                const reason = probed ? probed.reason : engine.reason;
-                return (
-                  <div key={engine.name} className={`kv-engine ${selectedEngine === engine.name ? "on" : ""}`}>
-                    <button className="kv-engine-main" onClick={() => setSelectedEngine(engine.name)} title={engine.description}>
-                      <span className={`kv-doc-dot ${available ? "ready" : "failed"}`} />
-                      <b>{engine.label}</b>
-                      <em>{engine.local ? "本地" : available ? "可用" : reason || "未配置"}</em>
-                    </button>
-                    {!engine.local && (
-                      <button
-                        className="btn tiny-btn"
-                        disabled={engineBusy === `probe:${engine.name}`}
-                        onClick={() => void probe(engine.name)}
-                      >{engineBusy === `probe:${engine.name}` ? "…" : "探测"}</button>
-                    )}
-                  </div>
-                );
-              })}
+
+        {/* 右：本次引用 → 引擎 → 规则 */}
+        <aside className="pr-col pr-side">
+          <div className="pr-block">
+            <div className="pr-block-head">本次引用
+              <button className="link tiny" onClick={() => void navigator.clipboard?.writeText((ask?.citations || []).map((c) => `[${c.ref}] ${c.title} · ${c.locator}`).join("\n"))}>导出引用</button>
             </div>
-            <button className="btn tiny-btn" onClick={() => setAdding((value) => !value)}>＋ 自研引擎</button>
-            {adding && (
-              <div className="kv-extra-form">
-                <input className="kv-input" placeholder="引擎名，如 my-parser" value={newEngine.name} onChange={(e) => setNewEngine({ ...newEngine, name: e.target.value })} />
-                <input className="kv-input" placeholder="Endpoint，如 http://127.0.0.1:9000/parse" value={newEngine.endpoint} onChange={(e) => setNewEngine({ ...newEngine, endpoint: e.target.value })} />
-                <input className="kv-input" placeholder="支持格式，如 pdf,docx" value={newEngine.fileTypes} onChange={(e) => setNewEngine({ ...newEngine, fileTypes: e.target.value })} />
-                <div className="kv-engine-foot">
-                  <span className="tiny faint">响应可为 markdown 或 JSON；JSON 默认取 markdown 字段</span>
-                  <button className="btn tiny-btn" onClick={() => void addEngine()} disabled={engineBusy === "add" || !newEngine.name.trim() || !newEngine.endpoint.trim()}>注册</button>
-                </div>
+            {ask?.citations?.length ? ask.citations.map((c) => (
+              <button key={c.ref} className={`pr-cite-card ${selectedCite === c.ref ? "on" : ""}`} onClick={() => selectCitation(c)}>
+                <div className="pr-cc-head"><span className="kv-type">{c.ref}</span><b className="ellipsis">{c.title}</b></div>
+                <span className="tiny faint">{c.locator}{c.heading ? ` · ${c.heading}` : ""} · 点击打开原页</span>
+              </button>
+            )) : <p className="notes-meta-empty">提问后这里显示本次回答引用的页 / 段。</p>}
+          </div>
+
+          <div className="pr-block">
+            <div className="pr-block-head">解析引擎
+              <button className="link tiny" onClick={() => setEngineOpen((v) => !v)}>{engineOpen ? "收起" : "配置"}</button>
+            </div>
+            {engineOpen ? (
+              <div className="pr-engine">
+      <div className="kv-block">
+        <div className="notes-meta-title">解析引擎</div>
+        <select
+          className="settings-control kv-engine-select"
+          value={engineState?.defaultEngine || "auto"}
+          disabled={engineBusy === "default"}
+          onChange={(e) => void setDefaultEngine(e.target.value)}
+        >
+          <option value="auto">自动路由（简单格式本地，其余按默认）</option>
+          {engines.map((engine) => (
+            <option key={engine.name} value={engine.name}>{engine.label}{engine.available ? "" : "（不可用）"}</option>
+          ))}
+        </select>
+        <div className="kv-engines">
+          {engines.map((engine) => {
+            const probed = probes[engine.name];
+            const available = probed ? probed.available : engine.available;
+            const reason = probed ? probed.reason : engine.reason;
+            return (
+              <div key={engine.name} className={`kv-engine ${selectedEngine === engine.name ? "on" : ""}`}>
+                <button className="kv-engine-main" onClick={() => setSelectedEngine(engine.name)} title={engine.description}>
+                  <span className={`kv-doc-dot ${available ? "ready" : "failed"}`} />
+                  <b>{engine.label}</b>
+                  <em>{engine.local ? "本地" : available ? "可用" : reason || "未配置"}</em>
+                </button>
+                {!engine.local && (
+                  <button
+                    className="btn tiny-btn"
+                    disabled={engineBusy === `probe:${engine.name}`}
+                    onClick={() => void probe(engine.name)}
+                  >{engineBusy === `probe:${engine.name}` ? "…" : "探测"}</button>
+                )}
               </div>
+            );
+          })}
+        </div>
+        <button className="btn tiny-btn" onClick={() => setAdding((value) => !value)}>＋ 自研引擎</button>
+        {adding && (
+          <div className="kv-extra-form">
+            <input className="kv-input" placeholder="引擎名，如 my-parser" value={newEngine.name} onChange={(e) => setNewEngine({ ...newEngine, name: e.target.value })} />
+            <input className="kv-input" placeholder="Endpoint，如 http://127.0.0.1:9000/parse" value={newEngine.endpoint} onChange={(e) => setNewEngine({ ...newEngine, endpoint: e.target.value })} />
+            <input className="kv-input" placeholder="支持格式，如 pdf,docx" value={newEngine.fileTypes} onChange={(e) => setNewEngine({ ...newEngine, fileTypes: e.target.value })} />
+            <div className="kv-engine-foot">
+              <span className="tiny faint">响应可为 markdown 或 JSON；JSON 默认取 markdown 字段</span>
+              <button className="btn tiny-btn" onClick={() => void addEngine()} disabled={engineBusy === "add" || !newEngine.name.trim() || !newEngine.endpoint.trim()}>注册</button>
+            </div>
+          </div>
+        )}
+      </div>
+      {selected && (
+        <div className="kv-block">
+          <div className="notes-meta-title">{selected.label}</div>
+          <p className="kv-engine-desc">{selected.description}</p>
+          {usesEndpoint && (
+            <label className="kv-field">
+              <span>{selected.name.endsWith("_cloud") ? "Base URL" : "Endpoint"}</span>
+              <input
+                className="kv-input"
+                value={draft.endpoint}
+                placeholder="http://127.0.0.1:8080"
+                onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
+              />
+            </label>
+          )}
+          {usesApiKey && (
+            <label className="kv-field">
+              <span>{SECRET_LABEL[selected.name] || "API Key"}{selected.config.apiKeySet ? "（已保存）" : ""}</span>
+              <input
+                className="kv-input"
+                type="password"
+                value={draft.apiKey}
+                placeholder={selected.config.apiKeySet ? "留空保持不变" : "粘贴 API Key"}
+                onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
+              />
+            </label>
+          )}
+          {usesCloudKey && (
+            <label className="kv-field">
+              <span>MinerU API Key{selected.config.apiKeySet ? "（已保存）" : ""}</span>
+              <input
+                className="kv-input"
+                type="password"
+                value={draft.apiKey}
+                placeholder={selected.config.apiKeySet ? "留空保持不变" : "粘贴 mineru.net API Key"}
+                onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
+              />
+            </label>
+          )}
+          {usesToken && (
+            <label className="kv-field">
+              <span>AI Studio Token{selected.config.tokenSet ? "（已保存）" : ""}</span>
+              <input
+                className="kv-input"
+                type="password"
+                value={draft.token}
+                placeholder={selected.config.tokenSet ? "留空保持不变" : "粘贴 Access Token"}
+                onChange={(e) => setDraft({ ...draft, token: e.target.value })}
+              />
+            </label>
+          )}
+          <label className="kv-field">
+            <span>超时（秒）</span>
+            <input
+              className="kv-input"
+              type="number"
+              min={5}
+              value={Math.round(draft.timeoutMs / 1000)}
+              onChange={(e) => setDraft({ ...draft, timeoutMs: (Number(e.target.value) || 600) * 1000 })}
+            />
+          </label>
+          <div className="kv-engine-foot">
+            <span className="tiny faint">{selected.fileTypes.slice(0, 8).join(" / ")}{selected.fileTypes.length > 8 ? " …" : ""}</span>
+            <span className="row gap6">
+              {isExtra && <button className="btn tiny-btn" onClick={() => void removeEngine()} disabled={engineBusy === "remove"}>移除</button>}
+              <button className="btn tiny-btn" onClick={() => void saveEngine()} disabled={engineBusy === "save"}>
+                {engineBusy === "save" ? "保存中…" : "保存"}
+              </button>
+            </span>
+          </div>
+        </div>
+      )}
+              </div>
+            ) : (
+              <p className="notes-meta-empty">
+                默认 {engineState?.defaultEngine || "auto"} · 可用 {engines.filter((e) => e.available).length}/{engines.length} 个引擎
+              </p>
             )}
           </div>
-          {selected && (
-            <div className="kv-block">
-              <div className="notes-meta-title">{selected.label}</div>
-              <p className="kv-engine-desc">{selected.description}</p>
-              {usesEndpoint && (
-                <label className="kv-field">
-                  <span>{selected.name.endsWith("_cloud") ? "Base URL" : "Endpoint"}</span>
-                  <input
-                    className="kv-input"
-                    value={draft.endpoint}
-                    placeholder="http://127.0.0.1:8080"
-                    onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
-                  />
-                </label>
-              )}
-              {usesApiKey && (
-                <label className="kv-field">
-                  <span>{SECRET_LABEL[selected.name] || "API Key"}{selected.config.apiKeySet ? "（已保存）" : ""}</span>
-                  <input
-                    className="kv-input"
-                    type="password"
-                    value={draft.apiKey}
-                    placeholder={selected.config.apiKeySet ? "留空保持不变" : "粘贴 API Key"}
-                    onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
-                  />
-                </label>
-              )}
-              {usesCloudKey && (
-                <label className="kv-field">
-                  <span>MinerU API Key{selected.config.apiKeySet ? "（已保存）" : ""}</span>
-                  <input
-                    className="kv-input"
-                    type="password"
-                    value={draft.apiKey}
-                    placeholder={selected.config.apiKeySet ? "留空保持不变" : "粘贴 mineru.net API Key"}
-                    onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
-                  />
-                </label>
-              )}
-              {usesToken && (
-                <label className="kv-field">
-                  <span>AI Studio Token{selected.config.tokenSet ? "（已保存）" : ""}</span>
-                  <input
-                    className="kv-input"
-                    type="password"
-                    value={draft.token}
-                    placeholder={selected.config.tokenSet ? "留空保持不变" : "粘贴 Access Token"}
-                    onChange={(e) => setDraft({ ...draft, token: e.target.value })}
-                  />
-                </label>
-              )}
-              <label className="kv-field">
-                <span>超时（秒）</span>
-                <input
-                  className="kv-input"
-                  type="number"
-                  min={5}
-                  value={Math.round(draft.timeoutMs / 1000)}
-                  onChange={(e) => setDraft({ ...draft, timeoutMs: (Number(e.target.value) || 600) * 1000 })}
-                />
-              </label>
-              <div className="kv-engine-foot">
-                <span className="tiny faint">{selected.fileTypes.slice(0, 8).join(" / ")}{selected.fileTypes.length > 8 ? " …" : ""}</span>
-                <span className="row gap6">
-                  {isExtra && <button className="btn tiny-btn" onClick={() => void removeEngine()} disabled={engineBusy === "remove"}>移除</button>}
-                  <button className="btn tiny-btn" onClick={() => void saveEngine()} disabled={engineBusy === "save"}>
-                    {engineBusy === "save" ? "保存中…" : "保存"}
-                  </button>
-                </span>
-              </div>
-            </div>
-          )}
-          <div className="kv-block">
-            <div className="notes-meta-title">问资料</div>
-            <textarea
-              className="kv-ask"
-              rows={4}
-              value={askQ}
-              placeholder="只基于已导入的材料回答；没有依据会说「材料里没有」"
-              onChange={(e) => setAskQ(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void runAsk(); } }}
-            />
-            <button className="btn tiny-btn primary" onClick={() => void runAsk()} disabled={busy || !askQ.trim()}>{busy ? "检索中…" : "提问 ⌘Enter"}</button>
-          </div>
-          <div className="kv-block">
-            <div className="notes-meta-title">规则</div>
-            <p className="notes-meta-empty">资料只读；回答只引用候选片段，并标到页 / 段。删除资料会把引用它的页面标为过期。</p>
-            <p className="notes-meta-empty">引擎输出统一成 Markdown + 页码。自研引擎只需实现同一份注册接口，不需要改路由。</p>
+
+          <div className="pr-block">
+            <div className="pr-block-head">规则</div>
+            <p className="notes-meta-empty">资料只读；回答只引用候选片段并标到页 / 段。</p>
+            <p className="notes-meta-empty">删除资料会把引用它的页面标为过期。</p>
+            <p className="notes-meta-empty">引擎输出统一成 Markdown + 页码；换引擎只需重解析，不影响已发布页面。</p>
           </div>
         </aside>
       </div>

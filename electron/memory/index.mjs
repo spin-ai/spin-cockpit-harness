@@ -123,6 +123,21 @@ export function createMemory({ dir }) {
     },
     entryArchive({ id } = {}) { run("UPDATE entries SET status='archived', updated_at=? WHERE id=?", [Date.now(), id]); return true; },
 
+    /** 条目来源：sources 里保存的 id/链接，原样返回给 UI 展示 */
+    entrySources({ id } = {}) {
+      const row = one("SELECT * FROM entries WHERE id=?", [id]);
+      return row ? entryRow(row).sourceRefs : [];
+    },
+    /** 降级：L4→L3→L2→L1（最后一次不再降） */
+    entryDemote({ id } = {}) {
+      const row = one("SELECT * FROM entries WHERE id=?", [id]);
+      if (!row) throw new Error("条目不存在");
+      const idx = LAYERS.indexOf(row.layer);
+      const next = LAYERS[Math.min(LAYERS.length - 1, idx + 1)];
+      run("UPDATE entries SET layer=?, updated_at=? WHERE id=?", [next, Date.now(), id]);
+      return entryRow(one("SELECT * FROM entries WHERE id=?", [id]));
+    },
+
     // ── 注入：L4 只放目录与结论，超预算做减法 ─────────────────────
     inject({ maxChars = 12000 } = {}) {
       const budget = Math.max(800, Number(maxChars) || 12000);
@@ -132,20 +147,29 @@ export function createMemory({ dir }) {
       let out = head;
       let used = head.length;
       let dropped = 0;
+      const items = [];
+      const push = (entry, line, included, reason) => items.push({
+        id: entry.id, layer: entry.layer, title: entry.title, chars: line.length,
+        included, reason: reason || "",
+      });
       for (const e of l4) {
         const line = `\n- ${e.title}${e.body ? `：${e.body.replace(/\s+/g, " ").slice(0, 160)}` : ""}`;
         // 至少给 L4 留出预算的一半，避免小预算时一条都进不去
-        if (used + line.length > Math.max(head.length + 200, budget - 600)) { dropped += 1; continue; }
+        const fits = used + line.length <= Math.max(head.length + 200, budget - 600);
+        if (!fits) { dropped += 1; push(e, line, false, `L4 超出预算（剩余 ${Math.max(0, budget - used)} 字符）`); continue; }
         out += line; used += line.length;
+        push(e, line, true, "L4 全部注入");
       }
       // 还有预算时补少量 L3（页面结论），只给标题与链接
       for (const e of others) {
         const line = `\n- [${e.layer}] ${e.title}`;
-        if (used + line.length > budget) { dropped += 1; continue; }
+        const fits = used + line.length <= budget;
+        if (!fits) { dropped += 1; push(e, line, false, `预算不足：L4 之后按最近使用排序，这条超出 ${budget} 字符预算`); continue; }
         out += line; used += line.length;
+        push(e, line, true, "剩余预算内注入");
       }
       if (dropped) out += `\n（另有 ${dropped} 条超出 ${budget} 字符预算，已省略；需要详情用 memory_search）`;
-      return { markdown: out, chars: out.length, budget, injected: l4.length + others.length - dropped, dropped };
+      return { markdown: out, chars: out.length, budget, injected: l4.length + others.length - dropped, dropped, items };
     },
 
     // ── Dream：五种动作，只产建议 ─────────────────────────────────
