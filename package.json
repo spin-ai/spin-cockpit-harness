@@ -40,7 +40,8 @@
     "knowledge:selftest": "ELECTRON_RUN_AS_NODE=1 electron scripts/knowledge-selftest.mjs",
     "knowledge:selftest:ark": "ELECTRON_RUN_AS_NODE=1 electron scripts/knowledge-selftest.mjs --ark",
     "knowledge:engines:selftest": "node scripts/knowledge-engines-selftest.mjs",
-    "verify:pty": "node scripts/verify-pty.mjs"
+    "verify:pty": "node scripts/verify-pty.mjs",
+    "import:wechat": "node scripts/import-wechat.mjs"
   },
   "dependencies": {
     "adm-zip": "^0.6.1",

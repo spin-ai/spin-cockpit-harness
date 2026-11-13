@@ -269,8 +269,16 @@ export function createPersona({ dir }) {
       const people = rows("SELECT * FROM people").map(personRow);
       const rels = rows("SELECT * FROM relations").map((r) => ({ id: r.id, from: r.from_id, to: r.to_id, type: r.type, strength: r.strength }));
       const nameOf = (id) => (id === "__self__" ? (people.find((p) => p.isSelf)?.name || "本人") : people.find((p) => p.id === id)?.name || id);
-      const tokens = q.split(/[，。？！\s,?]+/).filter((t) => t.length >= 2);
+      // 中文没有空格：除了整段词，再切 2-gram，否则「推进发布计划该找谁」这种整句永远匹配不上
+      const words = q.split(/[，。？！、\s,?]+/).filter((t) => t.length >= 2);
+      const grams = [];
+      for (const w of words) {
+        if (!/[\u3400-\u9fff]/.test(w)) continue;
+        for (let i = 0; i < w.length - 1; i += 1) grams.push(w.slice(i, i + 2));
+      }
+      const tokens = [...new Set([...words, ...grams])];
       const hit = (text) => tokens.some((t) => String(text || "").includes(t));
+      const hitFact = (f) => hit(f.value) || hit(f.quote) || hit(f.person);
       const citations = [];
       const lines = [];
 
@@ -292,7 +300,7 @@ export function createPersona({ dir }) {
         const scored = people
           .filter((p) => !p.isSelf)
           .map((p) => {
-            const mine = facts.filter((f) => f.personId === p.id && (hit(f.value) || hit(f.field)));
+            const mine = facts.filter((f) => f.personId === p.id && (hitFact(f) || hit(f.field)));
             return { p, mine, score: mine.length + (rels.some((r) => r.from === p.id || r.to === p.id) ? 0.5 : 0) };
           })
           .filter((x) => x.mine.length > 0)
@@ -319,7 +327,7 @@ export function createPersona({ dir }) {
       }
       if (!lines.length) {
         // 兜底：按关键词匹配事实
-        for (const f of facts.filter((f) => hit(f.value) || hit(f.person)).slice(0, 8)) {
+        for (const f of facts.filter((f) => hitFact(f)).slice(0, 8)) {
           lines.push(`- ${f.person || nameOf(f.personId)} · ${f.field}：${f.value}`);
           citations.push({ kind: "observation", id: f.id, quote: f.quote, source: f.sourceRef, at: f.validFrom || f.createdAt });
         }
