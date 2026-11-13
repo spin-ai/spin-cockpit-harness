@@ -12,6 +12,12 @@ const tools = [
   { name: "wiki_read_page", description: "读取一个 Wiki 页面（含 citations / backlinks）。", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
   { name: "wiki_upsert_draft", description: "创建或更新一个 Wiki draft。source_ids 用于绑定引用；不会直接标记 reviewed。", inputSchema: { type: "object", properties: { title: { type: "string" }, content: { type: "string" }, summary: { type: "string" }, source_ids: { type: "array", items: { type: "string" } } }, required: ["title", "content"] } },
   { name: "wiki_add_citation", description: "给页面绑定一个 source 引用。page/source 都可以用 id 或标题。", inputSchema: { type: "object", properties: { page: { type: "string" }, source: { type: "string" }, quote: { type: "string" }, locator: { type: "string" } }, required: ["page", "source"] } },
+  { name: "memory_inject", description: "读取本次该注入的 L4 记忆（预算内，超了做减法）。", inputSchema: { type: "object", properties: { max_chars: { type: "number" } } } },
+  { name: "memory_search", description: "只读检索历史会话 / 运行 / 事件（transcript），带时间、run、会话 id。", inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] } },
+  { name: "memory_note_write", description: "记录一条未验证观察（独立对象，不进页面审核流）。必须给来源。", inputSchema: { type: "object", properties: { body: { type: "string" }, source_kind: { type: "string" }, source_ref: { type: "string" } }, required: ["body"] } },
+  { name: "persona_lookup", description: "查人像画像（本人 / 他人 / 关系），返回带来源的结论；没有依据返回 found=false。", inputSchema: { type: "object", properties: { question: { type: "string" } }, required: ["question"] } },
+  { name: "knowledge_search", description: "检索知识库资料（PDF/Office/网页等），返回页/段级命中。", inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] } },
+  { name: "knowledge_ask", description: "只基于知识库资料回答，带引用；没有依据明确说材料里没有。", inputSchema: { type: "object", properties: { question: { type: "string" } }, required: ["question"] } },
 ];
 let buffer = "";
 process.stdin.setEncoding("utf8");

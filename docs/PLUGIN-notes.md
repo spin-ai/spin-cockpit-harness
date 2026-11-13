@@ -3,6 +3,7 @@
 > **状态：P0 已实现（原生 Wiki 数据 + UI），P1 进行中。**
 > Notes 不再是 vault-first 的 Obsidian 文件浏览器；它现在是一个 **原生 LLM Wiki**：Source → Page → Citation → Review → Query。本地 Markdown 目录仍可作为可选适配器打开、编辑，并导入为 Source。
 > 插件宿主见 [`ARCH-plugins.md`](ARCH-plugins.md)。
+> 检索链路、SAG2 评估与试点方案见 [`ARCH-wiki-retrieval.md`](ARCH-wiki-retrieval.md)。
 
 ---
 
@@ -332,7 +333,7 @@ plugins/notes/main.mjs
 - source hash stale 自动检测
 - revision diff UI
 - PDF / 网页正文抽取打磨
-- 语义搜索 / embedding
+- 语义搜索 / embedding（评估与试点方案见 [`ARCH-wiki-retrieval.md`](ARCH-wiki-retrieval.md)）
 - Query Chat 的 citation 校验
 - 导出 Markdown / 导入 Obsidian
 - 多 Wiki / 团队协作
@@ -362,6 +363,7 @@ plugins/notes/main.mjs
 
 ### P2
 
+- SAG2 多跳检索试点（先评测，见 [`ARCH-wiki-retrieval.md`](ARCH-wiki-retrieval.md)）
 - PDF / 网页剪藏
 - 语义搜索 / embedding
 - 批量导入

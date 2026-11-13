@@ -4,7 +4,7 @@ import { THEMES } from "../themes";
 import { PageHeader } from "./PageHeader";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
-type Section = "general" | "appearance" | "execution" | "terminal" | "preview" | "plugins" | "data" | "shortcuts" | "about";
+type Section = "general" | "appearance" | "execution" | "terminal" | "preview" | "im" | "plugins" | "data" | "shortcuts" | "about";
 
 const SECTIONS: { id: Section; label: string; desc: string }[] = [
   { id: "general", label: "通用", desc: "启动视图、默认 Agent、发送与停止行为；改动即时生效。" },
@@ -12,6 +12,7 @@ const SECTIONS: { id: Section; label: string; desc: string }[] = [
   { id: "execution", label: "执行", desc: "Agent 并发、审批策略和 dsh 启动参数；新 run 生效。" },
   { id: "terminal", label: "终端", desc: "pty 的 shell、字号、回滚缓冲和 dev server 地址识别。" },
   { id: "preview", label: "预览与元素", desc: "前端预览地址、元素拾取截图和注入 Chat 的上下文详细度。" },
+  { id: "im", label: "即时通信", desc: "在手机上继续处理：IM 消息进入同一套会话，结果与审批回到 IM。" },
   { id: "plugins", label: "插件", desc: "安装、启用和管理本地插件；插件代码是受信代码，启用前请确认来源。" },
   { id: "data", label: "数据", desc: "本地数据库位置、备份导出和清理。" },
   { id: "shortcuts", label: "快捷键", desc: "当前版本可用的键盘操作。" },
@@ -27,6 +28,7 @@ const DEFAULTS: Partial<Record<keyof SettingsModel, unknown>> = {
   shellPath: "", terminalFontSize: 12, terminalScrollback: 5000, autoDetectDevServerUrl: true,
   previewHomeUrl: "http://localhost:5173/", elementScreenshots: true, contextDetail: "standard", worktreeMode: "auto",
   dshEnv: "",
+  imEnabled: false, imTelegramToken: "", imTelegramAllow: "", imWebhookUrl: "", imWebhookToken: "", imInboundPort: 0, imAllowIds: "",
 };
 
 /** 恢复本页默认 */
@@ -37,6 +39,7 @@ const SECTION_KEYS: Partial<Record<Section, (keyof SettingsModel)[]>> = {
     "superAgentEnabled", "maxSupervisorRuns", "maxMissionChildren", "missionBudgetMinutes", "worktreeMode"],
   terminal: ["shellPath", "terminalFontSize", "terminalScrollback", "autoDetectDevServerUrl"],
   preview: ["previewHomeUrl", "elementScreenshots", "contextDetail"],
+  im: ["imEnabled", "imTelegramToken", "imTelegramAllow", "imWebhookUrl", "imWebhookToken", "imInboundPort", "imAllowIds"],
 };
 
 /** 搜索索引：标题 / 说明 / 分区，命中后跳到对应行 */
@@ -492,6 +495,42 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
             <Card title="源码定位">
               <div className="settings-note">
                 <code>data-ym-src="src/x.tsx:42"</code> → <code>_debugSource</code> → 组件名 + selector
+              </div>
+            </Card>
+          </>
+        )}
+
+        {section === "im" && (
+          <>
+            <Card title="网关">
+              <Row k="imEnabled" title="启用即时通信">
+                <Toggle value={Boolean(settings.imEnabled)} onChange={(v) => void set({ imEnabled: v })} />
+              </Row>
+              <Row k="imTelegramToken" title="Telegram bot token" hint="走 getUpdates 长轮询；桌面关闭时消息留在 Telegram 队列，下次启动继续。">
+                <TextSetting value={settings.imTelegramToken || ""} placeholder="123456:ABC…" onCommit={(v) => void set({ imTelegramToken: v })} />
+              </Row>
+              <Row k="imTelegramAllow" title="允许的 chat id" hint="留空则忽略所有消息；支持多个，逗号分隔，* 表示全部。" >
+                <TextSetting value={settings.imTelegramAllow || ""} placeholder="123456789" onCommit={(v) => void set({ imTelegramAllow: v })} />
+              </Row>
+            </Card>
+            <Card title="飞书 / 微信（Webhook）">
+              <Row k="imWebhookUrl" title="出站 Webhook" hint="把结果按「结果 / 步骤 / 身份」三段式 POST 到这里。">
+                <TextSetting value={settings.imWebhookUrl || ""} placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…" onCommit={(v) => void set({ imWebhookUrl: v })} />
+              </Row>
+              <Row k="imWebhookToken" title="Webhook Token" hint="出站放在 Authorization 头；入站要求同值。">
+                <TextSetting value={settings.imWebhookToken || ""} placeholder="可选" onCommit={(v) => void set({ imWebhookToken: v })} />
+              </Row>
+              <Row k="imInboundPort" title="入站端口" hint="本地 HTTP 回调：POST { chat_id, text }；需要公网可达或内网转发。0 = 关闭。">
+                <NumberSetting value={Number(settings.imInboundPort) || 0} min={0} max={65535} onCommit={(v) => void set({ imInboundPort: v })} />
+              </Row>
+              <Row k="imAllowIds" title="额外允许 id" hint="飞书 open_id / 微信会话 id。">
+                <TextSetting value={settings.imAllowIds || ""} placeholder="ou_xxx" onCommit={(v) => void set({ imAllowIds: v })} />
+              </Row>
+            </Card>
+            <Card title="规则">
+              <div className="settings-note">
+                陌生会话一律忽略并留日志；审批卡一次只问一个问题，回复数字即选择；敏感的人像事实默认不推 IM。
+                移动端不保存凭据，token 只存在本机设置里。
               </div>
             </Card>
           </>

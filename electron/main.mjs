@@ -10,7 +10,13 @@ const execFileAsync = promisify(execFile);
 import { fileURLToPath } from "node:url";
 import { formatToolContent, toolOutputText } from "./tool-format.mjs";
 import { openDb, DEFAULT_SETTINGS } from "./db.mjs";
+import { safeStorage } from "electron";
 import { AcpClient, dshPathEnv } from "./acp.mjs";
+import { createKnowledge } from "./knowledge/index.mjs";
+import { chat as arkChat, resolveArkKey as resolveArkKeyFor } from "./knowledge/ark.mjs";
+import { createMemory } from "./memory/index.mjs";
+import { createPersona } from "./persona/index.mjs";
+import { createImGateway, formatImCard, formatApprovalCard } from "./im/gateway.mjs";
 import { prepareWorktree, removeWorktree, repoRoot } from "./worktree.mjs";
 import { pickElement, cancelPick, detachPreview } from "./preview.mjs";
 import { formatContext, detectDevUrl } from "./ui-context.mjs";
@@ -560,15 +566,35 @@ function contextDetail() {
   return store.state.settings?.contextDetail === "compact" ? "compact" : "standard";
 }
 
+/** 终端「长时间无输出」检测：running 且 tail 5 分钟没变 → stalled */
+const terminalIdle = new Map(); // id -> { tail, since, warned }
+function terminalIdleOf(id, tail, running) {
+  const prev = terminalIdle.get(id);
+  const now = Date.now();
+  if (!running) { terminalIdle.delete(id); return { stalled: false, idleMs: 0 }; }
+  if (!prev || prev.tail !== tail) { terminalIdle.set(id, { tail, since: now, warned: false }); return { stalled: false, idleMs: 0 }; }
+  const idleMs = now - prev.since;
+  const stalled = idleMs > 5 * 60 * 1000;
+  if (stalled && !prev.warned) {
+    prev.warned = true;
+    store.addEvent("terminal.stalled", `terminal.stalled ${id} ${Math.round(idleMs / 1000)}s`);
+  }
+  return { stalled, idleMs };
+}
+
 function terminalSnapshot() {
   return (store.state.terminals || []).map((t) => {
     const info = terminalUrls.get(t.id);
+    const running = Boolean(info && !info.exited);
+    const idle = terminalIdleOf(t.id, String(info?.recent || t.tail || "").slice(-400), running);
     return {
       ...t,
       status: info ? (info.exited ? "exited" : "running") : (t.status === "running" ? "detached" : t.status),
       exitCode: info?.exitCode ?? t.exitCode ?? null,
       tail: info?.recent || t.tail || "",
       endedAt: info?.exited ? (info.endedAt || Date.now()) : t.endedAt,
+      stalled: idle.stalled,
+      idleMs: idle.idleMs,
     };
   });
 }
@@ -589,7 +615,7 @@ function snapshot() {
     plugins: store.state.plugins || [],
     pluginCommands: pluginHost?.commands() || [],
     todoLinks: store.state.todoLinks || [],
-    settings: store.state.settings || { ...DEFAULT_SETTINGS },
+    settings: { ...(store.state.settings || { ...DEFAULT_SETTINGS }), dshEnv: decSecret((store.state.settings || {}).dshEnv) },
     scenes: store.state.projects.map((p) => sceneOf(p.id)),
     terminals: terminalSnapshot(),
     runtimes: runtimeViews(),
@@ -716,6 +742,10 @@ function seed() {
   for (const t of state.threads) {
     if (!t.kind) t.kind = t.todoId && state.todos.find((x) => x.id === t.todoId)?.kind === "mission" ? "mission" : "chat";
   }
+  try {
+    const cur = store.state.settings?.dshEnv;
+    if (cur && !String(cur).startsWith("enc:")) store.state.settings.dshEnv = encSecret(cur);
+  } catch { /* ignore */ }
   recoverMissions();
   if (repairEditedThreads()) store.addEvent("message.supersede", "message.supersede 修复历史编辑顺序");
   ensureThreads();
@@ -932,7 +962,7 @@ async function startRun(run, todo, agent) {
     return;
   }
 
-  const extraEnv = parseEnvText(store.state.settings?.dshEnv || "");
+  const extraEnv = parseEnvText(decSecret(store.state.settings?.dshEnv || ""));
   const client = new AcpClient({
     cwd,
     env: isRemote ? null : extraEnv, // 远端请在目标机自己配置（env 不会随 ssh 过去）
@@ -983,6 +1013,10 @@ async function startRun(run, todo, agent) {
     store.addEvent("run.permission", `run.permission ${approval.title} waiting`);
     store.addMessage(thread.id, run.id, "system", "system", `等待审批：${approval.title}`);
     broadcast();
+    try {
+      const chatId = Object.keys(imSessions).find((k) => imSessions[k] === todo.id);
+      if (chatId && imGateway) void imGateway.send(formatApprovalCard({ title: approval.title, description: approval.desc || approval.description, options: approval.options }), { to: chatId }).catch(() => {});
+    } catch { /* ignore */ }
   });
   client.on("notification", (method, params) => {
     if (method !== "session/update") return;
@@ -1003,14 +1037,18 @@ async function startRun(run, todo, agent) {
       .filter((m) => m.context)
       .map((m) => formatContext(m.context, contextDetail()))
       .filter(Boolean);
-    const memory = await wikiMemoryContext();
+    const wikiMemory = await wikiMemoryContext();
+    // 记忆层：L4 目录/结论（预算内，超了做减法），和 wiki 索引一起注入
+    let layers = "";
+    try { layers = memory().inject({ maxChars: 6000 }).markdown; } catch { /* 记忆库不可用不影响跑 run */ }
     const prompt = [
       `任务：${todo.title}`,
       todo.desc ? `描述：${todo.desc}` : "",
       todo.acceptance?.length ? `验收：${todo.acceptance.join("；")}` : "",
       instructions.length ? `补充指令：\n${instructions.map((text) => `- ${text}`).join("\n")}` : "",
       contexts.length ? `界面上下文：\n${contexts.join("\n\n")}` : "",
-      memory ? `Wiki 记忆索引（需要详情时使用 wiki_search / wiki_read_page；写入用 wiki_upsert_draft）：\n${memory}` : "",
+      layers ? `${layers}\n（详情用 memory_search / wiki_search；写观察用 memory_note_write，写页面用 wiki_upsert_draft）` : "",
+      wikiMemory ? `知识库索引（需要详情时使用 wiki_search / wiki_read_page；写入用 wiki_upsert_draft）：\n${wikiMemory}` : "",
       "完成后给出结论；如需改文件请直接修改。",
     ].filter(Boolean).join("\n");
     const res = await client.prompt(prompt);
@@ -1020,6 +1058,7 @@ async function startRun(run, todo, agent) {
     applyRunUsage(run, res);
     const otherActive = store.state.runs.some((r) => r.id !== run.id && r.todoId === todo.id && ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"].includes(r.status));
     todo.status = otherActive ? "in_progress" : "in_review";
+    void imNotifyRun(todo, run, handle).catch(() => {});
     todo.updatedAt = now();
     store.addMessage(thread.id, run.id, "system", "system", `run 结束 · ${res?.stopReason || "end_turn"}`);
     store.addEvent("run.finished", `run.finished todo=${todo.key}`);
@@ -1200,6 +1239,12 @@ function startWikiMcpServer() {
       else if (name === "wiki_read_page") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: args.id });
       else if (name === "wiki_upsert_draft") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.upsertDraft", { title: args.title, content: args.content, summary: args.summary, sourceIds: args.source_ids || [] });
       else if (name === "wiki_add_citation") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.addCitation", { pageId: args.page, sourceId: args.source, quote: args.quote, locator: args.locator });
+      else if (name === "memory_inject") result = memory().inject({ maxChars: args.max_chars || 12000 });
+      else if (name === "memory_search") result = transcriptSearch(args.query, args.limit || 8);
+      else if (name === "memory_note_write") result = memory().noteAdd({ body: args.body, sourceKind: args.source_kind || "transcript", sourceRef: args.source_ref || "" });
+      else if (name === "persona_lookup") result = persona().ask({ question: args.question });
+      else if (name === "knowledge_search") result = knowledge().search(String(args.query || ""), { limit: Number(args.limit) || 8 });
+      else if (name === "knowledge_ask") result = await knowledge().ask(String(args.question || ""), { limit: 6 });
       else throw new Error(`unknown wiki tool: ${name}`);
       return send(200, { ok: true, result });
     } catch (err) { return send(400, { ok: false, error: String(err?.message || err).slice(0, 1000) }); }
@@ -1447,6 +1492,21 @@ const SETTINGS_SPEC = {
   missionBudgetMinutes: { kind: "number", min: 5, max: 240, fallback: 30 },
   worktreeMode: { kind: "enum", values: ["auto", "always", "never"], fallback: "auto" },
 };
+
+/** 凭据只在本机加密存放：dshEnv 里通常有 API key */
+function encSecret(text) {
+  const value = String(text ?? "");
+  if (!value) return "";
+  try {
+    if (value.startsWith("enc:") || !safeStorage.isEncryptionAvailable()) return value;
+    return `enc:${safeStorage.encryptString(value).toString("base64")}`;
+  } catch { return value; }
+}
+function decSecret(text) {
+  const value = String(text ?? "");
+  if (!value.startsWith("enc:")) return value;
+  try { return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(Buffer.from(value.slice(4), "base64")) : ""; } catch { return ""; }
+}
 
 function sanitizeSettings(patch = {}) {
   const next = {};
@@ -2360,9 +2420,357 @@ function startMissionMcpServer() {
   mcpServer.on("error", (err) => console.warn(`[mission.mcp] ${String(err?.message || err)}`));
 }
 
+/** 记忆层（L1–L4）/ note / Dream 建议：独立 mem.db，可删可重建。 */
+let memoryStore = null;
+function memory() {
+  if (!memoryStore) memoryStore = createMemory({ dir: path.join(app.getPath("userData"), "memory") });
+  return memoryStore;
+}
+/** 人像记忆：独立 persona.db。 */
+let personaStore = null;
+function persona() {
+  if (!personaStore) personaStore = createPersona({ dir: path.join(app.getPath("userData"), "persona") });
+  return personaStore;
+}
+
+/** IM 网关：手机侧消息 → 同一套会话模型；结果 / 审批回到 IM。 */
+let imGateway = null;
+let imSessions = {};
+function imSessionsFile() { return path.join(app.getPath("userData"), "im", "sessions.json"); }
+function loadImSessions() {
+  try { imSessions = JSON.parse(fs.readFileSync(imSessionsFile(), "utf8")) || {}; } catch { imSessions = {}; }
+}
+function saveImSessions() {
+  try {
+    fs.mkdirSync(path.dirname(imSessionsFile()), { recursive: true });
+    fs.writeFileSync(imSessionsFile(), JSON.stringify(imSessions, null, 2));
+  } catch { /* ignore */ }
+}
+function startImGateway() {
+  if (imGateway) return imGateway;
+  loadImSessions();
+  imGateway = createImGateway({
+    dir: path.join(app.getPath("userData"), "im"),
+    settings: () => store.state.settings || {},
+    onLog: (line) => console.log(`[im] ${line}`),
+    onMessage: async ({ text, chatId, kind }) => {
+      // 1) 审批回复：数字 → 对应 run 的审批选项
+      const pending = [...approvals.values()].filter((a) => imSessions[chatId] && a.todoId === imSessions[chatId]);
+      const pick = Number(String(text).trim());
+      if (pending.length && Number.isFinite(pick) && pick >= 1 && pick <= (pending[0].options || []).length) {
+        const approval = pending[0];
+        const handle = active.get(approval.runId);
+        const option = approval.options[pick - 1];
+        if (handle && option) {
+          handle.client.respondPermission(option.id);
+          approvals.delete(approval.id);
+          store.addMessage(threadForTodo(store.state.todos.find((t) => t.id === approval.todoId)).id, approval.runId, "system", "system", `IM 审批：${option.name || option.id}`);
+          broadcast();
+          const res = { sent: true };
+          await imGateway.send(`已选择：${option.name || option.id}`, { to: chatId });
+          return res;
+        }
+      }
+      // 2) 普通消息：进入同一套会话（没有任务就新建）
+      const res = await actions.send({ text, projectId: null });
+      const todoId = res?.todoId || null;
+      if (todoId) { imSessions[chatId] = todoId; saveImSessions(); }
+      await imGateway.send("收到，已排进任务队列。桌面不在线时消息会留在 IM 队列，下次启动继续处理。", { to: chatId });
+      return res;
+    },
+  });
+  imGateway.start();
+  return imGateway;
+}
+
+/** run 结束后把结果回传 IM（三段式：结果 / 步骤 / 身份） */
+async function imNotifyRun(todo, run, handle) {
+  if (!imGateway) return;
+  const chatId = Object.keys(imSessions).find((k) => imSessions[k] === todo.id);
+  if (!chatId) return;
+  const thread = threadForTodo(todo);
+  const texts = store.state.messages.filter((m) => m.threadId === thread.id && m.runId === run.id);
+  const result = [...texts].reverse().find((m) => m.role === "agent" && m.kind === "text")?.content || "";
+  const steps = texts.filter((m) => m.role === "tool").map((m) => String(m.content).split("\n")[0]);
+  try {
+    await imGateway.send(formatImCard({ title: todo.title, result, steps, branch: run.branch || "", runId: run.id, agent: agentOf(todo)?.name || "" }), { to: chatId });
+  } catch (err) { console.warn(`[im] notify failed: ${String(err?.message || err)}`); }
+  void handle;
+}
+
+/** 只读检索历史：transcript（消息）/ run / 事件，带时间与来源会话 */
+function transcriptSearch(query, limit = 8) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return [];
+  const out = [];
+  for (const m of store.state.messages) {
+    if (!String(m.content || "").toLowerCase().includes(q)) continue;
+    out.push({ kind: "message", id: m.id, at: m.createdAt, threadId: m.threadId, runId: m.runId, role: m.role, snippet: String(m.content).replace(/\s+/g, " ").slice(0, 240) });
+  }
+  for (const r of store.state.runs) {
+    const hay = `${r.id} ${r.status} ${r.branch || ""} ${r.cwd || ""} ${r.error || ""}`.toLowerCase();
+    if (!hay.includes(q)) continue;
+    out.push({ kind: "run", id: r.id, at: r.startedAt || r.createdAt || 0, status: r.status, todoId: r.todoId, snippet: `${r.status}${r.branch ? ` · ${r.branch}` : ""}${r.error ? ` · ${r.error.slice(0, 120)}` : ""}` });
+  }
+  for (const e of store.state.events) {
+    if (!String(e.text || "").toLowerCase().includes(q)) continue;
+    out.push({ kind: "event", id: e.id, at: e.ts, type: e.type, snippet: String(e.text).slice(0, 200) });
+  }
+  return out.sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, Math.max(1, Math.min(50, Number(limit) || 8)));
+}
+
+/** Dream 建议被接受后真正落地 */
+async function applyMemorySuggestion(sug) {
+  if (!sug) return { applied: false };
+  const plugins = pluginHost;
+  if (sug.action === "promote" && sug.targetId) {
+    const note = memory().noteList({ limit: 500 }).find((n) => n.id === sug.targetId);
+    if (!note) return { applied: false, reason: "note 已不存在" };
+    const title = note.body.replace(/\s+/g, " ").slice(0, 40) || "观察";
+    const page = plugins ? await plugins.invoke("ai.cockpit.notes", "wiki.upsertDraft", {
+      title, content: `# ${title}\n\n> ${note.body}\n\n来源：观察 ${note.id}（${note.sourceKind}${note.sourceRef ? ` · ${note.sourceRef}` : ""}）\n`, summary: note.body.slice(0, 200),
+    }) : null;
+    if (page?.id) {
+      memory().entryUpsert({ layer: "L4", title: `观察已晋升为页面：${title}`, body: `页面 ${page.id}`, sources: [note.id, page.id] });
+      return { applied: true, pageId: page.id };
+    }
+    return { applied: false };
+  }
+  if (sug.action === "build" && sug.targetId && plugins) {
+    const res = await plugins.invoke("ai.cockpit.notes", "wiki.generate", { sourceIds: [sug.targetId], limit: 1 });
+    return { applied: Boolean(res?.created), detail: res };
+  }
+  if (sug.action === "fix" && sug.targetKind === "page" && sug.targetId && plugins) {
+    const page = await plugins.invoke("ai.cockpit.notes", "wiki.getPage", { id: sug.targetId });
+    if (!page?.id) return { applied: false };
+    const summary = page.summary || String(page.content || "").replace(/^#.*\n/, "").replace(/\s+/g, " ").trim().slice(0, 200);
+    await plugins.invoke("ai.cockpit.notes", "wiki.savePage", { id: page.id, title: page.title, content: page.content, summary, status: "stale" });
+    return { applied: true, pageId: page.id };
+  }
+  if (sug.action === "prune") {
+    const l3 = memory().entryList({ layer: "L3" });
+    const victims = [...l3].sort((a, b) => b.body.length - a.body.length).slice(0, Math.max(1, Math.ceil(l3.length / 3)));
+    for (const v of victims) memory().entryArchive({ id: v.id });
+    return { applied: victims.length > 0, archived: victims.length };
+  }
+  if (sug.action === "fill" && sug.targetKind === "page" && sug.targetId && plugins) {
+    // 补洞：把页面标成 stale，等人工补引用/互链（不自动编造依据）
+    const page = await plugins.invoke("ai.cockpit.notes", "wiki.getPage", { id: sug.targetId });
+    if (!page?.id) return { applied: false };
+    await plugins.invoke("ai.cockpit.notes", "wiki.savePage", { id: page.id, title: page.title, content: page.content, summary: page.summary, status: "stale" });
+    return { applied: true, pageId: page.id };
+  }
+  return { applied: false };
+}
+
+/** 知识索引：懒加载，首次使用时才建 userData/knowledge/kb.db（删掉即可重建）。 */
+let knowledgeStore = null;
+function knowledge() {
+  if (!knowledgeStore) {
+    knowledgeStore = createKnowledge({
+      dir: path.join(app.getPath("userData"), "knowledge"),
+      engineSeal: (value) => (safeStorage.isEncryptionAvailable()
+        ? safeStorage.encryptString(value).toString("base64")
+        : value),
+      engineOpen: (value) => (safeStorage.isEncryptionAvailable()
+        ? safeStorage.decryptString(Buffer.from(value, "base64"))
+        : value),
+    });
+  }
+  return knowledgeStore;
+}
+
 const actions = {
+  knowledgeStatus: async () => {
+    const kb = knowledge();
+    return { ...kb.status(), hasKey: kb.hasKey, root: kb.root };
+  },
+  knowledgeList: async ({ kb, limit } = {}) => knowledge().listDocuments({ kb, limit }),
+  knowledgeEngines: async () => knowledge().engines(),
+  knowledgeEngineProbe: async ({ name } = {}) => {
+    if (!name) throw new Error("缺少引擎名");
+    return knowledge().probeEngine(String(name));
+  },
+  knowledgeEngineConfig: async ({ name, patch, defaultEngine, fallbackEngine } = {}) => {
+    return knowledge().setEngineConfig({ name, patch, defaultEngine, fallbackEngine });
+  },
+  knowledgeEngineAdd: async (spec = {}) => {
+    if (!spec.name) throw new Error("缺少引擎名");
+    const reserved = ["simple", "builtin", "mineru", "mineru_cloud", "paddleocr_vl", "paddleocr_vl_cloud", "custom"];
+    if (reserved.includes(String(spec.name))) throw new Error("该名称是内置引擎，请换一个");
+    return knowledge().addEngine(spec);
+  },
+  knowledgeEngineRemove: async ({ name } = {}) => {
+    if (!name) throw new Error("缺少引擎名");
+    return knowledge().removeEngine(String(name));
+  },
+  knowledgeSearch: async ({ query, limit, kb } = {}) => {
+    if (!query) return { hits: [], ftsCount: 0, vecCount: 0 };
+    return knowledge().search(String(query), { limit: Number(limit) || 8, kb });
+  },
+  knowledgeAsk: async ({ question, limit, kb } = {}) => {
+    if (!question) throw new Error("缺少 question");
+    return knowledge().ask(String(question), { limit: Number(limit) || 6, kb });
+  },
+  knowledgeIngest: async ({ engine } = {}) => {
+    const res = await dialog.showOpenDialog(win, {
+      properties: ["openFile", "multiSelections"],
+      title: "导入资料",
+      filters: [
+        { name: "资料", extensions: ["pdf", "doc", "docx", "xlsx", "xls", "pptx", "epub", "md", "markdown", "txt", "csv", "html"] },
+        { name: "全部文件", extensions: ["*"] },
+      ],
+    });
+    if (res.canceled || !res.filePaths.length) return { added: [], engine: engine || "auto" };
+    const added = [];
+    for (const file of res.filePaths) {
+      added.push({ file, ...(await knowledge().ingestFile({ source: file, engine })) });
+    }
+    return { added, engine: engine || "auto" };
+  },
+  knowledgeRemove: async ({ id } = {}) => {
+    const res = knowledge().remove(String(id || ""));
+    // 删除资料时：引用过它的知识库页面标为过期（不删内容，等人工复核）
+    let staled = 0;
+    try {
+      const pages = (await pluginHost.invoke("ai.cockpit.notes", "wiki.list", {})).pages || [];
+      for (const page of pages) {
+        const cites = page.citations || [];
+        if (!cites.length) continue;
+        const full = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: page.id });
+        const dead = (full?.citations || []).some((c) => c.source?.uri && String(c.source.uri).includes(String(id)));
+        if (dead && page.status !== "stale") {
+          await pluginHost.invoke("ai.cockpit.notes", "wiki.savePage", { id: page.id, title: page.title, content: full.content, summary: full.summary, status: "stale" });
+          staled += 1;
+        }
+      }
+    } catch { /* 插件未启用时忽略 */ }
+    return { ...res, staledPages: staled };
+  },
+
+  // ── 记忆：L1–L4 / note / Dream ───────────────────────────────
+  memoryOverview: async () => memory().overview(),
+  memoryInject: async ({ maxChars } = {}) => memory().inject({ maxChars }),
+  memoryNoteAdd: async (args) => memory().noteAdd(args || {}),
+  memoryNoteList: async ({ status, limit } = {}) => memory().noteList({ status, limit }),
+  memoryNoteSet: async ({ id, status } = {}) => memory().noteSetStatus({ id, status }),
+  memoryNoteRemove: async ({ id } = {}) => memory().noteRemove({ id }),
+  memoryEntryUpsert: async (args) => memory().entryUpsert(args || {}),
+  memoryEntryList: async ({ layer, status } = {}) => memory().entryList({ layer, status }),
+  memoryEntryArchive: async ({ id } = {}) => memory().entryArchive({ id }),
+  memoryTranscriptSearch: async ({ query, limit } = {}) => transcriptSearch(query, limit),
+  memoryDream: async () => {
+    let pages = [];
+    let sources = [];
+    try {
+      const list = await pluginHost.invoke("ai.cockpit.notes", "wiki.list", {});
+      sources = list.sources || [];
+      pages = (list.pages || []).map((p) => ({ ...p }));
+      for (const page of pages) {
+        const full = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: page.id });
+        page.summary = full?.summary || "";
+        page.citations = full?.citations || [];
+      }
+    } catch { /* 插件未启用：只做 note/L3 相关建议 */ }
+    const created = memory().dreamScan({ pages, sources });
+    store.addEvent("memory.dream", `memory.dream ${created.length} 条建议`);
+    return { created, pending: memory().suggestionList({ status: "pending" }) };
+  },
+  memorySuggestions: async ({ status } = {}) => memory().suggestionList({ status }),
+  memorySuggestionResolve: async ({ id, accept = false } = {}) => {
+    const res = memory().suggestionResolve({ id, accept });
+    if (!accept) return res;
+    let applied = { applied: false };
+    try { applied = await applyMemorySuggestion(res); } catch (err) { applied = { applied: false, error: String(err?.message || err) }; }
+    store.addEvent("memory.suggestion", `memory.suggestion ${res.action} ${accept ? "accepted" : "rejected"} ${applied.applied ? "applied" : "skipped"}`);
+    return { ...res, applied };
+  },
+
+  // ── 人像记忆 ─────────────────────────────────────────────────
+  personaStats: async () => persona().stats(),
+  personaPending: async ({ limit } = {}) => persona().pending({ limit }),
+  personaResolve: async ({ id, accept = false, sensitive } = {}) => {
+    const res = persona().resolve({ id, accept, sensitive });
+    if (accept) persona().detectConflicts();
+    return res;
+  },
+  personaProfile: async ({ personId } = {}) => persona().profile({ personId }),
+  personaTimeline: async ({ personId, field } = {}) => persona().timeline({ personId, field }),
+  personaAsk: async ({ question } = {}) => persona().ask({ question }),
+  personaMerge: async ({ keepId, aliasIds } = {}) => persona().merge({ keepId, aliasIds }),
+  personaRemove: async ({ personId, from, to, sourcePrefix } = {}) => persona().remove({ personId, from, to, sourcePrefix }),
+  personaConflicts: async () => persona().detectConflicts(),
+  personaImportPick: async () => {
+    const res = await dialog.showOpenDialog(win, {
+      properties: ["openFile", "multiSelections"],
+      title: "导入聊天记录 / 文档",
+      filters: [{ name: "聊天导出 / 文本 / JSON", extensions: ["txt", "json", "md", "csv", "html"] }],
+    });
+    if (res.canceled || !res.filePaths.length) return { added: [] };
+    const out = [];
+    for (const file of res.filePaths) {
+      try {
+        const text = fs.readFileSync(file, "utf8");
+        out.push({ file, ...persona().import({ text, kind: "chat", title: path.basename(file) }) });
+      } catch (err) { out.push({ file, error: String(err?.message || err) }); }
+    }
+    return { added: out };
+  },
+  personaImport: async ({ text, selfName, format, kind, title, knowledgeDocId } = {}) => {
+    let body = String(text || "");
+    let docTitle = title || "手动粘贴";
+    let importKind = kind || "chat";
+    if (!body && knowledgeDocId) {
+      // 直接用人库里已入库的资料作为抽取来源（原文在 chunks 里）
+      const kb = knowledge();
+      const doc = kb.listDocuments({ limit: 1000 }).find((d) => d.id === String(knowledgeDocId));
+      if (!doc) throw new Error("资料不存在");
+      body = kb.db.prepare("SELECT text FROM chunks WHERE doc_id=? ORDER BY COALESCE(page_no,0), COALESCE(char_start,0)").all(doc.id).map((r) => r.text).join("\n");
+      docTitle = doc.title || doc.uri;
+      importKind = "doc";
+    }
+    if (!body.trim()) throw new Error("没有可导入的内容");
+    return persona().import({ text: body, selfName, format, kind: importKind, title: docTitle });
+  },
+
+  knowledgeReparse: async ({ id, engine } = {}) => {
+    const doc = knowledge().listDocuments({ limit: 1000 }).find((d) => d.id === String(id || ""));
+    if (!doc) throw new Error("文档不存在");
+    return knowledge().ingestFile({ source: doc.uri, id: doc.id, title: doc.title, engine: engine || undefined });
+  },
   pluginInvoke: async ({ pluginId, method, args } = {}) => {
     if (!pluginHost) throw new Error("插件宿主未启动");
+    // 「问知识库」优先走模型：知识库页面作候选集，答案必须带页面引用；没有 key 时落回插件的检索式
+    if (String(pluginId) === "ai.cockpit.notes" && String(method) === "wiki.ask") {
+      const question = String(args?.question || "").trim();
+      const key = resolveArkKeyFor(store.state.settings?.dshEnv ? decSecret(store.state.settings.dshEnv) : "");
+      if (question && key) {
+        try {
+          const hits = await pluginHost.invoke("ai.cockpit.notes", "wiki.search", { query: question, limit: 6 });
+          const pages = [];
+          for (const hit of hits || []) {
+            if (hit.kind !== "page") continue;
+            const full = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: hit.id });
+            if (full?.content) pages.push({ id: full.id, title: full.title, content: String(full.content).slice(0, 4000) });
+          }
+          if (!pages.length) return { found: false, answer: "知识库里没有找到相关内容。", citations: [] };
+          const context = pages.map((p, i) => `[${i + 1}] ${p.title}\n${p.content}`).join("\n\n");
+          const res = await arkChat([
+            { role: "system", content: "只根据候选页面回答；每段结论后用 [[页面标题]] 标注出处；没有依据就直接说「知识库里没有」，不要编造。" },
+            { role: "user", content: `候选页面：\n${context}\n\n问题：${question}` },
+          ], { key, maxTokens: 900 });
+          return {
+            found: true,
+            answer: res.text,
+            citations: pages.map((p) => ({ id: p.id, title: p.title })),
+            via: "model",
+            model: res.model,
+          };
+        } catch (err) {
+          console.warn(`[wiki.ask] model path failed: ${String(err?.message || err)}`);
+        }
+      }
+    }
     return pluginHost.invoke(String(pluginId || ""), String(method || ""), args || {});
   },
   pluginRunCommand: async ({ pluginId, commandId, args } = {}) => {
@@ -2389,7 +2797,9 @@ const actions = {
   },
   pluginRemove: async ({ id } = {}) => pluginHost?.remove(String(id || "")),
   setSettings: (patch) => {
-    const next = sanitizeSettings(patch || {});
+    const raw = { ...(patch || {}) };
+    if (typeof raw.dshEnv === "string") raw.dshEnv = encSecret(raw.dshEnv);
+    const next = sanitizeSettings(raw);
     store.state.settings = { ...(store.state.settings || DEFAULT_SETTINGS), ...next };
     store.addEvent("settings.changed", `settings.changed ${Object.keys(next).join(",") || "noop"}`);
     if ("defaultAgentId" in next) {
@@ -2399,7 +2809,7 @@ const actions = {
     return store.state.settings;
   },
   resetSettings: () => {
-    store.state.settings = { ...DEFAULT_SETTINGS };
+    store.state.settings = { ...DEFAULT_SETTINGS, dshEnv: encSecret("") };
     store.addEvent("settings.reset", "settings.reset");
     return store.state.settings;
   },
@@ -3254,7 +3664,7 @@ const actions = {
     store.addMessage(threadForTodo(todo).id, null, "system", "system", `已撤销确认 · ${todo.key}`);
     store.addEvent(todo.kind === "mission" ? "mission.unconfirmed" : "todo.unconfirmed", `${todo.kind === "mission" ? "mission" : "todo"}.unconfirmed ${todo.key}`);
   },
-  attachTerminalToTask: ({ terminalId, todoId }) => {
+  attachTerminalToTask: ({ terminalId, todoId, keepCwd = true, branch: switchBranch = null } = {}) => {
     const info = terminalUrls.get(terminalId);
     if (!info) throw new Error("终端不存在或已关闭");
     if (info.taskId) throw new Error("这个终端已经接入任务");
@@ -3262,17 +3672,27 @@ const actions = {
     if (!todo) throw new Error("todo not found");
     const agent = info.agentId ? store.state.agents.find((a) => a.id === info.agentId) : null;
     if (!agent) throw new Error("这个终端不是 Agent 终端；请先用「＋ Agent」启动");
+    // 手工终端接入：keepCwd=false 时切到该任务最近的 worktree（只影响后续 run，不改历史 run）
+    let adoptCwd = info.cwd;
+    let adoptBranch = info.branch || null;
+    if (!keepCwd) {
+      const wanted = switchBranch || "";
+      const candidate = [...store.state.runs].reverse().find((r) => r.todoId === todo.id && r.cwd && (!wanted || r.branch === wanted));
+      if (candidate && fsSync.existsSync(candidate.cwd)) { adoptCwd = candidate.cwd; adoptBranch = candidate.branch || adoptBranch; }
+    }
     const run = {
       id: store.nextId("r"), todoId: todo.id, agentId: agent.id, status: "running",
       trigger: "terminal", kind: "worker", delegationId: null,
       startedAt: Date.now(), endedAt: null, cost: 0, tokens: null, error: null, parentRunId: null,
-      cwd: info.cwd, branch: info.branch || null, hostId: agent.hostId || null, createdAt: Date.now(),
+      cwd: adoptCwd, branch: adoptBranch, hostId: agent.hostId || null, createdAt: Date.now(),
       tokensIn: null, tokensOut: null, usageSource: "unknown", errorClass: null, exitCode: null,
       queueWaitMs: 0, durationMs: null, queueReason: null, terminalId, runtime: "terminal",
     };
     store.state.runs.push(run);
     info.runId = run.id;
     info.taskId = todo.id;
+    info.cwd = adoptCwd;
+    info.branch = adoptBranch;
     syncTerminalRecord(terminalId, { todoId: todo.id, runId: run.id, status: "running", endedAt: null });
     todo.status = "in_progress";
     todo.agentId = agent.id;
@@ -4384,6 +4804,7 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.warn(`[plugins] host start failed: ${String(err?.message || err)}`);
   }
+  try { startImGateway(); } catch (err) { console.warn(`[im] start failed: ${String(err?.message || err)}`); }
   broadcast();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
@@ -4395,6 +4816,7 @@ app.on("before-quit", () => {
   try { grapeProc?.kill(); } catch { /* ignore */ }
   try { mcpServer?.close(); } catch { /* ignore */ }
   try { wikiMcpServer?.close(); } catch { /* ignore */ }
+  try { imGateway?.stop(); } catch { /* ignore */ }
   void pluginHost?.stopAll();
   // 正常退出也要结算：否则下次启动前卡片一直是「进行中」
   try {

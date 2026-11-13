@@ -149,6 +149,15 @@
   整批导入、导出 Markdown / PDF；Wiki 存储拆成轻量索引 + 正文分片 + 搜索索引，1000 页面实测 list 23ms / search 5ms / 单页 1ms。
   位置：`plugins/notes/main.mjs`、`Notes.tsx`
 
+- [ ] **P1 记忆四层补齐（待实施）**
+  L1 缺检索通道（`transcript_search` / `run_read`）、L2 缺独立 note 对象、Dream 只有确定性检查且无建议队列。
+  方案：`docs/ARCH-memory.md`；需求：`docs/REQ-modules-original.md` 第 3 节。
+
+- [ ] **P0 知识合并：资料 + 页面一个库（待实施）**
+  两者共用一套解析、索引、检索入口与引用解析，只在写入侧分权（资料只读、页面可审核）。
+  含：多格式解析（PDF / Office / EPUB / 扫描件）、中文 bigram 检索、Ark 向量召回 + RRF、页级引用定位、后台去重 / 补引用 / 标过期、`kb-mcp-bridge` 只读白名单出口。
+  方案：`docs/ARCH-knowledge.md`；需求：`docs/REQ-modules-original.md` 第 2 节。
+
 ---
 
 ## 7. Agent / 主机 / Runtime
