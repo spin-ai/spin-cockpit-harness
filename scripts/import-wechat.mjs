@@ -178,6 +178,7 @@ function recordsFromDecryptedDir(dir) {
   const files = [];
   const walk = (base) => {
     for (const name of fs.readdirSync(base)) {
+      if (name.startsWith(".")) continue;
       const full = path.join(base, name);
       const st = fs.statSync(full);
       if (st.isDirectory()) walk(full);
@@ -186,92 +187,124 @@ function recordsFromDecryptedDir(dir) {
   };
   walk(dir);
 
-  const out = [];
-  const sessions = new Map(); // username -> 会话展示名
-  const contacts = new Map(); // username -> 联系人展示名
-  // 先扫 session / contact 库拿展示名（读不到就退化成 username）
-  for (const file of files.filter((f) => /(session|contact)[^/]*\.db$/i.test(f))) {
-    const isContact = /contact/i.test(path.basename(file));
+  const md5 = (text) => crypto.createHash("md5").update(text).digest("hex");
+  const contacts = new Map();   // username -> 展示名（备注 / 昵称）
+  const sessions = new Map();   // username -> 展示名（会话列表）
+  const idMaps = [];            // 每个 message 库自己的 Name2Id：rowid -> username
+
+  const safeAll = (db, sql) => {
+    try { return db.prepare(sql).all(); } catch { return []; }
+  };
+  const columnsOf = (db, table) => safeAll(db, `PRAGMA table_info("${table}")`).map((c) => c.name);
+
+  // 1) contact.db：备注 / 昵称
+  for (const file of files.filter((f) => /contact/i.test(path.basename(f)))) {
+    let db;
+    try { db = new DatabaseSync(file); } catch { continue; }
     try {
-      const db = new DatabaseSync(file);
-      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name);
-      for (const t of tables) {
-        const cols = db.prepare(`PRAGMA table_info("${t}")`).all().map((c) => c.name);
-        const nameCol = cols.find((c) => /^(user_name|username|talker|str_talker|session_id)$/i.test(c))
-          || cols.find((c) => /user_name|username|talker|str_talker|session_id/i.test(c));
-        // 展示名：优先备注/昵称；注意排除 username 本身（name$ 会误匹配 user_name）
-        const dispCol = cols.find((c) => c !== nameCol && /^(remark|remark_name|nick_name|nickname|display_name|alias|name)$/i.test(c));
-        if (!nameCol) continue;
-        for (const row of db.prepare(`SELECT * FROM "${t}"`).all()) {
-          const key = String(row[nameCol] || "");
-          const label = String((dispCol && row[dispCol]) || key || "");
-          if (key && label) (isContact ? contacts : sessions).set(key, label);
+      for (const table of safeAll(db, "SELECT name FROM sqlite_master WHERE type='table'").map((r) => r.name)) {
+        const cols = columnsOf(db, table);
+        const userCol = cols.find((c) => /^username$/i.test(c));
+        if (!userCol) continue;
+        const remarkCol = cols.find((c) => /^remark$/i.test(c));
+        const nickCol = cols.find((c) => /^nick_?name$/i.test(c));
+        const idCol = cols.find((c) => /^id$/i.test(c));
+        const rows = safeAll(db, `SELECT ${[userCol, remarkCol, nickCol, idCol].filter(Boolean).map((c) => `"${c}"`).join(",")} FROM "${table}"`);
+        for (const row of rows) {
+          const user = String(row[userCol] || "");
+          if (!user) continue;
+          const nick = String((remarkCol && row[remarkCol]) || (nickCol && row[nickCol]) || "").trim();
+          // 只有 username 的表（如 name2id）不能把已有备注/昵称覆盖成裸 id
+          if (nick && nick !== user) contacts.set(user, nick);
+          else if (!contacts.has(user)) contacts.set(user, user);
+          if (idCol && row[idCol] != null) contacts.set(`#${row[idCol]}`, user);
         }
       }
-      db.close();
-    } catch { /* session 读不到就退化成表名 */ }
+    } catch { /* 单库失败忽略 */ }
+    finally { try { db.close(); } catch { /* ignore */ } }
   }
 
-  const md5Chat = new Map();
-  for (const [key, label] of sessions) {
-    md5Chat.set(crypto.createHash("md5").update(key).digest("hex"), label);
+  // 2) session.db：会话列表（会话名用 username + 联系人展示名）
+  for (const file of files.filter((f) => /session[^/]*\.db$/i.test(f))) {
+    let db;
+    try { db = new DatabaseSync(file); } catch { continue; }
+    try {
+      for (const table of safeAll(db, "SELECT name FROM sqlite_master WHERE type='table'").map((r) => r.name)) {
+        const cols = columnsOf(db, table);
+        const userCol = cols.find((c) => /^username$/i.test(c));
+        if (!userCol) continue;
+        for (const row of safeAll(db, `SELECT "${userCol}" AS u FROM "${table}"`)) {
+          const user = String(row.u || "");
+          if (user) sessions.set(user, contacts.get(user) || user);
+        }
+      }
+    } catch { /* ignore */ }
+    finally { try { db.close(); } catch { /* ignore */ } }
   }
+
+  const out = [];
+  const selfWxid = flag("self-wxid") || "";
 
   for (const file of files) {
-    if (/session[^/]*\.db$/i.test(file)) continue;
+    if (/contact|session/i.test(path.basename(file))) continue;
     let db;
     try { db = new DatabaseSync(file); } catch (err) { log(`跳过 ${path.basename(file)}：${String(err?.message || err).slice(0, 80)}`); continue; }
     try {
-      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name);
-      // Name2Id：real_sender_id -> 用户名
-      const idMap = new Map();
-      for (const t of tables.filter((n) => /name2id/i.test(n))) {
-        const cols = db.prepare(`PRAGMA table_info("${t}")`).all().map((c) => c.name);
-        const idCol = cols.find((c) => /^id$|rowid|user_id/i.test(c));
-        const nameCol = cols.find((c) => /user_name|username|name/i.test(c));
-        if (!idCol || !nameCol) continue;
-        for (const row of db.prepare(`SELECT * FROM "${t}"`).all()) idMap.set(String(row[idCol]), String(row[nameCol] || ""));
+      const tables = safeAll(db, "SELECT name FROM sqlite_master WHERE type='table'").map((r) => r.name);
+      // Name2Id：rowid = real_sender_id
+      for (const table of tables.filter((n) => /name2id/i.test(n))) {
+        const cols = columnsOf(db, table);
+        if (!cols.some((c) => /^user_name$/i.test(c))) continue;
+        const map = new Map();
+        for (const row of safeAll(db, `SELECT rowid AS rid, user_name FROM "${table}"`)) map.set(String(row.rid), String(row.user_name || ""));
+        if (map.size) idMaps.push(map);
       }
       for (const table of tables.filter((n) => /^Msg_/i.test(n))) {
-        const cols = db.prepare(`PRAGMA table_info("${table}")`).all().map((c) => c.name);
-        const typeCol = cols.find((c) => /local_type|type/i.test(c));
-        const senderCol = cols.find((c) => /real_sender_id|sender/i.test(c));
-        const timeCol = cols.find((c) => /create_time|createtime|time/i.test(c));
-        const textCol = cols.find((c) => /^(message_content|content|msg|str_content)$/i.test(c));
+        const cols = columnsOf(db, table);
+        const typeCol = cols.find((c) => /^local_type$/i.test(c));
+        const senderCol = cols.find((c) => /^real_sender_id$/i.test(c));
+        const timeCol = cols.find((c) => /^create_time$/i.test(c));
+        const textCol = cols.find((c) => /^message_content$/i.test(c));
         if (!timeCol || !textCol) continue;
-        const rows = db.prepare(`SELECT * FROM "${table}"`).all();
-        // 会话名：Msg_<md5(username)>，用 session 表里的 username 算 md5 对上
+        const projection = [typeCol, senderCol, timeCol, textCol].filter(Boolean).map((c) => `"${c}"`).join(",");
+        const rows = safeAll(db, `SELECT ${projection} FROM "${table}" ORDER BY "${timeCol}"`);
+        // 会话名：Msg_<md5(username)>
         const suffix = table.replace(/^Msg_/i, "").toLowerCase();
-        const chat = md5Chat.get(suffix) || `会话_${suffix.slice(0, 8)}`;
+        let chat = "";
+        for (const [user, label] of sessions) {
+          if (md5(user) === suffix) { chat = label; break; }
+        }
+        if (!chat) chat = `会话_${suffix.slice(0, 8)}`;
+        const idMap = idMaps[idMaps.length - 1] || new Map();
         for (const row of rows) {
           const type = Number(row[typeCol] ?? 0);
+          if (type === 10000) continue; // 系统提示
           let text = String(row[textCol] ?? "");
-          if (!text && row.compress_content) continue; // 压缩内容（图片/文件等）跳过
+          if (!text) continue;
+          // 群消息正文带发送者前缀：wxid_xxx: 内容 / xxx@chatroom: 内容
+          let sender = idMap.get(String(row[senderCol] ?? "")) || "";
+          const prefixed = text.match(/^(wxid_[A-Za-z0-9_-]+|[A-Za-z0-9_-]+@chatroom):\s*([\s\S]*)$/);
+          if (prefixed) { sender = prefixed[1]; text = prefixed[2]; }
           if (type === 49) {
             const title = text.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
             text = title ? `[链接/分享] ${title[1].trim()}` : "";
-          } else if (type !== 1 && type !== 10000 && type !== 3) {
-            // 其它类型（语音/视频/转账…）只在能读到文本时保留
-            if (!/[\u3400-\u9fff]|[a-zA-Z0-9]/.test(text)) continue;
+          } else if (type !== 1) {
+            if (!/^\s*\S/.test(text) || !/[\u3400-\u9fff]|[a-zA-Z0-9]{2}/.test(text)) continue;
           }
-          if (!String(text).trim()) continue;
-          const senderId = idMap.get(String(row[senderCol] ?? "")) || "";
-          const selfWxid = flag("self-wxid") || "";
-          const isSelf = Boolean((selfWxid && senderId === selfWxid) || (!selfWxid && senderId && senderId === selfName));
-          const speakerName = isSelf
-            ? (selfName || contacts.get(senderId) || senderId || "我")
-            : (contacts.get(senderId) || senderId || "对方");
-          out.push({
-            chat,
-            at: toMs(row[timeCol]),
-            speaker: speakerName,
-            text: String(text).replace(/\u0000/g, "").trim(),
-            out: isSelf,
-          });
+          text = text.replace(/\u0000/g, "").trim();
+          if (!text) continue;
+          const isSelf = Boolean(selfWxid && sender === selfWxid);
+          const speaker = isSelf ? (selfName || contacts.get(sender) || "我") : (contacts.get(sender) || sender || chat);
+          out.push({ chat, at: toMs(row[timeCol]), speaker, text, out: isSelf });
         }
       }
     } catch { /* 单库失败不影响其它 */ }
     finally { try { db.close(); } catch { /* ignore */ } }
+  }
+  if (has("debug")) {
+    log(`contacts=${contacts.size} sessions=${sessions.size} idMaps=${idMaps.length} messages=${out.length}`);
+    const rooms = [...sessions.entries()].filter(([u]) => u.includes("@chatroom")).slice(0, 3);
+    log(`sessions sample: ${JSON.stringify(rooms)}`);
   }
   return out;
 }

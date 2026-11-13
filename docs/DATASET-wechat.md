@@ -64,6 +64,35 @@ csrutil enable
 解它需要的封装密钥同样来自运行时；公开工具（含 Windows 版）最终也都是走内存扫描。
 所以「只拷文件、不跑微信」拿不到 key。
 
+## 实跑记录（这台机器，2026-11-14）
+
+按 A1 真跑通过，全过程约 3 分钟，微信临时退出并在调试副本里跑过一次：
+
+```bash
+bash scripts/wechat-key-macos.sh --yes --only=sip.prepare   # 下载 Frida Gadget + 构建调试副本
+cd .runtime/wechat4-db-decrypt
+uv run python -m wxexport.keys.hunt --restart --timeout 420 --quiet 45   # 退出微信→启动副本→抓 key
+uv run python -m wxexport.keys.map --db-dir "$HOME/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_ivx7yz1nfzgp22_ea49/db_storage"
+uv run python -m wxexport.decrypt --db-dir "<上面同一个 db_storage>" --out-dir decrypted-live
+```
+
+两个坑（脚本和文档都已修正）：
+
+1. `keys.map` / `decrypt` 默认读 `config.json` 里的 `db_dir`，它会挑**别的账号**目录 →
+   所有库都「无密钥」。必须 `--db-dir` 指到当前账号的 `db_storage`。
+2. 解码 WeChat 4.x 库时不能 `SELECT *`：`server_id` 等 64 位整数超出 JS 安全范围，
+   `node:sqlite` 会直接抛错；要显式选列（`local_type` / `create_time` /
+   `real_sender_id` / `message_content`）。
+
+结果：13,830 条 / 377 个会话 / 2026-08-19 → 11-14，本人 888 条，落在 `datasets/wechat/`。
+
+清理：抓完把调试副本与快照删掉即可（key 仍适用于原库）：
+
+```bash
+rm -rf .runtime/wechat4-db-decrypt/.runtime/WeChat-SIP.app .runtime/wechat4-db-decrypt/decrypted-live
+rm -rf ~/Library/Containers/io.github.timfang4162.wechat4-macos-frida-export.sip
+```
+
 ## 方式 A：第三方工具解密（拿到 key 后直读）
 
 macOS 上可行的是「Frida Gadget + CommonCrypto 拦截」路线（会启动一个**调试副本**的微信，
