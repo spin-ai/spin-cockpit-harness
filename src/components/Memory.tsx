@@ -37,6 +37,8 @@ export function Memory({ act }: { act: Act }) {
   const [openInjectId, setOpenInjectId] = useState<string>("");
   const [srcFilter, setSrcFilter] = useState("");
   const [entrySort, setEntrySort] = useState<"updated" | "title" | "length">("updated");
+  const [picking, setPicking] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
   const [archived, setArchived] = useState<Entry[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [dreamCfg, setDreamCfg] = useState<{ enabled: boolean; maxSuggestions: number }>({ enabled: true, maxSuggestions: 40 });
@@ -149,6 +151,19 @@ export function Memory({ act }: { act: Act }) {
     .sort((a, b) => entrySort === "title" ? a.title.localeCompare(b.title, "zh-Hans-CN")
       : entrySort === "length" ? (b.body?.length || 0) - (a.body?.length || 0)
         : (b.updatedAt || 0) - (a.updatedAt || 0));
+  const bulkAction = async (action: "archive" | "restore" | "demote") => {
+    const ids = [...picked];
+    if (!ids.length) return;
+    const label = action === "archive" ? "标为过期" : action === "restore" ? "恢复" : "降级";
+    if (action === "archive" && !window.confirm(`把所选 ${ids.length} 条${label}？（可恢复）`)) return;
+    try {
+      const res = await act("memoryEntryBulk", { ids, action });
+      setNotice(`已${label} ${res?.count || 0} 条`);
+      setPicked(new Set()); setPicking(false);
+      await load();
+    } catch (err) { fail(err); }
+  };
+
   const restore = async (entry: Entry) => {
     try { await act("memoryEntryRestore", { id: entry.id }); setNotice("已恢复"); await load(); } catch (err) { fail(err); }
   };
@@ -262,6 +277,7 @@ export function Memory({ act }: { act: Act }) {
               <p>{layerMeta.desc}。{layer === "L4" ? "写进这里的条目每次 run 都会注入，所以宁少不多。" : ""}</p>
             </div>
             <span className="row gap6">
+              <button className={`list-chip ${picking ? "on" : ""}`} onClick={() => { setPicking((v) => !v); setPicked(new Set()); }}>{picking ? "退出多选" : "多选"}</button>
               <select className="list-select" value={entrySort} onChange={(e) => setEntrySort(e.target.value as typeof entrySort)} aria-label="排序">
                 <option value="updated">按最近更新</option>
                 <option value="title">按标题</option>
@@ -285,6 +301,19 @@ export function Memory({ act }: { act: Act }) {
             </div>
           </div>
 
+          {picking && (
+            <div className="bulk-bar">
+              <span>已选 {picked.size}</span>
+              <button className="link tiny" onClick={() => setPicked(new Set(shownEntries.map((e) => e.id)))}>全选本层</button>
+              <button className="link tiny" onClick={() => setPicked(new Set())} disabled={!picked.size}>清空</button>
+              <span style={{ flex: 1 }} />
+              <button className="btn tiny-btn" onClick={() => void bulkAction("demote")} disabled={!picked.size}>降级</button>
+              {showArchived
+                ? <button className="btn tiny-btn" onClick={() => void bulkAction("restore")} disabled={!picked.size}>恢复</button>
+                : <button className="btn tiny-btn" onClick={() => void bulkAction("archive")} disabled={!picked.size}>标为过期</button>}
+            </div>
+          )}
+
           <div className="pr-entries">
             {shownEntries.length === 0 && (
               <EmptyState compact mark="◍" title={`「${layerMeta.name}」还是空的`} desc={layer === "L4" ? "接受 Dream 的「晋升」建议会写到这里，也可以手动添加。" : "条目只由 Dream 建议或人工写入。"} />
@@ -306,8 +335,17 @@ export function Memory({ act }: { act: Act }) {
             )}
 
             {shownEntries.map((e) => (
-              <div className="pr-entry" key={e.id}>
+              <div className={`pr-entry ${picked.has(e.id) ? "picked" : ""}`} key={e.id}>
                 <div className="pr-entry-head">
+                  {picking && (
+                    <input
+                      type="checkbox"
+                      className="pick-box"
+                      checked={picked.has(e.id)}
+                      onChange={() => setPicked((prev) => { const n = new Set(prev); if (n.has(e.id)) n.delete(e.id); else n.add(e.id); return n; })}
+                      aria-label={`选择 ${e.title}`}
+                    />
+                  )}
                   <h3>{e.title}</h3>
                   <RowMenu title="条目操作">
                     <button onClick={() => {

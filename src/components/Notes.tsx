@@ -70,6 +70,8 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   const [tab, setTab] = useState<Tab>(initialTab || "pages");
   const [listSort, setListSort] = useState<"updated" | "title" | "status">("updated");
   const [statusFilter, setStatusFilter] = useState<"" | "draft" | "reviewed" | "stale">("");
+  const [picking, setPicking] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
   useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
   const [query, setQuery] = useState("");
   const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
@@ -1013,8 +1015,50 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
     try { setTagPages((await invoke("wiki.byTag", { tag: key })) || []); } catch { setTagPages([]); }
   };
 
+  const deletePickedPages = async () => {
+    const ids = [...picked];
+    if (!ids.length) return;
+    if (!window.confirm(`删除所选 ${ids.length} 个页面？（可在回收站恢复）`)) return;
+    let ok = 0;
+    for (const id of ids) {
+      try { await invoke("wiki.deletePage", { id }); ok += 1; } catch { /* ignore */ }
+    }
+    setPicked(new Set()); setPicking(false);
+    setNotice(`已删除 ${ok} 个页面`); await refresh();
+  };
+
+  const deletePickedSources = async () => {
+    const ids = [...picked];
+    if (!ids.length) return;
+    if (!window.confirm(`删除所选 ${ids.length} 份资料？引用会被移除。`)) return;
+    try { await invoke("wiki.deleteSource", { ids }); setNotice(`已删除 ${ids.length} 份资料`); }
+    catch (err) { fail(err); }
+    setPicked(new Set()); setPicking(false); await refresh();
+  };
+
+  const reviewPicked = async (decision: "accept" | "reject") => {
+    const ids = [...picked];
+    if (!ids.length) return;
+    let ok = 0;
+    for (const id of ids) {
+      try { await invoke("wiki.review", { id, decision }); ok += 1; } catch { /* ignore */ }
+    }
+    setPicked(new Set()); setPicking(false);
+    setNotice(`${decision === "accept" ? "接受" : "退回"} ${ok} 个页面`); await refresh();
+  };
+
   const pageRow = (p: PageSummary) => (
-    <div key={p.id} className={`notes-row ${activeDoc?.id === p.id ? "on" : ""}`}>
+    <div key={p.id} className={`notes-row ${activeDoc?.id === p.id ? "on" : ""} ${picked.has(p.id) ? "picked" : ""}`}>
+      {picking && (
+        <input
+          type="checkbox"
+          className="pick-box"
+          checked={picked.has(p.id)}
+          onChange={() => setPicked((prev) => { const n = new Set(prev); if (n.has(p.id)) n.delete(p.id); else n.add(p.id); return n; })}
+          onClick={(e) => e.stopPropagation()}
+          aria-label={`选择 ${p.title}`}
+        />
+      )}
       <button className={`notes-file ${activeDoc?.id === p.id ? "on" : ""}`} onClick={() => void openPage(p.id)} title={p.title}>
         <span className={`notes-status-dot ${p.status}`} />
         <span className="notes-file-main">
@@ -1205,6 +1249,17 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
             </div>
           )}
           {filteredHits.length > 0 && <div className="notes-search-results">{filteredHits.slice(0, 12).map((hit) => <button key={hit.kind + hit.id} onClick={() => void openHit(hit)}><b>{markText(hit.title, query)}</b><span>{hit.kind}</span><em>{markText(hit.snippet, query)}</em></button>)}</div>}
+          {picking && (
+            <div className="bulk-bar">
+              <span>已选 {picked.size}</span>
+              <button className="link tiny" onClick={() => setPicked(new Set(filteredPages.map((p) => p.id)))}>{tab === "sources" ? "全选资料" : "全选页面"}</button>
+              <button className="link tiny" onClick={() => setPicked(new Set())} disabled={!picked.size}>清空</button>
+              <span style={{ flex: 1 }} />
+              {tab === "pages" && <button className="btn tiny-btn" onClick={() => void reviewPicked("accept")} disabled={!picked.size}>接受</button>}
+              {tab === "pages" && <button className="btn tiny-btn" onClick={() => void reviewPicked("reject")} disabled={!picked.size}>退回</button>}
+              <button className="btn tiny-btn" onClick={() => void (tab === "sources" ? deletePickedSources() : deletePickedPages())} disabled={!picked.size}>删除</button>
+            </div>
+          )}
           {(tab === "pages" || tab === "sources") && (
             <div className="list-tools">
               <select className="list-select" value={listSort} onChange={(e) => setListSort(e.target.value as typeof listSort)} aria-label="排序">
@@ -1212,6 +1267,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
                 <option value="title">按标题</option>
                 {tab === "pages" && <option value="status">按状态</option>}
               </select>
+              <button className={`list-chip ${picking ? "on" : ""}`} onClick={() => { setPicking((v) => !v); setPicked(new Set()); }}>{picking ? "退出多选" : "多选"}</button>
               {tab === "pages" && (
                 <div className="list-chips">
                   {([["", "全部"], ["draft", "草稿"], ["reviewed", "已审核"], ["stale", "已过期"]] as const).map(([id, label]) => (

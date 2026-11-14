@@ -2760,6 +2760,17 @@ const actions = {
   memoryExport: async () => ({ markdown: memory().exportMarkdown() }),
   memoryDreamStatus: async () => memory().dreamConfig({}),
   memoryEntryDemote: async ({ id } = {}) => memory().entryDemote({ id }),
+  memoryEntryBulk: async ({ ids = [], action = "archive" } = {}) => {
+    const done = [];
+    for (const id of ids) {
+      try {
+        if (action === "archive") { memory().entryArchive({ id }); done.push(id); }
+        else if (action === "restore") { memory().entryRestore({ id }); done.push(id); }
+        else if (action === "demote") { memory().entryDemote({ id }); done.push(id); }
+      } catch { /* ignore */ }
+    }
+    return { action, count: done.length };
+  },
   memoryNoteBulk: async ({ ids = [], status = "verified" } = {}) => {
     const out = [];
     for (const id of ids) { try { out.push(memory().noteSetStatus({ id, status })); } catch { /* ignore */ } }
@@ -2811,13 +2822,26 @@ const actions = {
   personaMerge: async ({ keepId, aliasIds } = {}) => persona().merge({ keepId, aliasIds }),
   personaRemove: async ({ personId, from, to, sourcePrefix } = {}) => persona().remove({ personId, from, to, sourcePrefix }),
   personaConflicts: async () => persona().detectConflicts(),
+  /** 批量删除（按 personId） */
+  personaRemoveMany: async ({ personIds = [] } = {}) => {
+    let removed = 0;
+    for (const personId of personIds) {
+      try { removed += persona().remove({ personId })?.removed || 0; } catch { /* ignore */ }
+    }
+    store.addEvent("persona.remove", `persona.remove people=${personIds.length} observations=${removed}`);
+    return { people: personIds.length, removed };
+  },
+  /** 批量复制角色卡：返回数组，由 UI 放进剪贴板 */
+  personaCards: async ({ personIds = [] } = {}) => personIds.map((id) => {
+    try { return persona().card({ personId: id }); } catch { return null; }
+  }).filter(Boolean),
   /**
    * 人物建模（可直接从界面调用）：
    * - mode="llm"：统计事实 + 每个联系人的一次 Ark 分析（oneLiner / 身份 / 性格 / 沟通 / 价值 / 目标 / 决策）
    * - mode="stats"：只算可观测统计，不花钱
    * 进度写到 personaModelStatus()，可用 personaModelCancel() 中途停止；样本 hash 缓存，不重复花钱。
    */
-  personaModel: async ({ mode = "llm", limit = 12, minMessages = 30, model = "", autoConfirmStats = true } = {}) => {
+  personaModel: async ({ mode = "llm", limit = 12, minMessages = 30, model = "", autoConfirmStats = true, names = [] } = {}) => {
     if (personaJob.running) throw new Error("已经有一个建模任务在跑");
     Object.assign(personaJob, {
       running: true, cancelled: false, total: 0, done: 0, current: "", startedAt: Date.now(), finishedAt: 0,
@@ -2847,8 +2871,9 @@ const actions = {
     }
     const people = persona().people();
     const known = new Map(people.map((p) => [p.name, p]));
+    const wanted = Array.isArray(names) && names.length ? new Set(names) : null;
     const targets = [...byPerson.entries()]
-      .filter(([name, msgs]) => known.has(name) && msgs.length >= minMessages)
+      .filter(([name, msgs]) => known.has(name) && msgs.length >= minMessages && (!wanted || wanted.has(name)))
       .sort((a, b) => b[1].length - a[1].length);
     // limit<=0 → 全部（一键全部建模）；默认 12
     const limited = Number(limit) > 0 ? targets.slice(0, Number(limit)) : targets;
