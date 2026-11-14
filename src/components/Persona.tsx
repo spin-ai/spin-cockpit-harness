@@ -16,9 +16,19 @@ type CardRow = {
   conflict: string | null; evidence: Evidence[];
 };
 type CardSection = { id: string; title: string; rows: CardRow[] };
+/** 导入格式的中文名，用来在提示里说清「识别成了什么」 */
+const FORMAT_LABEL: Record<string, string> = {
+  telegram: "Telegram 导出",
+  feishu: "飞书导出",
+  wechat: "微信 txt",
+  csv: "CSV",
+  json: "通用 JSON",
+  text: "纯文本",
+};
+
 type Person = { id: string; name: string; relation: string; groupOnly: boolean; isSelf: boolean };
 type PersonRow = Person & { confirmed: number; pending: number; completeness: number; lastAt: number; tags?: string[] };
-type Network = { id: string; name: string; type: string; strength: number; at: number };
+type Network = { id: string; name: string; type: string; strength: number; at: number; context?: string | null; groupOnly?: boolean };
 type Card = {
   person: Person; sections: CardSection[]; network: Network[]; oneLiner: string; completeness: number;
   counts: { confirmed: number; pending: number; sensitive: number; fields: number; total: number };
@@ -28,6 +38,8 @@ type Obs = {
   id: string; personId: string | null; person: string; field: string; value: string; quote: string;
   sourceKind: string; sourceRef: string; sensitive: boolean; createdAt: number;
 };
+type AsOfField = { field: string; label: string; value?: string; values?: string[]; history?: { value: string; from: number; to: number | null }[]; at: number; confidence: number };
+type AsOf = { at: number; fields: AsOfField[]; count: number };
 type Drift = { kind: "drift" | "conflict"; field: string; label: string; from?: string; to?: string; value?: string; note?: string; at: number };
 type Inject = { markdown: string; chars: number; budget: number; dropped: number };
 
@@ -66,6 +78,8 @@ export function Persona({ act }: { act: Act }) {
   const [selected, setSelected] = useState("");
   const [card, setCard] = useState<Card | null>(null);
   const [drift, setDrift] = useState<Drift[]>([]);
+  const [asOfAt, setAsOfAt] = useState("");
+  const [asOf, setAsOf] = useState<AsOf | null>(null);
   const [inject, setInject] = useState<Inject | null>(null);
   const [openEv, setOpenEv] = useState<Record<string, boolean>>({});
   const [onlyMine, setOnlyMine] = useState(false);
@@ -121,6 +135,7 @@ export function Persona({ act }: { act: Act }) {
       setDrift(d || []);
       setInject(inj);
       setAnswer(null);
+      setAsOf(null);
     } catch (err) { fail(err); }
   }, [act]);
 
@@ -133,8 +148,8 @@ export function Persona({ act }: { act: Act }) {
   };
 
   // AI/统计建模：动作会一直跑到结束，所以启动后不 await，改为轮询进度
-  const startModel = async (mode: "llm" | "stats", limitOverride?: number, names?: string[]) => {
-    if (mode === "llm" && !window.confirm("建模会把联系人的部分发言样本发给模型分析（默认最多 12 人，同一份样本只算一次）。继续？")) return;
+  const startModel = async (mode: "llm" | "stats", limitOverride?: number, names?: string[], ask = true) => {
+    if (ask && mode === "llm" && !window.confirm("建模会把联系人的部分发言样本发给模型分析（默认最多 12 人，同一份样本只算一次）。继续？")) return;
     try {
       const st = await act("personaModelStatus");
       if (st?.running) { setNotice("已有建模任务在跑"); return; }
@@ -191,7 +206,9 @@ export function Persona({ act }: { act: Act }) {
     setBusy(true);
     try {
       const res = await act("personaImport", { text: paste, selfName, title: "手动粘贴", kind: "chat" });
-      setNotice(res?.deduped ? "内容重复，已跳过" : `解析 ${res?.messages || 0} 条发言，新增 ${res?.added || 0} 条待确认`);
+      const fmt = res?.format ? `（${FORMAT_LABEL[res.format] || res.format}）` : "";
+      const warn = Array.isArray(res?.warnings) && res.warnings.length ? ` · ${res.warnings[0]}` : "";
+      setNotice(res?.deduped ? "内容重复，已跳过" : `解析 ${res?.messages || 0} 条发言${fmt}，新增 ${res?.added || 0} 条待确认${warn}`);
       setPaste("");
       await reload();
     } catch (err) { fail(err); } finally { setBusy(false); }
@@ -202,8 +219,9 @@ export function Persona({ act }: { act: Act }) {
     try {
       const res = await act("personaImportPick");
       const added = res?.added || [];
+      const fmts = [...new Set(added.map((a: { format?: string }) => a.format).filter(Boolean))].map((f) => FORMAT_LABEL[String(f)] || String(f));
       setNotice(added.length
-        ? `导入 ${added.length} 个文件，新增 ${added.reduce((n: number, a: { added?: number }) => n + (a.added || 0), 0)} 条待确认`
+        ? `导入 ${added.length} 个文件${fmts.length ? `（${fmts.join(" / ")}）` : ""}，新增 ${added.reduce((n: number, a: { added?: number }) => n + (a.added || 0), 0)} 条待确认`
         : "没有选择文件");
       await reload();
     } catch (err) { fail(err); } finally { setBusy(false); }
@@ -262,7 +280,7 @@ export function Persona({ act }: { act: Act }) {
     if (!names.length) return;
     if (!window.confirm(`对所选 ${names.length} 人跑建模（未缓存的会调用模型）？`)) return;
     setPicking(false);
-    await startModel("llm", -1, names);
+    await startModel("llm", 0, names, false);
   };
 
   const batchCopyCards = async () => {
@@ -558,7 +576,7 @@ export function Persona({ act }: { act: Act }) {
                   const calls = plan?.calls ?? plan?.eligible ?? 0;
                   if (!calls) { setNotice("没有需要建模的人（可能都已缓存）"); return; }
                   if (!window.confirm(`一键全部建模：\n\n可建模 ${plan.eligible} 人（已缓存 ${plan.cached} 人跳过）\n本次预计 ${calls} 次模型调用，按顺序逐人跑，可随时取消。\n\n继续？`)) return;
-                  await startModel("llm", 0);
+                  await startModel("llm", 0, undefined, false);
                 } catch (err) { setNotice(String((err as Error)?.message || err)); }
               }}
             >一键全部建模（未建模的全部跑一遍）</button>
@@ -578,7 +596,7 @@ export function Persona({ act }: { act: Act }) {
       {(job?.running || job?.done) && (
         <div className="pr-modeljob">
           <div className="pr-modeljob-main">
-            <b>{job.running ? `建模中 · ${job.done}/${job.total || "?"}` : `本次建模完成 · ${job.cards} 人出卡`}</b>
+            <b>{job.running ? (job.cancelled ? `正在停止…（已完成 ${job.done}/${job.total || "?"}）` : `建模中 · ${job.done}/${job.total || "?"}`) : `本次建模完成 · ${job.cards} 人出卡`}</b>
             <span className="tiny faint">
               {job.running ? (job.current ? `当前：${job.current}` : "准备中…") : `统计 ${job.statsAdded} 条 · 模型结论 ${job.llmAdded} 条待确认${job.skippedCache ? ` · 缓存跳过 ${job.skippedCache}` : ""}`}
             </span>
@@ -830,7 +848,11 @@ export function Persona({ act }: { act: Act }) {
                         {card.network.map((n) => (
                           <div className="persona-rel" key={n.id}>
                             <span className="persona-ava">{n.name.slice(0, 1)}</span>
-                            <span><b>{n.name}</b><em>{n.type || "关系"}</em></span>
+                            <span>
+                              <b>{n.name}</b>
+                              <em>{n.type || "关系"}</em>
+                              {n.groupOnly && <em className="persona-rel-group" title="只在群聊里出现过，强度按群聊计算">仅群聊</em>}
+                            </span>
                             <span className="persona-bar"><i style={{ width: `${Math.round((n.strength || 0.5) * 100)}%` }} /></span>
                             <span className="t">{fmtDate(n.at)}</span>
                           </div>
@@ -888,6 +910,49 @@ export function Persona({ act }: { act: Act }) {
               </div>
             ))}
             {visibleQueue.length > 12 && <p className="notes-meta-empty">还有 {visibleQueue.length - 12} 条未显示。</p>}
+          </div>
+
+          <div className="kv-block">
+            <div className="persona-block-title">回看 <em>{asOf ? new Date(asOf.at).toLocaleDateString() : "当时什么是真的"}</em></div>
+            <div className="row gap6" style={{ alignItems: "center" }}>
+              <input
+                className="kv-input"
+                type="date"
+                value={asOfAt}
+                max={new Date().toISOString().slice(0, 10)}
+                onChange={(e) => setAsOfAt(e.target.value)}
+                aria-label="回看时间点"
+              />
+              <button
+                className="btn tiny-btn"
+                disabled={!asOfAt || !selected}
+                onClick={() => void (async () => {
+                  try { setAsOf(await act("personaAsOf", { personId: selected, at: new Date(`${asOfAt}T23:59:59`).getTime() })); }
+                  catch (err) { fail(err); }
+                })()}
+              >回看</button>
+              {asOf && <button className="link tiny" onClick={() => setAsOf(null)}>回到现在</button>}
+            </div>
+            {asOf ? (
+              asOf.fields.length === 0 ? (
+                <p className="notes-meta-empty">这个时间点还没有已确认的事实。</p>
+              ) : (
+                <div className="persona-asof">
+                  {asOf.fields.slice(0, 12).map((f) => (
+                    <div className="persona-asof-row" key={f.field}>
+                      <span className="k">{f.label}</span>
+                      <span className="v">
+                        {f.values && f.values.length > 1 ? f.values.join(" / ") : f.value}
+                        {(f.history?.length || 0) > 1 && <em className="tiny faint">（之后变成「{f.history![0].value}」）</em>}
+                      </span>
+                    </div>
+                  ))}
+                  <p className="notes-meta-empty">只显示当时已确认的事实；未确认的推断不算。</p>
+                </div>
+              )
+            ) : (
+              <p className="notes-meta-empty">选一个日期，看当时画像里什么是真的。需要事实带时间且已确认。</p>
+            )}
           </div>
 
           <div className="kv-block">

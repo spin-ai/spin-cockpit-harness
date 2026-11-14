@@ -158,33 +158,66 @@ export function describePerson(name, f) {
   return out;
 }
 
-/** 可选：交给模型写一版人设卡草稿（结构化 JSON） */
-export async function modelCard({ name, features, relation = "", key } = {}) {
+/**
+ * LLM 人像分析：把「这个人的发言 + 上下文 + 统计事实」交给模型，产出结构化画像。
+ * 统计只作为事实底座，结论由模型给；每条结论必须带原文证据，材料不足写「未知」。
+ */
+const ANALYSIS_SYSTEM = [
+  "你在做人物画像分析（不是聊天摘要）。输入会给出：某个联系人的发言样本、他与别人/与本人的上下文片段、以及统计事实。",
+  "只根据输入作答，不得编造身份、年龄、职业、住址、公司；材料不足就在对应项写「未知」。",
+  "输出严格 JSON（不要 markdown 代码块），结构：",
+  "{",
+  '  "oneLiner": "一句话概括这个人怎么说话、怎么处事（<=45字，不要心理诊断）",',
+  '  "identity": {"value": "可确证的身份线索，否则未知", "evidence": "原文<=40字"},',
+  '  "role": {"value": "职业/角色线索，否则未知", "evidence": "原文<=40字"},',
+  '  "traits": [{"value": "<=12字的性格/行为特征", "evidence": "原文<=40字"}],',
+  '  "communication": [{"value": "<=16字沟通方式", "evidence": "原文<=40字"}],',
+  '  "values": [{"value": "<=16字价值取向/在意什么", "evidence": "原文<=40字"}],',
+  '  "goals": [{"value": "<=16字目标或持续关注的事", "evidence": "原文<=40字"}],',
+  '  "decisions": [{"value": "<=16字决策习惯", "evidence": "原文<=40字"}],',
+  '  "topics": ["<=10字常聊话题"],',
+  '  "relationshipToMe": {"value": "与本人的关系判断（不确定写未知）", "evidence": "原文<=40字"},',
+  '  "confidence": 0.0',
+  "}",
+  "traits/communication/values/goals/decisions 各最多 3 条；没有依据就空数组。evidence 必须是输入里出现过的原话片段。",
+].join("\n");
+
+export async function analyzePersonWithLLM({ name, relation = "", stats = null, samples = [], context = [], key, model, signal = null } = {}) {
   const arkKey = key || resolveArkKey("");
   if (!arkKey) return null;
-  const samples = (features?.samples || []).slice(-25).map((s) => `- ${s.text}`).join("\n");
-  if (!samples) return null;
-  const sys = [
-    "你在帮用户建模一个联系人。只根据给出的发言样本，输出严格 JSON：",
-    '{"oneLiner":"一句话概括这个人怎么说话/怎么处事（<=40字，不要心理诊断）",',
-    '"traits":["<=12字的可观察特征"],"communication":["<=16字的沟通方式"],"topics":["<=10字的常聊话题"],',
-    '"evidence":["支撑上述结论的原话，最多3条"]}',
-    "禁止编造身份、年龄、职业、住址；证据不足就少写。",
-  ].join("\n");
-  try {
-    const res = await arkChat([
-      { role: "system", content: sys },
-      { role: "user", content: `联系人：${name}${relation ? `（与本人关系：${relation}）` : ""}\n发言样本：\n${samples}` },
-    ], { key: arkKey, maxTokens: 600 });
-    const text = String(res.text || "").trim();
-    const json = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
-    return json;
-  } catch {
-    return null;
-  }
+  const sampleText = samples.slice(-12).map((s) => `- ${String(s.text || "").slice(0, 100)}`).join("\n");
+  if (sampleText.length < 40) return null;
+  const contextText = context.slice(-12).map((c) => `- ${c.from}: ${String(c.text || "").slice(0, 80)}`).join("\n");
+  const statText = stats ? [
+    `发言 ${stats.count} 条 / 活跃 ${stats.activeDays} 天 / 每日 ${stats.perDay} 条`,
+    `句长中位 ${stats.medianLen} 字`,
+    stats.replyMedianMin != null ? `接话时延中位 ${stats.replyMedianMin} 分钟（${stats.replySamples} 次）` : "",
+    `问句 ${stats.questionPct}% / 礼貌用语 ${stats.politePct}% / 笑声 ${stats.laughPct}% / 表情 ${stats.emojiPct}%`,
+    `群聊 ${stats.groupMsgs} 条 / 私聊 ${stats.privateMsgs} 条`,
+    `活跃时段 ${stats.activeHours.map((h) => `${h}点`).join(" ")}`,
+    stats.topWords?.length ? `高频词 ${stats.topWords.map((w) => w.w).join("、")}` : "",
+    stats.topInterlocutors?.length ? `最常互动 ${stats.topInterlocutors.map((x) => x.w).join("、")}` : "",
+  ].filter(Boolean).join("\n") : "";
+  const res = await arkChat([
+    { role: "system", content: ANALYSIS_SYSTEM },
+    {
+      role: "user",
+      content: [
+        `联系人：${name}${relation ? `（已知关系：${relation}）` : ""}`,
+        statText ? `统计事实：\n${statText}` : "",
+        `他的发言样本：\n${sampleText}`,
+        contextText ? `上下文（别人说的话，用于判断互动方式）：\n${contextText}` : "",
+      ].filter(Boolean).join("\n\n"),
+    },
+  ], {
+    key: arkKey,
+    maxTokens: 1200,
+    // 外部 signal（取消任务）+ 单次超时；任一触发都中断当前请求
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(25000)]) : AbortSignal.timeout(25000),
+    ...(model ? { model } : {}),
+  });
+  const text = String(res.text || "").trim();
+  try { return JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); }
+  catch { return null; }
 }
 
-/** 写入 observations 的唯一键（避免重复建模灌水） */
-export function signatureOf(personId, field, value) {
-  return crypto.createHash("sha1").update(`${personId}|${field}|${value}`).digest("hex").slice(0, 16);
-}
