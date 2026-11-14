@@ -1266,7 +1266,43 @@ function startWikiMcpServer() {
         result = who ? { ...answer, card: persona().inject({ personId: who.id, maxChars: 2000 }).markdown } : answer;
       }
       else if (name === "knowledge_search") result = knowledge().search(String(args.query || ""), { limit: Number(args.limit) || 8 });
-      else if (name === "knowledge_ask") result = await knowledge().ask(String(args.question || ""), { limit: 6 });
+      else if (name === "knowledge_docs") result = knowledge().listDocuments({ limit: Number(args.limit) || 50 });
+      else if (name === "knowledge_cite") {
+        const doc = knowledge().listDocuments({ limit: 1000 }).find((d) => d.id === String(args.doc_id || ""));
+        if (!doc) throw new Error("资料不存在");
+        const citePage = String(args.page_id || "");
+        const sources = (await pluginHost.invoke("ai.cockpit.notes", "wiki.sources", {})) || [];
+        let source = sources.find((s) => s.uri && s.uri === doc.uri);
+        if (!source) {
+          const pv = knowledge().preview(doc.id, { maxChars: 2000 });
+          const content = (pv?.pages || []).map((p) => `## p${p.page_no}\n${p.text}`).join("\n\n").slice(0, 20000) || doc.title;
+          source = await pluginHost.invoke("ai.cockpit.notes", "wiki.importSource", { title: doc.title, content, kind: "file", uri: doc.uri });
+        }
+        const where = String(args.locator || `p${Number(args.page) || 1}`);
+        const view = await pluginHost.invoke("ai.cockpit.notes", "wiki.addCitation", { pageId: citePage, sourceId: source.id, quote: String(args.quote || ""), locator: where });
+        const row = knowledge().cite({ pageId: citePage, docId: doc.id, pageNo: Number(args.page) || 1, quote: args.quote, locator: where });
+        result = { ok: true, sourceId: source.id, citationId: row.id, page: view?.title || citePage };
+      }
+      else if (name === "knowledge_read") {
+        const doc = knowledge().preview(String(args.id || ""), { maxChars: Number(args.max_chars) || 4000 });
+        if (!doc) throw new Error("资料不存在");
+        const only = Number(args.page);
+        result = only ? { ...doc, pages: doc.pages.filter((p) => p.page_no === only) } : doc;
+      }
+      else if (name === "knowledge_ask") {
+        const scope = String(args.scope || "all");
+        const extra = [];
+        if (scope !== "docs") {
+          try {
+            const pageHits = await pluginHost.invoke("ai.cockpit.notes", "wiki.search", { query: String(args.question || ""), limit: 4 });
+            for (const hit of (pageHits || []).slice(0, 4)) {
+              const page = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: hit.id });
+              if (page?.content) extra.push({ id: page.id, title: page.title || hit.title, text: String(page.content) });
+            }
+          } catch { /* 页面侧失败不影响资料侧 */ }
+        }
+        result = await knowledge().ask(String(args.question || ""), { limit: 6, extra, includeDocs: scope !== "pages" });
+      }
       else throw new Error(`unknown wiki tool: ${name}`);
       return send(200, { ok: true, result });
     } catch (err) { return send(400, { ok: false, error: String(err?.message || err).slice(0, 1000) }); }
@@ -2556,7 +2592,7 @@ const personaJob = {
   running: false, cancelled: false, // 启动时断言为未运行，避免上次异常退出留下脏状态
   total: 0, done: 0, current: "", startedAt: 0, finishedAt: 0,
   cards: 0, llmAdded: 0, statsAdded: 0, skippedCache: 0, failed: [], mode: "",
-  runId: "", lastError: "",
+  runId: "", lastError: "", controller: null,
 };
 
 /** 只读检索历史：transcript（消息）/ run / 事件，带时间与来源会话 */
@@ -2685,9 +2721,28 @@ const actions = {
     if (!query) return { hits: [], ftsCount: 0, vecCount: 0 };
     return knowledge().search(String(query), { limit: Number(limit) || 8, kb, docIds: Array.isArray(docIds) ? docIds : undefined });
   },
-  knowledgeAsk: async ({ question, limit, kb, docIds } = {}) => {
+  knowledgeAsk: async ({ question, limit, kb, docIds, scope = "all" } = {}) => {
     if (!question) throw new Error("缺少 question");
-    return knowledge().ask(String(question), { limit: Number(limit) || 6, kb, docIds: Array.isArray(docIds) ? docIds : undefined });
+    // 页面侧候选：与资料侧共用一个编号空间，回答可以同时引用页面与页码
+    const extra = [];
+    if (scope !== "docs" && pluginHost) {
+      try {
+        const pageHits = await pluginHost.invoke("ai.cockpit.notes", "wiki.search", { query: String(question), limit: 4 });
+        for (const hit of (pageHits || []).slice(0, 4)) {
+          const page = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: hit.id });
+          if (!page?.content) continue;
+          extra.push({ id: page.id, title: page.title || hit.title, text: String(page.content) });
+        }
+      } catch { /* 页面侧失败不影响资料侧回答 */ }
+    }
+    const res = await knowledge().ask(String(question), {
+      limit: Number(limit) || 6,
+      kb,
+      docIds: Array.isArray(docIds) ? docIds : undefined,
+      extra,
+      includeDocs: scope !== "pages",
+    });
+    return res;
   },
   knowledgeIngest: async ({ engine } = {}) => {
     const res = await dialog.showOpenDialog(win, {
@@ -2715,6 +2770,31 @@ const actions = {
       uri: String(url || `paste:${Date.now()}`),
     });
   },
+  knowledgePageImage: async ({ id, page } = {}) => knowledge().pageImage(String(id || ""), Number(page) || 1),
+  /**
+   * 引用写回：资料片段 → 页面 citation。
+   * 1) 为文档准备一个 notes source（uri 用文档原路径，删除资料时按 uri 命中）
+   * 2) 走插件既有的 wiki.addCitation（页面 UI 直接可见，reviewed 仍然不能被静默覆盖）
+   * 3) kb.db 记一条快照（doc/page/chunk/quote），删除资料后仍可追溯
+   */
+  knowledgeCite: async ({ pageId, docId, page = 1, chunkId = null, quote = "", locator } = {}) => {
+    const doc = knowledge().listDocuments({ limit: 1000 }).find((d) => d.id === String(docId || ""));
+    if (!doc) throw new Error("资料不存在");
+    const sources = (await pluginHost.invoke("ai.cockpit.notes", "wiki.sources", {})) || [];
+    let source = sources.find((s) => s.uri && s.uri === doc.uri);
+    if (!source) {
+      const pv = knowledge().preview(doc.id, { maxChars: 2000 });
+      const content = (pv?.pages || []).map((p) => `## p${p.page_no}${p.heading ? ` · ${p.heading}` : ""}\n${p.text}`).join("\n\n").slice(0, 20000)
+        || `${doc.title}\n\n（该资料没有可抽取的文本）`;
+      source = await pluginHost.invoke("ai.cockpit.notes", "wiki.importSource", { title: doc.title, content, kind: "file", uri: doc.uri });
+    }
+    const where = String(locator || `p${Number(page) || 1}`);
+    const pageView = await pluginHost.invoke("ai.cockpit.notes", "wiki.addCitation", {
+      pageId, sourceId: source.id, quote: String(quote || ""), locator: where,
+    });
+    const row = knowledge().cite({ pageId, docId: doc.id, chunkId, pageNo: Number(page) || 1, quote, locator: where });
+    return { sourceId: source.id, citationId: row.id, page: pageView };
+  },
   knowledgeRemove: async ({ id } = {}) => {
     const docId = String(id || "");
     const doc = knowledge().listDocuments({ limit: 1000 }).find((d) => d.id === docId) || null;
@@ -2724,12 +2804,14 @@ const actions = {
     try {
       const pages = (await pluginHost.invoke("ai.cockpit.notes", "wiki.list", {})).pages || [];
       const keys = [doc?.uri, doc?.title].filter(Boolean).map(String);
+      const citedPageIds = new Set(knowledge().citationsOfDoc(docId).map((c) => c.pageId));
       for (const page of pages) {
-        const cites = page.citations || [];
-        if (!cites.length) continue;
+        // wiki.list 的 citations 是数量，不是数组（旧实现按数组判断，导致永远跳过）
+        const cites = Number(page.citations) || 0;
+        if (!citedPageIds.has(page.id) && !cites) continue;
         const full = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: page.id });
         // 引用里记的是 source 的 uri/标题；匹配文档 uri 或标题（旧实现拿 doc id 去比 uri，永远不命中）
-        const dead = (full?.citations || []).some((c) => {
+        const dead = citedPageIds.has(page.id) || (full?.citations || []).some((c) => {
           const uri = String(c.source?.uri || "");
           const title = String(c.source?.title || "");
           return keys.some((k) => (uri && uri === k) || (title && title === k) || (uri && uri.endsWith(`/${k}`)));
@@ -2823,6 +2905,7 @@ const actions = {
   personaInject: async ({ personId, maxChars } = {}) => persona().inject({ personId, maxChars }),
   personaDrift: async ({ personId, limit } = {}) => persona().drift({ personId, limit }),
   personaTimeline: async ({ personId, field } = {}) => persona().timeline({ personId, field }),
+  personaAsOf: async ({ personId, at } = {}) => persona().asOf({ personId, at }),
   personaAsk: async ({ question } = {}) => persona().ask({ question }),
   personaMerge: async ({ keepId, aliasIds } = {}) => persona().merge({ keepId, aliasIds }),
   personaRemove: async ({ personId, from, to, sourcePrefix } = {}) => persona().remove({ personId, from, to, sourcePrefix }),
@@ -2895,6 +2978,7 @@ const actions = {
     Object.assign(personaJob, {
       running: true, cancelled: false, total: 0, done: 0, current: "", startedAt: Date.now(), finishedAt: 0,
       cards: 0, llmAdded: 0, statsAdded: 0, skippedCache: 0, failed: [], mode, runId: `pm-${Date.now().toString(36)}`, lastError: "",
+      controller: new AbortController(),
     });
     const rootDs = personaDatasetDir();
     if (!rootDs) {
@@ -2925,7 +3009,8 @@ const actions = {
       .filter(([name, msgs]) => known.has(name) && msgs.length >= minMessages && (!wanted || wanted.has(name)))
       .sort((a, b) => b[1].length - a[1].length);
     // limit<=0 → 全部（一键全部建模）；默认 12
-    const limited = Number(limit) > 0 ? targets.slice(0, Number(limit)) : targets;
+    // 注意别把 limited 和 targets 指向同一个数组：下面清空 targets 会把 limited 也清掉
+    const limited = Number(limit) > 0 ? targets.slice(0, Number(limit)) : [...targets];
     targets.length = 0;
     targets.push(...limited);
     personaJob.total = targets.length;
@@ -2963,12 +3048,16 @@ const actions = {
               // 单个人最多等 50s：模型偶发慢请求不能把整批卡死
               card = await Promise.race([
                 analyzePersonWithLLM({
-                  name, relation: person.relation || "", stats: f,
+                  name, relation: person.relation || "", stats: f, signal: personaJob.controller?.signal,
                   samples: f.samples.slice(-12).map((s) => ({ text: s.text, at: s.at })),
                   context: context.slice(-12).map((c) => ({ from: c.from, text: c.text })),
                   model: model || undefined,
                 }),
-                new Promise((resolve) => setTimeout(() => resolve(null), 28000)),
+                // 取消要立刻生效：不等 fetch 自己 reject，直接听 abort 结束这一人的等待
+                new Promise((resolve) => {
+                  const timer = setTimeout(() => resolve(null), 22000);
+                  personaJob.controller?.signal.addEventListener("abort", () => { clearTimeout(timer); resolve(null); }, { once: true });
+                }),
               ]);
             } catch (err) {
               personaJob.failed.push(`${name}: ${String(err?.message || err).slice(0, 80)}`);
@@ -3076,7 +3165,11 @@ const actions = {
     failed: personaJob.failed.slice(0, 5),
     rephrased: undefined,
   }),
-  personaModelCancel: async () => { personaJob.cancelled = true; return { cancelled: true }; },
+  personaModelCancel: async () => {
+    personaJob.cancelled = true;
+    try { personaJob.controller?.abort(); } catch { /* ignore */ }
+    return { cancelled: true };
+  },
   /** 把某次 AI 建模产生的 pending 一次确认/拒绝 */
   personaModelResolve: async ({ runId, accept = true } = {}) => {
     const res = persona().bulkResolve({ sourceKind: "llm", since: 0, accept });
