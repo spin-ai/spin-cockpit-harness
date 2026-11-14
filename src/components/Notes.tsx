@@ -21,6 +21,9 @@ type PageSummary = {
 type Citation = { id: string; pageId: string; sourceId: string; quote?: string; locator?: string; source?: Source };
 type Page = Omit<PageSummary, "citations" | "backlinks"> & { content: string; citations: Citation[]; backlinks: PageSummary[] };
 type Source = { id: string; title: string; kind: string; uri?: string; createdAt: number; citations: number; content?: string };
+/** 人工结论：人改过的一句话，整理时必须逐条校验，不能静默丢 */
+type Claim = { id: string; pageId: string; quote: string; status: "active" | "conflict" | "orphan"; kind: string; provenance?: { by: string; at: number; from?: string } | null; checkedAt?: number | null };
+type ClaimIssue = { pageId: string; title: string; status: string; claims: { id: string; quote: string; status: string }[] };
 type VaultFile = { path: string; title: string; folder: string; mtime: number; size: number };
 type VaultInfo = { path: string; files: VaultFile[]; indexedAt?: number; error?: string };
 type GraphData = { nodes: { id: string; title: string; kind: "page" | "source" | "file"; links: number }[]; edges: { source: string; target: string; kind: string }[] };
@@ -29,11 +32,75 @@ type Pane = { tabs: string[]; active: string | null };
 type Tab = "pages" | "sources" | "docs" | "review" | "vault" | "trash";
 type SourceDraft = { title: string; content: string; url: string; mode: "text" | "url" | "file" };
 type TrashItem = { id: string; kind: "page" | "source"; title: string; deletedAt: number };
+/** 整理产出的待审建议：reviewed / stale 页面不被静默改写的唯一出口 */
+type Suggestion = {
+  id: string; kind: string; targetId: string; title: string;
+  status: "pending" | "accepted" | "rejected" | "superseded" | "expired" | "needs_rebase";
+  confidence: string; reasons: string[]; evidence?: { kind: string; id?: string; quote?: string }[]; size: { lines: number; chars: number };
+  createdAt: number; decidedAt?: number | null; feedback?: string;
+  payload?: string; baseHash?: string;
+};
 type SearchHit = { kind: string; id: string; title: string; status?: string; at?: number; snippet: string };
 
 function emptyPane(): Pane { return { tabs: [], active: null }; }
 function statusLabel(status: string) { return status === "reviewed" ? "已审核" : status === "stale" ? "已过期" : "草稿"; }
 function confidenceLabel(level?: string) { return level === "high" ? "高" : level === "low" ? "低" : "中"; }
+/** 建议的三种来源：结构整理 / 漏引用 / 疑似重复 */
+function suggestionKindLabel(kind: string) {
+  if (kind === "citation") return "引用";
+  if (kind === "merge") return "合并";
+  if (kind === "summary") return "摘要";
+  return "结构";
+}
+/** 结构整理和模型摘要是「改正文」，都要看逐行 diff；引用/合并只看依据 */
+const isBodySuggestion = (kind: string) => kind === "structure" || kind === "summary";
+const suggestionAcceptLabel = (kind: string) => kind === "citation" ? "加入引用" : kind === "merge" ? "生成合并草稿" : "接受并写入";
+/** 建议依据：带上「资料 / 页面 / 人工结论」，重复的原文只留一条 */
+function evidenceLines(sug: Suggestion): string[] {
+  const label = (kind: string) => kind === "source" ? "资料" : kind === "page" ? "页面" : kind === "claim" ? "人工结论" : "规则";
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of sug.evidence || []) {
+    const quote = String(item.quote || "").replace(/\s+/g, " ").trim();
+    if (!quote) continue;
+    const key = quote.replace(/[。.!?！？]$/, "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(`${label(item.kind)} · ${quote}`);
+  }
+  return out.length ? out : sug.reasons.filter(Boolean);
+}
+
+/** 逐行 diff：审核的人看到的就是批准时写入的字节，所以这里只看行，不做任何重排 */
+function diffLines(before: string, after: string): { type: "same" | "add" | "del"; text: string }[] {
+  const a = String(before || "").split("\n");
+  const b = String(after || "").split("\n");
+  const n = a.length;
+  const m = b.length;
+  const out: { type: "same" | "add" | "del"; text: string }[] = [];
+  // 太大就不做 LCS：整块替换总比让界面卡住诚实
+  if (n * m > 400_000) {
+    a.forEach((text) => out.push({ type: "del", text }));
+    b.forEach((text) => out.push({ type: "add", text }));
+    return out;
+  }
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i -= 1) {
+    for (let j = m - 1; j >= 0; j -= 1) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { out.push({ type: "same", text: a[i] }); i += 1; j += 1; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ type: "del", text: a[i] }); i += 1; }
+    else { out.push({ type: "add", text: b[j] }); j += 1; }
+  }
+  while (i < n) { out.push({ type: "del", text: a[i] }); i += 1; }
+  while (j < m) { out.push({ type: "add", text: b[j] }); j += 1; }
+  return out;
+}
 
 function escapeRegExp(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 function markText(text: string, query: string) {
@@ -60,6 +127,10 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   const [pages, setPages] = useState<PageSummary[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [reviews, setReviews] = useState<PageSummary[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [claims, setClaims] = useState<Claim[]>([]);
+  const [claimIssues, setClaimIssues] = useState<ClaimIssue[]>([]);
+  const [preview, setPreview] = useState<{ sug: Suggestion; before: string; lines: { type: "same" | "add" | "del"; text: string }[]; note: string } | null>(null);
   const [trash, setTrash] = useState<TrashItem[]>([]);
   const [tags, setTags] = useState<{ tag: string; count: number }[]>([]);
   const [pins, setPins] = useState<string[]>([]);
@@ -90,10 +161,6 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   const [highlightQuery, setHighlightQuery] = useState("");
   const [unlinked, setUnlinked] = useState<PageSummary[]>([]);
   const [linkHover, setLinkHover] = useState<{ title: string; summary: string; status: string; x: number; y: number } | null>(null);
-  const [askOpen, setAskOpen] = useState(false);
-  const [askQuestion, setAskQuestion] = useState("");
-  const [askResult, setAskResult] = useState<{ found: boolean; answer: string; citations: { id: string; title: string }[] } | null>(null);
-  const [askLoading, setAskLoading] = useState(false);
   const [docs, setDocs] = useState<Record<string, Doc>>({});
   const [left, setLeft] = useState<Pane>(emptyPane);
   const [right, setRight] = useState<Pane>(emptyPane);
@@ -151,6 +218,8 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       setPages(Array.isArray(res.pages) ? res.pages : []);
       setSources(Array.isArray(res.sources) ? res.sources : []);
       setReviews(Array.isArray(res.reviews) ? res.reviews : []);
+      setSuggestions(Array.isArray(res.suggestions) ? res.suggestions : []);
+      setClaimIssues(Array.isArray(res.claimIssues) ? res.claimIssues : []);
       setTrash(Array.isArray(res.trash) ? res.trash : []);
       setPins(Array.isArray(res.pins) ? res.pins : []);
       setLog(Array.isArray(res.log) ? res.log : []);
@@ -386,14 +455,14 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   const curateWithModel = async () => {
     const n = Math.min(8, draftCount);
     if (!n) return;
-    if (!window.confirm(`用模型整理 ${n} 个草稿页面？\n\n每页一次调用（约 2k tokens），只改「摘要 + 要点」；原文摘录与已审核页面不动。内容没变过的页面会跳过。`)) return;
+    if (!window.confirm(`用模型整理 ${n} 个草稿页面？\n\n每页一次调用（约 2k tokens），只改「摘要 + 要点」；结果先进「审核」，你看过逐行 diff 才写入页面。内容没变过的页面会跳过。`)) return;
     setBusy(true);
     setNotice(`模型整理中：0/${n} 页…（逐页调用模型，可切走，完成后会提示）`);
     try {
       const res = await act("wikiCurateLLM", { limit: 8 });
       const errors: string[] = Array.isArray(res?.errors) ? res.errors : [];
       setNotice(
-        `模型整理：更新 ${res?.updated || 0} 页 · 跳过 ${res?.skipped || 0} 页 · 调用 ${res?.calls || 0} 次${res?.tokens ? ` · ${(Number(res.tokens) / 1000).toFixed(1)}k tokens` : ""}`
+        `模型整理：${res?.updated || 0} 条建议进了「审核」 · 跳过 ${res?.skipped || 0} 页 · 调用 ${res?.calls || 0} 次${res?.tokens ? ` · ${(Number(res.tokens) / 1000).toFixed(1)}k tokens` : ""}`
         + (errors.length ? ` · ${errors.length} 个失败：${errors.slice(0, 2).join("；")}` : ""),
       );
       await refresh();
@@ -411,18 +480,36 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       const res = await invoke("wiki.curate", {});
       const updated = Number(res?.updated || 0);
       const renamed = Number(res?.renamed || 0);
+      const suggested = Number(res?.suggested || 0);
       const names = (res?.renames || []).slice(0, 3).map((r: { from: string; to: string }) => `「${r.from}」→「${r.to}」`).join(" ");
-      setNotice(
-        updated || res?.createdIndex || renamed
-          ? `已整理 ${updated} 个页面${renamed ? `，重命名 ${renamed} 个${names ? `：${names}${renamed > 3 ? " …" : ""}` : ""}` : ""}${res?.createdIndex ? "，并生成「知识库索引」" : "，索引已更新"}`
-          : "大纲和标题已经是最新的（没有需要改的页面）",
-      );
+      const parts = [
+        updated ? `已整理 ${updated} 个草稿${renamed ? `，重命名 ${renamed} 个${names ? `：${names}${renamed > 3 ? " …" : ""}` : ""}` : ""}` : "",
+        // 已审核 / 已过期页面的改动不会直接落盘：只产 diff 建议，人点头才写
+        Number(res?.blockedByClaims || 0) ? `${Number(res.blockedByClaims)} 个页面的整理会动到人工结论，已改成待审建议` : "",
+        suggested ? `${suggested} 个页面的改动进了「审核」（逐行 diff，批准才写）` : "",
+        res?.createdIndex ? "并生成「Wiki 索引」" : "索引已更新",
+      ].filter(Boolean);
+      setNotice(updated || suggested || res?.createdIndex || renamed ? parts.join("，") : "大纲和标题已经是最新的（没有需要改的页面）");
       await refresh();
       const current = pane.active;
       if (current && docs[current] && !docs[current].local) {
         const fresh = await invoke("wiki.getPage", { id: current });
         if (fresh) setDocs((cur) => ({ ...cur, [current]: { ...fresh, dirty: false } }));
       }
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  /** 维护扫描：找漏引用和疑似重复页面。只产建议，正文不动 */
+  const maintainWiki = async () => {
+    setBusy(true);
+    try {
+      const res = await invoke("wiki.maintain", {});
+      const added = Number(res?.added || 0);
+      setNotice(added
+        ? `${added} 条建议进了「审核」（漏引用 ${Number(res?.citations || 0)} / 疑似重复 ${Number(res?.merges || 0)}）`
+        : "没有发现需要处理的漏引用或重复页面");
+      if (added) setTab("review");
+      await refresh();
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
@@ -531,6 +618,48 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
+  /** 打开建议预览：结构整理现算 diff；引用 / 合并只展示依据，不接受就不写盘 */
+  const previewSuggestion = async (sug: Suggestion) => {
+    setBusy(true);
+    try {
+      const [full, page] = await Promise.all([
+        invoke("wiki.suggestion", { id: sug.id }),
+        invoke("wiki.getPage", { id: sug.targetId }),
+      ]);
+      if (!full?.payload) throw new Error("这条建议已失效，重新扫描一次");
+      if (isBodySuggestion(sug.kind)) {
+        if (!page) throw new Error("目标页面不存在了");
+        const before = String(page.content || "");
+        setPreview({ sug: { ...sug, payload: full.payload }, before, lines: diffLines(before, String(full.payload)), note: "" });
+        return;
+      }
+      let spec: { sourceId?: string; quote?: string; title?: string; content?: string } = {};
+      try { spec = JSON.parse(String(full.payload)); } catch { spec = {}; }
+      const note = sug.kind === "citation"
+        ? `给页面加一条引用：${sources.find((x) => x.id === spec.sourceId)?.title || spec.sourceId || "资料"} — 「${String(spec.quote || "").slice(0, 120)}」`
+        : `生成草稿「${spec.title || "合并稿"}」，两个原页面保持不动（删不删由你决定）`;
+      setPreview({ sug: { ...sug, payload: full.payload }, before: "", lines: [], note });
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  /** 接受 = 插件把 payload 原样写入（不重新调模型）；needs_rebase 说明页面已经改过，不自动合并 */
+  const resolveSuggestion = async (sug: Suggestion, decision: "accept" | "reject") => {
+    setBusy(true);
+    try {
+      const res = await invoke("wiki.suggestionResolve", { id: sug.id, decision });
+      setPreview(null);
+      if (res?.status === "needs_rebase") setNotice("页面在这版建议之后又改过了，这条建议失效；重新「整理结构」再审核");
+      else if (res?.status === "expired") setNotice("目标页面或资料不存在了，建议已作废");
+      else if (decision !== "accept") setNotice("已退回这条建议（30 天内不再提同类）");
+      else if (res?.createdPageId) setNotice("已生成合并草稿，原页面没动；确认后自己删掉重复的那份");
+      else if (sug.kind === "citation") setNotice("已加入引用（页面正文没变，可在右栏核对）");
+      else setNotice("已按建议更新页面（可用 revision 回滚）");
+      await refresh();
+      if (res?.createdPageId) await openPage(res.createdPageId);
+      else if (res?.status === "accepted") await loadPage(sug.targetId);
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
   const importSource = async () => {
     if (!sourceDraft) return;
     setBusy(true);
@@ -574,6 +703,13 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       const source = sources.find((s) => s.id === sourceId) || await invoke("wiki.source", { id: sourceId });
       if (source) setSourceView(source);
     } catch (err) { fail(err); }
+  };
+
+  /** 知识库只做浏览与整理；问答交给 Chat（带范围说明，回答要页面引用） */
+  const askInChat = () => {
+    const text = "只基于本地知识库回答，并给出页面引用（[[页面标题]]）。\n\n问题：";
+    window.dispatchEvent(new CustomEvent("harness:view", { detail: "workspace" }));
+    window.setTimeout(() => window.dispatchEvent(new CustomEvent("harness:chat-draft", { detail: { text } })), 100);
   };
 
   const sendSourceToChat = (source: Source) => {
@@ -682,7 +818,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       <button className={tab === "pages" ? "on" : ""} onClick={() => setTab("pages")}>页面</button>
       <button className={tab === "sources" ? "on" : ""} onClick={() => setTab("sources")} title="页面引用的原始输入：粘贴文本 / URL / 本地 Markdown">来源</button>
       <button className={tab === "docs" ? "on" : ""} onClick={() => setTab("docs")} title="导入的 PDF / Office / 网页，可检索并带页码出处">资料库</button>
-      <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>审核{reviews.length ? `·${reviews.length}` : ""}</button>
+      <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>审核{reviews.length + suggestions.length + claimIssues.length ? `·${reviews.length + suggestions.length + claimIssues.length}` : ""}</button>
       <button className={tab === "vault" ? "on" : ""} onClick={() => setTab("vault")}>本地</button>
       <button className={tab === "trash" ? "on" : ""} onClick={() => setTab("trash")}>回收站</button>
     </div>
@@ -729,7 +865,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               <span>③ 生成知识库（草稿）</span><i>→</i>
               <span>④ 编辑 / 审核</span>
             </div>
-            <div className="notes-hub-tip">「生成知识库」是确定性骨架（把资料变成草稿页面 + 引用）。整理有两条：<b>整理结构</b>只重排大纲、补互链、重建索引（免费、秒级）；<b>模型整理</b>逐页重写摘要与要点（每页一次调用，只写草稿）。</div>
+            <div className="notes-hub-tip">问答在 <b>Chat</b> 里做（带页面引用，能追问、能派活）；这一页只负责浏览与整理。「生成知识库」是确定性骨架（把资料变成草稿页面 + 引用）。整理有两条：<b>整理结构</b>只重排大纲、补互链、重建索引（免费、秒级）；<b>模型整理</b>逐页重写摘要与要点（每页一次调用，只写草稿）。</div>
           </div>
         ) : (
           <>
@@ -873,6 +1009,36 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
     return () => { alive = false; };
   }, [activeDoc?.id, activeDoc?.local, invoke, pages.length]);
 
+  // 人工结论：打开页面时拉一次，冲突 / 丢失会在右栏标出来
+  useEffect(() => {
+    if (!activeDoc || activeDoc.local) { setClaims([]); return; }
+    let alive = true;
+    invoke("wiki.claims", { pageId: activeDoc.id })
+      .then((res) => { if (alive) setClaims(Array.isArray(res) ? res : []); })
+      .catch(() => { if (alive) setClaims([]); });
+    return () => { alive = false; };
+  }, [activeDoc?.id, activeDoc?.local, invoke, activeDoc?.content]);
+
+  /** 一次性解除某页所有「对不上」的结论（人已经确认不再需要守了） */
+  const clearClaimIssues = async (issue: ClaimIssue) => {
+    setBusy(true);
+    try {
+      for (const c of issue.claims) {
+        try { await invoke("wiki.claimRemove", { id: c.id }); } catch { /* 单条失败不阻塞 */ }
+      }
+      setNotice(`已解除 ${issue.claims.length} 条人工结论`);
+      await refresh();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const removeClaim = async (claimId: string) => {
+    try {
+      await invoke("wiki.claimRemove", { id: claimId });
+      setClaims((current) => current.filter((c) => c.id !== claimId));
+      setNotice("已解除这条人工结论");
+    } catch (err) { fail(err); }
+  };
+
   // 双链样式：已有页面给摘要 tooltip，缺失页面标红，点击可创建
   useEffect(() => {
     if (mode !== "preview") return;
@@ -927,37 +1093,6 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
         await refresh();
         await openPage(page.id);
         setNotice(`已创建页面「${title.trim()}」`);
-      }
-    } catch (err) { fail(err); }
-  };
-
-  const askWiki = async () => {
-    const question = askQuestion.trim();
-    if (!question) return;
-    setAskLoading(true);
-    setAskResult(null);
-    try {
-      const res = await invoke("wiki.ask", { question });
-      if (res) setAskResult(res);
-    } catch (err) { fail(err); } finally { setAskLoading(false); }
-  };
-
-  const saveAnswer = async () => {
-    if (!askResult?.found) return;
-    try {
-      const title = askQuestion.trim().slice(0, 60) || "知识库问答";
-      const page = await invoke("wiki.upsertDraft", {
-        title,
-        content: `# ${title}\n\n${askResult.answer}\n`,
-        summary: `来自问答：${askQuestion.trim()}`,
-      });
-      if (page) {
-        setAskOpen(false);
-        setAskQuestion("");
-        setAskResult(null);
-        await refresh();
-        await openPage(page.id);
-        setNotice("问答已存为 draft");
       }
     } catch (err) { fail(err); }
   };
@@ -1080,41 +1215,6 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
 
   return (
     <div className="notes-page">
-      {askOpen && (
-        <div className="modal-mask" role="dialog" aria-modal="true" aria-label="问我的知识库">
-          <div className="modal wiki-ask">
-            <h3>问知识库</h3>
-            <p className="tiny muted">只检索本地页面与资料；每段结论都带页面引用；没有依据会直接说没有。</p>
-            <textarea
-              autoFocus
-              rows={3}
-              value={askQuestion}
-              onChange={(e) => setAskQuestion(e.target.value)}
-              placeholder="例如：芯片良率结论是什么？"
-              onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void askWiki(); } }}
-            />
-            <div className="row gap6" style={{ justifyContent: "flex-end" }}>
-              <button className="btn tiny-btn" onClick={() => { setAskOpen(false); setAskResult(null); }}>关闭</button>
-              <button className="btn tiny-btn primary" disabled={askLoading || !askQuestion.trim()} onClick={() => void askWiki()}>{askLoading ? "检索中…" : "提问"}</button>
-            </div>
-            {askResult && (
-              <div className="wiki-ask-result">
-                <div className="notes-preview markdown-body" onClick={(e) => {
-                  const a = (e.target as HTMLElement).closest("a");
-                  const href = a?.getAttribute("href") || "";
-                  if (!href.startsWith("#wiki/")) return;
-                  e.preventDefault();
-                  const title = decodeURIComponent(href.slice(6)).split("#")[0];
-                  const target = pages.find((p) => p.title === title || p.slug === title || p.id === title);
-                  if (target) { setAskOpen(false); void openPage(target.id); }
-                }} dangerouslySetInnerHTML={{ __html: renderMarkdown(wikiMarkdown(askResult.answer)) }} />
-                {askResult.citations.length > 0 && <div className="wiki-ask-cites">{askResult.citations.map((c) => <button key={c.id} onClick={() => { setAskOpen(false); void openPage(c.id); }}>{c.title}</button>)}</div>}
-                {askResult.found && <button className="btn tiny-btn" onClick={() => void saveAnswer()}>存为知识库草稿</button>}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
       {quickOpen && (
         <div className="modal-mask" role="dialog" aria-modal="true" aria-label="快速记录">
           <div className="modal quick-capture">
@@ -1147,7 +1247,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
           <div className="notes-stats">
             <span><b>{pages.length}</b> 页面</span>
             <span><b>{sources.length}</b> 来源</span>
-            <span className={reviews.length ? "warn" : ""}><b>{reviews.length}</b> 待审核</span>
+            <span className={reviews.length + suggestions.length + claimIssues.length ? "warn" : ""}><b>{reviews.length + suggestions.length + claimIssues.length}</b> 待审核</span>
             {vault.path && <span><b>{vault.files.length}</b> 本地文件</span>}
           </div>
         )}
@@ -1160,7 +1260,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               disabled={busy}
               title="导入资料：粘贴文本 / Markdown、URL，或从磁盘选文件"
             >导入资料</button>
-            <button className="btn" onClick={() => setAskOpen(true)} title="只基于本地知识库页面回答，带页面引用">问知识库</button>
+            <button className="btn" onClick={askInChat} title="到 Chat 里提问：带上「只基于知识库 + 页面引用」的要求；知识库页只做浏览与整理">在 Chat 中问</button>
             <RowMenu title="更多知识库操作" popClassName="notes-menu">
               <div className="row-menu-label">生成与整理</div>
               <button
@@ -1170,6 +1270,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               >{busy ? "生成中…" : sources.length ? `生成知识库 (${sources.length})` : "生成知识库"}</button>
               <button onClick={() => void curateWiki()} disabled={busy || pages.length === 0} title="统一页面大纲（要点 / 原文摘录 / 相关）、补页面互链，并重建「知识库索引」页">整理结构</button>
               <button onClick={() => void curateWithModel()} disabled={busy || !draftCount} title={draftCount ? `用模型重写 ${Math.min(8, draftCount)} 个草稿页面的摘要与要点（每页一次调用）` : "没有草稿页面可整理"}>{busy ? "整理中…" : `模型整理${draftCount ? ` (${Math.min(8, draftCount)})` : ""}`}</button>
+              <button onClick={() => void maintainWiki()} disabled={busy || pages.length === 0} title="扫描漏引用与疑似重复页面（确定性，不调模型）；结果进「审核」，人看过才写">查找重复与漏引用</button>
               <div className="row-menu-label">本地目录</div>
               <button onClick={() => void pickLocalFolder()} disabled={busy}>{vault.path ? "更换本地目录…" : "打开本地目录…"}</button>
               <div className="row-menu-label">查看</div>
@@ -1338,6 +1439,32 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
                 </span>
               </div>
             ))}
+            {tab === "review" && claimIssues.map((issue) => (
+              <div key={issue.pageId} className="notes-row">
+                <button className="notes-file" onClick={() => { setTab("pages"); void openPage(issue.pageId); }} title={issue.claims.map((c) => c.quote).join(" · ")}>
+                  <span className="notes-status-dot stale" />
+                  <span className="ellipsis">{issue.title}</span>
+                  <em>结论待确认</em>
+                </button>
+                <span className="notes-row-actions">
+                  <button className="link tiny" title="打开页面核对" onClick={(e) => { e.stopPropagation(); setTab("pages"); void openPage(issue.pageId); }}>查看</button>
+                  <button className="link tiny" title="不再守这些结论（只解除锁定，不改正文）" onClick={(e) => { e.stopPropagation(); void clearClaimIssues(issue); }}>全部解除</button>
+                </span>
+              </div>
+            ))}
+            {tab === "review" && suggestions.map((s) => (
+              <div key={s.id} className="notes-row">
+                <button className="notes-file" onClick={() => void previewSuggestion(s)} title={s.reasons.join(" · ") || "整理建议"}>
+                  <span className="notes-status-dot reviewed" />
+                  <span className="ellipsis">{s.title}</span>
+                  <em>{suggestionKindLabel(s.kind)}</em>
+                </button>
+                <span className="notes-row-actions">
+                  <button className="link tiny" title="看逐行 diff 再决定" onClick={(e) => { e.stopPropagation(); void previewSuggestion(s); }}>查看</button>
+                  <button className="link tiny" title="退回（不写盘）" onClick={(e) => { e.stopPropagation(); void resolveSuggestion(s, "reject"); }}>退回</button>
+                </span>
+              </div>
+            ))}
             {tab === "review" && reviews.map((p) => (
               <div key={p.id} className="notes-row">
                 <button className="notes-file" onClick={() => void openPage(p.id)}>
@@ -1404,7 +1531,14 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               </div>
             )}
             {tab === "sources" && filteredSources.length === 0 && <div className="notes-empty-list">还没有资料。导入文本或 URL。</div>}
-            {tab === "review" && reviews.length === 0 && <div className="notes-empty-list">没有待审核 draft。</div>}
+            {tab === "review" && reviews.length === 0 && suggestions.length === 0 && claimIssues.length === 0 && (
+              <div className="notes-empty-list">
+                没有待审核的草稿或建议。已审核页面的整理改动、漏引用与疑似重复都会作为建议出现在这里。
+                <div className="notes-empty-actions">
+                  <button className="link tiny" onClick={() => void maintainWiki()} disabled={busy || pages.length === 0}>查找重复与漏引用</button>
+                </div>
+              </div>
+            )}
           </div>
           {tab === "sources" && (
             <div className="notes-sidebar-foot">
@@ -1462,6 +1596,18 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
                   <span className={`notes-review-badge ${activeDoc.status}`}>{statusLabel(activeDoc.status)}</span>
                   <span className="notes-meta-hint">置信度 {confidenceLabel(activeDoc.confidence)}</span>
                 </div>
+              </div>
+              <div className="notes-meta-block">
+                <div className="notes-meta-title">人工结论 <em>{claims.length}</em></div>
+                {claims.length === 0 && <p className="notes-meta-empty">你改过的句子会自动记在这里；后续整理会逐条校验，冲突时不会静默改写页面。</p>}
+                {claims.map((c) => (
+                  <div key={c.id} className={`notes-claim ${c.status}`} title={c.quote}>
+                    <span className={`notes-status-dot ${c.status === "active" ? "reviewed" : c.status === "conflict" ? "stale" : "draft"}`} />
+                    <span className="ellipsis">{c.quote}</span>
+                    <button className="link tiny" title="解除这条锁定" onClick={() => void removeClaim(c.id)}>解除</button>
+                  </div>
+                ))}
+                {claims.some((c) => c.status !== "active") && <p className="notes-meta-empty">标红的结论在最近一次整理里对不上：页面的自动整理已改成待审建议，确认后再写。</p>}
               </div>
               <div className="notes-meta-block">
                 <div className="notes-meta-title">引用来源 <em>{activeDoc.citations.length}</em></div>
@@ -1533,6 +1679,52 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
           <p>{linkHover.summary}</p>
         </div>
       )}
+      {preview && (
+        <div className="notes-source-modal" onClick={() => setPreview(null)}>
+          <div className="notes-source-card notes-diff-card" onClick={(e) => e.stopPropagation()}>
+            <div className="notes-source-head">
+              <div>
+                <b>{preview.sug.title}</b>
+                <span>
+                  {isBodySuggestion(preview.sug.kind)
+                    ? `${preview.sug.reasons.join(" · ") || suggestionKindLabel(preview.sug.kind)} · ${preview.sug.size.lines} 行`
+                    : `${suggestionKindLabel(preview.sug.kind)}建议 · 置信度 ${confidenceLabel(preview.sug.confidence)}`}
+                </span>
+              </div>
+              <button className="icon-btn" onClick={() => setPreview(null)}>×</button>
+            </div>
+            {preview.lines.length > 0 ? (
+              <div className="notes-diff" role="presentation">
+                {preview.lines.map((line, i) => (
+                  <div key={i} className={`notes-diff-line ${line.type}`}>
+                    <span className="notes-diff-sign">{line.type === "add" ? "+" : line.type === "del" ? "−" : " "}</span>
+                    <span className="notes-diff-text">{line.text || " "}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="notes-suggest-card">
+                <p>{preview.note}</p>
+                {evidenceLines(preview.sug).map((line, i) => <div key={i} className="notes-suggest-reason">{line}</div>)}
+              </div>
+            )}
+            <div className="notes-diff-foot">
+              {preview.sug.kind === "citation"
+                ? "加引用不改正文，只补出处；同样会记一条 revision。"
+                : preview.sug.kind === "merge"
+                  ? "合并只生成新草稿，两个原页面一个字都不动。"
+                  : preview.sug.kind === "summary"
+                    ? "模型只重写了摘要与要点；批准后按上面显示的字节写入，不重新调模型。"
+                    : "批准后写入的就是上面显示的字数，不重新调模型；写入会记一条 revision，可回滚。"}
+            </div>
+            <div className="notes-source-actions">
+              <button className="btn" onClick={() => void resolveSuggestion(preview.sug, "reject")} disabled={busy}>退回</button>
+              <button className="btn primary" onClick={() => void resolveSuggestion(preview.sug, "accept")} disabled={busy}>{suggestionAcceptLabel(preview.sug.kind)}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {sourceView && (
         <div className="notes-source-modal" onClick={() => setSourceView(null)}>
           <div className="notes-source-card" onClick={(e) => e.stopPropagation()}>

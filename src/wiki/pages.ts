@@ -6,13 +6,14 @@ import architecture from "../../resources/wiki/architecture.md?raw";
 import agents from "../../resources/wiki/agents.md?raw";
 import superAgent from "../../resources/wiki/super-agent.md?raw";
 import designNotes from "../../resources/wiki/design-notes.md?raw";
+import persona from "../../resources/wiki/persona.md?raw";
 import terminal from "../../resources/wiki/terminal.md?raw";
 import themes from "../../resources/wiki/themes.md?raw";
 import plugins from "../../resources/wiki/plugins.md?raw";
 import build from "../../resources/wiki/build.md?raw";
 import changelog from "../../CHANGELOG.md?raw";
 
-export type WikiPage = {
+type WikiPage = {
   id: string;
   title: string;
   group: string;
@@ -31,6 +32,7 @@ export const WIKI_PAGES: WikiPage[] = [
   { id: "agents", title: "Agent 与执行适配器", group: "系统", summary: "哪些 CLI 能从 Chat 派活，dsh ACP 如何驱动一次 run。", body: agents },
   { id: "super-agent", title: "Super Agent / Mission", group: "系统", summary: "Mission、Plan、Delegation、Supervisor 与 MCP 编排。", body: superAgent },
   { id: "design-notes", title: "设计取舍与踩坑", group: "系统", summary: "关键决策、已踩的坑，以及明确没做的事。", body: designNotes },
+  { id: "persona", title: "人物画像与记忆语义", group: "系统", summary: "四种「忘」、可观测特征与事实的分界、建模怎么跑才值。", body: persona },
   { id: "terminal", title: "终端与预览", group: "系统", summary: "真实 pty、标签拆分、预览和元素拾取上下文。", body: terminal },
   { id: "themes", title: "主题系统", group: "扩展", summary: "13 套主题、深浅色结构与终端 ANSI 配色。", body: themes },
   { id: "plugins", title: "插件与 LLM Wiki", group: "扩展", summary: "插件宿主、Notes 原生 Wiki、MCP 工具与编辑器。", body: plugins },

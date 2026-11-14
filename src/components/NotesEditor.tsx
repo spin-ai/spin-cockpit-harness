@@ -10,7 +10,7 @@ import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { CheckSquareIcon, CodeIcon, LinkIcon, QuoteIcon, RedoIcon, RuleIcon, SearchIcon, TableIcon, UndoIcon } from "./Icons";
 
-export type NotePickerItem = { path: string; title: string };
+type NotePickerItem = { path: string; title: string };
 
 const notesTheme = EditorView.theme({
   "&": { height: "100%", color: "var(--fg)", backgroundColor: "transparent" },

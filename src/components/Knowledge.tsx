@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
 import { RowMenu } from "./RowMenu";
@@ -7,11 +7,14 @@ type Act = (type: string, payload?: unknown) => Promise<any>;
 
 type Doc = {
   id: string; uri: string; title: string; parser: string; engine?: string | null;
-  pages_total: number; status: string; indexed_at: number; error_code?: string | null; error_text?: string | null;
+  pages_total: number; status: string; indexed_at: number; index_mode?: string | null;
+  error_code?: string | null; error_text?: string | null;
 };
 type Hit = { doc_id: string; title: string; page_no: number | null; heading: string | null; text: string; score?: number };
 type Cite = {
   ref: number;
+  kind?: "doc" | "page";
+  page_id?: string | null;
   doc_id: string;
   chunk_id?: number;
   page_no: number | null;
@@ -29,8 +32,36 @@ type Engine = {
   available: boolean; reason: string; enabled: boolean; requires: string[]; config: EngineConfig;
 };
 type EngineState = { defaultEngine: string; fallbackEngine: string; engines: Engine[] };
+const DEGRADED_LABEL: Record<string, string> = {
+  "fts-only": "仅关键词召回",
+  "no-key": "缺 key，仅关键词召回",
+  "embed-failed": "向量召回失败",
+  "no-vector": "无向量索引",
+};
+const STATUS_LABEL: Record<string, string> = {
+  queued: "排队中", parsing: "解析中", indexing: "建索引", ready: "已索引",
+  failed: "失败", stale: "待重建", deleted: "已删除",
+};
+const statusOf = (s: string) => STATUS_LABEL[s] || s;
+
+/** 索引模式：local-fts-only = 一个字节不出网；cloud-vector = 正文分块发往 Ark embedding */
+type EmbeddingInfo = { enabled: boolean; available: boolean; hasKey: boolean; model: string };
 
 type Draft = { endpoint: string; apiKey: string; token: string; timeoutMs: number };
+
+/**
+ * 刷新列表时保持已有资料的位置：只把新导入的放到最前面。
+ * 这样「重新解析 / 换引擎 / 删除 / 勾选」都不会让侧栏里的某一行突然跳位。
+ */
+function mergeDocOrder(prev: Doc[], next: Doc[]): Doc[] {
+  if (!prev.length) return next;
+  const rank = new Map(prev.map((d, i) => [d.id, i]));
+  const fresh = next.filter((d) => !rank.has(d.id));
+  const kept = next
+    .filter((d) => rank.has(d.id))
+    .sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+  return [...fresh, ...kept];
+}
 
 const SECRET_LABEL: Record<string, string> = {
   mineru: "API Key（可选，网关鉴权时填）",
@@ -59,9 +90,9 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
   embedded?: boolean;
 }) {
   const [docs, setDocs] = useState<Doc[]>([]);
+  const docsRef = useRef<Doc[]>([]);
   const [hits, setHits] = useState<Hit[]>([]);
   const [pages, setPages] = useState<WikiHit[]>([]);
-  const [query, setQuery] = useState("");
   const [askQ, setAskQ] = useState("");
   const [ask, setAsk] = useState<{ answer: string; citations: Cite[]; found: boolean; degraded?: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -69,7 +100,12 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [preview, setPreview] = useState<{ doc: Doc; pages: { page_no: number; heading: string; text: string; warn: boolean }[]; chunks: number } | null>(null);
   const [selectedCite, setSelectedCite] = useState<number | null>(null);
-  const [engineOpen, setEngineOpen] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [shot, setShot] = useState<{ dataUrl: string; page: number; title: string } | null>(null);
+  const [shotBusy, setShotBusy] = useState(false);
+  const [range, setRange] = useState<"all" | "ready" | "busy" | "attention">("all");
+  /** 提问范围：页面 / 资料 / 全部（默认全部，一次检索两侧） */
+  const [scope, setScope] = useState<"all" | "pages" | "docs">("all");
   const [pasting, setPasting] = useState(false);
   const [pasteTitle, setPasteTitle] = useState("");
   const [pasteText, setPasteText] = useState("");
@@ -81,8 +117,24 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
   const [probes, setProbes] = useState<Record<string, { available: boolean; reason: string }>>({});
   const [adding, setAdding] = useState(false);
   const [newEngine, setNewEngine] = useState({ name: "", endpoint: "", fileTypes: "pdf,docx" });
+  const [embedding, setEmbedding] = useState<EmbeddingInfo | null>(null);
 
   const fail = (err: unknown) => setError(String((err as Error)?.message || err));
+
+  // 范围筛选：按状态看资料比按解析引擎分组更有用（引擎只是标签，不是集合）
+  const counts = useMemo(() => ({
+    all: docs.length,
+    ready: docs.filter((d) => d.status === "ready").length,
+    busy: docs.filter((d) => ["queued", "parsing", "indexing"].includes(d.status)).length,
+    attention: docs.filter((d) => ["failed", "stale"].includes(d.status)).length,
+  }), [docs]);
+
+  const visibleDocs = useMemo(() => {
+    if (range === "all") return docs;
+    if (range === "ready") return docs.filter((d) => d.status === "ready");
+    if (range === "busy") return docs.filter((d) => ["queued", "parsing", "indexing"].includes(d.status));
+    return docs.filter((d) => ["failed", "stale"].includes(d.status));
+  }, [docs, range]);
 
   const docIds = () => (checked.size ? [...checked] : undefined);
   const toggleDoc = (id: string) => setChecked((prev) => {
@@ -93,6 +145,16 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
   const allChecked = docs.length > 0 && checked.size === docs.length;
   const toggleAll = () => setChecked(allChecked ? new Set() : new Set(docs.map((d) => d.id)));
 
+  const openPageImage = async (doc: Doc, page: number) => {
+    if (shotBusy) return;
+    setShotBusy(true);
+    try {
+      const res = await act("knowledgePageImage", { id: doc.id, page });
+      if (res?.dataUrl) setShot({ dataUrl: res.dataUrl, page, title: doc.title });
+      else setError("这份资料没有页图（仅 PDF / 图片支持原页预览）");
+    } catch (err) { fail(err); } finally { setShotBusy(false); }
+  };
+
   const openPreview = async (doc: Doc, page?: number) => {
     try {
       const res = await act("knowledgePreview", { id: doc.id });
@@ -102,19 +164,37 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
         window.setTimeout(() => {
           document.querySelector(`#kv-page-${page}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
         }, 60);
+        // 扫描件 / 纯图页：没有文本可看，直接给原页（这才是唯一能核对的东西）
+        const target = (res.pages || []).find((pg: { page_no: number; warn?: boolean }) => pg.page_no === page);
+        if (target?.warn) void openPageImage(res.doc || doc, page);
       }
     } catch (err) { fail(err); }
   };
 
   const selectCitation = (c: Cite) => {
     setSelectedCite(c.ref);
+    if (c.kind === "page" && c.page_id) { onOpenPage?.(c.page_id); return; }
     const doc = docs.find((d) => d.id === c.doc_id);
     if (doc) void openPreview(doc, c.page_no || 1);
     else setPreview((p) => p);
   };
 
   const load = useCallback(async () => {
-    try { setDocs((await act("knowledgeList", { limit: 200 })) || []); } catch (err) { fail(err); }
+    try {
+      const list = (await act("knowledgeList", { limit: 200 })) || [];
+      const merged = mergeDocOrder(docsRef.current, list);
+      docsRef.current = merged;
+      setDocs(merged);
+      // 被删掉的资料不要留在勾选集里，否则「只基于勾选的 N 份」会虚高
+      setChecked((prev) => {
+        if (!prev.size) return prev;
+        const ids = new Set(list.map((d: Doc) => d.id));
+        const next = new Set([...prev].filter((id) => ids.has(id)));
+        return next.size === prev.size ? prev : next;
+      });
+      // 预览中的资料被删掉时，退回提问视图
+      setPreview((prev) => (prev && list.some((d: Doc) => d.id === prev.doc.id) ? prev : null));
+    } catch (err) { fail(err); }
   }, [act]);
 
   const loadEngines = useCallback(async () => {
@@ -125,7 +205,14 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
     } catch (err) { fail(err); }
   }, [act]);
 
-  useEffect(() => { void load(); void loadEngines(); }, [load, loadEngines]);
+  const loadEmbedding = useCallback(async () => {
+    try {
+      const res = await act("knowledgeStatus");
+      setEmbedding(res?.embedding || null);
+    } catch { setEmbedding(null); }
+  }, [act]);
+
+  useEffect(() => { void load(); void loadEngines(); void loadEmbedding(); }, [load, loadEngines, loadEmbedding]);
 
   useEffect(() => {
     const engine = engineState?.engines.find((item) => item.name === selectedEngine) || null;
@@ -136,7 +223,6 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
   const selected = useMemo(() => engines.find((item) => item.name === selectedEngine) || null, [engines, selectedEngine]);
 
   const runSearch = async (value: string) => {
-    setQuery(value);
     if (!value.trim()) { setHits([]); setPages([]); return; }
     try {
       const res = await act("knowledgeSearch", { query: value, limit: 12, docIds: docIds() });
@@ -155,9 +241,10 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
     setBusy(true); setAsk(null); setSelectedCite(null);
     try {
       void runSearch(question);
-      const res = await act("knowledgeAsk", { question, limit: 6, docIds: docIds() });
+      const res = await act("knowledgeAsk", { question, limit: 6, docIds: docIds(), scope });
       setAsk(res);
-      if (res?.degraded === "no-key") setNotice("未配置 Ark key：只做了检索，不能生成回答");
+      if (res?.degraded === "no-key") setNotice("未配置 Ark key：本次只用关键词检索，没有向量召回");
+      else if (res?.degraded === "fts-only") setNotice("当前是本地关键词检索（未启用云向量），答案仍由模型生成");
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
@@ -169,22 +256,28 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
       const ok = added.filter((a: { error?: string; ok?: boolean }) => a.ok !== false && !a.error).length;
       const warnings = added.flatMap((a: { route?: { warnings?: string[] } }) => a.route?.warnings || []);
       const failure = added.find((a: { ok?: boolean; message?: string }) => a.ok === false);
+      const modes = [...new Set(added.map((a: { indexMode?: string }) => a.indexMode).filter(Boolean))] as string[];
       setNotice([
         `导入 ${ok} / ${added.length} 份`,
+        modes.length
+          ? `索引：${modes.map((m) => (m === "cloud-vector" ? "云端向量（正文已发往火山方舟）" : "本地关键词（不出网）")).join(" / ")}`
+          : "",
         failure?.message ? `失败：${failure.message}` : "",
         warnings.length ? `路由：${warnings.join("；")}` : "",
       ].filter(Boolean).join(" · "));
       await load();
+      await loadEmbedding();
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
   const ingestText = async () => {
     setBusy(true);
     try {
-      await act("knowledgeIngestText", { title: pasteTitle || "粘贴的资料", text: pasteText });
-      setNotice("已存入资料库");
+      const res = await act("knowledgeIngestText", { title: pasteTitle || "粘贴的资料", text: pasteText });
+      setNotice(res?.indexMode === "cloud-vector" ? "已存入资料库（云端向量）" : "已存入资料库（本地索引，不出网）");
       setPasting(false); setPasteText(""); setPasteTitle("");
       await load();
+      await loadEmbedding();
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
@@ -205,6 +298,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
       if (res?.ok === false) throw new Error(res.message || "重新解析失败");
       setNotice(`已重新解析：${doc.title}${res?.engine ? ` · ${res.engine}` : ""}`);
       await load();
+      await loadEmbedding();
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
@@ -286,21 +380,46 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
   const usesCloudKey = selected?.name === "mineru_cloud";
   const isExtra = Boolean(selected && !["simple", "builtin", "mineru", "mineru_cloud", "paddleocr_vl", "paddleocr_vl_cloud", "custom"].includes(selected.name));
 
+  const moreMenu = (
+    <RowMenu title="更多资料操作" popClassName="notes-menu">
+      <div className="row-menu-label">解析与索引</div>
+      <button onClick={() => setConfigOpen(true)}>解析引擎与索引模式…</button>
+      <div className="row-menu-label">范围</div>
+      <button onClick={toggleAll}>{allChecked ? "取消全选" : "全选参与检索"}</button>
+      <button onClick={() => setChecked(new Set())}>清空勾选</button>
+      <div className="row-menu-label">状态</div>
+      <button onClick={() => void load()}>刷新列表</button>
+    </RowMenu>
+  );
+
   const body = (
     <div className={embedded ? "kv-embedded pr-page" : "notes-page kv-page pr-page"}>
-      {!embedded && (
+      {embedded ? (
+        /* 嵌进知识库时不再出现第二个页头：只保留一条与 tab 同高的工具条 */
+        <div className="kv-embedded-bar">
+          <div className="notes-stats">
+            <span><b>{docs.length}</b> 份资料</span>
+            <span><b>{counts.ready}</b> 已索引</span>
+            {counts.attention > 0 && <span className="warn"><b>{counts.attention}</b> 需处理</span>}
+          </div>
+          <span className="spacer" />
+          <button className="btn tiny-btn primary" onClick={() => void ingest()} disabled={busy}>＋ 导入</button>
+          <button className="btn tiny-btn" onClick={() => setPasting(true)} disabled={busy}>粘贴文本</button>
+          {moreMenu}
+        </div>
+      ) : (
         <PageHeader
           kicker="MATERIALS"
           title="资料"
           subtitle={<div className="notes-stats">
             <span><b>{docs.length}</b> 资料</span>
-            <span><b>{docs.filter((d) => d.status === "ready").length}</b> 已索引</span>
+            <span><b>{counts.ready}</b> 已索引</span>
             <span><b>{engines.filter((e) => e.available).length}</b> 引擎可用</span>
           </div>}
           actions={<>
             <button className="btn primary" onClick={() => void ingest()} disabled={busy}>＋ 导入资料</button>
             <button className="btn" onClick={() => setPasting(true)} disabled={busy}>粘贴文本</button>
-            <button className="icon-btn" onClick={() => void load()} title="刷新">↻</button>
+            {moreMenu}
           </>}
         />
       )}
@@ -323,28 +442,26 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
       )}
 
       <div className="pr-grid">
-        {/* 左：集合 + 资料（勾选决定检索范围） */}
+        {/* 左：范围 + 资料（勾选决定检索范围） */}
         <aside className="pr-col">
-          <div className="pr-block">
-            <div className="pr-block-head">集合<button className="icon-btn" onClick={() => void load()} title="刷新">↻</button></div>
-            <button className={`pr-coll ${checked.size === 0 ? "on" : ""}`} onClick={() => setChecked(new Set())}>
-              全部资料<em>{docs.length}</em>
-            </button>
-            {[...new Set(docs.map((d) => d.parser || "文本"))].slice(0, 4).map((kind) => {
-              const subset = docs.filter((d) => (d.parser || "文本") === kind);
-              const on = subset.length > 0 && subset.every((d) => checked.has(d.id));
-              return (
-                <button key={kind} className={`pr-coll ${on ? "on" : ""}`} onClick={() => setChecked(on ? new Set() : new Set(subset.map((d) => d.id)))}>
-                  {kind}<em>{subset.length}</em>
+          {docs.length > 0 && <div className="pr-block">
+            <div className="pr-block-head">范围<span className="tiny faint">勾选决定检索</span></div>
+            <div className="kv-range">
+              {([["all", "全部", counts.all], ["ready", "已索引", counts.ready], ["busy", "解析中", counts.busy], ["attention", "需处理", counts.attention]] as const).map(([key, label, n]) => (
+                <button key={key} className={`kv-range-chip ${range === key ? "on" : ""}`} onClick={() => setRange(key)}>
+                  {label}<em>{n}</em>
                 </button>
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          </div>}
 
           <div className="pr-block">
-            <div className="pr-block-head">资料<button className="link tiny" onClick={toggleAll}>{allChecked ? "取消全选" : "全选"}</button></div>
+            <div className="pr-block-head">资料
+              {checked.size > 0 && <span className="tiny faint">已选 {checked.size}</span>}
+              {docs.length > 0 && <button className="link tiny" onClick={toggleAll}>{allChecked ? "取消全选" : "全选"}</button>}
+            </div>
             <div className="pr-docs">
-              {docs.map((d) => (
+              {visibleDocs.map((d) => (
                 <div key={d.id} className={`pr-doc ${preview?.doc.id === d.id ? "on" : ""}`}>
                   <input
                     type="checkbox"
@@ -354,20 +471,25 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
                   />
                   <button className="pr-doc-main" onClick={() => void openPreview(d)} title={d.uri}>
                     <b className="ellipsis">{d.title}</b>
-                    <span className="tiny faint">
-                      <span className="kv-engine-tag">{d.engine || d.parser || "builtin"}</span>
-                      {" · "}{d.pages_total || 1} 页 · {d.status}
+                    <span className="tiny faint pr-doc-meta">
+                      <span className="kv-engine-tag">{engines.find((e) => e.name === (d.engine || d.parser))?.label || d.engine || d.parser || "本地文本"}</span>
+                      {" · "}{d.pages_total || 1} 页 · {statusOf(d.status)}
                     </span>
                   </button>
-                  <RowMenu title="资料操作">
-                    <button onClick={() => void openPreview(d)}>查看解析预览</button>
+                  <RowMenu title="资料操作" popClassName="notes-menu">
+                    <div className="row-menu-label">查看</div>
+                    <button onClick={() => void openPreview(d)}>解析预览</button>
                     <button onClick={() => { setAskQ(`这份资料讲了什么？${d.title}`); void runAsk(); }}>就这份提问</button>
-                    <button onClick={() => void reparse(d)}>按当前默认重新解析</button>
-                    <button className="danger" onClick={() => void remove(d)}>删除</button>
+                    <div className="row-menu-label">索引</div>
+                    <button onClick={() => void reparse(d)}>重新解析</button>
+                    <button onClick={() => toggleDoc(d.id)}>{checked.has(d.id) ? "从检索范围移除" : "加入检索范围"}</button>
+                    <div className="row-menu-label">危险</div>
+                    <button className="danger" onClick={() => void remove(d)}>删除资料</button>
                   </RowMenu>
                 </div>
               ))}
               {docs.length === 0 && <p className="notes-meta-empty">还没有资料。导入 PDF / Word / Markdown / 网页。</p>}
+              {docs.length > 0 && visibleDocs.length === 0 && <p className="notes-meta-empty">这个范围里没有资料。</p>}
             </div>
             <p className="notes-meta-empty">只有勾选的资料参与检索与引用；未勾选的仍可单独打开后提问。</p>
           </div>
@@ -381,7 +503,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
                 <div>
                   <h2>{preview.doc.title}</h2>
                   <span className="tiny faint">
-                    {preview.doc.engine || preview.doc.parser} · {preview.doc.pages_total || preview.pages.length} 页 · {preview.doc.status} · {preview.chunks} 个片段
+                    {engines.find((e) => e.name === (preview.doc.engine || preview.doc.parser))?.label || preview.doc.engine || preview.doc.parser} · {preview.doc.pages_total || preview.pages.length} 页 · {statusOf(preview.doc.status)} · {preview.chunks} 个片段
                   </span>
                 </div>
                 <button className="link" onClick={() => setPreview(null)}>返回提问</button>
@@ -389,7 +511,10 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
               <div className="pr-pages">
                 {preview.pages.slice(0, 80).map((pg) => (
                   <div key={pg.page_no} id={`kv-page-${pg.page_no}`} className={`pr-page ${pg.warn ? "warn" : ""}`}>
-                    <div className="pr-ph">p{pg.page_no}{pg.heading ? ` · ${pg.heading}` : ""}</div>
+                    <div className="pr-ph">
+                      <span>p{pg.page_no}{pg.heading ? ` · ${pg.heading}` : ""}</span>
+                      <button className="link tiny" onClick={() => void openPageImage(preview.doc, pg.page_no)} disabled={shotBusy}>看原页</button>
+                    </div>
                     <p>{pg.warn ? "该页只有图像，当前引擎未输出文本。可「按当前默认重新解析」或换 OCR 引擎。" : pg.text.slice(0, 900)}</p>
                   </div>
                 ))}
@@ -398,11 +523,17 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
           ) : (
             <>
               <div className="pr-ask">
+                <div className="pr-ask-scope">
+                  <span className="tiny faint">提问范围</span>
+                  {([["all", "页面 + 资料"], ["pages", "只看页面"], ["docs", "只看资料"]] as const).map(([key, label]) => (
+                    <button key={key} className={`kv-range-chip ${scope === key ? "on" : ""}`} onClick={() => setScope(key)}>{label}</button>
+                  ))}
+                </div>
                 <textarea
                   className="pr-ask-input"
                   rows={3}
                   value={askQ}
-                  placeholder="问一个问题，只基于勾选的资料回答"
+                  placeholder="问一个问题：页面与资料一起检索，答案带可点的出处"
                   onChange={(e) => setAskQ(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void runAsk(); } }}
                 />
@@ -417,7 +548,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
                 <div className="pr-answer">
                   <div className="pr-answer-head">
                     <b>{ask.found ? "基于资料的回答" : "材料里没有"}</b>
-                    <span className="tiny faint">{ask.citations.length} 条引用{ask.degraded ? ` · ${ask.degraded}` : ""}</span>
+                    <span className="tiny faint">{ask.citations.length} 条引用{ask.degraded ? ` · ${DEGRADED_LABEL[ask.degraded] || ask.degraded}` : ""}</span>
                     <button className="link tiny" onClick={() => void navigator.clipboard?.writeText(ask.answer)}>复制</button>
                   </div>
                   <div className="pr-answer-body">{ask.answer.replace(/\[(\d+)\]/g, "")}</div>
@@ -428,8 +559,8 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
                           key={c.ref}
                           className={`pr-cite ${selectedCite === c.ref ? "on" : ""}`}
                           onClick={() => selectCitation(c)}
-                          title={`${c.title} · ${c.locator}`}
-                        >{c.ref}</button>
+                          title={c.kind === "page" ? `页面：${c.title || c.heading}` : `${c.title} · ${c.locator}`}
+                        >{c.kind === "page" ? `页${c.ref}` : c.ref}</button>
                       ))}
                     </div>
                   )}
@@ -488,146 +619,31 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
               <button className="link tiny" onClick={() => void navigator.clipboard?.writeText((ask?.citations || []).map((c) => `[${c.ref}] ${c.title} · ${c.locator}`).join("\n"))}>导出引用</button>
             </div>
             {ask?.citations?.length ? ask.citations.map((c) => (
-              <button key={c.ref} className={`pr-cite-card ${selectedCite === c.ref ? "on" : ""}`} onClick={() => selectCitation(c)}>
-                <div className="pr-cc-head"><span className="kv-type">{c.ref}</span><b className="ellipsis">{c.title}</b></div>
-                <span className="tiny faint">{c.locator}{c.heading ? ` · ${c.heading}` : ""} · 点击打开原页</span>
-              </button>
+              <div key={c.ref} className={`pr-cite-card ${selectedCite === c.ref ? "on" : ""}`}>
+                <button className="pr-cc-main" onClick={() => selectCitation(c)}>
+                  <div className="pr-cc-head">
+                    <span className={`kv-type ${c.kind === "page" ? "page" : ""}`}>{c.kind === "page" ? "页面" : "资料"}</span>
+                    <b className="ellipsis">{c.title}</b>
+                  </div>
+                  <span className="tiny faint">{c.locator}{c.heading ? ` · ${c.heading}` : ""}</span>
+                </button>
+                {c.kind === "page"
+                  ? <button className="link tiny" onClick={() => selectCitation(c)}>打开页面</button>
+                  : <button className="link tiny" onClick={() => { const d = docs.find((x) => x.id === c.doc_id); if (d) void openPageImage(d, c.page_no || 1); }}>看原页</button>}
+              </div>
             )) : <p className="notes-meta-empty">提问后这里显示本次回答引用的页 / 段。</p>}
           </div>
 
           <div className="pr-block">
-            <div className="pr-block-head">解析引擎
-              <button className="link tiny" onClick={() => setEngineOpen((v) => !v)}>{engineOpen ? "收起" : "配置"}</button>
+            <div className="pr-block-head">解析与索引
+              <button className="link tiny" onClick={() => setConfigOpen(true)}>配置</button>
             </div>
-            {engineOpen ? (
-              <div className="pr-engine">
-      <div className="kv-block">
-        <div className="notes-meta-title">解析引擎</div>
-        <select
-          className="settings-control kv-engine-select"
-          value={engineState?.defaultEngine || "auto"}
-          disabled={engineBusy === "default"}
-          onChange={(e) => void setDefaultEngine(e.target.value)}
-        >
-          <option value="auto">自动路由（简单格式本地，其余按默认）</option>
-          {engines.map((engine) => (
-            <option key={engine.name} value={engine.name}>{engine.label}{engine.available ? "" : "（不可用）"}</option>
-          ))}
-        </select>
-        <div className="kv-engines">
-          {engines.map((engine) => {
-            const probed = probes[engine.name];
-            const available = probed ? probed.available : engine.available;
-            const reason = probed ? probed.reason : engine.reason;
-            return (
-              <div key={engine.name} className={`kv-engine ${selectedEngine === engine.name ? "on" : ""}`}>
-                <button className="kv-engine-main" onClick={() => setSelectedEngine(engine.name)} title={engine.description}>
-                  <span className={`kv-doc-dot ${available ? "ready" : "failed"}`} />
-                  <b>{engine.label}</b>
-                  <em>{engine.local ? "本地" : available ? "可用" : reason || "未配置"}</em>
-                </button>
-                {!engine.local && (
-                  <button
-                    className="btn tiny-btn"
-                    disabled={engineBusy === `probe:${engine.name}`}
-                    onClick={() => void probe(engine.name)}
-                  >{engineBusy === `probe:${engine.name}` ? "…" : "探测"}</button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-        <button className="btn tiny-btn" onClick={() => setAdding((value) => !value)}>＋ 自研引擎</button>
-        {adding && (
-          <div className="kv-extra-form">
-            <input className="kv-input" placeholder="引擎名，如 my-parser" value={newEngine.name} onChange={(e) => setNewEngine({ ...newEngine, name: e.target.value })} />
-            <input className="kv-input" placeholder="Endpoint，如 http://127.0.0.1:9000/parse" value={newEngine.endpoint} onChange={(e) => setNewEngine({ ...newEngine, endpoint: e.target.value })} />
-            <input className="kv-input" placeholder="支持格式，如 pdf,docx" value={newEngine.fileTypes} onChange={(e) => setNewEngine({ ...newEngine, fileTypes: e.target.value })} />
-            <div className="kv-engine-foot">
-              <span className="tiny faint">响应可为 markdown 或 JSON；JSON 默认取 markdown 字段</span>
-              <button className="btn tiny-btn" onClick={() => void addEngine()} disabled={engineBusy === "add" || !newEngine.name.trim() || !newEngine.endpoint.trim()}>注册</button>
-            </div>
-          </div>
-        )}
-      </div>
-      {selected && (
-        <div className="kv-block">
-          <div className="notes-meta-title">{selected.label}</div>
-          <p className="kv-engine-desc">{selected.description}</p>
-          {usesEndpoint && (
-            <label className="kv-field">
-              <span>{selected.name.endsWith("_cloud") ? "Base URL" : "Endpoint"}</span>
-              <input
-                className="kv-input"
-                value={draft.endpoint}
-                placeholder="http://127.0.0.1:8080"
-                onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
-              />
-            </label>
-          )}
-          {usesApiKey && (
-            <label className="kv-field">
-              <span>{SECRET_LABEL[selected.name] || "API Key"}{selected.config.apiKeySet ? "（已保存）" : ""}</span>
-              <input
-                className="kv-input"
-                type="password"
-                value={draft.apiKey}
-                placeholder={selected.config.apiKeySet ? "留空保持不变" : "粘贴 API Key"}
-                onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
-              />
-            </label>
-          )}
-          {usesCloudKey && (
-            <label className="kv-field">
-              <span>MinerU API Key{selected.config.apiKeySet ? "（已保存）" : ""}</span>
-              <input
-                className="kv-input"
-                type="password"
-                value={draft.apiKey}
-                placeholder={selected.config.apiKeySet ? "留空保持不变" : "粘贴 mineru.net API Key"}
-                onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
-              />
-            </label>
-          )}
-          {usesToken && (
-            <label className="kv-field">
-              <span>AI Studio Token{selected.config.tokenSet ? "（已保存）" : ""}</span>
-              <input
-                className="kv-input"
-                type="password"
-                value={draft.token}
-                placeholder={selected.config.tokenSet ? "留空保持不变" : "粘贴 Access Token"}
-                onChange={(e) => setDraft({ ...draft, token: e.target.value })}
-              />
-            </label>
-          )}
-          <label className="kv-field">
-            <span>超时（秒）</span>
-            <input
-              className="kv-input"
-              type="number"
-              min={5}
-              value={Math.round(draft.timeoutMs / 1000)}
-              onChange={(e) => setDraft({ ...draft, timeoutMs: (Number(e.target.value) || 600) * 1000 })}
-            />
-          </label>
-          <div className="kv-engine-foot">
-            <span className="tiny faint">{selected.fileTypes.slice(0, 8).join(" / ")}{selected.fileTypes.length > 8 ? " …" : ""}</span>
-            <span className="row gap6">
-              {isExtra && <button className="btn tiny-btn" onClick={() => void removeEngine()} disabled={engineBusy === "remove"}>移除</button>}
-              <button className="btn tiny-btn" onClick={() => void saveEngine()} disabled={engineBusy === "save"}>
-                {engineBusy === "save" ? "保存中…" : "保存"}
-              </button>
-            </span>
-          </div>
-        </div>
-      )}
-              </div>
-            ) : (
-              <p className="notes-meta-empty">
-                默认 {engineState?.defaultEngine || "auto"} · 可用 {engines.filter((e) => e.available).length}/{engines.length} 个引擎
-              </p>
-            )}
+            <p className="notes-meta-empty">
+              默认 {engineState?.defaultEngine || "auto"} · {engines.filter((e) => e.available).length}/{engines.length} 个引擎可用
+            </p>
+            <p className="notes-meta-empty">
+              {embedding?.enabled ? `云端向量：${embedding.model}` : "本地关键词索引，正文不出网"}
+            </p>
           </div>
 
           <div className="pr-block">
@@ -638,6 +654,174 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
           </div>
         </aside>
       </div>
+
+      {shot && (
+        <div className="modal-mask kv-shot-mask" onMouseDown={(e) => { if (e.target === e.currentTarget) setShot(null); }}>
+          <figure className="kv-shot">
+            <figcaption>
+              <span className="ellipsis">{shot.title} · p{shot.page}</span>
+              <button className="link tiny" onClick={() => setShot(null)}>关闭</button>
+            </figcaption>
+            <img src={shot.dataUrl} alt={`${shot.title} 第 ${shot.page} 页`} />
+          </figure>
+        </div>
+      )}
+
+      {configOpen && (
+        <div className="modal-mask" onMouseDown={(e) => { if (e.target === e.currentTarget) setConfigOpen(false); }}>
+          <div className="modal kv-config-modal" role="dialog" aria-modal="true" aria-label="解析与索引">
+            <div className="pr-block-head">
+              解析与索引
+              <button className="link tiny" onClick={() => setConfigOpen(false)}>关闭</button>
+            </div>
+            <div className="kv-config-body">
+              <p className="notes-meta-empty">解析引擎决定文字与页码的抽取质量；索引模式决定正文是否出网。</p>
+              <div className="kv-block">
+                <div className="notes-meta-title">解析引擎</div>
+                <select
+                  className="settings-control kv-engine-select"
+                  value={engineState?.defaultEngine || "auto"}
+                  disabled={engineBusy === "default"}
+                  onChange={(e) => void setDefaultEngine(e.target.value)}
+                >
+                  <option value="auto">自动路由（简单格式本地，其余按默认）</option>
+                  {engines.map((engine) => (
+                    <option key={engine.name} value={engine.name}>{engine.label}{engine.available ? "" : "（不可用）"}</option>
+                  ))}
+                </select>
+                <div className="kv-engines">
+                  {engines.map((engine) => {
+                    const probed = probes[engine.name];
+                    const available = probed ? probed.available : engine.available;
+                    const reason = probed ? probed.reason : engine.reason;
+                    return (
+                      <div key={engine.name} className={`kv-engine ${selectedEngine === engine.name ? "on" : ""}`}>
+                        <button className="kv-engine-main" onClick={() => setSelectedEngine(engine.name)} title={engine.description}>
+                          <span className={`kv-doc-dot ${available ? "ready" : "failed"}`} />
+                          <b>{engine.label}</b>
+                          <em>{engine.local ? "本地" : available ? "可用" : reason || "未配置"}</em>
+                        </button>
+                        {!engine.local && (
+                          <button
+                            className="btn tiny-btn"
+                            disabled={engineBusy === `probe:${engine.name}`}
+                            onClick={() => void probe(engine.name)}
+                          >{engineBusy === `probe:${engine.name}` ? "…" : "探测"}</button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <button className="btn tiny-btn" onClick={() => setAdding((value) => !value)}>＋ 自研引擎</button>
+                {adding && (
+                  <div className="kv-extra-form">
+                    <input className="kv-input" placeholder="引擎名，如 my-parser" value={newEngine.name} onChange={(e) => setNewEngine({ ...newEngine, name: e.target.value })} />
+                    <input className="kv-input" placeholder="Endpoint，如 http://127.0.0.1:9000/parse" value={newEngine.endpoint} onChange={(e) => setNewEngine({ ...newEngine, endpoint: e.target.value })} />
+                    <input className="kv-input" placeholder="支持格式，如 pdf,docx" value={newEngine.fileTypes} onChange={(e) => setNewEngine({ ...newEngine, fileTypes: e.target.value })} />
+                    <div className="kv-engine-foot">
+                      <span className="tiny faint">响应可为 markdown 或 JSON；JSON 默认取 markdown 字段</span>
+                      <button className="btn tiny-btn" onClick={() => void addEngine()} disabled={engineBusy === "add" || !newEngine.name.trim() || !newEngine.endpoint.trim()}>注册</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              {selected && (
+                <div className="kv-block">
+                  <div className="notes-meta-title">{selected.label}</div>
+                  <p className="kv-engine-desc">{selected.description}</p>
+                  {!selected.local && (
+                    <p className="notes-meta-empty">
+                      远端引擎：导入时整份文件会上传到该服务解析（不是只发片段）。只对可公开的材料使用。
+                    </p>
+                  )}
+                  {usesEndpoint && (
+                    <label className="kv-field">
+                      <span>{selected.name.endsWith("_cloud") ? "Base URL" : "Endpoint"}</span>
+                      <input
+                        className="kv-input"
+                        value={draft.endpoint}
+                        placeholder="http://127.0.0.1:8080"
+                        onChange={(e) => setDraft({ ...draft, endpoint: e.target.value })}
+                      />
+                    </label>
+                  )}
+                  {usesApiKey && (
+                    <label className="kv-field">
+                      <span>{SECRET_LABEL[selected.name] || "API Key"}{selected.config.apiKeySet ? "（已保存）" : ""}</span>
+                      <input
+                        className="kv-input"
+                        type="password"
+                        value={draft.apiKey}
+                        placeholder={selected.config.apiKeySet ? "留空保持不变" : "粘贴 API Key"}
+                        onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
+                      />
+                    </label>
+                  )}
+                  {usesCloudKey && (
+                    <label className="kv-field">
+                      <span>MinerU API Key{selected.config.apiKeySet ? "（已保存）" : ""}</span>
+                      <input
+                        className="kv-input"
+                        type="password"
+                        value={draft.apiKey}
+                        placeholder={selected.config.apiKeySet ? "留空保持不变" : "粘贴 mineru.net API Key"}
+                        onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
+                      />
+                    </label>
+                  )}
+                  {usesToken && (
+                    <label className="kv-field">
+                      <span>AI Studio Token{selected.config.tokenSet ? "（已保存）" : ""}</span>
+                      <input
+                        className="kv-input"
+                        type="password"
+                        value={draft.token}
+                        placeholder={selected.config.tokenSet ? "留空保持不变" : "粘贴 Access Token"}
+                        onChange={(e) => setDraft({ ...draft, token: e.target.value })}
+                      />
+                    </label>
+                  )}
+                  <label className="kv-field">
+                    <span>超时（秒）</span>
+                    <input
+                      className="kv-input"
+                      type="number"
+                      min={5}
+                      value={Math.round(draft.timeoutMs / 1000)}
+                      onChange={(e) => setDraft({ ...draft, timeoutMs: (Number(e.target.value) || 600) * 1000 })}
+                    />
+                  </label>
+                  <div className="kv-engine-foot">
+                    <span className="tiny faint">{selected.fileTypes.slice(0, 8).join(" / ")}{selected.fileTypes.length > 8 ? " …" : ""}</span>
+                    <span className="row gap6">
+                      {isExtra && <button className="btn tiny-btn" onClick={() => void removeEngine()} disabled={engineBusy === "remove"}>移除</button>}
+                      <button className="btn tiny-btn" onClick={() => void saveEngine()} disabled={engineBusy === "save"}>
+                        {engineBusy === "save" ? "保存中…" : "保存"}
+                      </button>
+                    </span>
+                  </div>
+                </div>
+              )}
+              <div className="kv-block">
+              <div className="notes-meta-title">索引模式</div>
+                      {embedding?.enabled ? (
+                        <>
+                          <p className="notes-meta-empty">
+                            正文分块会发往 {embedding.model}（火山方舟）建向量索引；检索时查询串也会发一次。
+                            在「设置 → 数据」可关闭。
+                          </p>
+                          {!embedding.hasKey && (
+                            <p className="notes-meta-empty">尚未配置 ARK_API_KEY：设置 → 执行 → 模型密钥 / 环境变量。</p>
+                          )}
+                        </>
+                      ) : (
+                        <p className="notes-meta-empty">只做本地关键词索引，资料正文一个字节不出网。</p>
+                      )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
   return body;

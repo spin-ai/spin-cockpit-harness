@@ -1,6 +1,6 @@
 import type { WikiDemoStep } from "../components/WikiFlowDemo";
 
-export type WikiDemo = { eyebrow?: string; title: string; steps: WikiDemoStep[] };
+type WikiDemo = { eyebrow?: string; title: string; steps: WikiDemoStep[] };
 
 export const WIKI_DEMOS: Record<string, WikiDemo> = {
   home: {

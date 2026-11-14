@@ -9,6 +9,9 @@ import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { planCurate, INDEX_TITLE } from "./curate-structure.mjs";
+import { claimCandidates, normalizeClaim, evaluateClaims } from "./claims.mjs";
+import { buildMergedDraft, findCitationCandidates, findMergeCandidates } from "./maintenance.mjs";
 
 let ctx;
 let seq = 0;
@@ -19,6 +22,8 @@ let data = {
   citations: [],
   revisions: [],
   reviews: [],
+  suggestions: [],
+  claims: [],
   log: [],
   trash: [],
   pins: [],
@@ -191,6 +196,8 @@ function hydrate(raw) {
   data = {
     ...data, ...raw,
     trash: Array.isArray(raw.trash) ? raw.trash : [],
+    suggestions: Array.isArray(raw.suggestions) ? raw.suggestions : [],
+    claims: Array.isArray(raw.claims) ? raw.claims : [],
     pins: Array.isArray(raw.pins) ? raw.pins : [],
     recents: Array.isArray(raw.recents) ? raw.recents : [],
     backlinks: raw.backlinks && typeof raw.backlinks === "object" ? raw.backlinks : {},
@@ -370,6 +377,8 @@ async function persist() {
     sources: data.sources.map(sourceMeta),
     citations: data.citations,
     reviews: data.reviews,
+    suggestions: data.suggestions,
+    claims: data.claims,
     log: data.log,
     pins: data.pins,
     recents: data.recents,
@@ -429,7 +438,7 @@ function pageView(page, includeContent = true) {
 }
 
 function pageSummary(page) {
-  return { id: page.id, slug: page.slug, title: page.title, summary: page.summary || "", status: page.status, confidence: page.confidence || "medium", updatedAt: page.updatedAt, citations: citationsOf(page.id).length, backlinks: backlinksOf(page).length };
+  return { id: page.id, slug: page.slug, title: page.title, summary: page.summary || "", status: page.status, confidence: page.confidence || "medium", updatedAt: page.updatedAt, citations: citationsOf(page.id).length, backlinks: backlinksOf(page).length, claims: claimsOf(page.id).length };
 }
 
 function pageRevision(page, reason) {
@@ -438,6 +447,206 @@ function pageRevision(page, reason) {
     fsSync.mkdirSync(revisionDir(), { recursive: true });
     fsSync.appendFileSync(path.join(revisionDir(), `${safeFile(page.id)}.ndjson`), `${JSON.stringify(rev)}\n`, "utf8");
   } catch { /* 历史记录失败不影响页面保存 */ }
+}
+
+// ── 建议队列（不是直接写入）─────────────────────────────────────────────
+// 整理只对 draft 直接落盘；reviewed / stale 的改动一律先变成一条建议，人点头才写。
+// 建议里存的是**渲染好的完整正文**，批准时纯字节拷贝 —— 审核者读到的就是发布的字节。
+const SUGGESTION_LIMIT = 120;
+const SUGGESTION_MAX_CHARS = 200_000;
+
+function suggestionSummary(sug) {
+  if (!sug) return null;
+  return {
+    id: sug.id,
+    kind: sug.kind,
+    targetKind: sug.targetKind,
+    targetId: sug.targetId,
+    title: sug.title,
+    status: sug.status,
+    confidence: sug.confidence || "medium",
+    reasons: (sug.evidence || []).map((e) => e.quote).filter(Boolean),
+    evidence: (sug.evidence || []).map((e) => ({ kind: e.kind, id: e.id, quote: e.quote })),
+    size: sug.size || { lines: 0, chars: 0 },
+    createdAt: sug.createdAt,
+    decidedAt: sug.decidedAt || null,
+    feedback: sug.feedback || "",
+  };
+}
+
+/** 同一条建议被拒绝后，30 天内不再打扰（复用记忆侧 Dream 建议的节流口径） */
+const SUGGESTION_REJECT_COOLDOWN = 30 * 24 * 3600 * 1000;
+
+/**
+ * 统一的入队闸门：所有 kind 都走这里。
+ * - `sig` 是「这是同一条建议」的身份：pending 去重、拒绝后节流、接受后不重复入队；
+ * - 没有 evidence 的一律不入队（机器提出来可以，但必须说得出依据）。
+ */
+function enqueueSuggestion({ kind, targetKind = "page", targetId, title, payload, baseHash = "", evidence = [], confidence = "high", sig }) {
+  if (!payload || !sig) return false;
+  if (payload.length > SUGGESTION_MAX_CHARS) return false;
+  if (!Array.isArray(data.suggestions)) data.suggestions = [];
+  const existing = data.suggestions.find((s) => s.sig === sig);
+  if (existing) {
+    if (existing.status === "pending") return false;
+    if (existing.status === "rejected" && existing.decidedAt && now() - existing.decidedAt < SUGGESTION_REJECT_COOLDOWN) return false;
+    if (existing.status === "accepted" && existing.payload === payload) return false;
+  }
+  if (!evidence.length) return false;
+  data.suggestions.unshift({
+    id: id("sug"),
+    kind,
+    targetKind,
+    targetId,
+    title,
+    payload,
+    payloadHash: hash(payload),
+    baseHash,
+    confidence,
+    evidence,
+    size: { lines: payload.split("\n").length, chars: payload.length },
+    sig,
+    status: "pending",
+    createdAt: now(),
+    decidedAt: null,
+    feedback: "",
+  });
+  data.suggestions = data.suggestions.slice(0, SUGGESTION_LIMIT);
+  addLog("suggestion.create", `${title}：${kind}`);
+  return true;
+}
+
+/** 结构整理：同一页面的旧 pending 作废；内容完全相同的建议不重复入队（sig 含 payload hash） */
+function upsertStructureSuggestion(page, change) {
+  const payload = String(change.after || "");
+  if (!payload) return false;
+  if (!Array.isArray(data.suggestions)) data.suggestions = [];
+  const sig = `structure:${page.id}:${hash(payload).slice(0, 16)}`;
+  for (const old of data.suggestions) {
+    if (old.kind === "structure" && old.targetId === page.id && old.status === "pending" && old.sig !== sig) old.status = "superseded";
+  }
+  const reasons = (change.reasons || []).filter(Boolean);
+  return enqueueSuggestion({
+    kind: "structure",
+    targetId: page.id,
+    title: page.title,
+    payload,
+    // 基线：接受时用它判断页面是否已经被别人改过（不一致就不自动合并）
+    baseHash: hash(String(page.content || "")),
+    evidence: [
+      { kind: "rule", id: "curate.structure", quote: reasons.join(" · ").slice(0, 400) || "结构整理" },
+      ...(change.blockedClaims || []).slice(0, 6).map((c) => ({ kind: "claim", id: c.id, quote: c.quote })),
+    ],
+    sig,
+  });
+}
+
+// ── 人工结论（claim）：人改过的一句话不能在下一次整理里消失 ──────────────
+const CLAIMS_PER_PAGE = 40;
+const CLAIMS_PER_SAVE = 12;
+
+function claimsOf(pageId, { includeRemoved = false } = {}) {
+  return (data.claims || []).filter((c) => c.pageId === pageId && (includeRemoved || c.status !== "removed"));
+}
+
+/**
+ * 人（不是 Agent、不是系统）保存页面时，把**这次新出现的行**记成 claim。
+ * 人自己删掉的那一行视为自己撤销了那条结论 —— 不要留成 orphan 噪声。
+ */
+function recordHumanClaims(page, prevContent, nextContent) {
+  if (!Array.isArray(data.claims)) data.claims = [];
+  const kept = new Set(String(nextContent || "").split("\n").map(normalizeClaim).filter(Boolean));
+  data.claims = data.claims.filter((c) => c.pageId !== page.id || c.status === "removed" || kept.has(normalizeClaim(c.quote)));
+
+  const existing = new Set(claimsOf(page.id, { includeRemoved: true }).map((c) => normalizeClaim(c.quote)));
+  let added = 0;
+  for (const quote of claimCandidates(prevContent, nextContent, CLAIMS_PER_SAVE)) {
+    if (existing.has(quote)) continue;
+    data.claims.push({
+      id: id("claim"),
+      pageId: page.id,
+      quote,
+      kind: "line",
+      provenance: { by: "human", at: now() },
+      status: "active",
+      checkedAt: null,
+    });
+    added += 1;
+  }
+  // 单页上限：保留最近的一批，别让结论列表变成垃圾场
+  const mine = data.claims.filter((c) => c.pageId === page.id);
+  if (mine.length > CLAIMS_PER_PAGE) {
+    const drop = new Set(mine.slice(0, mine.length - CLAIMS_PER_PAGE).map((c) => c.id));
+    data.claims = data.claims.filter((c) => !drop.has(c.id));
+  }
+  return added;
+}
+
+function setClaimStatus(ids, status) {
+  const want = new Set(ids || []);
+  for (const claim of data.claims || []) {
+    if (want.has(claim.id)) { claim.status = status; claim.checkedAt = now(); }
+  }
+}
+
+/** 合并草稿接手原页面的结论：只带「草稿里确实有」的那些，凭空搬没有意义 */
+function carryClaimsTo(targetPageId, sourcePageIds, content) {
+  const lines = String(content || "").split("\n").map(normalizeClaim).filter(Boolean);
+  const existing = new Set(claimsOf(targetPageId).map((c) => normalizeClaim(c.quote)));
+  let carried = 0;
+  for (const claim of data.claims || []) {
+    if (claim.status === "removed" || !sourcePageIds.includes(claim.pageId)) continue;
+    const key = normalizeClaim(claim.quote);
+    if (!key || existing.has(key)) continue;
+    const present = lines.some((line) => line.includes(key) || (key.includes(line) && line.length >= 8));
+    if (!present) continue;
+    data.claims.push({
+      id: id("claim"),
+      pageId: targetPageId,
+      quote: claim.quote,
+      kind: claim.kind === "explicit" ? "explicit" : "line",
+      provenance: { by: "carry", from: claim.pageId, at: now() },
+      status: "active",
+      checkedAt: null,
+    });
+    existing.add(key);
+    carried += 1;
+  }
+  return carried;
+}
+
+/** 按页面聚合「对不上的结论」：审核 tab 用，右栏之外也要能一眼看到 */
+function claimIssuesByPage() {
+  const byPage = new Map();
+  for (const claim of data.claims || []) {
+    if (claim.status !== "conflict" && claim.status !== "orphan") continue;
+    const page = data.pages.find((p) => p.id === claim.pageId);
+    if (!page) continue;
+    if (!byPage.has(page.id)) byPage.set(page.id, { pageId: page.id, title: page.title, status: page.status, claims: [] });
+    byPage.get(page.id).claims.push({ id: claim.id, quote: claim.quote, status: claim.status });
+  }
+  return [...byPage.values()];
+}
+
+function claimView(claim) {
+  return {
+    id: claim.id,
+    pageId: claim.pageId,
+    quote: claim.quote,
+    status: claim.status,
+    kind: claim.kind,
+    provenance: claim.provenance || null,
+    checkedAt: claim.checkedAt || null,
+  };
+}
+
+/** 页面被删 / 被审核时，顺带把过期的建议关掉，避免队列里堆死条目 */
+function expireSuggestions(predicate, status = "expired") {
+  let n = 0;
+  for (const sug of data.suggestions || []) {
+    if (sug.status === "pending" && predicate(sug)) { sug.status = status; sug.decidedAt = now(); n += 1; }
+  }
+  return n;
 }
 
 function ensurePage({ title, summary = "", content = "", sourceIds = [] }) {
@@ -457,10 +666,6 @@ function ensurePage({ title, summary = "", content = "", sourceIds = [] }) {
   pageRevision(page, "create");
   addLog("page.create", page.title);
   return page;
-}
-
-function sourceText(source) {
-  return `${source.title}\n${source.uri || ""}\n${source.content || ""}`;
 }
 
 /**
@@ -602,11 +807,13 @@ export async function activate(context) {
   ctx = context;
   await load();
 
-  ctx.api.handle("wiki.status", async () => ({ pages: data.pages.length, sources: data.sources.length, drafts: data.pages.filter((p) => p.status === "draft").length, stale: data.pages.filter((p) => p.status === "stale").length, vaultPath: data.vaultPath }));
+  ctx.api.handle("wiki.status", async () => ({ pages: data.pages.length, sources: data.sources.length, drafts: data.pages.filter((p) => p.status === "draft").length, stale: data.pages.filter((p) => p.status === "stale").length, suggestions: (data.suggestions || []).filter((s) => s.status === "pending").length, vaultPath: data.vaultPath }));
   ctx.api.handle("wiki.list", async () => ({
     pages: data.pages.map(pageSummary),
     sources: data.sources.map((s) => ({ id: s.id, title: s.title, kind: s.kind, uri: s.uri, createdAt: s.createdAt, citations: data.citations.filter((c) => c.sourceId === s.id).length })),
     reviews: data.pages.filter((p) => p.status === "draft").map(pageSummary),
+    suggestions: (data.suggestions || []).filter((s) => s.status === "pending").map(suggestionSummary),
+    claimIssues: claimIssuesByPage(),
     trash: data.trash.map((t) => ({ id: t.id, kind: t.kind, title: t.title, deletedAt: t.deletedAt })),
     pins: data.pins,
     recents: data.recents.map((r) => ({ id: r.id, at: r.at })),
@@ -700,13 +907,19 @@ export async function activate(context) {
     return out;
   });
   ctx.api.handle("wiki.createPage", async ({ title, summary = "" } = {}) => { const page = ensurePage({ title, summary }); await persist(); return pageView(page); });
-  ctx.api.handle("wiki.savePage", async ({ id: pageId, content, title, summary, status } = {}) => {
+  ctx.api.handle("wiki.savePage", async ({ id: pageId, content, title, summary, status, source = "human" } = {}) => {
     const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
     if (!page) throw new Error("page not found");
+    const prevContent = String(page.content || "");
     if (typeof title === "string" && title.trim()) page.title = title.trim().slice(0, 180);
     if (typeof summary === "string") page.summary = summary.slice(0, 2000);
     if (typeof content === "string") page.content = content;
-    page.status = status === "reviewed" ? "reviewed" : "draft";
+    // 只有人保存才记「人工结论」；Agent / 系统写入不产生结论，也不能靠保存洗掉它们
+    // 只给「已有页面的人工修改」记结论：新建页面的正文本来就还是草稿，不需要保护
+    if (source === "human" && prevContent.trim() && page.content !== prevContent) recordHumanClaims(page, prevContent, page.content);
+    // stale 是「来源变了/资料被删」的标记，允许由调用方写入；其余未知值一律回到 draft，
+    // 避免绕过审核流直接把页面标成 reviewed。
+    page.status = status === "reviewed" ? "reviewed" : status === "stale" ? "stale" : "draft";
     page.updatedAt = now();
     if (page.status === "reviewed") page.reviewedAt = now();
     pageRevision(page, "edit");
@@ -732,6 +945,9 @@ export async function activate(context) {
   ctx.api.handle("wiki.deletePage", async ({ id: pageId } = {}) => {
     const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
     if (!page) throw new Error("page not found");
+    expireSuggestions((s) => s.targetId === page.id);
+    // 页面进了回收站：人工结论标 orphan（不删），恢复时再逐条核对
+    setClaimStatus(claimsOf(page.id).map((c) => c.id), "orphan");
     data.trash.unshift({
       id: id("trash"), kind: "page", title: page.title, deletedAt: now(),
       page: clone(page), citations: data.citations.filter((c) => c.pageId === page.id),
@@ -755,6 +971,13 @@ export async function activate(context) {
       }
       for (const c of entry.citations || []) {
         if (!data.citations.some((x) => x.id === c.id)) data.citations.push(clone(c));
+      }
+      // 恢复后按当前正文重新核对结论：还在就 active，不见了就保持 orphan
+      const restoredPage = data.pages.find((p) => p.id === entry.page.id);
+      if (restoredPage) {
+        const verdict = evaluateClaims(claimsOf(restoredPage.id), restoredPage.content);
+        setClaimStatus(verdict.ok.map((c) => c.id), "active");
+        setClaimStatus([...verdict.conflict, ...verdict.orphan].map((c) => c.id), "orphan");
       }
     } else if (entry.kind === "source" && entry.source) {
       if (!data.sources.some((s) => s.id === entry.source.id)) {
@@ -899,6 +1122,11 @@ export async function activate(context) {
     if (!safeTitle) throw new Error("title is required");
     let page = data.pages.find((p) => p.title.toLowerCase() === safeTitle.toLowerCase() || p.slug === slugify(safeTitle));
     if (!page) page = ensurePage({ title: safeTitle, summary, content });
+    // Agent / 模型只能写 draft：reviewed 页面的改动必须走「审核」（退回成 draft 或变成建议），
+    // 不能靠改一次正文顺手把 reviewed 降级 —— 那是静默覆盖。
+    if (page.status === "reviewed") {
+      throw new Error(`「${page.title}」已审核，Agent 不能直接改写；先在页面里退回草稿，或把改动做成待审建议`);
+    }
     page.content = String(content || page.content);
     page.summary = String(summary || page.summary || "");
     page.status = "draft";
@@ -928,196 +1156,356 @@ export async function activate(context) {
   ctx.api.handle("wiki.tags", async () => allTags());
   /**
    * 自动整理 Wiki：统一大纲 + 补「相关」链接 + 重建索引页（确定性，不需要模型）。
-   * - 每个页面保证 `# 标题`、`## 要点`、`## 原文摘录`、`## 相关` 四段
-   * - 引用同一份 source、或标题互相提及的页面，互相加 [[双链]]
-   * - 维护一个 `Wiki 索引` 页面（按状态分组列出所有页面）
+   *
+   * 硬规则：**只有 draft 允许被整理直接改写。**
+   * reviewed / stale 的页面一律只产「待审建议」，人点头才写 —— 整理做错比不做更糟。
+   * 计算部分在 ./curate-structure.mjs（纯函数，自检见 scripts/wiki-curate-selftest.mjs）。
    */
   const curateWiki = async ({ dryRun = false } = {}) => {
-    const INDEX_TITLE = "Wiki 索引";
-    const indexPage = data.pages.find((p) => p.title === INDEX_TITLE);
-    const realPages = data.pages.filter((p) => p.title !== INDEX_TITLE);
+    const indexPage = data.pages.find((p) => p.title === INDEX_TITLE) || null;
+    const plan = planCurate({ pages: data.pages, citations: data.citations, sources: data.sources, claims: data.claims || [], index: indexPage });
 
-    // 1) 页面之间的关系：共享 source 或标题互现
-    const related = new Map(); // pageId -> Set(pageId)
-    const link = (a, b) => {
-      if (!a || !b || a === b) return;
-      if (!related.has(a)) related.set(a, new Set());
-      related.get(a).add(b);
-    };
-    const sourcesOf = new Map();
-    for (const c of data.citations) {
-      if (!sourcesOf.has(c.pageId)) sourcesOf.set(c.pageId, new Set());
-      sourcesOf.get(c.pageId).add(c.sourceId);
-    }
-    const ids = realPages.map((p) => p.id);
-    for (let i = 0; i < ids.length; i += 1) {
-      for (let j = i + 1; j < ids.length; j += 1) {
-        const a = sourcesOf.get(ids[i]) || new Set();
-        const b = sourcesOf.get(ids[j]) || new Set();
-        let shared = false;
-        for (const x of a) if (b.has(x)) { shared = true; break; }
-        if (shared) { link(ids[i], ids[j]); link(ids[j], ids[i]); }
-      }
-    }
-
-    // 2) 页面标题：用正文 H1 / 摘要 / 把 slug 美化，太弱的标题直接改掉
-    const weakTitle = (t) => /^[a-z0-9._\-]+$/i.test(t) || /^untitled/i.test(t);
-    // 摘要里截出来的一行要像「话」：含中文，或至少 3 个词且不含 CSV/公式符号
-    const looksLikeProse = (t) => /[\u4e00-\u9fa5]/.test(t) || (t.split(/\s+/).length >= 3 && !/[,=]/.test(t));
-    const deriveTitle = (page) => {
-      const body = String(page.content || "");
-      const h1 = (body.match(/^#\s+(.+)$/m) || [])[1]?.trim();
-      if (h1 && h1.length >= 2 && h1.length <= 60 && !/^untitled/i.test(h1) && h1 !== page.title) return h1;
-      if (/^[a-z0-9._\-]+$/i.test(page.title)) {
-        return page.title.replace(/[._\-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).trim() || page.title;
-      }
-      const firstLine = String(page.summary || "").replace(/[#>*`]/g, "").split(/[。.!?\n]/)[0].trim();
-      if (firstLine.length >= 6 && firstLine.length <= 60 && looksLikeProse(firstLine) && weakTitle(page.title)) return firstLine;
-      return page.title;
-    };
-
-    const renameMap = new Map(); // oldTitle -> newTitle
-    const taken = new Set([INDEX_TITLE, ...realPages.map((p) => p.title)]);
-    for (const page of realPages) {
-      const next = deriveTitle(page);
-      if (!next || next === page.title) continue;
-      let candidate = next;
-      let n = 2;
-      while ([...taken].some((t) => t !== page.title && t.toLowerCase() === candidate.toLowerCase())) candidate = `${next} ${n++}`;
-      taken.delete(page.title);
-      taken.add(candidate);
-      renameMap.set(page.title, candidate);
-    }
-    let renamed = 0;
-    for (const page of realPages) {
-      const next = renameMap.get(page.title);
-      if (!next) continue;
-      page.title = next;
-      page.slug = slugify(next);
-      page.updatedAt = now();
-      renamed += 1;
-    }
-    // 旧标题的双链改指向新标题（其余页面与索引都会受益）
-    if (renameMap.size) {
-      for (const page of realPages) {
-        let content = String(page.content || "");
-        for (const [oldTitle, newTitle] of renameMap) {
-          content = content.split(`[[${oldTitle}]]`).join(`[[${newTitle}]]`);
-          content = content.split(`[[${oldTitle}|`).join(`[[${newTitle}|`);
-        }
-        page.content = content;
-      }
-    }
-
-    const updated = [];
-    for (const page of realPages) {
-      const title = page.title;
-      const body = String(page.content || "");
-      const summary = String(page.summary || "").trim();
-      // 按 ## 分块解析我们自己维护的结构（比全文正则稳，避免反复整理时摘录被吃掉）
-      const noH1 = body.replace(/^#\s+.*$/m, "");
-      const chunks = noH1.split(/^##\s+/m);
-      const preamble = String(chunks.shift() || "").trim();
-      const blockOf = (name) => String(chunks.find((c) => c.trim().startsWith(name)) || "").replace(/^[^\n]*\n?/, "").trim();
-      const ours = new Set(["要点", "原文摘录", "相关"]);
-      const freeChunks = chunks.filter((c) => !ours.has(c.trim().split(/\s/)[0]));
-      const prevExcerpt = blockOf("原文摘录");
-      const freeText = [preamble, ...freeChunks.map((c) => c.trim())].filter(Boolean).join("\n\n").trim();
-      // 正文被我们完全结构化过时，沿用上一次的摘录，避免每轮都变
-      const excerptSource = freeText || prevExcerpt;
-      // 摘要要点：从自由正文（或上次摘录）里的列表提取，去重、跳过双链
-      const bullets = [...new Set(((freeText || prevExcerpt).match(/^\s*[-*]\s+.+$/gm) || [])
-        .map((l) => l.replace(/^\s*[-*]\s+/, "").trim())
-        .filter((l) => l && !/^\[\[[^\]]+\]\]/.test(l) && l !== "待整理"))].slice(0, 8);
-      // 原文摘录：把摘录里自带的标题降级成加粗，避免和页面结构打架
-      const excerpt = excerptSource
-        .split(/\n{2,}/)
-        .slice(0, 4)
-        .join("\n\n")
-        .slice(0, 1200)
-        .replace(/^#{1,6}\s+(.+)$/gm, "**$1**");
-      const rel = [...(related.get(page.id) || [])]
-        .map((id) => realPages.find((p) => p.id === id))
-        .filter(Boolean)
-        .slice(0, 6);
-
-      const next = [
-        `# ${title}`,
-        "",
-        summary ? `> ${summary}` : "",
-        "",
-        "## 要点",
-        "",
-        ...(bullets.length ? bullets.map((b) => `- ${b}`) : ["- 待补充"]),
-        "",
-        "## 原文摘录",
-        "",
-        excerpt || "（暂无摘录）",
-        "",
-        "## 相关",
-        "",
-        ...(rel.length ? rel.map((r) => `- [[${r.title}]]`) : [`- [[${INDEX_TITLE}]]`]),
-        "",
-      ].filter((x) => x !== undefined).join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
-
-      if (next !== body) {
-        page.content = next;
-        page.updatedAt = now();
-        updated.push(page.id);
-      }
-    }
-
-    // 2) 索引页
-    const groups = [
-      ["已审核", realPages.filter((p) => p.status === "reviewed")],
-      ["草稿", realPages.filter((p) => p.status === "draft")],
-      ["已过期", realPages.filter((p) => p.status === "stale")],
-    ];
-    const indexBody = [
-      `# ${INDEX_TITLE}`,
-      "",
-      `> 自动生成：${realPages.length} 个页面 · ${data.sources.length} 份资料。改页面内容不会被覆盖（只重写本索引）。`,
-      "",
-      ...groups.flatMap(([label, list]) => (list.length
-        ? [`## ${label}（${list.length}）`, "", ...list.map((p) => `- [[${p.title}]]${p.summary ? ` — ${p.summary}` : ""}`), ""]
-        : [])),
-      "## 资料",
-      "",
-      ...(data.sources.length ? data.sources.slice(0, 50).map((s) => `- ${s.title}${s.kind ? `（${s.kind}）` : ""}`) : ["- 还没有资料"]),
-      "",
-    ].join("\n");
-
-    let createdIndex = false;
     if (dryRun) {
-      return { dryRun: true, wouldUpdate: updated.length, renames: [...renameMap.entries()].map(([from, to]) => ({ from, to })), pages: realPages.length, sources: data.sources.length, hasIndex: Boolean(indexPage) };
+      return {
+        dryRun: true,
+        wouldUpdate: plan.stats.writable,
+        wouldSuggest: plan.stats.reviewOnly,
+        blockedByClaims: plan.stats.blockedByClaims,
+        renames: plan.renames.map(({ from, to }) => ({ from, to })),
+        skippedRenames: plan.skippedRenames.length,
+        pages: plan.stats.pages,
+        sources: plan.stats.sources,
+        hasIndex: Boolean(indexPage),
+      };
     }
-    if (!indexPage) { ensurePage({ title: INDEX_TITLE, summary: "Wiki 索引（自动维护）", content: indexBody }); createdIndex = true; }
-    else if (indexPage.content !== indexBody) { indexPage.content = indexBody; indexPage.updatedAt = now(); updateSearchEntry("page", indexPage); }
-    for (const page of realPages) updateSearchEntry("page", page);
-    addLog("wiki.curate", `updated ${updated.length} pages${createdIndex ? " + index" : ""}`);
+
+    // 1) 改名：计划里只包含 draft 页面（reviewed / stale 改名要人点头）
+    for (const r of plan.renames) {
+      const page = data.pages.find((p) => p.id === r.pageId);
+      if (!page) continue;
+      page.title = r.to;
+      page.slug = slugify(r.to);
+      page.updatedAt = now();
+    }
+
+    // 2) 直接写：只有 draft 会进这里
+    const updated = [];
+    for (const change of plan.changes) {
+      if (!change.apply) continue;
+      const page = data.pages.find((p) => p.id === change.pageId);
+      if (!page) continue;
+      page.content = change.after;
+      page.updatedAt = now();
+      // 之前这里没有任何历史：结构整理改坏了只能靠备份。现在每次整理都留一条 revision。
+      pageRevision(page, "curate:structure");
+      updateSearchEntry("page", page);
+      setClaimStatus(change.claimStatus.ok, "active");
+      updated.push(page.id);
+    }
+
+    // 3) 建议：reviewed / stale / 会动到人工结论的页面一律不落盘
+    let suggested = 0;
+    let blockedByClaims = 0;
+    for (const change of plan.changes) {
+      if (change.apply) continue;
+      const page = data.pages.find((p) => p.id === change.pageId);
+      if (!page) continue;
+      // 冲突 / 丢失的人工结论先标出来，页面上能直接看到「哪一句被动了」
+      setClaimStatus(change.claimStatus?.conflict, "conflict");
+      setClaimStatus(change.claimStatus?.orphan, "orphan");
+      if (change.blockedByClaims) blockedByClaims += 1;
+      if (upsertStructureSuggestion(page, change)) suggested += 1;
+    }
+
+    // 4) 索引页（同样受「reviewed 不静默改写」约束）
+    let createdIndex = false;
+    const idx = plan.index;
+    if (idx && idx.after !== idx.before) {
+      const existing = data.pages.find((p) => p.title === INDEX_TITLE);
+      if (!idx.exists) {
+        ensurePage({ title: INDEX_TITLE, summary: "Wiki 索引（自动维护）", content: idx.after });
+        createdIndex = true;
+      } else if (existing && idx.apply) {
+        existing.content = idx.after;
+        existing.updatedAt = now();
+        pageRevision(existing, "curate:index");
+        updateSearchEntry("page", existing);
+      } else if (existing && upsertStructureSuggestion(existing, { ...idx, pageId: existing.id, title: existing.title, status: existing.status })) {
+        suggested += 1;
+      }
+    }
+
+    addLog("wiki.curate", `updated ${updated.length} pages, suggested ${suggested}${createdIndex ? " + index" : ""}`);
     await persist();
     return {
-      updated: updated.length, renamed, renames: [...renameMap.entries()].map(([from, to]) => ({ from, to })),
-      createdIndex, pages: realPages.length, sources: data.sources.length,
+      updated: updated.length,
+      renamed: plan.renames.length,
+      renames: plan.renames.map(({ from, to }) => ({ from, to })),
+      // 这些页面名本该改但状态不允许（reviewed / stale），留给后续的「改名建议」
+      skippedRenames: plan.skippedRenames.length,
+      suggested,
+      // 这些页面的自动整理被人工结论拦下了：改成了待审建议，人看过 diff 才写
+      blockedByClaims,
+      createdIndex,
+      pages: plan.stats.pages,
+      sources: plan.stats.sources,
     };
   };
   ctx.api.handle("wiki.curate", (args) => curateWiki(args));
+  ctx.api.handle("wiki.suggestions", async ({ status = "pending", pageId = "" } = {}) => (data.suggestions || [])
+    .filter((s) => (!status || s.status === status) && (!pageId || s.targetId === pageId))
+    .map(suggestionSummary));
+  /**
+   * 维护扫描：漏引用 + 疑似重复。只产建议，不碰正文。
+   * 确定性判定（bigram 重叠 / 标题 Jaccard），同一份库扫两遍结果一致。
+   */
+  ctx.api.handle("wiki.maintain", async ({ dryRun = false } = {}) => {
+    const citationCandidates = findCitationCandidates({
+      pages: data.pages, sources: data.sources, citations: data.citations, max: 20,
+    });
+    const mergeCandidates = findMergeCandidates({ pages: data.pages, max: 10 });
+    if (dryRun) return { citations: citationCandidates.length, merges: mergeCandidates.length, added: 0 };
+    let added = 0;
+    for (const candidate of citationCandidates) {
+      const page = data.pages.find((p) => p.id === candidate.pageId);
+      const source = data.sources.find((s) => s.id === candidate.sourceId);
+      if (!page || !source) continue;
+      const queued = enqueueSuggestion({
+        kind: "citation",
+        targetId: page.id,
+        title: page.title,
+        payload: JSON.stringify({ op: "addCitation", sourceId: source.id, quote: candidate.quote.slice(0, 1000), locator: "" }),
+        baseHash: hash(String(page.content || "")),
+        evidence: [
+          { kind: "source", id: source.id, quote: String(candidate.quote).slice(0, 300) },
+          { kind: "page", id: page.id, quote: String(candidate.claim).slice(0, 300) },
+        ],
+        confidence: candidate.score >= 0.8 ? "high" : "medium",
+        sig: `citation:${page.id}:${source.id}`,
+      });
+      if (queued) added += 1;
+    }
+    for (const candidate of mergeCandidates) {
+      const a = data.pages.find((p) => p.id === candidate.aId);
+      const b = data.pages.find((p) => p.id === candidate.bId);
+      if (!a || !b) continue;
+      const queued = enqueueSuggestion({
+        kind: "merge",
+        targetId: a.id,
+        title: `${a.title} / ${b.title}`,
+        payload: JSON.stringify({
+          op: "mergeDraft",
+          title: `${a.title}（合并稿）`,
+          content: buildMergedDraft({ a, b }),
+          pages: [a.id, b.id],
+        }),
+        evidence: [
+          { kind: "page", id: a.id, quote: a.title },
+          { kind: "page", id: b.id, quote: b.title },
+          { kind: "rule", id: "merge.similarity", quote: candidate.why },
+        ],
+        confidence: candidate.score >= 0.85 ? "high" : "medium",
+        sig: `merge:${[a.id, b.id].sort().join(":")}`,
+      });
+      if (queued) added += 1;
+    }
+    addLog("wiki.maintain", `citations=${citationCandidates.length} merges=${mergeCandidates.length} added=${added}`);
+    await persist();
+    return { citations: citationCandidates.length, merges: mergeCandidates.length, added };
+  });
+  /**
+   * 模型整理（摘要 + 要点）也只产建议：payload 是模型拼好的整段正文，
+   * 人看过逐行 diff 才写。以前它直接写 draft —— 等于让模型输出成为页面字节。
+   */
+  ctx.api.handle("wiki.suggestSummary", async ({ pageId, content = "", evidence = [], confidence = "medium" } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    const payload = String(content || "");
+    if (!payload) throw new Error("content is required");
+    const sig = `summary:${page.id}:${hash(payload).slice(0, 16)}`;
+    for (const old of data.suggestions || []) {
+      if (old.kind === "summary" && old.targetId === page.id && old.status === "pending" && old.sig !== sig) old.status = "superseded";
+    }
+    const queued = enqueueSuggestion({
+      kind: "summary",
+      targetId: page.id,
+      title: page.title,
+      payload,
+      baseHash: hash(String(page.content || "")),
+      confidence,
+      evidence: evidence.length ? evidence : [{ kind: "rule", id: "curate.llm", quote: "模型重写摘要与要点（逐行 diff 核对）" }],
+      sig,
+    });
+    await persist();
+    return { queued, sig };
+  });
+  // 单条带正文：渲染进程要用它算逐行 diff（列表接口不带 payload，避免一次拉几十份正文）
+  ctx.api.handle("wiki.suggestion", async ({ id: sugId } = {}) => {
+    const sug = (data.suggestions || []).find((s) => s.id === sugId);
+    if (!sug) throw new Error("suggestion not found");
+    return { ...suggestionSummary(sug), payload: sug.payload || "", baseHash: sug.baseHash || "" };
+  });
+  // ── 人工结论（claim）───────────────────────────────────────────────
+  ctx.api.handle("wiki.claims", async ({ pageId = "", status = "" } = {}) => (data.claims || [])
+    .filter((c) => c.status !== "removed" && (!pageId || c.pageId === pageId) && (!status || c.status === status))
+    .map(claimView));
+  /** 结论待确认：整理判定它们对不上，但人还没处理（审核 tab 要能一眼看到） */
+  ctx.api.handle("wiki.claimIssues", async () => claimIssuesByPage());
+  /** 显式锁一句：人选中一段点「锁定」，后续整理必须原样保留 */
+  ctx.api.handle("wiki.claimAdd", async ({ pageId, quote = "" } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    const text = normalizeClaim(quote);
+    if (!page) throw new Error("page not found");
+    if (text.length < 4) throw new Error("要锁定的内容太短");
+    const existing = claimsOf(page.id).find((c) => normalizeClaim(c.quote) === text);
+    if (existing) return claimView(existing);
+    const claim = { id: id("claim"), pageId: page.id, quote: text.slice(0, 300), kind: "explicit", provenance: { by: "human", at: now() }, status: "active", checkedAt: null };
+    data.claims.push(claim);
+    addLog("claim.add", `${page.title}：${claim.quote.slice(0, 60)}`);
+    await persist();
+    return claimView(claim);
+  });
+  ctx.api.handle("wiki.claimRemove", async ({ id: claimId } = {}) => {
+    const claim = (data.claims || []).find((c) => c.id === claimId);
+    if (!claim) throw new Error("claim not found");
+    claim.status = "removed";
+    claim.checkedAt = now();
+    await persist();
+    return true;
+  });
+  /**
+   * 拿一段「拟写入的正文」校验人工结论还在不在。
+   * 模型整理（wikiCurateLLM）在落盘前必须过这一关：会覆盖人写结论的页面直接跳过。
+   */
+  ctx.api.handle("wiki.claimCheck", async ({ pageId, content } = {}) => {
+    const page = data.pages.find((p) => p.id === pageId || p.slug === pageId);
+    if (!page) throw new Error("page not found");
+    const res = evaluateClaims(claimsOf(page.id), typeof content === "string" ? content : page.content);
+    return {
+      total: res.ok.length + res.conflict.length + res.orphan.length,
+      ok: res.ok.length,
+      conflict: res.conflict.map((c) => ({ id: c.id, quote: c.quote })),
+      orphan: res.orphan.map((c) => ({ id: c.id, quote: c.quote })),
+    };
+  });
+  /**
+   * 对待审建议做决定。
+   * - 接受 = 把建议里那串字节原样写入（不重新调模型、不重新生成）；
+   * - 页面在这一版建议之后被改过 → 标 needs_rebase，不自动合并；
+   * - 拒绝也留痕（feedback），后续同类建议可以据此节流。
+   */
+  ctx.api.handle("wiki.suggestionResolve", async ({ id: sugId, decision = "accept", feedback = "" } = {}) => {
+    const sug = (data.suggestions || []).find((s) => s.id === sugId);
+    if (!sug) throw new Error("suggestion not found");
+    if (sug.status !== "pending") return suggestionSummary(sug);
+    const page = data.pages.find((p) => p.id === sug.targetId);
+    if (!page) {
+      sug.status = "expired";
+      sug.decidedAt = now();
+      await persist();
+      return suggestionSummary(sug);
+    }
+    if (decision !== "accept") {
+      sug.status = "rejected";
+      sug.feedback = String(feedback).slice(0, 2000);
+      sug.decidedAt = now();
+      addLog("suggestion.reject", `${page.title}${sug.feedback ? `：${sug.feedback.slice(0, 80)}` : ""}`);
+      await persist();
+      return suggestionSummary(sug);
+    }
+    let createdPageId = "";
+    if (sug.kind === "citation") {
+      // 加引用不改正文：只补 metadata，仍然留 revision
+      let spec = {};
+      try { spec = JSON.parse(sug.payload || "{}"); } catch { spec = {}; }
+      const source = data.sources.find((s) => s.id === spec.sourceId);
+      if (!source) {
+        sug.status = "expired";
+        sug.decidedAt = now();
+        await persist();
+        return suggestionSummary(sug);
+      }
+      if (!data.citations.some((c) => c.pageId === page.id && c.sourceId === source.id)) {
+        data.citations.push({ id: id("cite"), pageId: page.id, sourceId: source.id, quote: String(spec.quote || "").slice(0, 1000), locator: String(spec.locator || "").slice(0, 200), createdAt: now() });
+      }
+      page.updatedAt = now();
+      pageRevision(page, `suggest:${sug.id}`);
+      updateSearchEntry("page", page);
+    } else if (sug.kind === "merge") {
+      // 合并只生成草稿：原页面一个字都不动，删不删由人决定
+      let spec = {};
+      try { spec = JSON.parse(sug.payload || "{}"); } catch { spec = {}; }
+      const title = String(spec.title || "").trim().slice(0, 180);
+      const content = String(spec.content || "");
+      if (!title || !content) {
+        sug.status = "rejected";
+        sug.feedback = "合并建议内容不完整";
+        sug.decidedAt = now();
+        await persist();
+        return suggestionSummary(sug);
+      }
+      const existing = data.pages.find((p) => p.title === title);
+      if (!existing) {
+        const created = ensurePage({ title, summary: `合并自「${sug.title}」`, content });
+        createdPageId = created.id;
+        // 合并稿接手两边的人工结论 —— 否则人删掉原页面后，那些「人改过的句子」就没人守了
+        const pair = Array.isArray(spec.pages) && spec.pages.length ? spec.pages.map(String) : [page.id];
+        const carried = carryClaimsTo(created.id, pair, content);
+        if (carried) addLog("claim.carry", `${title}：${carried} 条`);
+      }
+    } else {
+      if (hash(String(page.content || "")) !== sug.baseHash) {
+        sug.status = "needs_rebase";
+        sug.decidedAt = now();
+        addLog("suggestion.rebase", `${page.title}（建议已过期，需重新整理）`);
+        await persist();
+        return suggestionSummary(sug);
+      }
+      page.content = String(sug.payload || "");
+      page.updatedAt = now();
+      pageRevision(page, `suggest:${sug.id}`);
+      updateSearchEntry("page", page);
+    }
+    sug.status = "accepted";
+    sug.decidedAt = now();
+    addLog("suggestion.accept", `${sug.kind} ${page.title}${createdPageId ? " → 生成合并草稿" : ""}`);
+    await persist();
+    return { ...suggestionSummary(sug), createdPageId };
+  });
 
   ctx.api.handle("wiki.memory", async ({ maxChars = 12000 } = {}) => memoryMarkdown(Number(maxChars) || 12000));
-  ctx.api.handle("wiki.dream", async () => {
-    // Deterministic first pass: surface maintenance work without mutating reviewed pages.
-    const issues = [];
-    for (const page of data.pages) {
-      if (!citationsOf(page.id).length) issues.push({ kind: "missing-citation", pageId: page.id, title: page.title });
-      if (page.status === "draft" && page.updatedAt < now() - 7 * 24 * 3600 * 1000) issues.push({ kind: "stale-draft", pageId: page.id, title: page.title });
+  // @deprecated 记忆维护统一走 electron/memory 的 Dream（记忆页）。这里仅为兼容旧调用保留。
+  ctx.api.handle("wiki.dream", async ({ dryRun = true } = {}) => {
+    // @deprecated 只是 wiki.maintain 的兼容壳：不再单独维护第二套检查，
+    // 默认 dry-run（只报数，不写队列）；要真的入队请调 wiki.maintain。
+    const citations = findCitationCandidates({ pages: data.pages, sources: data.sources, citations: data.citations, max: 20 });
+    const merges = findMergeCandidates({ pages: data.pages, max: 10 });
+    const issues = [
+      ...citations.map((c) => ({ kind: "missing-citation", pageId: c.pageId, title: c.pageTitle, sourceId: c.sourceId })),
+      ...merges.map((m) => ({ kind: "duplicate-page", pageId: m.aId, title: m.aTitle, other: m.bTitle })),
+    ];
+    if (!dryRun) {
+      for (const c of citations) {
+        const page = data.pages.find((p) => p.id === c.pageId);
+        const source = data.sources.find((x) => x.id === c.sourceId);
+        if (!page || !source) continue;
+        enqueueSuggestion({
+          kind: "citation",
+          targetId: page.id,
+          title: page.title,
+          payload: JSON.stringify({ op: "addCitation", sourceId: source.id, quote: c.quote.slice(0, 1000), locator: "" }),
+          baseHash: hash(String(page.content || "")),
+          evidence: [
+            { kind: "source", id: source.id, quote: String(c.quote).slice(0, 300) },
+            { kind: "page", id: page.id, quote: String(c.claim).slice(0, 300) },
+          ],
+          confidence: c.score >= 0.8 ? "high" : "medium",
+          sig: `citation:${page.id}:${source.id}`,
+        });
+      }
+      await persist();
     }
-    const seen = new Map();
-    for (const page of data.pages) {
-      const key = page.title.toLowerCase();
-      if (seen.has(key)) issues.push({ kind: "duplicate-title", pageId: page.id, title: page.title });
-      else seen.set(key, page.id);
-    }
-    return { issues, memory: memoryMarkdown() };
+    return { issues, dryRun: Boolean(dryRun), memory: memoryMarkdown() };
   });
   /**
    * 生成 Wiki 草稿骨架：每份还没有页面的 source 生成一个 draft，并建立 citation。

@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import Heading from "@tiptap/extension-heading";
 import { TableKit } from "@tiptap/extension-table";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -9,6 +10,23 @@ import { gfm } from "turndown-plugin-gfm";
 import { renderMarkdown } from "../markdown";
 
 export type MarkdownEditorHandle = { save: () => Promise<void>; focus: () => void };
+
+/**
+ * 保留 renderMarkdown 生成的 `id`：目录跳转靠它定位。
+ * TipTap 默认的 heading 不带 id 属性，ProseMirror 会把 HTML 里的 id 丢掉。
+ */
+const HeadingWithId = Heading.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      id: {
+        default: null,
+        parseHTML: (el) => el.getAttribute("id"),
+        renderHTML: (attrs) => (attrs.id ? { id: attrs.id } : {}),
+      },
+    };
+  },
+});
 
 /** ProseMirror 的表格（colgroup / 单元格里套 <p>）没法直接走 gfm 规则，这里手工转 pipe 表 */
 function tableToMarkdown(node: HTMLElement) {
@@ -75,7 +93,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, {
 
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
+      StarterKit.configure({ heading: false }),
+      HeadingWithId.configure({ levels: [1, 2, 3, 4] }),
       Link.configure({ openOnClick: false, autolink: true, linkOnPaste: true }),
       TableKit.configure({ table: { resizable: false } }),
       Placeholder.configure({ placeholder }),
