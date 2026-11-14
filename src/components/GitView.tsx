@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { State } from "../types";
+import { STATUS_LABEL, statusTone } from "../ui";
 import { GitWiki } from "./GitWiki";
 import { EmptyState } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
 import { RowMenu } from "./RowMenu";
 
-type Act = (type: string, payload?: unknown) => Promise<any>;
 type Commit = { hash: string; subject: string; author: string; when: string };
-
-const STATUS_LABEL: Record<string, string> = { M: "改", A: "增", D: "删", R: "移", C: "复", U: "冲", "?": "新" };
 
 /**
  * Source Control（分支 / 暂存 / Diff / 提交）
@@ -182,7 +180,7 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
 
   const FileRow = ({ file }: { file: GitFile }) => {
     const code = file.untracked ? "?" : file.staged ? file.index : file.worktree || file.index;
-    const tone = code === "D" ? "red" : code === "?" || code === "A" ? "green" : code === "U" ? "amber" : "brand";
+    const tone = statusTone(code);
     return (
       <div className={`git-file ${selected === file.path ? "on" : ""}`} onClick={() => setSelected(file.path)}>
         <span className={`git-badge ${tone}`}>{STATUS_LABEL[code] || code || "·"}</span>

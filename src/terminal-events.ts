@@ -3,7 +3,7 @@
  *  - App 收到事件后确保终端面板展开；
  *  - TerminalPanel 挂载时/收到事件时消费队列，避免面板收起时事件丢失。
  */
-export type FilePreviewRequest = { rel: string; name?: string; root?: string };
+type FilePreviewRequest = { rel: string; name?: string; root?: string };
 
 let pendingFile: FilePreviewRequest | null = null;
 let pendingCwd: string | null = null;
@@ -25,7 +25,7 @@ export function takeTerminalRequests(): { file: FilePreviewRequest | null; cwd: 
   return result;
 }
 
-export type TerminalAdoptRequest = { terminalId: string; cwd: string; title?: string; taskId?: string; branch?: string | null };
+type TerminalAdoptRequest = { terminalId: string; cwd: string; title?: string; taskId?: string; branch?: string | null };
 let pendingAdopt: TerminalAdoptRequest | null = null;
 
 /** Chat → 终端：把已经创建好的 pty 接管为终端标签。 */

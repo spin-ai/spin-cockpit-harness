@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Delegation, ElementContext, Message, MissionPlanRecord, State, Thread, Todo } from "../types";
-import { RUN_STATUS, STATUS, activeRun, agentOf, duration, lastRun, missingKeyInfo, timeAgo } from "../ui";
+import { RUN_STATUS, STATUS, agentOf, duration, lastRun, missingKeyInfo, timeAgo } from "../ui";
 import { ChevronRightIcon, CopyCheckIcon, CopyIcon, PanelCollapseIcon, PencilIcon, RefreshIcon, SendIcon, SparkleIcon } from "./Icons";
 import { requestTerminalAdopt } from "../terminal-events";
 
@@ -680,7 +680,6 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                 plan={latestPlan}
                 delegations={delegations}
                 state={state}
-                now={now}
                 act={act}
                 onOpenThread={onOpenThread}
               />
@@ -1005,13 +1004,12 @@ function missionPillClass(value?: string | null) {
   return "running";
 }
 
-function MissionOverview({ mission, plan, delegations, state, now, act, onOpenThread }: {
+function MissionOverview({ mission, plan, delegations, state, act, onOpenThread }: {
   mission: Todo; plan: MissionPlanRecord | null;
-  delegations: Delegation[]; state: State; now: number;
+  delegations: Delegation[]; state: State;
   act: Act; onOpenThread?: (id: string) => void;
 }) {
   const draft = plan && plan.status === "draft" ? plan : null;
-  const open = delegations.filter((d) => ["proposed", "queued", "running", "waiting_input", "rework"].includes(d.status));
   const done = delegations.filter((d) => ["completed", "accepted"].includes(d.status));
   return (
     <section className={`mission-panel mission-${mission.missionState || "planning"}`} aria-label="Mission">
@@ -1679,6 +1677,3 @@ function roleLabel(role: string, agentName?: string) {
   return role;
 }
 
-function basename(p: string) {
-  return p.split("/").filter(Boolean).slice(-1)[0] || p || "—";
-}

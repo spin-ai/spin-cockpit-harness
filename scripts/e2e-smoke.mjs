@@ -13,22 +13,9 @@
  * - COCKPIT_USER_DATA 指向临时目录，避免动到正在使用的 harness.db
  * - 「问清楚」会真的失败一次 run（本机 dsh 无 API key 也算预期结果），用于验证统计采集
  */
+import { attach } from "./e2e/harness.mjs";
 const port = Number(process.argv[2] || 9223);
-const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-const page = list.find((t) => t.type === "page");
-if (!page) { console.error(`没有找到调试页面：http://127.0.0.1:${port}/json/list`); process.exit(2); }
-
-const ws = new WebSocket(page.webSocketDebuggerUrl);
-let seq = 0; const pending = new Map();
-ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } };
-await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
-const send = (method, params = {}) => new Promise((res) => { const id = ++seq; pending.set(id, res); ws.send(JSON.stringify({ id, method, params })); });
-const evaluate = async (expression) => {
-  const r = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
-  if (r.result?.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description || "eval error");
-  return r.result?.result?.value;
-};
-const run = (code) => evaluate(`(async()=>{ ${code} })()`);
+const { evaluate, run } = await attach(port);
 const results = [];
 const check = (name, ok, detail = "") => { results.push(ok); console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? " · " + detail : ""}`); };
 

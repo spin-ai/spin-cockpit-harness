@@ -1,5 +1,5 @@
 // 预览页元素拾取（CDP）。只允许对 webview guest 操作，绝不允许挂到主窗口。
-// 设计：docs/ARCH-ui-context.md
+// 设计：docs/arch/ARCH-ui-context.md
 import fs from "node:fs";
 import path from "node:path";
 import { app, webContents } from "electron";

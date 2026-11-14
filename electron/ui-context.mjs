@@ -1,5 +1,5 @@
 // UI 元素 → Agent 上下文。纯函数，便于单独测试。
-// 设计：docs/ARCH-ui-context.md
+// 设计：docs/arch/ARCH-ui-context.md
 import path from "node:path";
 
 const attr = (value, max = 300) => String(value ?? "").replace(/"/g, "&quot;").slice(0, max);

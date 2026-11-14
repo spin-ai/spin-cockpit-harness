@@ -14,7 +14,7 @@ const SECTIONS: { id: Section; label: string; desc: string }[] = [
   { id: "preview", label: "预览与元素", desc: "前端预览地址、元素拾取截图和注入 Chat 的上下文详细度。" },
   { id: "im", label: "即时通信", desc: "在手机上继续处理：IM 消息进入同一套会话，结果与审批回到 IM。" },
   { id: "plugins", label: "插件", desc: "安装、启用和管理本地插件；插件代码是受信代码，启用前请确认来源。" },
-  { id: "data", label: "数据", desc: "本地数据库位置、备份导出和清理。" },
+  { id: "data", label: "数据", desc: "本地数据库位置、备份导出、出网边界与清理。" },
   { id: "shortcuts", label: "快捷键", desc: "当前版本可用的键盘操作。" },
   { id: "about", label: "关于", desc: "版本、运行环境与本地数据。" },
 ];
@@ -22,20 +22,22 @@ const SECTIONS: { id: Section; label: string; desc: string }[] = [
 /** 与 electron/db.mjs DEFAULT_SETTINGS 对齐：用于「恢复默认」判定与恢复 */
 const DEFAULTS: Partial<Record<keyof SettingsModel, unknown>> = {
   defaultView: "workspace", defaultAgentId: null, enterToSend: true, confirmStop: false,
-  theme: "system", chatFontSize: 13,
+  theme: "system", uiScale: 0, chatFontSize: 13,
   maxConcurrentRuns: 0, approvalPolicy: "ask", dshBinary: "", dshHome: "", model: "", effort: "",
   superAgentEnabled: true, maxSupervisorRuns: 1, maxMissionChildren: 4, missionBudgetMinutes: 30,
   shellPath: "", terminalFontSize: 12, terminalScrollback: 5000, autoDetectDevServerUrl: true,
   previewHomeUrl: "http://localhost:5173/", elementScreenshots: true, contextDetail: "standard", worktreeMode: "auto",
+  knowledgeCloudIndex: false,
   dshEnv: "",
   imEnabled: false, imTelegramToken: "", imTelegramAllow: "", imWebhookUrl: "", imWebhookToken: "", imInboundPort: 0, imAllowIds: "",
+  personaDatasetDir: "",
 };
 
 /** 恢复本页默认 */
 const SECTION_KEYS: Partial<Record<Section, (keyof SettingsModel)[]>> = {
   general: ["defaultView", "defaultAgentId", "enterToSend", "confirmStop"],
-  appearance: ["theme", "chatFontSize"],
-  execution: ["maxConcurrentRuns", "approvalPolicy", "dshBinary", "dshHome", "dshEnv", "model", "effort",
+  appearance: ["theme", "uiScale", "chatFontSize"],
+  execution: ["maxConcurrentRuns", "approvalPolicy", "dshBinary", "dshHome", "dshEnv", "model", "effort", "personaDatasetDir",
     "superAgentEnabled", "maxSupervisorRuns", "maxMissionChildren", "missionBudgetMinutes", "worktreeMode"],
   terminal: ["shellPath", "terminalFontSize", "terminalScrollback", "autoDetectDevServerUrl"],
   preview: ["previewHomeUrl", "elementScreenshots", "contextDetail"],
@@ -50,6 +52,7 @@ const SEARCH_INDEX: { section: Section; title: string; hint?: string; k?: string
   { section: "general", title: "停止前确认", k: "confirmStop", hint: "停止运行前弹确认" },
   { section: "general", title: "重置面板尺寸", hint: "TODO / Chat / Terminal / 文件列宽" },
   { section: "appearance", title: "主题", k: "theme", hint: THEMES.map((t) => t.label).join(" / ") },
+  { section: "appearance", title: "界面缩放", k: "uiScale", hint: "自动跟随屏幕分辨率；也可固定 80–150%" },
   { section: "appearance", title: "Chat 字号", k: "chatFontSize", hint: "11–16px" },
   { section: "execution", title: "全局并发上限", k: "maxConcurrentRuns", hint: "同时运行的 run 数量，0 = 不限" },
   { section: "execution", title: "审批策略", k: "approvalPolicy", hint: "ACP 权限请求：询问 / 自动批准 / 自动拒绝" },
@@ -71,6 +74,7 @@ const SEARCH_INDEX: { section: Section; title: string; hint?: string; k?: string
   { section: "terminal", title: "识别 dev server 地址", k: "autoDetectDevServerUrl", hint: "终端输出里的 localhost 地址" },
   { section: "preview", title: "默认地址", k: "previewHomeUrl", hint: "预览标签默认打开的 URL" },
   { section: "preview", title: "保存截图", k: "elementScreenshots", hint: "拾取元素时截图" },
+  { section: "data", title: "云端向量索引", k: "knowledgeCloudIndex", hint: "开启后资料正文分块会发往 Ark embedding" },
   { section: "preview", title: "上下文详细度", k: "contextDetail", hint: "注入 Chat 的 UI 上下文详略" },
   { section: "plugins", title: "已安装插件", hint: "Notes / 本地插件" },
   { section: "plugins", title: "安装插件包", hint: ".cockpit-plugin / 包含 plugin.json 的目录" },
@@ -89,7 +93,6 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
   const [section, setSection] = useState<Section>("general");
   const [query, setQuery] = useState("");
   const [savedAt, setSavedAt] = useState<number | null>(null);
-  const [flashKey, setFlashKey] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const settings = state.settings;
@@ -106,7 +109,6 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
     const def = DEFAULTS[k];
     if (def === undefined) return;
     void set({ [k]: def } as Partial<SettingsModel>);
-    setFlashKey(String(k));
   };
 
   const hits = useMemo(() => {
@@ -301,6 +303,20 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
               </div>
             </Card>
             <Card title="字号">
+              <Row
+                k="uiScale"
+                title="界面缩放"
+                hint={`自动按屏幕分辨率取值（当前生效 ${settings.uiScaleResolved || 100}%）；⌘+ / ⌘- 手动步进，⌘0 回到自动`}
+              >
+                <select
+                  className="settings-control"
+                  value={Number(settings.uiScale) > 0 ? String(settings.uiScale) : "0"}
+                  onChange={(e) => void set({ uiScale: Number(e.target.value) })}
+                >
+                  <option value="0">自动（跟随屏幕）</option>
+                  {[80, 90, 100, 110, 120, 130, 150].map((v) => <option key={v} value={v}>{v}%</option>)}
+                </select>
+              </Row>
               <Row k="chatFontSize" title="Chat 字号" hint="消息正文和输入框；11–16px">
                 <NumberSetting value={settings.chatFontSize} min={11} max={16} onCommit={(v) => void set({ chatFontSize: v })} />
               </Row>
@@ -370,6 +386,23 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
               </Row>
             </Card>
 
+            <Card title="人物建模">
+              <Row k="personaDatasetDir" title="人物语料目录" hint="datasets/wechat 的位置；装好的 App 读不到仓库时指定一次即可。">
+                <TextSetting value={settings.personaDatasetDir || ""} placeholder="粘贴 datasets/wechat 的绝对路径" onCommit={(v) => void set({ personaDatasetDir: v })} />
+              </Row>
+              <Row title="复制到应用目录" hint="把仓库里的 datasets/wechat 复制进应用数据目录（约 250MB），之后无需再指定路径。">
+                <button
+                  className="btn tiny-btn"
+                  onClick={async () => {
+                    try {
+                      const res = await act("personaDatasetCopy");
+                      notify(`已复制 ${res?.chats || 0} 个会话到应用目录`);
+                      set({ personaDatasetDir: res?.dir || "" });
+                    } catch (err) { notify(String((err as Error)?.message || err)); }
+                  }}
+                >复制数据</button>
+              </Row>
+            </Card>
             <Card title="模型密钥 / 环境变量">
               <Row
                 k="dshEnv"
@@ -529,7 +562,7 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
             </Card>
             <Card title="规则">
               <div className="settings-note">
-                陌生会话一律忽略并留日志；审批卡一次只问一个问题，回复数字即选择；敏感的人像事实默认不推 IM。
+                陌生会话一律忽略并留日志；审批卡一次只问一个问题，回复数字即选择；敏感的人物事实默认不推 IM。
                 移动端不保存凭据，token 只存在本机设置里。
               </div>
             </Card>
@@ -550,6 +583,25 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
               <Row title="导出备份">
                 <button className="btn tiny-btn" onClick={async () => { const p = await act("exportData"); if (p) notify(`已导出：${p}`); }}>导出 .db</button>
               </Row>
+            </Card>
+            <Card title="出网边界">
+              <Row
+                k="knowledgeCloudIndex"
+                title="云端向量索引（Ark embedding）"
+                hint="关闭：资料只做本地关键词索引，正文一个字节不出网。开启：导入与检索会把正文分块 / 查询串发到火山方舟。需要先在本页上方的「模型密钥 / 环境变量」里配置 ARK_API_KEY。"
+              >
+                <Toggle
+                  value={Boolean(settings.knowledgeCloudIndex)}
+                  onChange={(v) => {
+                    if (v && !window.confirm("开启后，资料正文分块与检索查询串会发送到火山方舟 embedding 接口。确认开启？")) return;
+                    void set({ knowledgeCloudIndex: v });
+                  }}
+                />
+              </Row>
+              <div className="settings-note">
+                其余出网路径都是显式动作：Agent 运行时发模型请求、云端解析引擎（MinerU / PaddleOCR，需自己填 key）、IM 网关（需开启并填 token）。
+                本应用不上报任何遥测，也没有自动更新检查。
+              </div>
             </Card>
             <Card title="清理">
               <Row title="重置设置">
@@ -642,7 +694,7 @@ const SHORTCUTS = [
   { keys: "⌘ ⇧ 1…9", label: "切换到第 N 个标签" },
   { keys: "⌘ ⇧ [ / ]", label: "上一个 / 下一个标签" },
   { keys: "⌘ F", label: "终端查找" },
-  { keys: "⌘ + / - / 0", label: "终端字号" },
+  { keys: "⌘ + / - / 0", label: "界面缩放（终端聚焦时调终端字号）" },
   { keys: "⇧ ⌘ K", label: "清屏" },
   { keys: "⌘ C / ⌘ V", label: "复制 / 粘贴" },
   { keys: "右键 / 双击标签", label: "菜单 / 重命名" },

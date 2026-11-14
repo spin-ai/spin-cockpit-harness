@@ -1,9 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import type { State } from "../types";
 
 export type Command = { id: string; label: string; hint?: string; group?: string; run: () => void };
 
-export function CommandPalette({ open, state, onClose, commands }: { open: boolean; state: State; onClose: () => void; commands: Command[] }) {
+export function CommandPalette({ open, onClose, commands }: { open: boolean; onClose: () => void; commands: Command[] }) {
   const [q, setQ] = useState("");
   const [idx, setIdx] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);

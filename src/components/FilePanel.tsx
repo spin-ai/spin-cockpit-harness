@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Agent, Message, Run, State, Thread, Todo } from "../types";
 import { agentOf, timeAgo } from "../ui";
 import {
-  BotIcon, ChevronDownIcon, ChevronRightIcon, CollapseIcon, CopyIcon, EyeIcon, EyeOffIcon,
+  BotIcon, ChevronDownIcon, ChevronRightIcon, CollapseIcon, EyeIcon, EyeOffIcon,
   FileIcon, FilePlusIcon, FilesIcon, GitIcon, FolderIcon,
-  FolderOpenIcon, FolderPlusIcon, HistoryIcon, InfoIcon, PanelCollapseIcon, RefreshIcon, RevealIcon,
+  FolderOpenIcon, FolderPlusIcon, HistoryIcon, InfoIcon, PanelCollapseIcon, RefreshIcon,
   SearchIcon, UserIcon, WrenchIcon, XIcon,
 } from "./Icons";
 import { FileVisual } from "./FileVisual";
@@ -191,7 +191,6 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
   }, [tab, creating, renaming, menu]);
 
   const parentOf = (rel: string) => (rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "");
-  const joinPath = (dir: string, name: string) => [dir, name].filter(Boolean).join("/");
   const absOf = (rel: string) => `${base.replace(/[\\/]+$/, "")}/${rel || ""}`.replace(/\/+/g, "/");
   const errText = (e: unknown) => String((e as Error)?.message || e);
 

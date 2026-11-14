@@ -116,6 +116,22 @@ export async function connect(port) {
   return { socket, send, evaluate, close: () => socket.close() };
 }
 
+/**
+ * 连一个「已经带调试端口跑着」的实例（老脚本习惯用 argv 传端口）。
+ * 返回 send / evaluate / ev / run 四种形态，省得每个脚本再手抄一遍 CDP 客户端。
+ */
+export async function attach(port) {
+  const cdp = await connect(port);
+  return {
+    socket: cdp.socket,
+    close: cdp.close,
+    send: cdp.send,
+    evaluate: cdp.evaluate,
+    ev: (expr) => cdp.evaluate(`(async()=>{ ${expr} })()`),
+    run: (expr) => cdp.evaluate(`(async()=>{ ${expr} })()`),
+  };
+}
+
 const HELPERS = `
 window.__e2e = {
   wait: (ms) => new Promise((r) => setTimeout(r, ms)),

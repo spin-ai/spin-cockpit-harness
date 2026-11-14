@@ -8,6 +8,7 @@
  *     ./node_modules/electron/dist/Electron.app/Contents/MacOS/Electron . --remote-debugging-port=9223
  */
 import fs from "node:fs";
+import { attach } from "./e2e/harness.mjs";
 
 const PROJ = "/tmp/tiptap-proj";
 fs.rmSync(PROJ, { recursive: true, force: true });
@@ -15,18 +16,7 @@ fs.mkdirSync(PROJ, { recursive: true });
 fs.writeFileSync(`${PROJ}/doc.md`, "# 富文本测试\n\n第一段原文。\n\n## 小节\n\n- 列表 A\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n");
 fs.writeFileSync(`${PROJ}/empty.md`, "");
 
-const list = await (await fetch("http://127.0.0.1:9223/json/list")).json();
-const page = list.find((t) => t.type === "page");
-const ws = new WebSocket(page.webSocketDebuggerUrl);
-let seq = 0; const pending = new Map();
-ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } };
-await new Promise((r) => (ws.onopen = r));
-const send = (method, params = {}) => new Promise((res) => { const id = ++seq; pending.set(id, res); ws.send(JSON.stringify({ id, method, params })); });
-const ev = async (expr) => {
-  const r = await send("Runtime.evaluate", { expression: `(async()=>{ ${expr} })()`, awaitPromise: true, returnByValue: true });
-  if (r.result?.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description);
-  return r.result?.result?.value;
-};
+const { send, ev } = await attach(9223);
 let fails = 0;
 const check = (n, ok, d = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"} ${n}${d ? " · " + d : ""}`); };
 const type = async (text) => { for (const ch of text) { await send("Input.dispatchKeyEvent", { type: "char", text: ch, unmodifiedText: ch }); await new Promise((r) => setTimeout(r, 50)); } };

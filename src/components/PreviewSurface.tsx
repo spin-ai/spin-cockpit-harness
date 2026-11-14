@@ -2,9 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ElementContext } from "../types";
 import { ChevronRightIcon, CopyIcon, DevtoolsIcon, ExternalIcon, ListIcon, RefreshIcon, RevealIcon, SearchIcon, XIcon } from "./Icons";
 import { FileVisual, extOf } from "./FileVisual";
-import { renderMarkdown, slugifyHeading } from "../markdown";
+import { slugifyHeading } from "../markdown";
 import { MarkdownEditor, type MarkdownEditorHandle } from "./MarkdownEditor";
-import { requestFilePreview } from "../terminal-events";
 import { lazy, Suspense } from "react";
 import type { VisualEditorApi } from "./HtmlVisualEditor";
 
@@ -23,19 +22,6 @@ function normalizeUrl(raw: string) {
   const value = String(raw || "").trim();
   if (!value) return "";
   return /^[a-z]+:\/\//i.test(value) ? value : `http://${value}`;
-}
-
-/** 把 Markdown 里的相对链接解析成相对项目根的路径（支持 ../） */
-function resolveRel(baseRel: string, href: string) {
-  const baseDir = baseRel.includes("/") ? baseRel.slice(0, baseRel.lastIndexOf("/")) : "";
-  const parts = (href.startsWith("/") ? href.slice(1) : `${baseDir}/${href}`).split("/");
-  const out: string[] = [];
-  for (const part of parts) {
-    if (!part || part === ".") continue;
-    if (part === "..") out.pop();
-    else out.push(part);
-  }
-  return out.join("/");
 }
 
 /**
@@ -102,7 +88,6 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   const [richDirty, setRichDirty] = useState(false);
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const [liveMd, setLiveMd] = useState<string | null>(null);
-  const mdRef = useRef<HTMLDivElement | null>(null);
   const editable = isFile && (isHtml || isMarkdown);
   const dirty = editable && data?.text != null && draft !== data.text;
 
@@ -111,11 +96,6 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   const useWebview = Boolean(src) && (!isFile || isHtml || isImage);
   // HTML 文件即使源码模式也保留 webview，切回来不重新加载
   const showWebview = useWebview && (!isFile || !isHtml || fileMode === "render");
-
-  const mdHtml = useMemo(() => {
-    if (!isMarkdown || fileMode !== "render" || data?.text == null) return "";
-    return renderMarkdown(data.text);
-  }, [isMarkdown, fileMode, data?.text]);
 
   // 同一标签换成另一个文件时回到「渲染」视图
   useEffect(() => {
@@ -350,29 +330,6 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
 
   const canPick = Boolean(src) && (!isFile || (isHtml && fileMode === "render"));
 
-  const onRenderedClick = (e: React.MouseEvent) => {
-    const a = (e.target as HTMLElement).closest("a");
-    if (!a) return;
-    const href = a.getAttribute("href") || "";
-    if (!href) return;
-    if (href.startsWith("#")) {
-      e.preventDefault();
-      const id = decodeURIComponent(href.slice(1));
-      const container = e.currentTarget as HTMLElement;
-      const target = Array.from(container.querySelectorAll<HTMLElement>("[id]")).find((el) => el.id === id);
-      target?.scrollIntoView({ block: "start", behavior: "smooth" });
-      return;
-    }
-    e.preventDefault();
-    if (/^(https?:|mailto:)/i.test(href)) { void window.harness.openExternal(href); return; }
-    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//")) return;
-    // Markdown 里的相对文档链接：在同一个 root 下打开为新的预览标签
-    const raw = href.split("#")[0].split("?")[0];
-    if (!raw || raw.endsWith("/")) return;
-    const target = resolveRel(file?.rel || "", raw);
-    if (target) requestFilePreview({ rel: target, name: target.split("/").pop(), root: file?.root || root });
-  };
-
   /** 可视化编辑（GrapesJS）：保存时把编辑器产出的完整 HTML 写回磁盘 */
   const saveVisual = async () => {
     if (!file) return;
@@ -478,10 +435,7 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   const jumpToHeading = (id: string) => {
     if (fileMode !== "render") setFileMode("render");
     window.setTimeout(() => {
-      const el = bodyRef.current?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}"]`);
-      el?.scrollIntoView({ block: "start", behavior: "smooth" });
-      el?.classList.add("md-flash");
-      window.setTimeout(() => el?.classList.remove("md-flash"), 1200);
+      bodyRef.current?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" });
     }, 60);
   };
 

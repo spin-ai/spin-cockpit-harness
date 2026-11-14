@@ -10,6 +10,7 @@
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import { attach } from "./e2e/harness.mjs";
 
 const port = Number(process.argv[2] || 9223);
 const REPO = "/tmp/git-fixture";
@@ -31,27 +32,7 @@ fs.writeFileSync(`${REPO}/a.txt`, "line1\nline2 changed\nline3\n");
 fs.writeFileSync(`${REPO}/new.txt`, "new file\n");
 fs.writeFileSync(`${REPO}/b.txt`, "old\nstaged line\n");
 sh("add", "b.txt");
-/** 建立/重连 CDP（vite 首次优化依赖会强制 reload，旧 session 会卡住） */
-async function connect() {
-  const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-  const target = targets.find((t) => t.type === "page");
-  if (!target) throw new Error("no page target");
-  const socket = new WebSocket(target.webSocketDebuggerUrl);
-  let seq = 0; const pending = new Map();
-  socket.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } };
-  await new Promise((res, rej) => { socket.onopen = res; socket.onerror = rej; });
-  const send = (method, params = {}) => new Promise((res, rej) => {
-    const id = ++seq;
-    pending.set(id, (msg) => (msg.error ? rej(new Error(msg.error.message)) : res(msg)));
-    socket.send(JSON.stringify({ id, method, params }));
-  });
-  const evaluate = async (e) => {
-    const r = await send("Runtime.evaluate", { expression: e, awaitPromise: true, returnByValue: true });
-    if (r.result?.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description);
-    return r.result?.result?.value;
-  };
-  return { socket, evaluate };
-}
+const connect = () => attach(port);
 
 const HELPERS = `window.__t={wait:(ms)=>new Promise(r=>setTimeout(r,ms)),click(el){el.dispatchEvent(new MouseEvent("click",{bubbles:true}))},
  setValue(el,v){const p=el instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(p,"value").set.call(el,v);el.dispatchEvent(new Event("input",{bubbles:true}))},
@@ -90,7 +71,7 @@ let r = await run(`
   if (!rail) return { error: "no git rail" };
   __t.click(rail);
   const page = await __t.until(() => document.querySelector(".git-page"));
-  const head = await __t.until(() => document.querySelector(".git-page .page-head .muted"));
+  const head = await __t.until(() => document.querySelector(".git-page .page-header-sub"));
   return { page: !!page, head: head?.textContent, files: [...document.querySelectorAll(".git-file .mono")].map((e) => e.textContent.trim()) };`);
 check("Git 视图：分支 + 变更文件列表", r.page === true && (r.head || "").includes("main") && r.files.includes("a.txt") && r.files.includes("new.txt"), JSON.stringify(r));
 

@@ -9,6 +9,7 @@
  * 用法：node scripts/e2e-notes.mjs [port]
  */
 import fs from "node:fs";
+import { attach } from "./e2e/harness.mjs";
 
 const port = Number(process.argv[2] || 9223);
 const VAULT = "/tmp/notes-vault";
@@ -25,18 +26,7 @@ fs.writeFileSync(DOC_MD, "# 本地文档测试\n\n这是从磁盘导入的文档
 fs.writeFileSync(DOC_CSV, "name,value\nA,1\nB,2\n");
 fs.writeFileSync(DOC_BIN, "PK\u0000\u0003\u0004binary");
 
-const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-const page = list.find((t) => t.type === "page");
-const ws = new WebSocket(page.webSocketDebuggerUrl);
-let seq = 0; const pending = new Map();
-ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } };
-await new Promise((r) => (ws.onopen = r));
-const send = (method, params = {}) => new Promise((res) => { const id = ++seq; pending.set(id, res); ws.send(JSON.stringify({ id, method, params })); });
-const ev = async (expr) => {
-  const r = await send("Runtime.evaluate", { expression: `(async()=>{ ${expr} })()`, awaitPromise: true, returnByValue: true });
-  if (r.result?.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description);
-  return r.result?.result?.value;
-};
+const { ev } = await attach(port);
 let fails = 0;
 const check = (n, ok, d = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"} ${n}${d ? " · " + d : ""}`); };
 const run = ev;

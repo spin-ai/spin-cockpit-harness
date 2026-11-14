@@ -66,6 +66,41 @@ export interface SceneConfig {
   notes: string;
 }
 export interface Scene { projectId: string; text: string; config: SceneConfig; updatedAt: number; }
+/** 多 Agent 协作场景：与执行配置 Scene 分离；config 里是阵容 / 呈现偏好。 */
+export type CoordinationTemplate = "office" | "warroom" | "carrier";
+export type CoordinationLight = "auto" | "dawn" | "day" | "dusk" | "night";
+export interface CoordinationMotion {
+  tier: "calm" | "full" | "off";
+  walk: number;
+  amp: number;
+  typing: boolean;
+}
+export interface CoordinationCastMember {
+  agentId: string;
+  role: "lead" | "worker" | "reviewer";
+  seat: number | null;
+  displayName?: string;
+}
+export interface CoordinationPrefs {
+  reviewGate: boolean;
+  escalate: boolean;
+  inject: boolean;
+  showLinks: boolean;
+  showLabels: boolean;
+  /** 舞台光照：auto 跟随本地时间，其余手动锁定时段 */
+  light?: CoordinationLight;
+  /** 动效档位与参数：走位时长 / 姿态幅度 / 打字 */
+  motion?: CoordinationMotion;
+}
+export interface CoordinationScene {
+  id: string;
+  name: string;
+  projectId: string | null;
+  template: CoordinationTemplate;
+  config: { cast: CoordinationCastMember[]; prefs: CoordinationPrefs };
+  createdAt: number;
+  updatedAt: number;
+}
 export interface TerminalRecord {
   id: string; projectId: string | null; todoId: string | null; runId: string | null; agentId: string | null;
   cwd: string; kind: "agent" | "shell"; title: string;
@@ -82,7 +117,7 @@ export interface RuntimeView {
 export interface Run {
   id: string; todoId: string; agentId: string; status: string; trigger: string;
   startedAt: number | null; endedAt: number | null; cost: number;
-  /** null = 执行器未上报，界面显示「未上报」而不是 0（见 docs/ARCH-hosts-stats.md） */
+  /** null = 执行器未上报，界面显示「未上报」而不是 0（见 docs/arch/ARCH-hosts-stats.md） */
   tokens: number | null;
   error: string | null; parentRunId: string | null; cwd?: string; branch?: string | null;
   hostId?: string | null; createdAt?: number | null;
@@ -122,7 +157,7 @@ export interface TodoLink {
   id: string; todoId: string; pluginId: string; kind: string; ref: string; title: string; createdAt: number;
 }
 export interface Approval { id: string; requestId: string; runId: string; todoId: string; title: string; description: string; options: { id: string; name: string; kind: string }[]; missionId?: string | null; childTitle?: string | null; }
-/** 预览区拾取的 UI 元素，随消息注入 Agent（见 docs/ARCH-ui-context.md） */
+/** 预览区拾取的 UI 元素，随消息注入 Agent（见 docs/arch/ARCH-ui-context.md） */
 export interface ElementContext {
   kind: "dom-element";
   url: string;
@@ -144,6 +179,10 @@ export type ThemeMode = "system" | "light" | "paper" | "vslight" | "dark" | "vsd
 export interface Settings {
   defaultView: "workspace" | "projects" | "stats" | "hosts";
   theme: ThemeMode;
+  /** 整窗缩放：0 = 自动（跟随屏幕分辨率），80–150 = 手动固定百分比 */
+  uiScale: number;
+  /** 只读：自动/手动换算后的实际百分比，由主进程算好给设置页显示 */
+  uiScaleResolved?: number;
   chatFontSize: number;
   enterToSend: boolean;
   confirmStop: boolean;
@@ -163,6 +202,8 @@ export interface Settings {
   previewHomeUrl: string;
   elementScreenshots: boolean;
   contextDetail: "compact" | "standard";
+  /** 云端向量索引（Ark embedding）：默认 false = 只做本地关键词索引，正文不出网 */
+  knowledgeCloudIndex?: boolean;
   superAgentEnabled?: boolean;
   maxSupervisorRuns?: number;
   maxMissionChildren?: number;
@@ -176,6 +217,8 @@ export interface Settings {
   imWebhookToken?: string;
   imInboundPort?: number;
   imAllowIds?: string;
+  /** 人物语料目录（datasets/wechat）；空则按 userData → 仓库顺序找 */
+  personaDatasetDir?: string;
 }
 export interface State {
   hosts: Host[]; agents: Agent[]; todos: Todo[]; runs: Run[]; threads: Thread[]; messages: Message[];
@@ -190,6 +233,7 @@ export interface State {
   activeProjectId: string | null;
   projects: Project[];
   scenes?: Scene[];
+  coordinationScenes?: CoordinationScene[];
   terminals?: TerminalRecord[];
   runtimes?: RuntimeView[];
   cliCapabilities: string[];

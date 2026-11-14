@@ -90,7 +90,10 @@ const ctx = {
     reveal: (file) => request("fs.reveal", { file: String(file) }),
   },
   net: {
+    /** 插件出网必须声明 net 权限；未声明的插件拿不到这个能力 */
     fetchJson: async (url, init) => {
+      const permissions = Array.isArray(manifest?.permissions) ? manifest.permissions : [];
+      if (!permissions.includes("net")) throw new Error("permission denied: net");
       const res = await fetch(url, init);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();

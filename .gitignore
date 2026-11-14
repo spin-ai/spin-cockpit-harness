@@ -30,14 +30,8 @@ Thumbs.db
 !.vscode/extensions.json
 !.vscode/settings.json
 
-# 本地写作 / 参考素材（保留在本地，不入库）
-docs/ARTICLE-zhihu-multi-agent-terminal.md
-docs/assets/article/
-
 # 文章与参考素材（本地保留，不入库）
-docs/ARTICLE-zhihu-multi-agent-terminal.md
-docs/ARTICLE-zhihu-super-agent.md
-docs/ARTICLE-zhihu-llm-wiki.md
+docs/articles/
 docs/assets/article/
 
 # 生成的文档产物（由 scripts/build-docs-html.py 生成）
@@ -48,3 +42,6 @@ datasets/
 
 # 本地工具运行时（微信 key/解密副本等，含敏感数据）
 .runtime/
+
+# 渲染层预览截图（scripts/preview-persona.mjs · scripts/preview-memory.mjs）
+.preview/

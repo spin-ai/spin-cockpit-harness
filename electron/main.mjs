@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, clipboard, Menu, globalShortcut } from "electron";
+import { app, BrowserWindow, ipcMain, shell, dialog, clipboard, Menu, globalShortcut, screen } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { spawn, spawnSync, execFile } from "node:child_process";
@@ -15,9 +15,9 @@ import { AcpClient, dshPathEnv } from "./acp.mjs";
 import { createKnowledge } from "./knowledge/index.mjs";
 import { chat as arkChat, resolveArkKey as resolveArkKeyFor } from "./knowledge/ark.mjs";
 import { curateMessages, parseCurated, spliceCurated, contentHash } from "./wiki-curate.mjs";
-import { createMemory } from "./memory/index.mjs";
+import { createMemory, parseDreamItems } from "./memory/index.mjs";
 import { createPersona } from "./persona/index.mjs";
-import { computeFeatures, describePerson, analyzePersonWithLLM } from "./persona/model.mjs";
+import { computeFeatures, computeMeasures, analyzePersonWithLLM, analysisCacheHash, evidenceMatches, looksLikeStat } from "./persona/model.mjs";
 import { createImGateway, formatImCard, formatApprovalCard } from "./im/gateway.mjs";
 import { prepareWorktree, removeWorktree, repoRoot } from "./worktree.mjs";
 import { pickElement, cancelPick, detachPreview } from "./preview.mjs";
@@ -284,6 +284,46 @@ function sceneSuggestion(projectId) {
   return `# ${project?.name || "项目"} 场景建议（可手改）\nworktree: ${git ? "auto" : "never"}\nruntime: ${runtime}\nagent: ${picked?.alias || picked?.name || ""}\nconcurrency: 1\nacceptance: 改动可运行、验证通过\nnotes: ${git ? "git 项目默认每个 run 独立 worktree" : "非 git 项目原地执行，多 Agent 需要手动错开"}`;
 }
 
+// ── Coordination Scene：多 Agent 协作舞台（与执行配置 scenes 分离） ────
+const COORDINATION_TEMPLATES = new Set(["office", "warroom", "carrier"]);
+/** 旧的流水线模板已下线：库里残留的 factory 读成 carrier，写回时一并迁移。 */
+const TEMPLATE_ALIASES = { factory: "carrier" };
+const COORDINATION_PREFS = {
+  reviewGate: true, escalate: true, inject: false, showLinks: true, showLabels: true, light: "auto",
+};
+
+const COORDINATION_LIGHTS = new Set(["auto", "day", "dusk", "night"]);
+
+function normalizeCoordinationPrefs(raw = {}) {
+  return {
+    reviewGate: raw.reviewGate !== false,
+    escalate: raw.escalate !== false,
+    inject: raw.inject === true,
+    showLinks: raw.showLinks !== false,
+    showLabels: raw.showLabels !== false,
+    light: COORDINATION_LIGHTS.has(raw.light) ? raw.light : "auto",
+  };
+}
+
+function normalizeCoordinationCast(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const item of raw.slice(0, 50)) {
+    const agentId = String(item?.agentId || "").trim();
+    if (!agentId || seen.has(agentId)) continue;
+    seen.add(agentId);
+    const role = ["lead", "worker", "reviewer"].includes(item?.role) ? item.role : "worker";
+    const seat = item?.seat == null ? null : Math.max(0, Math.min(5, Math.round(Number(item.seat))));
+    out.push({ agentId, role, seat: Number.isFinite(seat) ? seat : null, displayName: String(item?.displayName || "").slice(0, 40) });
+  }
+  return out;
+}
+
+function coordinationSceneOf(id) {
+  return (store.state.coordinationScenes || []).find((s) => s.id === id) || null;
+}
+
 function prepareRunWorktree(todo, cwd, runId) {
   const projectId = todo?.projectId || store.state.activeProjectId;
   const mode = sceneOf(projectId).config.worktree || store.state.settings?.worktreeMode || "auto";
@@ -475,7 +515,7 @@ function queueRun(todo, agent, trigger = "assign", parentRunId = null, kind = "w
   const run = {
     id: store.nextId("r"), todoId: todo.id, agentId: agent.id, status: "queued", trigger, kind, delegationId,
     startedAt: null, endedAt: null, cost: 0, tokens: null, error: null, parentRunId, cwd: "", branch: null,
-    // 统计口径：createdAt 用于排队时长，其余待 run 结束 / ACP 回包后回填（见 docs/ARCH-hosts-stats.md）
+    // 统计口径：createdAt 用于排队时长，其余待 run 结束 / ACP 回包后回填（见 docs/arch/ARCH-hosts-stats.md）
     hostId: agent.hostId || null, createdAt: Date.now(), tokensIn: null, tokensOut: null,
     usageSource: "unknown", errorClass: null, exitCode: null, queueWaitMs: null, durationMs: null, queueReason: null,
     runtime: chatRuntimeOf(agent),
@@ -631,7 +671,12 @@ function snapshot() {
     plugins: store.state.plugins || [],
     pluginCommands: pluginHost?.commands() || [],
     todoLinks: store.state.todoLinks || [],
-    settings: { ...(store.state.settings || { ...DEFAULT_SETTINGS }), dshEnv: decSecret((store.state.settings || {}).dshEnv) },
+    settings: {
+      ...(store.state.settings || { ...DEFAULT_SETTINGS }),
+      dshEnv: decSecret((store.state.settings || {}).dshEnv),
+      // 给设置页显示「自动 → 当前 120%」用；不落盘（sanitize 会丢掉未知键）
+      uiScaleResolved: uiScalePercent((store.state.settings || {}).uiScale, win && !win.isDestroyed() ? displayOfWindow(win) : undefined),
+    },
     scenes: store.state.projects.map((p) => sceneOf(p.id)),
     terminals: terminalSnapshot(),
     runtimes: runtimeViews(),
@@ -1055,8 +1100,26 @@ async function startRun(run, todo, agent) {
       .filter(Boolean);
     const wikiMemory = await memoryContext();
     // 记忆层：L4 目录/结论（预算内，超了做减法），和 wiki 索引一起注入
+    // 预算只认「设置里存的那一个」，不要在这里写死：写死会让 UI 显示的预算和实际注入不一致
     let layers = "";
-    try { layers = memory().inject({ maxChars: 6000 }).markdown; } catch { /* 记忆库不可用不影响跑 run */ }
+    let injectLogId = "";
+    try {
+      const injected = memory().inject({ runId: run.id });
+      layers = injected.markdown;
+      injectLogId = injected.logId || "";
+    } catch { /* 记忆库不可用不影响跑 run */ }
+    // 人物画像：只注入「任务里点名的人」，没点名就不出现（隐私与预算都靠这条规则守住）
+    let personaBlock = "";
+    try {
+      const named = persona().injectForText({
+        text: [todo.title, todo.desc, ...instructions].filter(Boolean).join("\n"),
+        maxChars: 600,
+        limit: 3,
+      });
+      if (named.people.length) {
+        personaBlock = `人物画像（任务里点名的人，敏感项已排除；要更多细节用 persona_lookup）：\n${named.markdown}`;
+      }
+    } catch { /* 人物库不可用不影响跑 run */ }
     const prompt = [
       `任务：${todo.title}`,
       todo.desc ? `描述：${todo.desc}` : "",
@@ -1065,6 +1128,7 @@ async function startRun(run, todo, agent) {
       contexts.length ? `界面上下文：\n${contexts.join("\n\n")}` : "",
       layers ? `${layers}\n（详情用 memory_search / wiki_search；写观察用 memory_note_write，写页面用 wiki_upsert_draft）` : "",
       wikiMemory ? `知识库索引（需要详情时使用 wiki_search / wiki_read_page；写入用 wiki_upsert_draft）：\n${wikiMemory}` : "",
+      personaBlock,
       "完成后给出结论；如需改文件请直接修改。",
     ].filter(Boolean).join("\n");
     const res = await client.prompt(prompt);
@@ -1077,6 +1141,10 @@ async function startRun(run, todo, agent) {
     void imNotifyRun(todo, run, handle).catch(() => {});
     todo.updatedAt = now();
     store.addMessage(thread.id, run.id, "system", "system", `run 结束 · ${res?.stopReason || "end_turn"}`);
+    // 注入归因：回答里用到了哪几条注入的记忆（口水话指标，但不落库就永远只能猜）
+    if (injectLogId) {
+      try { memory().markCited({ logId: injectLogId, text: runReplyText(run.id) }); } catch { /* 归因失败不影响 run */ }
+    }
     store.addEvent("run.finished", `run.finished todo=${todo.key}`);
     pluginHost?.emit("run.completed", { runId: run.id, todoId: todo.id, status: run.status, title: todo.title });
     const delegation = delegationForChild(todo.id);
@@ -1256,14 +1324,18 @@ function startWikiMcpServer() {
       else if (name === "wiki_add_citation") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.addCitation", { pageId: args.page, sourceId: args.source, quote: args.quote, locator: args.locator });
       else if (name === "memory_inject") result = memory().inject({ maxChars: args.max_chars || 12000 });
       else if (name === "memory_search") result = transcriptSearch(args.query, args.limit || 8);
-      else if (name === "memory_note_write") result = memory().noteAdd({ body: args.body, sourceKind: args.source_kind || "transcript", sourceRef: args.source_ref || "" });
+      else if (name === "run_read") result = runRead(args.run_id);
+      else if (name === "memory_note_write") result = memory().noteAdd({ body: args.body, kind: args.kind, confidence: args.confidence, sourceKind: args.source_kind || "transcript", sourceRef: args.source_ref || "" });
       else if (name === "memory_entry_write") result = memory().entryUpsert({ layer: args.layer || "L4", title: args.title, body: args.body || "", sources: args.sources || [] });
-      else if (name === "memory_promote_note") result = memory().promoteNote({ id: args.id, layer: args.layer || "L4" });
+      else if (name === "memory_promote_note") result = memory().promoteNote({ id: args.id, layer: args.layer || "L4", supersedes: args.supersedes || [] });
       else if (name === "persona_lookup") {
         const answer = persona().ask({ question: args.question });
         // 点名到人时顺带给出人设卡注入片段，Agent 才能「像他那样」判断
         const who = answer.found ? persona().peopleList().find((p) => !p.isSelf && String(args.question || "").includes(p.name)) : null;
-        result = who ? { ...answer, card: persona().inject({ personId: who.id, maxChars: 2000 }).markdown } : answer;
+        result = who ? { ...answer, card: persona().inject({ personId: who.id, maxChars: 2000, query: String(args.question || "") }).markdown } : answer;
+      }
+      else if (name === "persona_review") {
+        result = persona().review({ personId: args.person_id || null, limit: Number(args.limit) || 30 });
       }
       else if (name === "knowledge_search") result = knowledge().search(String(args.query || ""), { limit: Number(args.limit) || 8 });
       else if (name === "knowledge_docs") result = knowledge().listDocuments({ limit: Number(args.limit) || 50 });
@@ -1335,7 +1407,7 @@ function releaseWikiToken(runId) {
  */
 async function memoryContext() {
   try {
-    const res = await memory().inject({ maxChars: 12000 });
+    const res = await memory().inject();
     return String(res?.markdown || "");
   } catch {
     return "";
@@ -1530,6 +1602,7 @@ const SETTINGS_SPEC = {
   defaultView: { kind: "enum", values: ["workspace", "projects", "stats", "hosts"], fallback: "workspace" },
   theme: { kind: "enum", values: ["system", "light", "paper", "vslight", "dark", "vsdark", "midnight", "forest", "graphite", "monokai", "onedark", "solarized", "dracula"], fallback: "system" },
   chatFontSize: { kind: "number", min: 11, max: 16, fallback: 13 },
+  uiScale: { kind: "number", min: 0, max: 150, fallback: 0 },   // 0 = 自动（跟随屏幕分辨率）
   enterToSend: { kind: "boolean", fallback: true },
   confirmStop: { kind: "boolean", fallback: false },
   defaultAgentId: { kind: "string", nullable: true, fallback: null, max: 80 },
@@ -1578,6 +1651,65 @@ function decSecret(text) {
   const value = String(text ?? "");
   if (!value.startsWith("enc:")) return value;
   try { return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(Buffer.from(value.slice(4), "base64")) : ""; } catch { return ""; }
+}
+
+/**
+ * 整窗缩放：`uiScale = 0` 表示自动。
+ *
+ * 自动档位按「最长逻辑边」算：屏幕分辨率越高，100% 下的字就越小（典型是 27 寸 2K / 4K 原生分辨率），
+ * 所以直接给分辨率档位，而不是拿物理 DPI —— Electron 的 bounds 已经是 DIP，拿不到毫米尺寸。
+ * 不看对外接屏的 macOS 缩放：外接屏如果设成「看起来像 2560」，逻辑宽度就是 2560，本函数自然会给 120%。
+ */
+function autoUiScale(display = screen?.getPrimaryDisplay?.()) {
+  const wa = display?.workAreaSize || { width: 1500, height: 980 };
+  const long = Math.max(wa.width, wa.height);
+  if (long >= 3000) return 130;   // 4K / 5K 原生
+  if (long >= 2400) return 120;   // 2K / 2560
+  if (long >= 1900) return 110;   // 1920 宽，窗口占满后边框已经很紧
+  if (wa.width < 1440) return 90;  // 小屏：先缩一点，否则窄面板挤成一钢
+  return 100;
+}
+
+/** 设置值 → 实际百分比（0/非法 = 自动，其余夹在 80–150） */
+function uiScalePercent(raw, display) {
+  const v = Number(raw);
+  if (!Number.isFinite(v) || v <= 0) return autoUiScale(display);
+  return Math.min(150, Math.max(80, Math.round(v)));
+}
+
+function uiScaleFactor(raw, display) {
+  return uiScalePercent(raw, display) / 100;
+}
+
+/** 当前窗口落在哪块屏上（没窗口时用主屏） */
+function displayOfWindow(target) {
+  try {
+    if (target && !target.isDestroyed?.()) return screen.getDisplayMatching(target.getBounds());
+  } catch { /* ignore */ }
+  return screen.getPrimaryDisplay();
+}
+
+function applyUiScale(raw, { persist = false } = {}) {
+  let pct = uiScalePercent(raw, screen.getPrimaryDisplay());
+  for (const w of BrowserWindow.getAllWindows()) {
+    pct = uiScalePercent(raw, displayOfWindow(w));
+    try { w.webContents.setZoomFactor(pct / 100); } catch { /* 窗口还没 ready */ }
+  }
+  if (persist && store) {
+    // 自动模式下存 0，不要把它写成“算出来的那个数”，否则屏幕一换就固化了
+    store.state.settings.uiScale = Number(raw) > 0 ? uiScalePercent(raw) : 0;
+    store.addEvent("ui.scale", `ui.scale ${Number(raw) > 0 ? `${uiScalePercent(raw)}%` : `auto → ${pct}%`}`);
+    broadcast();
+  }
+  return pct;
+}
+
+/** 自动模式下屏幕/位置变了要重算；手动指定时不动 */
+function refreshAutoUiScale() {
+  if (!store) return;
+  const raw = Number(store.state.settings?.uiScale);
+  if (raw > 0) return;
+  applyUiScale(0);
 }
 
 function sanitizeSettings(patch = {}) {
@@ -2591,29 +2723,185 @@ function personaDatasetDir() {
 const personaJob = {
   running: false, cancelled: false, // 启动时断言为未运行，避免上次异常退出留下脏状态
   total: 0, done: 0, current: "", startedAt: 0, finishedAt: 0,
-  cards: 0, llmAdded: 0, statsAdded: 0, skippedCache: 0, failed: [], mode: "",
-  runId: "", lastError: "", controller: null,
+  cards: 0, llmAdded: 0, unverified: 0, notQuote: 0, statsAdded: 0, skippedCache: 0, failed: [], mode: "",
+  skippedNames: [], runId: "", lastError: "", controller: null,
 };
 
 /** 只读检索历史：transcript（消息）/ run / 事件，带时间与来源会话 */
+/** L1 索引源：消息与事件。runs 数量小，直接在内存里扫，不入索引。 */
+function transcriptIndexRows() {
+  const out = [];
+  for (const m of store.state.messages) {
+    out.push({ kind: "message", refId: m.id, at: m.createdAt, text: m.content, threadId: m.threadId || "", runId: m.runId || "" });
+  }
+  for (const e of store.state.events) {
+    out.push({ kind: "event", refId: e.id, at: e.ts, text: `${e.type} ${e.text || ""}` });
+  }
+  return out;
+}
+
+/**
+ * 启动时对一次账：清孤儿（会话删了 / 事件滚动淘汰）+ 补缺失，不做全量重建。
+ * 只比条数行不通：事件本来就是 300 条滚动窗口。
+ */
+function ensureTranscriptIndex() {
+  const mem = memory();
+  if (!mem.transcriptIndexReady()) return { filled: 0, pruned: 0, ready: false };
+  return { ...mem.transcriptSync(transcriptIndexRows()), ready: true };
+}
+
+/** 消息 / 事件的 L1 检索；索引不可用（或还没建）时回落旧的全量扫，行为不变。 */
 function transcriptSearch(query, limit = 8) {
   const q = String(query || "").trim().toLowerCase();
   if (!q) return [];
+  const take = Math.max(1, Math.min(50, Number(limit) || 8));
   const out = [];
-  for (const m of store.state.messages) {
-    if (!String(m.content || "").toLowerCase().includes(q)) continue;
-    out.push({ kind: "message", id: m.id, at: m.createdAt, threadId: m.threadId, runId: m.runId, role: m.role, snippet: String(m.content).replace(/\s+/g, " ").slice(0, 240) });
-  }
+  // run 数量小，直接扫
   for (const r of store.state.runs) {
     const hay = `${r.id} ${r.status} ${r.branch || ""} ${r.cwd || ""} ${r.error || ""}`.toLowerCase();
     if (!hay.includes(q)) continue;
     out.push({ kind: "run", id: r.id, at: r.startedAt || r.createdAt || 0, status: r.status, todoId: r.todoId, snippet: `${r.status}${r.branch ? ` · ${r.branch}` : ""}${r.error ? ` · ${r.error.slice(0, 120)}` : ""}` });
   }
-  for (const e of store.state.events) {
-    if (!String(e.text || "").toLowerCase().includes(q)) continue;
-    out.push({ kind: "event", id: e.id, at: e.ts, type: e.type, snippet: String(e.text).slice(0, 200) });
+  let hits = [];
+  try { hits = memory().transcriptSearch({ query: q, limit: take * 2 }); } catch { hits = []; }
+  if (hits.length) {
+    // 孤儿命中（会话已删但索引还在）在这里滤掉；启动对账会彻底清掉
+    const liveMessages = new Set(store.state.messages.map((m) => m.id));
+    for (const h of hits) {
+      if (h.kind === "message" && !liveMessages.has(h.id)) continue;
+      out.push(h);
+    }
+  } else {
+    // 索引没建（首次启动前 / FTS5 不可用）→ 退回原来的内存扫描
+    for (const m of store.state.messages) {
+      if (!String(m.content || "").toLowerCase().includes(q)) continue;
+      out.push({ kind: "message", id: m.id, at: m.createdAt, threadId: m.threadId, runId: m.runId, role: m.role, snippet: String(m.content).replace(/\s+/g, " ").slice(0, 240) });
+    }
+    for (const e of store.state.events) {
+      if (!String(e.text || "").toLowerCase().includes(q)) continue;
+      out.push({ kind: "event", id: e.id, at: e.ts, type: e.type, snippet: String(e.text).slice(0, 200) });
+    }
   }
-  return out.sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, Math.max(1, Math.min(50, Number(limit) || 8)));
+  return out.sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, take);
+}
+
+/**
+ * 本轮 Agent 说出来的话（role 是 agent，不是 assistant —— 踩过：按 assistant 过滤永远匹配不到，
+ * 归因恒为 0，看起来像「记忆从来没被用过」，其实是取错了字段）。thought 不算，那是思考过程。
+ */
+function runReplyText(runId) {
+  // 归因看两处：Agent 说出来/做出来的（agent 的 text）和它实际执行的工具调用（tool）。
+  // thought 不算——那是过程独白，写什么都可能提到「typecheck」。
+  return store.state.messages
+    .filter((m) => m.runId === runId && !["user", "system"].includes(m.role))
+    .filter((m) => m.role !== "agent" || (m.kind || "text") === "text")
+    .map((m) => String(m.content || ""))
+    .join("\n");
+}
+
+/**
+ * 回填历史归因：旧版本按 assistant 取文本，cited 全是空数组。
+ * 升级后把还能找到 run 的台账补一遍，否则命中率会长期被旧数据拉成 0。
+ */
+function backfillCitations({ limit = 60 } = {}) {
+  let touched = 0;
+  let cited = 0;
+  for (const row of memory().logsNeedingCitation({ limit })) {
+    const text = runReplyText(row.runId);
+    if (!text.trim()) continue;
+    try {
+      const res = memory().markCited({ logId: row.id, text });
+      touched += 1;
+      cited += res.cited || 0;
+    } catch { /* 单条失败不影响其它 */ }
+  }
+  return { touched, cited };
+}
+
+/**
+ * 单个 run 的回查：元信息 + 这轮的消息（截断）+ 提到它的关键事件。
+ * 和 memory_search（跨 run 全文检索）分工：那个找「哪次提过」，这个看「那一次到底做了什么」。
+ */
+function runRead(runId) {
+  const id = String(runId || "").trim();
+  const run = store.state.runs.find((r) => r.id === id);
+  if (!run) throw new Error("run 不存在");
+  const msgs = store.state.messages.filter((m) => m.runId === id);
+  const events = store.state.events.filter((e) => String(e.text || "").includes(id));
+  const todo = store.state.todos.find((t) => t.id === run.todoId);
+  const clip = (v, n) => { const t = String(v ?? "").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
+  return {
+    run: {
+      id: run.id, status: run.status, trigger: run.trigger || "", kind: run.kind || "worker",
+      at: run.startedAt || run.createdAt || 0, endedAt: run.endedAt || 0, durationMs: run.durationMs ?? null,
+      tokens: run.tokens ?? null, error: run.error || "", branch: run.branch || "", cwd: run.cwd || "",
+      todoId: run.todoId || "", todoTitle: todo?.title || "",
+    },
+    messages: msgs.slice(-20).map((m) => ({ id: m.id, role: m.role, kind: m.kind || "text", at: m.createdAt, snippet: clip(m.content, 400) })),
+    events: events.slice(0, 20).map((e) => ({ id: e.id, at: e.ts, type: e.type, snippet: clip(e.text, 240) })),
+    counts: { messages: msgs.length, events: events.length },
+  };
+}
+
+const DREAM_SEMANTIC_SYSTEM = [
+  "你在整理一个工程师长期记忆库里的「未验证观察」。只做两件事：找重复、找矛盾。",
+  "规则：",
+  "1. 只能引用给定的 id，不许编造；",
+  "2. merge：两条说的是同一件事（换个说法、加了条件、写了两次），给 ids 与 keep（保留哪条）；",
+  "3. correct：这条观察已经不成立 / 与另一条直接冲突，给 1 个 id；",
+  "4. rewrite：这条观察写得太糙（措辞含糊、攒了三条挤在一句里），给 1 个 id 和改写后的 body。",
+  "   rewrite 的铁律：只能删减、纠正措辞、合并它自己已有的说法；**不许引入原句里没有的新事实、新数字、新名字**。",
+  "   status 已经是 verified 的不要 rewrite（那是人确认过的），要报就报 correct。",
+  "5. 拿不准就别报——宁可漏，不要为凑数编造；",
+  "6. 每条都要给 reason：为什么它是重复、已不成立、或者该怎么改写，拿证据说话。",
+  '只输出 JSON：{"items":[{"action":"merge|correct|rewrite","ids":["..."],"keep":"...","body":"仅 rewrite 用","reason":"..."}]}',
+  '没有可报的就输出 {"items":[]}。',
+].join("\n");
+
+/**
+ * Dream 的语义 pass：一次调用，让模型在候选观察里找重复与矛盾。
+ * 三道闸门：设置里打开 / 有 key / 没超当日调用预算。任何一道不过都静默跳过。
+ * 它**只产建议**，绝不写 note 或 L4。
+ */
+async function dreamSemanticPass(cfg) {
+  const budget = memory().dreamModelCallBudget();
+  if (budget.used >= budget.limit) return { skipped: "budget", calls: 0, created: [], budget };
+  const key = arkKeyFromSettings();
+  if (!key) return { skipped: "nokey", calls: 0, created: [], budget };
+  const all = memory().dreamCandidates({ limit: cfg.llmBatch });
+  if (all.length < 2) return { skipped: "too-few", calls: 0, created: [], budget };
+  // 预算之外还有「上下文预算」：60 条 × 400 字可能超模型窗口，按字符数截断候选
+  const TEXT_BUDGET = 32000;
+  const candidates = [];
+  let chars = 0;
+  for (const n of all) {
+    chars += n.body.length + 40;
+    if (chars > TEXT_BUDGET) break;
+    candidates.push(n);
+  }
+  if (candidates.length < 2) return { skipped: "too-few", calls: 0, created: [], budget };
+  const user = JSON.stringify({ notes: candidates });
+  let text = "";
+  let tokens = 0;
+  try {
+    // 有的网关不认 response_format=json_object：先试严格 JSON，失败退回纯文本 + 宽容解析
+    try {
+      const r = await arkChat([{ role: "system", content: DREAM_SEMANTIC_SYSTEM }, { role: "user", content: user }], { key, maxTokens: 1500, temperature: 0, json: true });
+      text = r?.text || "";
+      tokens += Number(r?.usage?.total_tokens || 0);
+    } catch {
+      const r = await arkChat([{ role: "system", content: DREAM_SEMANTIC_SYSTEM }, { role: "user", content: user }], { key, maxTokens: 1500, temperature: 0 });
+      text = r?.text || "";
+      tokens += Number(r?.usage?.total_tokens || 0);
+    }
+  } catch (err) {
+    return { skipped: "error", calls: 0, created: [], reason: String(err?.message || err), budget };
+  } finally {
+    memory().noteDreamModelCall({ calls: 1, tokens });
+  }
+  const items = parseDreamItems(text) || [];
+  const created = items.length ? memory().dreamModelSuggest({ items, model: "dream-semantic" }) : [];
+  return { skipped: items.length ? "" : "empty", calls: 1, items: items.length, created, budget: memory().dreamModelCallBudget(), raw: text.slice(0, 160) };
 }
 
 /** Dream 建议被接受后真正落地 */
@@ -2643,6 +2931,27 @@ async function applyMemorySuggestion(sug) {
     const summary = page.summary || String(page.content || "").replace(/^#.*\n/, "").replace(/\s+/g, " ").trim().slice(0, 200);
     await plugins.invoke("ai.cockpit.notes", "wiki.savePage", { id: page.id, title: page.title, content: page.content, summary, status: "stale" });
     return { applied: true, pageId: page.id };
+  }
+  if (sug.action === "merge" && sug.targetKind === "note" && sug.targetId) {
+    // 合并：保留 targetId 那条，其余标 stale（保留行，不删——观察的成本低，留痕的价值高）
+    const dropIds = (sug.sources || []).filter((id) => id && id !== sug.targetId);
+    let dropped = 0;
+    for (const id of dropIds) {
+      try { memory().noteSetStatus({ id, status: "stale" }); dropped += 1; } catch { /* 已不存在就跳过 */ }
+    }
+    return { applied: dropped > 0, kept: sug.targetId, dropped };
+  }
+  if (sug.action === "rewrite" && sug.targetKind === "note" && sug.targetId) {
+    // 改写：把旧正文存进 note_revisions 再覆盖，随时能回退
+    const body = String(sug.payload?.body || "").trim();
+    if (!body) return { applied: false, reason: "建议里没有拟改正文" };
+    const note = memory().noteRewrite({ id: sug.targetId, body, source: "dream" });
+    return { applied: true, noteId: note.id, body: note.body };
+  }
+  if (sug.action === "correct" && sug.targetKind === "note" && sug.targetId) {
+    // 校正：依据被推翻了就先把这条观察标为不成立，退出注入与晋升队列；重写由人或 Agent 决定
+    memory().noteSetStatus({ id: sug.targetId, status: "stale" });
+    return { applied: true, noteId: sug.targetId };
   }
   if (sug.action === "prune") {
     const l3 = memory().entryList({ layer: "L3" });
@@ -2828,6 +3137,7 @@ const actions = {
   // ── 记忆：L1–L4 / note / Dream ───────────────────────────────
   memoryOverview: async () => memory().overview(),
   memoryInject: async ({ maxChars } = {}) => memory().inject({ maxChars }),
+  memoryInjectStats: async ({ limit } = {}) => memory().injectionStats({ limit }),
   memoryNoteAdd: async (args) => memory().noteAdd(args || {}),
   memoryNoteList: async ({ status, limit } = {}) => memory().noteList({ status, limit }),
   memoryNoteSet: async ({ id, status } = {}) => memory().noteSetStatus({ id, status }),
@@ -2837,10 +3147,12 @@ const actions = {
   memoryEntryArchive: async ({ id } = {}) => memory().entryArchive({ id }),
   memoryEntrySources: async ({ id } = {}) => memory().entrySources({ id }),
   memoryEntryRestore: async ({ id } = {}) => memory().entryRestore({ id }),
+  memoryEntryInvalidate: async ({ id, supersededBy } = {}) => memory().entryInvalidate({ id, supersededBy }),
+  memoryEntryAsOf: async ({ at, layer, limit } = {}) => memory().entryAsOf({ at, layer, limit }),
   memoryEntryReorder: async ({ ids } = {}) => memory().entryReorder({ ids }),
   memoryEntryArchived: async ({ limit } = {}) => memory().entryArchived({ limit }),
   memoryEntrySearch: async ({ query, limit } = {}) => memory().entrySearch({ query, limit }),
-  memoryPromoteNote: async ({ id, layer } = {}) => memory().promoteNote({ id, layer }),
+  memoryPromoteNote: async ({ id, layer, supersedes } = {}) => memory().promoteNote({ id, layer, supersedes }),
   memoryDreamConfig: async ({ patch } = {}) => memory().dreamConfig({ patch }),
   memorySetInjectBudget: async ({ maxChars } = {}) => memory().setInjectBudget({ maxChars }),
   memoryInjectBudget: async () => memory().currentInjectBudget(),
@@ -2864,6 +3176,7 @@ const actions = {
     return out;
   },
   memoryTranscriptSearch: async ({ query, limit } = {}) => transcriptSearch(query, limit),
+  memoryRunRead: async ({ runId } = {}) => runRead(runId),
   memoryDream: async () => {
     let pages = [];
     let sources = [];
@@ -2879,7 +3192,20 @@ const actions = {
     } catch { /* 插件未启用：只做 note/L3 相关建议 */ }
     const created = memory().dreamScan({ pages, sources });
     store.addEvent("memory.dream", `memory.dream ${created.length} 条建议`);
-    return { created, pending: memory().suggestionList({ status: "pending" }) };
+    // 语义 pass：默认关（要调模型），开了也受每日调用预算约束；只产建议
+    const cfg = memory().dreamConfig({});
+    let semantic = null;
+    if (cfg.llmPass) {
+      try {
+        semantic = await dreamSemanticPass(cfg);
+        if (semantic.created?.length) created.push(...semantic.created);
+        if (semantic.calls) store.addEvent("memory.dream", `memory.dream 语义 pass：${semantic.items || 0} 条候选 → ${semantic.created?.length || 0} 条建议`);
+        else if (semantic.skipped && !["empty"].includes(semantic.skipped)) store.addEvent("memory.dream", `memory.dream 语义 pass 跳过（${semantic.skipped}）`);
+      } catch (err) {
+        semantic = { skipped: "error", reason: String(err?.message || err), calls: 0, created: [] };
+      }
+    }
+    return { created, semantic, pending: memory().suggestionList({ status: "pending" }) };
   },
   memorySuggestions: async ({ status } = {}) => memory().suggestionList({ status }),
   memorySuggestionResolve: async ({ id, accept = false } = {}) => {
@@ -2893,7 +3219,10 @@ const actions = {
 
   // ── 人物建模 ─────────────────────────────────────────────────
   personaStats: async () => persona().stats(),
-  personaPending: async ({ limit } = {}) => persona().pending({ limit }),
+  // 待确认列表带上「证据是不是统计值」：这批是旧提示词把统计喂给模型的后遗症，
+  // 统计结论现在走 measures，逐条确认它们没有意义，得让界面能一次说清并批量拒绝。
+  personaPending: async ({ limit } = {}) => persona().pending({ limit })
+    .map((o) => ({ ...o, evidenceStat: looksLikeStat(o.quote) })),
   personaResolve: async ({ id, accept = false, sensitive } = {}) => {
     const res = persona().resolve({ id, accept, sensitive });
     if (accept) persona().detectConflicts();
@@ -2902,10 +3231,40 @@ const actions = {
   personaProfile: async ({ personId } = {}) => persona().profile({ personId }),
   personaPeople: async () => persona().peopleList(),
   personaCard: async ({ personId } = {}) => persona().card({ personId }),
-  personaInject: async ({ personId, maxChars } = {}) => persona().inject({ personId, maxChars }),
+  personaInject: async ({ personId, maxChars, query, at } = {}) => persona().inject({ personId, maxChars, query, at }),
   personaDrift: async ({ personId, limit } = {}) => persona().drift({ personId, limit }),
   personaTimeline: async ({ personId, field } = {}) => persona().timeline({ personId, field }),
-  personaAsOf: async ({ personId, at } = {}) => persona().asOf({ personId, at }),
+  personaAsOf: async ({ personId, at, mode } = {}) => persona().asOf({ personId, at, mode }),
+  /** 可观测特征（重算即可，不进记忆层） */
+  personaMeasures: async ({ personId } = {}) => persona().measures({ personId }),
+  /** 衰减与复核：TTL 到期的事实进复核队列，不删除（可审计、可回查） */
+  personaReview: async ({ personId, limit } = {}) => persona().review({ personId, limit }),
+  personaReviewResolve: async ({ id, keep = true } = {}) => {
+    const res = keep ? persona().keepFact({ id }) : persona().dropFact({ id });
+    store.addEvent("persona.review", `persona.review ${keep ? "keep" : "drop"} ${res?.field || ""}`);
+    return res;
+  },
+  /** 批量复核：一次处理某个人的全部到期事实（13 条逐个点没人干） */
+  personaReviewMany: async ({ personId, keep = true } = {}) => {
+    const res = persona().reviewMany({ personId, keep });
+    store.addEvent("persona.review", `persona.review bulk ${keep ? "keep" : "drop"} n=${res.resolved}`);
+    return res;
+  },
+  /** 到期扫描：把过期事实标 stale（只标记，不删） */
+  personaSweep: async () => {
+    const res = persona().sweep();
+    if (res.expired) store.addEvent("persona.sweep", `persona.sweep expired=${res.expired}`);
+    return res;
+  },
+  /** 近似值合并：建议 → 人确认 → 合并（证据累加，旧值标 merged） */
+  personaMergeSuggestions: async ({ personId, threshold, limit } = {}) => persona().mergeSuggestions({ personId, threshold, limit }),
+  personaMergeApply: async ({ keepId, dropId } = {}) => {
+    const res = persona().applyMergeValue({ keepId, dropId });
+    store.addEvent("persona.merge", `persona.merge value ${dropId} → ${keepId}`);
+    return res;
+  },
+  /** 只合并归一化后完全相同的重复值（安全子集） */
+  personaMergeExact: async ({ personId } = {}) => persona().mergeExact({ personId }),
   personaAsk: async ({ question } = {}) => persona().ask({ question }),
   personaMerge: async ({ keepId, aliasIds } = {}) => persona().merge({ keepId, aliasIds }),
   personaRemove: async ({ personId, from, to, sourcePrefix } = {}) => persona().remove({ personId, from, to, sourcePrefix }),
@@ -2973,11 +3332,21 @@ const actions = {
    * - mode="stats"：只算可观测统计，不花钱
    * 进度写到 personaModelStatus()，可用 personaModelCancel() 中途停止；样本 hash 缓存，不重复花钱。
    */
-  personaModel: async ({ mode = "llm", limit = 12, minMessages = 30, model = "", autoConfirmStats = true, names = [] } = {}) => {
+  personaModel: async ({ mode = "llm", limit = 12, minMessages = 30, model = "", names = [], concurrency = 2, ignoreCache = false } = {}) => {
+    // 统计特征现在进 measures（重算即可，没有「待确认」这一说），autoConfirmStats 参数一并废除
+
     if (personaJob.running) throw new Error("已经有一个建模任务在跑");
+    // 模型调用要 key：设置里的 ARK_API_KEY 优先，再回落环境变量。
+    // 从前这里只读 process.env —— 从 Finder 启动的 App 没有这个环境变量，
+    // analyzePersonWithLLM 会静默返回 null，整轮「建模」跑完显示 0 人出卡，却一条错误都没有。
+    const arkKey = mode === "llm" ? arkKeyFromSettings() : "";
+    if (mode === "llm" && !arkKey) {
+      throw new Error("缺少 Ark API key：到「设置 → 执行 → 模型密钥 / 环境变量」里配置 ARK_API_KEY，或先用「只跑统计」不花额度地建模。");
+    }
     Object.assign(personaJob, {
       running: true, cancelled: false, total: 0, done: 0, current: "", startedAt: Date.now(), finishedAt: 0,
-      cards: 0, llmAdded: 0, statsAdded: 0, skippedCache: 0, failed: [], mode, runId: `pm-${Date.now().toString(36)}`, lastError: "",
+      cards: 0, llmAdded: 0, unverified: 0, notQuote: 0, statsAdded: 0, skippedCache: 0, failed: [], skippedNames: [],
+      mode, runId: `pm-${Date.now().toString(36)}`, lastError: "",
       controller: new AbortController(),
     });
     const rootDs = personaDatasetDir();
@@ -3017,94 +3386,142 @@ const actions = {
     broadcast();
 
     const byField = {};
-    try {
-      for (const [name, msgs] of targets) {
-        if (personaJob.cancelled) break;
-        personaJob.current = name;
-        broadcast();
-        const person = known.get(name);
-        const chatNames = [...new Set(msgs.map((m) => m.chat).filter(Boolean))];
-        const context = chatNames.flatMap((c) => chats.get(c) || []);
-        const f = computeFeatures(msgs, name, context);
-        if (!f) { personaJob.done += 1; continue; }
+    // 单人一次模型调用在当前网关上要 40–70s，串行跑 47 人太慢：改成 2 路并发 + 90s 超时，
+    // 每个人的请求挂自己的 AbortController（取消任务 / 超时都能立刻释放连接）
+    const processOne = async ([name, msgs]) => {
+      const person = known.get(name);
+      const chatNames = [...new Set(msgs.map((m) => m.chat).filter(Boolean))];
+      const context = chatNames.flatMap((c) => chats.get(c) || []);
+      personaJob.stage = "compute"; personaJob.stageAt = Date.now();
+      const f = computeFeatures(msgs, name, context);
+      if (!f) return;
 
-        // 统计事实（可数）
-        for (const d of describePerson(name, f)) {
-          const res = persona().addObservation({
-            personId: person.id, person: name, field: d.field, value: d.value, quote: d.quote,
-            sourceKind: "stats", sourceRef: `${personaJob.runId}:chat:${chatNames[0] || ""}`,
-            status: autoConfirmStats ? "confirmed" : "pending",
-          });
-          if (res) { personaJob.statsAdded += 1; byField[d.field] = (byField[d.field] || 0) + 1; }
-        }
-
-        if (mode === "llm") {
-          const hash = crypto.createHash("sha1").update(`${name}|${f.samples.map((s) => s.text).join("")}`).digest("hex");
-          if (persona().analysisCache({ personId: person.id }) === hash) {
-            personaJob.skippedCache += 1;
-          } else {
-            let card = null;
-            try {
-              // 单个人最多等 50s：模型偶发慢请求不能把整批卡死
-              card = await Promise.race([
-                analyzePersonWithLLM({
-                  name, relation: person.relation || "", stats: f, signal: personaJob.controller?.signal,
-                  samples: f.samples.slice(-12).map((s) => ({ text: s.text, at: s.at })),
-                  context: context.slice(-12).map((c) => ({ from: c.from, text: c.text })),
-                  model: model || undefined,
-                }),
-                // 取消要立刻生效：不等 fetch 自己 reject，直接听 abort 结束这一人的等待
-                new Promise((resolve) => {
-                  const timer = setTimeout(() => resolve(null), 22000);
-                  personaJob.controller?.signal.addEventListener("abort", () => { clearTimeout(timer); resolve(null); }, { once: true });
-                }),
-              ]);
-            } catch (err) {
-              personaJob.failed.push(`${name}: ${String(err?.message || err).slice(0, 80)}`);
-            }
-            if (card) {
-              persona().setAnalysisCache({ personId: person.id, hash });
-              personaJob.cards += 1;
-              const push = (field, value, evidence) => {
-                const text = String(value || "").trim();
-                if (!text || /^(未知|不确定|unknown)$/i.test(text)) return;
-                const res = persona().addObservation({
-                  personId: person.id, person: name, field, value: text.slice(0, 120),
-                  quote: String(evidence || "").slice(0, 240), sourceKind: "llm",
-                  sourceRef: `${personaJob.runId}:chat:${chatNames[0] || ""}`, status: "pending",
-                  confidence: Number(card.confidence) || 0.55,
-                });
-                if (res) { personaJob.llmAdded += 1; byField[field] = (byField[field] || 0) + 1; }
-              };
-              const pair = (field, item) => push(field, item?.value, item?.evidence);
-              pair("identity", card.identity); pair("role", card.role); pair("relation", card.relationshipToMe);
-              (card.traits || []).slice(0, 3).forEach((x) => pair("traits", x));
-              (card.communication || []).slice(0, 3).forEach((x) => pair("communication", x));
-              (card.values || []).slice(0, 3).forEach((x) => pair("value", x));
-              (card.goals || []).slice(0, 3).forEach((x) => pair("goal", x));
-              (card.decisions || []).slice(0, 3).forEach((x) => pair("decision", x));
-              (card.topics || []).slice(0, 4).forEach((t) => push("situation", `常聊话题：${t}`, "(模型归纳)"));
-              if (card.oneLiner) persona().setOneLiner({ personId: person.id, text: card.oneLiner });
-            }
-          }
-        }
-        personaJob.done += 1;
-        broadcast();
+      // 统计特征（可数，不花钱）：进 measures，不进记忆层。
+      // 以前这些值走 addObservation 直插 confirmed，绕过 resolve 的失效逻辑：
+      // 「群聊 0%/私聊 100%」下次算出 1%/99% 就多一条同时成立的事实，全库 valid_to 一条都没写过。
+      const statsWritten = persona().applyStats({ personId: person.id, features: f });
+      if (statsWritten) {
+        personaJob.statsAdded += statsWritten;
+        for (const m of computeMeasures(f)) byField[m.field] = (byField[m.field] || 0) + 1;
       }
+      if (mode !== "llm") return;
+
+      const hash = analysisCacheHash(name, f, model);
+      if (!ignoreCache && persona().analysisCache({ personId: person.id }) === hash) {
+        personaJob.skippedCache += 1;
+        if (personaJob.skippedNames.length < 8) personaJob.skippedNames.push(name);
+        return;
+      }
+
+      personaJob.stage = "llm"; personaJob.stageAt = Date.now();
+      const perPerson = new AbortController();
+      const onCancel = () => perPerson.abort();
+      personaJob.controller?.signal.addEventListener("abort", onCancel, { once: true });
+      let card = null;
+      try {
+        card = await Promise.race([
+          analyzePersonWithLLM({
+            name, relation: person.relation || "", stats: f, key: arkKey,
+            signal: AbortSignal.any([perPerson.signal, AbortSignal.timeout(90000)]),
+            samples: f.samples.slice(-8).map((x) => ({ text: x.text, at: x.at })),
+            context: context.slice(-6).map((c) => ({ from: c.from, text: c.text })),
+            model: model || undefined,
+          }),
+          new Promise((resolve) => {
+            const timer = setTimeout(() => { perPerson.abort(); resolve(null); }, 95000);
+            perPerson.signal.addEventListener("abort", () => { clearTimeout(timer); resolve(null); }, { once: true });
+          }),
+        ]);
+      } catch (err) {
+        personaJob.failed.push(`${name}: ${String(err?.message || err).slice(0, 80)}`);
+      }
+      personaJob.controller?.signal.removeEventListener("abort", onCancel);
+
+      if (!card) {
+        if (!personaJob.failed.some((x) => x.startsWith(`${name}:`))) {
+          personaJob.failed.push(`${name}: 模型没有返回可用结果（样本太短 / 超时 / 返回不是 JSON）`);
+        }
+        return;
+      }
+      // 只有「模型真的给出了结论」才写缓存：否则模型换了输出结构时，这一轮会写出一条空缓存，
+      // 之后同一份样本永远跳过，卡片永远只有统计事实。
+      let produced = 0;
+      // 核对引用的语料 = 真正发给模型的那几段（样本 + 上下文），不是整份聊天记录：
+      // 只判断「模型说这是原话，那这句话是不是真的在它看到的材料里」。
+      const corpus = [
+        ...f.samples.slice(-8).map((x) => x.text),
+        ...context.slice(-6).map((c) => `${c.from} ${c.text}`),
+        ...context.slice(-6).map((c) => String(c.text || "")),
+      ].join("\n");
+      const push = (field, value, evidence) => {
+        const text = String(value || "").trim();
+        if (!text || /^(未知|不确定|unknown)$/i.test(text)) return;
+        produced += 1;
+        const quote = String(evidence || "").slice(0, 240);
+        // 三类分开数：没有引用（模型归纳）、引用是统计值（不是原话）、引用查不到（可能被改写）
+        const isStat = looksLikeStat(quote);
+        const verified = !quote || quote === "(模型归纳)" ? true : (!isStat && evidenceMatches(quote, corpus));
+        if (!verified) personaJob.unverified += 1;
+        if (isStat) personaJob.notQuote += 1;
+        const res = persona().addObservation({
+          personId: person.id, person: name, field, value: text.slice(0, 120),
+          quote, sourceKind: "llm",
+          sourceRef: `${personaJob.runId}:chat:${chatNames[0] || ""}`, status: "pending",
+          confidence: Number(card.confidence) || 0.55,
+          quoteVerified: verified,
+        });
+        if (res) { personaJob.llmAdded += 1; byField[field] = (byField[field] || 0) + 1; }
+      };
+      const pair = (field, item) => push(field, item?.value, item?.evidence);
+      pair("identity", card.identity); pair("role", card.role); pair("relation", card.relationshipToMe);
+      (card.traits || []).slice(0, 3).forEach((x) => pair("traits", x));
+      (card.communication || []).slice(0, 3).forEach((x) => pair("communication", x));
+      (card.values || []).slice(0, 3).forEach((x) => pair("value", x));
+      (card.goals || []).slice(0, 3).forEach((x) => pair("goal", x));
+      (card.decisions || []).slice(0, 3).forEach((x) => pair("decision", x));
+      (card.topics || []).slice(0, 4).forEach((t) => push("situation", `常聊话题：${t}`, "(模型归纳)"));
+      if (card.oneLiner) persona().setOneLiner({ personId: person.id, text: card.oneLiner });
+      // 全是「未知」或字段结构对不上（produced=0）时不写缓存，下一轮还能重试
+      if (produced > 0) { persona().setAnalysisCache({ personId: person.id, hash }); personaJob.cards += 1; }
+      else personaJob.failed.push(`${name}: 模型返回的画像没有可用字段（结构与提示不符），未写缓存`);
+    };
+
+    try {
+      const lanes = Math.max(1, Math.min(4, Number(concurrency) || 2));
+      let cursor = 0;
+      const worker = async () => {
+        for (;;) {
+          if (personaJob.cancelled) return;
+          const i = cursor;
+          cursor += 1;
+          if (i >= targets.length) return;
+          personaJob.current = targets[i][0];
+          broadcast();
+          try { await processOne(targets[i]); } catch (err) { personaJob.failed.push(`${targets[i][0]}: ${String(err?.message || err).slice(0, 60)}`); }
+          personaJob.done += 1;
+          broadcast();
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(lanes, targets.length || 1) }, () => worker()));
     } catch (err) {
       personaJob.lastError = String(err?.message || err);
     } finally {
       personaJob.running = false;
       personaJob.finishedAt = Date.now();
       personaJob.current = "";
-      store.addEvent("persona.model", `persona.model ${personaJob.mode} cards=${personaJob.cards} llm=${personaJob.llmAdded} stats=${personaJob.statsAdded} cancelled=${personaJob.cancelled}`);
+      // 建模完顺手做一次到期扫描：TTL 过期的事实标记 stale（不删），复核队列才不会是空的摆设
+      try { personaJob.swept = persona().sweep(); } catch { /* 扫描失败不影响建模结果 */ }
+      try { persona().detectConflicts(); } catch { /* ignore */ }
+      store.addEvent("persona.model", `persona.model ${personaJob.mode} cards=${personaJob.cards} llm=${personaJob.llmAdded} unverified=${personaJob.unverified} stats=${personaJob.statsAdded} stale=${personaJob.swept?.expired || 0} cancelled=${personaJob.cancelled}`);
       broadcast();
     }
     return {
       mode, runId: personaJob.runId, people: personaJob.total, done: personaJob.done,
       statsAdded: personaJob.statsAdded, llmAdded: personaJob.llmAdded, cards: personaJob.cards,
-      skippedCache: personaJob.skippedCache, cancelled: personaJob.cancelled,
-      failed: personaJob.failed.slice(0, 5), byField,
+      unverified: personaJob.unverified, notQuote: personaJob.notQuote,
+      skippedCache: personaJob.skippedCache, skippedNames: personaJob.skippedNames.slice(0, 8),
+      cancelled: personaJob.cancelled, swept: personaJob.swept || null,
+      failed: personaJob.failed.slice(0, 5), failedCount: personaJob.failed.length, byField,
     };
   },
   personaDatasetInfo: async () => {
@@ -3135,10 +3552,10 @@ const actions = {
   personaObsAdd: async ({ personId, field, value, quote = "" } = {}) => persona().addManual({ personId, field, value, quote }),
   personaObsUpdate: async ({ id, value, field } = {}) => persona().updateObservation({ id, value, field }),
   personaObsRemove: async ({ id } = {}) => persona().removeObservation({ id }),
-  personaModelPlan: async ({ minMessages = 30 } = {}) => {
+  personaModelPlan: async ({ minMessages = 30, model = "" } = {}) => {
     const dir = personaDatasetDir();
     if (!dir) return { dir: "", eligible: 0, cached: 0, calls: 0, people: 0 };
-    const counts = new Map();
+    const byName = new Map();
     for (const chat of fs.readdirSync(dir)) {
       const file = path.join(dir, chat, "dataset.json");
       if (!fs.existsSync(file)) continue;
@@ -3147,22 +3564,28 @@ const actions = {
       for (const m of list) {
         const who = String(m.from || "").trim();
         if (!who || who === "我") continue;
-        counts.set(who, (counts.get(who) || 0) + 1);
+        if (!byName.has(who)) byName.set(who, []);
+        byName.get(who).push(m);
       }
     }
     const people = persona().people();
-    const known = new Set(people.map((p) => p.name));
-    const eligible = [...counts.entries()].filter(([n, c]) => known.has(n) && c >= minMessages);
+    const known = new Map(people.map((p) => [p.name, p]));
+    const eligible = [...byName.entries()].filter(([n, msgs]) => known.has(n) && msgs.length >= minMessages);
     let cached = 0;
-    for (const [name] of eligible) {
-      const p = people.find((x) => x.name === name);
-      if (p && persona().analysisCache({ personId: p.id })) cached += 1;
+    for (const [name, msgs] of eligible) {
+      const p = known.get(name);
+      // 必须和 personaModel 用同一个 hash 判断：只看「有没有缓存」会把样本已变的人算成「跳过」，
+      // 于是「预计 0 次调用」直接被挡住，新聊天记录永远跑不进来。
+      const f = computeFeatures(msgs, name);
+      if (p && f && persona().analysisCache({ personId: p.id }) === analysisCacheHash(name, f, model)) cached += 1;
     }
     return { dir, people: people.length, eligible: eligible.length, cached, calls: Math.max(0, eligible.length - cached) };
   },
   personaModelStatus: async () => ({
     ...personaJob,
+    stageAge: personaJob.stageAt ? Date.now() - personaJob.stageAt : 0,
     failed: personaJob.failed.slice(0, 5),
+    failedCount: personaJob.failed.length,
     rephrased: undefined,
   }),
   personaModelCancel: async () => {
@@ -3210,8 +3633,9 @@ const actions = {
   },
 
   /**
-   * 模型整理知识库：逐页调用 Ark，只产出「摘要 + 要点」并写回 draft。
-   * 原文摘录 / 相关 / 用户自己写的小节不动；reviewed 页面默认跳过。
+   * 模型整理知识库：逐页调用 Ark，只产出「摘要 + 要点」。
+   * 结果**不落盘**，而是变成一条 `summary` 待审建议（人看过 diff 才写）；
+   * 原文摘录 / 相关 / 用户自己写的小节不动；会丢人工结论的页面直接跳过。
    * 没有 key 时明确报错，让 UI 退回「整理结构」。
    */
   wikiCurateLLM: async ({ ids, limit = 8, force = false } = {}) => {
@@ -3251,21 +3675,34 @@ const actions = {
         if (!parsed.ok) { errors.push(`${page.title}：模型输出无法解析`); continue; }
         const nextContent = spliceCurated(page.content, parsed);
         if (nextContent === page.content && (parsed.summary || "") === (page.summary || "")) { skipped += 1; continue; }
-        await pluginHost.invoke("ai.cockpit.notes", "wiki.savePage", {
-          id: page.id,
+        // 模型整理也要过人工结论这一关：会动到人写结论的页面直接跳过，不落盘
+        const guard = await pluginHost.invoke("ai.cockpit.notes", "wiki.claimCheck", { pageId: page.id, content: nextContent });
+        const lost = (guard?.conflict?.length || 0) + (guard?.orphan?.length || 0);
+        if (lost > 0) {
+          errors.push(`${page.title}：会动到 ${lost} 条人工结论，已跳过（先用「整理结构」看 diff）`);
+          continue;
+        }
+        const queued = await pluginHost.invoke("ai.cockpit.notes", "wiki.suggestSummary", {
+          pageId: page.id,
           content: nextContent,
-          summary: parsed.summary || page.summary || "",
-          status: "draft",
+          confidence: parsed.bullets.length >= 3 ? "medium" : "low",
+          evidence: [
+            { kind: "rule", id: "curate.llm", quote: `模型重写摘要与 ${parsed.bullets.length} 条要点（逐行 diff 核对）` },
+            ...(parsed.summary ? [{ kind: "page", id: page.id, quote: `旧摘要：${String(page.summary || "（无）").slice(0, 200)}` }] : []),
+          ],
         });
-        cache[page.id] = { hash: contentHash(nextContent), at: Date.now() };
-        updated += 1;
+        // 缓存按「整理前的页面内容」记：页面没变就不再花 token，变了才重新提
+        cache[page.id] = { hash: contentHash(page.content), at: Date.now() };
+        if (queued?.queued) updated += 1;
+        else skipped += 1;
       } catch (err) {
         errors.push(`${summary.title || summary.id}：${String(err?.message || err)}`);
       }
     }
     try { fs.writeFileSync(cacheFile, JSON.stringify(cache, null, 0)); } catch { /* 缓存写失败不影响结果 */ }
-    store.addEvent("wiki.curate.llm", `wiki.curate.llm updated=${updated} calls=${calls} errors=${errors.length}`);
-    return { candidates: drafts.length, picked: picked.length, updated, skipped, calls, tokens, errors };
+    store.addEvent("wiki.curate.llm", `wiki.curate.llm queued=${updated} calls=${calls} errors=${errors.length}`);
+    // 字段名保持向后兼容：updated = 进审核队列的建议数（不再直接写页面）
+    return { candidates: drafts.length, picked: picked.length, updated, queued: updated, skipped, calls, tokens, errors };
   },
 
   knowledgeReparse: async ({ id, engine } = {}) => {
@@ -3338,6 +3775,7 @@ const actions = {
     if (typeof raw.dshEnv === "string") raw.dshEnv = encSecret(raw.dshEnv);
     const next = sanitizeSettings(raw);
     store.state.settings = { ...(store.state.settings || DEFAULT_SETTINGS), ...next };
+    if ("uiScale" in next) applyUiScale(next.uiScale);
     store.addEvent("settings.changed", `settings.changed ${Object.keys(next).join(",") || "noop"}`);
     if ("defaultAgentId" in next) {
       for (const thread of store.state.threads) if (!thread.todoId && !thread.agentId) thread.agentId = next.defaultAgentId || null;
@@ -3425,6 +3863,40 @@ const actions = {
     store.addEvent("scene.saved", `scene.saved ${project.name} worktree=${parsed.config.worktree} runtime=${parsed.config.runtime}`);
     broadcast();
     return scene;
+  },
+  coordinationSceneSave: ({ id, projectId, name, template, config } = {}) => {
+    const pid = projectId === undefined ? store.state.activeProjectId : projectId;
+    if (pid && !store.state.projects.find((p) => p.id === pid)) throw new Error("项目不存在");
+    let scene = id ? coordinationSceneOf(id) : null;
+    if (id && !scene) throw new Error("场景不存在");
+    if (!scene) {
+      scene = {
+        id: store.nextId("cs"), projectId: pid || null,
+        name: "研发小队", template: "office",
+        config: { cast: [], prefs: { ...COORDINATION_PREFS } },
+        createdAt: Date.now(), updatedAt: Date.now(),
+      };
+      if (!store.state.coordinationScenes) store.state.coordinationScenes = [];
+      store.state.coordinationScenes.push(scene);
+    }
+    scene.name = String(name ?? scene.name ?? "场景").trim().slice(0, 80) || "场景";
+    const nextTemplate = TEMPLATE_ALIASES[template] || template;
+    scene.template = COORDINATION_TEMPLATES.has(nextTemplate) ? nextTemplate : (TEMPLATE_ALIASES[scene.template] || scene.template || "office");
+    const raw = config && typeof config === "object" ? config : {};
+    scene.config = {
+      cast: raw.cast !== undefined ? normalizeCoordinationCast(raw.cast) : (scene.config?.cast || []),
+      prefs: raw.prefs !== undefined ? normalizeCoordinationPrefs(raw.prefs) : normalizeCoordinationPrefs(scene.config?.prefs || {}),
+    };
+    scene.updatedAt = Date.now();
+    store.addEvent("scene.coordination_saved", `scene.coordination_saved ${scene.name} ${scene.template}`);
+    return scene;
+  },
+  coordinationSceneRemove: ({ id } = {}) => {
+    const index = (store.state.coordinationScenes || []).findIndex((s) => s.id === id);
+    if (index < 0) throw new Error("场景不存在");
+    const [scene] = store.state.coordinationScenes.splice(index, 1);
+    store.addEvent("scene.coordination_removed", `scene.coordination_removed ${scene.name}`);
+    return true;
   },
   sceneSuggestion: ({ projectId } = {}) => {
     const project = store.state.projects.find((p) => p.id === projectId);
@@ -5266,9 +5738,26 @@ function openQuickCapture() {
   captureWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 }
 
+/** 默认窗口尺寸跟着屏幕走：小屏不超出、大屏用得满（否则 4K 上开了个 1500 的小窗口） */
+function defaultWindowBounds(display = screen.getPrimaryDisplay()) {
+  const wa = display.workArea;
+  const width = Math.round(Math.min(Math.max(1500, wa.width * 0.9), wa.width - 24));
+  const height = Math.round(Math.min(Math.max(980, wa.height * 0.9), wa.height - 24));
+  const w = Math.max(960, width);
+  const h = Math.max(640, height);
+  return {
+    width: w, height: h,
+    x: Math.round(wa.x + (wa.width - w) / 2),
+    y: Math.round(wa.y + (wa.height - h) / 2),
+  };
+}
+
 async function createWindow() {
+  const bounds = defaultWindowBounds();
   win = new BrowserWindow({
-    width: 1500, height: 980, minWidth: 1180, minHeight: 760,
+    ...bounds,
+    // minWidth 必须跟着屏幕收，不然 1280 宽的屏上窗口本身就被挤到屏幕外
+    minWidth: Math.min(1180, bounds.width), minHeight: Math.min(760, bounds.height),
     backgroundColor: "#f2f5f7", title: "Cockpit Harness",
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, webviewTag: true },
   });
@@ -5290,6 +5779,17 @@ async function createWindow() {
       else if (key === "t") { event.preventDefault(); win?.webContents.send("harness:new-terminal"); }
     });
   });
+  // 整窗缩放：自动模式按「窗口所在屏幕」算，手动模式用设置值（⌘+ / ⌘- / ⌘0 也能调）
+  win.webContents.on("did-finish-load", () => { refreshAutoUiScale(); });
+  // 拖到另一块屏 / 分辨率或缩放变了（合上外接屏、切「更多空间」）要重算
+  let moveTimer = null;
+  win.on("moved", () => {
+    clearTimeout(moveTimer);
+    moveTimer = setTimeout(() => refreshAutoUiScale(), 250);
+  });
+  screen.on("display-metrics-changed", () => refreshAutoUiScale());
+  screen.on("display-added", () => refreshAutoUiScale());
+  screen.on("display-removed", () => refreshAutoUiScale());
   if (devUrl) await win.loadURL(devUrl);
   else await win.loadFile(path.join(__dirname, "../dist/index.html"));
 }
@@ -5310,8 +5810,28 @@ app.whenReady().then(async () => {
   installMenu();
   // 多实例 / E2E 隔离：显式指定 userData 目录，避免与正在使用的窗口抢同一个 harness.db
   if (!isolatedDataDir) migrateUserData("YieldMind Harness"); // 产品名改为 Cockpit Harness：老数据目录一次性搬过来
-  store = await openDb(app.getPath("userData"));
+  store = await openDb(app.getPath("userData"), {
+    // L1 索引：消息 / 事件落库时同步进 mem.db 的 bigram 索引
+    onTranscript: (row) => { memory().transcriptPut(row); },
+  });
   seed();
+  // 启动时扫一次到期事实（只标 stale，不删）：否则复核队列要等进「人物」页才出现。
+  // 注入本来就按 expires_at 排除了过期项，这次扫描只是让人一打开就能看到待复核。
+  try { persona().sweep(); } catch { /* 人物库不可用不影响启动 */ }
+  // 索引与 harness.db 对不上（首次 / 删过会话 / 事件滚动淘汰过）就补差量
+  try {
+    const res = ensureTranscriptIndex();
+    if (res.filled || res.pruned) store.addEvent("memory.index", `memory.index L1 索引同步 +${res.filled} / -${res.pruned}`);
+  } catch (err) {
+    console.error("[memory] transcript index failed:", String(err?.message || err));
+  }
+  // 归因回填：旧版本按错字段取文本，cited 全空；能补的补一遍
+  try {
+    const back = backfillCitations();
+    if (back.touched) store.addEvent("memory.index", `memory.index 归因回填 ${back.touched} 轮，命中 ${back.cited} 条`);
+  } catch (err) {
+    console.error("[memory] citation backfill failed:", String(err?.message || err));
+  }
   startMissionMcpServer();
   startWikiMcpServer();
   await createWindow();

@@ -118,6 +118,25 @@ if (fs.existsSync(dsh)) {
 }
 console.log(`[install] 已安装 v${version} · dsh ${dshVersion}`);
 
+// 构建产物（release/mac-arm64/*.app）会同时出现在 Spotlight / Launchpad：
+// 装完后删掉 staging app，只留 DMG（可分发）和 /Applications（已安装），避免看起来装了两份。
+try {
+  const releaseDir = path.join(ROOT, "release");
+  for (const entry of fs.readdirSync(releaseDir)) {
+    if (!entry.startsWith("mac")) continue;
+    const full = path.join(releaseDir, entry);
+    if (fs.statSync(full).isDirectory()) {
+      fs.rmSync(full, { recursive: true, force: true });
+      console.log(`[install] 清理构建 staging：release/${entry}`);
+    }
+  }
+} catch { /* 清理失败不影响安装 */ }
+
+// 构建产物目录不要被 Spotlight 索引（DMG 仍保留）
+try {
+  fs.writeFileSync(path.join(ROOT, "release", ".metadata_never_index"), "");
+} catch { /* 目录不可写就跳过 */ }
+
 if (has("--open")) {
   console.log("[install] 启动…");
   spawnSync("open", ["-a", DEST], { stdio: "inherit" });

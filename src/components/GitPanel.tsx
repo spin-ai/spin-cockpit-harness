@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { State } from "../types";
-
-type Act = (type: string, payload?: unknown) => Promise<any>;
-
-const STATUS_LABEL: Record<string, string> = { M: "改", A: "增", D: "删", R: "移", C: "复", U: "冲", "?": "新" };
+import { STATUS_LABEL, statusTone } from "../ui";
 
 /**
  * 右侧栏的 Git 迷你面板（和资源管理器 / 会话历史并列）。
@@ -67,7 +64,7 @@ export function GitPanel({ state, notify }: { state: State; notify: (m: string) 
 
   const Row = ({ file }: { file: GitFile }) => {
     const code = file.untracked ? "?" : file.staged ? file.index : file.worktree || file.index;
-    const tone = code === "D" ? "red" : code === "?" || code === "A" ? "green" : code === "U" ? "amber" : "brand";
+    const tone = statusTone(code);
     return (
       <div className="git-mini-file" title={file.path}>
         <span className={`git-badge ${tone}`}>{STATUS_LABEL[code] || code || "·"}</span>

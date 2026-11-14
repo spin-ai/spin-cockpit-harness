@@ -533,8 +533,22 @@ const RANGES: { id: string; label: string; ms: number }[] = [
   { id: "today", label: "24h", ms: 24 * 3600e3 },
   { id: "7d", label: "7 天", ms: 7 * 24 * 3600e3 },
   { id: "30d", label: "30 天", ms: 30 * 24 * 3600e3 },
+  // 自然季度：从 1/4/7/10 月 1 日 00:00 算，不是「过去 90 天」（ms 在 Stats 里单独处理）
+  { id: "quarter", label: "本季度", ms: 0 },
   { id: "all", label: "全部", ms: 0 },
 ];
+
+/** 本季度起点（本地时间） */
+function startOfQuarter(now = Date.now()) {
+  const d = new Date(now);
+  return new Date(d.getFullYear(), Math.floor(d.getMonth() / 3) * 3, 1).getTime();
+}
+
+/** 季度标签，如 2026 Q4 */
+function quarterLabel(now = Date.now()) {
+  const d = new Date(now);
+  return `${d.getFullYear()} Q${Math.floor(d.getMonth() / 3) + 1}`;
+}
 
 export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string) => void }) {
   const [range, setRange] = useState("7d");
@@ -542,8 +556,10 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
   const [errFilter, setErrFilter] = useState<string | null>(null);
   const [groupBy, setGroupBy] = useState<"agent" | "project" | "host" | "runtime">("agent");
 
-  const rangeMs = RANGES.find((r) => r.id === range)?.ms ?? 0;
-  const cutoff = rangeMs ? Date.now() - rangeMs : 0;
+  const isQuarter = range === "quarter";
+  const rangeMs = isQuarter ? 0 : (RANGES.find((r) => r.id === range)?.ms ?? 0);
+  const quarterStart = isQuarter ? startOfQuarter() : 0;
+  const cutoff = isQuarter ? quarterStart : rangeMs ? Date.now() - rangeMs : 0;
   const runs = state.runs.filter((r) => {
     const ts = r.createdAt || r.startedAt || 0;
     if (ts < cutoff) return false;
@@ -566,11 +582,17 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
   const errorCounts = { auth: 0, rate_limit: 0, timeout: 0, other: 0 } as Record<string, number>;
   for (const r of runs.filter((x) => x.status === "failed")) errorCounts[r.errorClass || "other"] += 1;
 
-  // 趋势：按天分桶（全部时最多 14 天，避免柱子细到看不见）
-  const days = range === "today" ? 12 : range === "7d" ? 7 : range === "30d" ? 30 : 14;
+  // 趋势：按天分桶（全部时最多 14 天，避免柱子细到看不见）；季度按周分桶，否则 90 根柱子糊成一片。
+  // 季度只画「已经过完的周」，月初打开不会出现一整排空柱子。
+  const quarterWeeks = isQuarter
+    ? Math.max(1, Math.min(13, Math.ceil(Math.max(1, Date.now() - quarterStart) / (7 * 24 * 3600e3))))
+    : 0;
+  const days = range === "today" ? 12 : range === "7d" ? 7 : range === "30d" ? 30 : isQuarter ? quarterWeeks : 14;
+  const spanMs = rangeMs || days * 24 * 3600e3;
+  const step = isQuarter ? 7 * 24 * 3600e3 : spanMs / days;
+  const windowStart = isQuarter ? quarterStart : Date.now() - spanMs;
   const buckets = Array.from({ length: days }, (_, i) => {
-    const step = (rangeMs || days * 24 * 3600e3) / days;
-    const start = (rangeMs ? Date.now() - rangeMs : Date.now() - days * 24 * 3600e3) + i * step;
+    const start = windowStart + i * step;
     const mine = runs.filter((r) => {
       const ts = r.createdAt || r.startedAt || 0;
       return ts >= start && ts < start + step;
@@ -647,7 +669,7 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
     <div className="page stats-page">
       <PageHeader
         title="统计"
-        subtitle={`${scope === "all" ? "全部项目" : state.projects.find((p) => p.id === scope)?.name || "项目"} · ${runs.length} 次运行 / ${completed} 成功 / ${failed} 失败`}
+        subtitle={`${scope === "all" ? "全部项目" : state.projects.find((p) => p.id === scope)?.name || "项目"}${isQuarter ? ` · ${quarterLabel()}` : ""} · ${runs.length} 次运行 / ${completed} 成功 / ${failed} 失败`}
         actions={<div className="row gap6 stats-actions">
           <select className="settings-control stats-scope" value={scope} onChange={(e) => setScope(e.target.value)} title="统计范围">
             <option value="all">全部项目</option>
@@ -695,14 +717,14 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
       <div className="stats-grid">
         <section className="panel">
           <div className="panel-head">
-            每日运行
+            {isQuarter ? "每周运行" : "每日运行"}
             <div className="trend-legend">
               <span><i className="ok" />成功 {runs.filter((r) => r.status === "completed").length}</span>
               <span><i className="bad" />失败 {runs.filter((r) => r.status === "failed").length}</span>
             </div>
           </div>
           {done.length === 0 ? <div className="trend-empty">所选范围内还没有完成或失败的运行<div className="tiny faint">排队 / 运行中的任务会在结束后进入趋势图。</div></div> : (
-          <div className="trend-chart" role="img" aria-label={`每日运行趋势：成功 ${runs.filter((r) => r.status === "completed").length}，失败 ${runs.filter((r) => r.status === "failed").length}`}>
+          <div className="trend-chart" role="img" aria-label={`${isQuarter ? "每周" : "每日"}运行趋势：成功 ${runs.filter((r) => r.status === "completed").length}，失败 ${runs.filter((r) => r.status === "failed").length}`}>
             <div className="trend-yaxis">
               {yTicks.map((t) => <span key={t}>{t}</span>)}
             </div>

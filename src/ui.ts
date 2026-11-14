@@ -9,7 +9,6 @@ export const STATUS: Record<TodoStatus, { label: string; cls: string }> = {
   done: { label: "完成", cls: "done" },
   cancelled: { label: "已取消", cls: "cancelled" },
 };
-export const COLUMNS: TodoStatus[] = ["todo", "queued", "in_progress", "waiting_input", "in_review", "done"];
 
 export function timeAgo(ts: number, now = Date.now()) {
   const s = Math.max(1, Math.round((now - ts) / 1000));
@@ -23,7 +22,6 @@ export function duration(run: Run | null | undefined, now = Date.now()) {
   const s = Math.max(0, Math.round(((run.endedAt ?? now) - run.startedAt) / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
-export function money(n: number) { return `$${Number(n || 0).toFixed(2)}`; }
 /** null = 未上报，必须与 0 区分开 */
 export function tokens(n: number | null | undefined) {
   if (n == null) return "未上报";
@@ -47,8 +45,26 @@ export function pct(part: number, total: number) {
   if (!total) return "—";
   return `${Math.round((part / total) * 100)}%`;
 }
+/** 相对时间（列表第二行用）：比 timeAgo 的 12s/3h 更适合展示给用户 */
+export function relTime(at?: number) {
+  if (!at) return "";
+  const min = Math.round((Date.now() - at) / 60000);
+  if (min < 1) return "刚刚";
+  if (min < 60) return `${min} 分钟前`;
+  const hour = Math.round(min / 60);
+  if (hour < 24) return `${hour} 小时前`;
+  const day = Math.round(hour / 24);
+  if (day < 30) return `${day} 天前`;
+  return new Date(at).toLocaleDateString([], { month: "numeric", day: "numeric" });
+}
+
+/** Git 状态字母 → 中文（右侧迷你面板与 Git 页共用） */
+export const STATUS_LABEL: Record<string, string> = { M: "改", A: "增", D: "删", R: "移", C: "复", U: "冲", "?": "新" };
+export function statusTone(code: string) {
+  return code === "D" ? "red" : code === "?" || code === "A" ? "green" : code === "U" ? "amber" : "brand";
+}
+
 export const ERROR_CLASS: Record<string, string> = { auth: "认证", rate_limit: "限流", timeout: "超时", other: "其他" };
-export const FINISHED = ["completed", "failed", "cancelled"];
 export const RUN_STATUS: Record<string, string> = {
   queued: "排队", running: "进行中", waiting_input: "等待输入",
   waiting_plan: "计划待批", waiting_children: "等待子任务",

@@ -10,13 +10,13 @@
   --shadow-2:0 10px 24px rgba(0,0,0,.16);
   --shadow-float:0 18px 46px rgba(0,0,0,.22),0 2px 8px rgba(0,0,0,.10);
 }
-body{letter-spacing:0;font-size:13px;line-height:1.55}
+body{letter-spacing:0;font-size:13.5px;line-height:1.55}
 
 /* 默认亮色：neutral zinc，不挤占 semantic color */
 :root[data-theme="light"]{
   --app-shell:#f5f5f5;--page-canvas:#fafafa;--surface:#ffffff;--surface-hover:#f5f5f5;--surface-selected:#ededed;
   --sidebar:#fafafa;--sidebar-accent:#f0f0f0;--border:#e5e5e5;--border-strong:#d4d4d4;--input:#e5e5e5;
-  --fg:#0a0a0a;--fg-2:#404040;--muted:#696969;--faint:#a3a3a3;
+  --fg:#0a0a0a;--fg-2:#404040;--muted:#525252;--faint:#6f6f6f;
   --brand:#171717;--brand-soft:#f2f2f2;--brand-line:#dedede;
   --ring:0 0 0 3px color-mix(in srgb,#171717 14%,transparent);
 }
@@ -26,7 +26,7 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
   --app-shell:#0a0a0a;--page-canvas:#0a0a0a;--surface:#171717;--surface-hover:#262626;--surface-selected:#2e2e2e;
   --sidebar:#111111;--sidebar-accent:#1f1f1f;
   --border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.14);--input:rgba(255,255,255,.16);
-  --fg:#f0f0f0;--fg-2:#d4d4d4;--muted:#a3a3a3;--faint:#737373;
+  --fg:#f0f0f0;--fg-2:#d4d4d4;--muted:#a3a3a3;--faint:#8a8a8a;
   --brand:#e5e5e5;--brand-soft:#262626;--brand-line:#3a3a3a;
   --ring:0 0 0 3px rgba(255,255,255,.14);
   --shadow-1:0 1px 2px rgba(0,0,0,.22);
@@ -43,8 +43,7 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
 :root[data-theme="dark"] .status.failed,
 :root[data-theme="dark"] .git-badge.red{color:var(--red)}
 
-/* 主面不依赖重阴影；边框和表面关系负责层级 */
-.wide .panel,.git-grid,.settings-body,.kpis,.grid2{border-color:var(--border);box-shadow:var(--shadow-1)}
+/* 主面不依赖重阴影；边框和表面关系负责层级 */ .wide .panel, .git-grid, .settings-body, .grid2{border-color:var(--border);box-shadow:var(--shadow-1)}
 .page-header-actions .btn.primary,.btn.primary{background:var(--fg);border-color:var(--fg);color:var(--surface)}
 .notes-tab.on{background:var(--surface);box-shadow:inset 0 -1px 0 var(--brand)}
 .notes-file.on{background:var(--brand-soft);color:var(--fg);box-shadow:inset 2px 0 0 var(--brand)}
@@ -52,7 +51,7 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
 /* 更紧凑的窗格 chrome，接近 ORCA 的 pane title */
 .pane-head,.right-tabs{height:40px}
 .right-tabs button{height:32px}
-.pane-head{font-size:11.5px;letter-spacing:.01em}
+.pane-head{font-size:12.5px;letter-spacing:.01em}
 .term-brand{letter-spacing:.01em}
 .thread-bar{padding:10px 12px 8px}
 .git-view-tabs{background:var(--page-canvas)}
@@ -83,8 +82,6 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
 .md-render.editing [contenteditable="false"]{outline:1px solid color-mix(in srgb,var(--border) 70%,transparent)}
 
 /* 点击目录跳转：不再闪蓝光 */
-@keyframes md-flash-out{0%{background:color-mix(in srgb,var(--fg) 8%,transparent)}100%{background:transparent}}
-.md-flash{animation:md-flash-out .8s ease-out;border-radius:6px}
 
 /* 可视化 HTML：用低对比细线标记，不用蓝色虚线 */
 .preview-hint.visual{background:var(--surface-hover);border-color:var(--border);color:var(--fg-2)}
@@ -93,7 +90,7 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
 /* 输入类控件统一 2px ring；composer 不再整块发光 */
 .composer-shell:focus-within{border-color:var(--border-strong);box-shadow:var(--shadow-1)}
 .file-source-editor:focus,.preview-surface-address:focus,.notes-search:focus,.notes-title-input:focus,.git-commit-msg:focus,.git-mini-msg:focus{border-color:var(--border-strong);box-shadow:var(--ring)}
-.settings-control:focus,.explorer-search input:focus,.composer-select:focus,.dispatch-form select:focus{box-shadow:var(--ring)}
+.settings-control:focus, .explorer-search input:focus, .composer-select:focus{box-shadow:var(--ring)}
 
 /* 编辑器的选中/行/搜索高亮降一档 */
 .notes-codemirror .cm-selectionBackground,
@@ -154,8 +151,7 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
 .main.pane-focus-todo .todo-pane .pane-head,.main.pane-focus-chat .chat-pane .pane-head,
 .main.pane-focus-terminal .terminal-pane .terminal-bar,.main.pane-focus-files .files-pane .right-tabs{color:var(--fg)}
 
-/* 数据页：数字节奏与行 hover */
-.kpi b,.fail-row,.git-commit-row,.agent-stat,.host-meta,.trend-yaxis,.git-diff-stat,.commit-time{font-variant-numeric:tabular-nums}
+.fail-row, .git-commit-row, .agent-stat, .host-meta, .trend-yaxis, .git-diff-stat, .commit-time{font-variant-numeric:tabular-nums}
 .fail-row{padding-left:8px;padding-right:8px;border-radius:6px;transition:background-color .12s}
 .fail-row:hover{background:var(--surface-hover)}
 .fail-row .tag{font-variant-numeric:normal}
@@ -166,8 +162,7 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
 .file-tree .tree-row{position:relative}
 .tree-row.on::after{content:"";position:absolute;left:2px;top:6px;bottom:6px;width:2px;border-radius:2px;background:var(--brand)}
 
-/* 收口：主面/浮层只用 token 圆角 */
-.wide .panel,.kpis,.grid2,.git-grid,.settings-body,.notes-main,.notes-disabled-card,.notes-source-card{--_r:var(--radius-card);border-radius:var(--radius-card)}
+/* 收口：主面/浮层只用 token 圆角 */ .wide .panel, .grid2, .git-grid, .settings-body, .notes-main, .notes-disabled-card, .notes-source-card{--_r:var(--radius-card);border-radius:var(--radius-card)}
 .modal,.row-menu-pop,.chat-history-pop,.term-menu,.md-slash{--_r:var(--radius-lg);border-radius:var(--radius-lg)}
 .composer-shell,.tool-group,.msg.user .msg-body,.md-code-block,.md-render{border-radius:var(--radius-card)}
 .empty-state-mark,.notes-empty-mark,.chat-empty-mark,.notes-hub-mark{border-radius:var(--radius-card)}
@@ -177,36 +172,36 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
 /* Chat：长会话的阅读节奏 */
 .chat-scroll{padding:16px 16px 22px;gap:16px;scroll-padding-bottom:20px}
 .msg{gap:10px}
-.msg-avatar{width:24px;height:24px;border-radius:8px;font-size:10.5px}
-.msg-meta{flex-wrap:wrap;row-gap:2px;font-size:11px;min-height:18px}
-.msg-meta b{font-size:11.5px}
+.msg-avatar{width:24px;height:24px;border-radius:8px;font-size:11.5px}
+.msg-meta{flex-wrap:wrap;row-gap:2px;font-size:12px;min-height:18px}
+.msg-meta b{font-size:12.5px}
 .msg-body{line-height:1.68;max-width:100%;overflow-wrap:anywhere}
 .msg.user .msg-body{max-width:86%;line-height:1.65}
 .thread-bar{padding:10px 12px 9px}
-.thread-meta{font-size:10.5px;overflow:hidden}
+.thread-meta{font-size:11.5px;overflow:hidden}
 .thread-meta .muted{white-space:nowrap}
 .chat-empty{padding:28px 14px}
 .tool-group-head{min-height:30px}
-.tool-group-summary{font-size:10.5px}
+.tool-group-summary{font-size:11.5px}
 
 /* Chat Markdown 表格 */
 .md-table-wrap{margin:8px 0;overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--surface)}
-.md-table{width:100%;border-collapse:collapse;font-size:12px;line-height:1.6}
+.md-table{width:100%;border-collapse:collapse;font-size:12.5px;line-height:1.6}
 .md-table th,.md-table td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
-.md-table th{position:sticky;top:0;background:var(--surface-hover);color:var(--fg);font-size:10.5px;letter-spacing:.03em;font-weight:600;white-space:nowrap}
+.md-table th{position:sticky;top:0;background:var(--surface-hover);color:var(--fg);font-size:11.5px;letter-spacing:.03em;font-weight:600;white-space:nowrap}
 .md-table tr:last-child td{border-bottom:0}
 .md-table tbody tr:hover{background:var(--surface-hover)}
 
 /* 统计：图表更像数据产品 */
 .trend-chart{height:210px;padding-top:10px}
 .trend-grid i{border-color:color-mix(in srgb,var(--border) 70%,transparent)}
-.trend-yaxis{font-size:10px;color:var(--faint);font-variant-numeric:tabular-nums}
-.trend-col>span{font-size:9.5px;color:var(--faint)}
+.trend-yaxis{font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
+.trend-col>span{font-size:10.5px;color:var(--faint)}
 .trend-value{font:10px var(--mono);color:var(--fg-2)}
 .trend-stack i{border-radius:3px 3px 0 0}
 .trend-legend{gap:10px}
 .trend-legend i{width:6px;height:6px}
-.kpi b,.stats-scope,.fail-row,.git-commit-row{font-variant-numeric:tabular-nums}
+.stats-scope, .fail-row, .git-commit-row{font-variant-numeric:tabular-nums}
 .md-table{min-width:480px;width:max-content;max-width:none}
 .md-table th{white-space:nowrap}
 

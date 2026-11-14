@@ -1,15 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { createRequire } from "node:module";
-import initSqlJs from "sql.js";
+import { DatabaseSync } from "node:sqlite";
 
-const require = createRequire(import.meta.url);
-let wasm = path.join(path.dirname(require.resolve("sql.js")), "sql-wasm.wasm");
-if (!fs.existsSync(wasm) && wasm.includes("app.asar")) {
-  wasm = wasm.replace("app.asar", "app.asar.unpacked");
-}
-
-const SCHEMA = `
+export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT, path TEXT, desc TEXT, color TEXT, status TEXT, created_at INTEGER, last_opened_at INTEGER, alias TEXT);
 CREATE TABLE IF NOT EXISTS hosts (id TEXT PRIMARY KEY, name TEXT, kind TEXT, addr TEXT, status TEXT, heartbeat INTEGER, version TEXT, port INTEGER, user TEXT, caps TEXT, last_probe INTEGER, latency_ms INTEGER, max_concurrency INTEGER, default_cwd TEXT, probe_error TEXT);
@@ -28,6 +21,7 @@ CREATE TABLE IF NOT EXISTS plugins (id TEXT PRIMARY KEY, version TEXT, path TEXT
 CREATE TABLE IF NOT EXISTS plugin_kv (plugin_id TEXT, key TEXT, value TEXT, updated_at INTEGER, PRIMARY KEY (plugin_id, key));
 CREATE TABLE IF NOT EXISTS todo_links (id TEXT PRIMARY KEY, todo_id TEXT, plugin_id TEXT, kind TEXT, ref TEXT, title TEXT, created_at INTEGER);
 CREATE TABLE IF NOT EXISTS scenes (project_id TEXT PRIMARY KEY, text TEXT, config TEXT, updated_at INTEGER);
+CREATE TABLE IF NOT EXISTS coordination_scenes (id TEXT PRIMARY KEY, name TEXT, project_id TEXT, template TEXT, config TEXT, created_at INTEGER, updated_at INTEGER);
 CREATE TABLE IF NOT EXISTS terminals (id TEXT PRIMARY KEY, project_id TEXT, todo_id TEXT, run_id TEXT, agent_id TEXT, cwd TEXT, kind TEXT, title TEXT, status TEXT, exit_code INTEGER, output_tail TEXT, created_at INTEGER, ended_at INTEGER);
 `;
 
@@ -36,6 +30,7 @@ export const DEFAULT_SETTINGS = {
   defaultView: "workspace",        // workspace | projects | stats | hosts
   theme: "system",                // system | light | paper | vslight | dark | vsdark | midnight | forest | graphite | monokai | onedark | solarized | dracula
   chatFontSize: 13,               // 11–16
+  uiScale: 0,                     // 0 = 自动（跟随屏幕分辨率）；80–150 = 手动固定百分比
   enterToSend: true,
   confirmStop: false,
   defaultAgentId: null,
@@ -53,6 +48,7 @@ export const DEFAULT_SETTINGS = {
   previewHomeUrl: "http://localhost:5173/",
   elementScreenshots: true,
   contextDetail: "standard",      // compact | standard
+  knowledgeCloudIndex: false,     // 云端向量索引（Ark embedding）：默认关，关 = 资料一个字节不出网
   imEnabled: false,
   imTelegramToken: "",
   imTelegramAllow: "",
@@ -69,12 +65,36 @@ export const DEFAULT_SETTINGS = {
 
 const J = (v, d) => { try { return v == null ? d : JSON.parse(v); } catch { return d; } };
 
-export async function openDb(dir) {
+export async function openDb(dir, { onTranscript } = {}) {
+  // 可选的 L1 索引钩子：消息 / 事件写入时同步给记忆层（主进程传，自检不传）
+  // 钩子绝不能让业务写入失败，所以统一包在 try 里
+  const indexTranscript = (row) => { try { onTranscript?.(row); } catch { /* 索引失败不影响写入 */ } };
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, "harness.db");
-  const SQL = await initSqlJs({ locateFile: () => wasm });
-  const db = fs.existsSync(file) ? new SQL.Database(fs.readFileSync(file)) : new SQL.Database();
-  db.run(SCHEMA);
+  // node:sqlite：Electron 内置、零原生依赖，和 knowledge / memory / persona 用同一个引擎
+  const db = new DatabaseSync(file);
+  // WAL + NORMAL：改动先落 -wal，崩溃可恢复；不再「每次 persist 把整库导出成 Buffer 写盘」
+  db.exec("PRAGMA journal_mode=WAL");
+  db.exec("PRAGMA synchronous=NORMAL");
+  db.exec("PRAGMA busy_timeout=3000");
+  db.exec(SCHEMA);
+
+  // 语句缓存：同一批 DELETE / INSERT 每秒可能跑几十次，重复 prepare 是纯开销
+  const stmts = new Map();
+  const stmt = (sql) => {
+    let cached = stmts.get(sql);
+    if (!cached) { cached = db.prepare(sql); stmts.set(sql, cached); }
+    return cached;
+  };
+  // node:sqlite 只接受 null / number / bigint / string / Buffer：undefined 与 boolean 先归一化，
+  // 否则老状态里少一个字段就会整批写入失败（sql.js 是宽松绑定，不能照搬）
+  const bind = (params) => (Array.isArray(params) ? params : []).map((v) => {
+    if (v === undefined) return null;
+    if (typeof v === "boolean") return v ? 1 : 0;
+    return v;
+  });
+  const run = (sql, params = []) => stmt(sql).run(...bind(params));
+  const rows = (sql, params = []) => stmt(sql).all(...bind(params));
   for (const sql of [
     "ALTER TABLE runs ADD COLUMN cwd TEXT",
     "ALTER TABLE runs ADD COLUMN branch TEXT",
@@ -99,7 +119,7 @@ export async function openDb(dir) {
     "ALTER TABLE messages ADD COLUMN context TEXT",
     // 编辑消息后重发：被新版本取代的后续消息打标记（软删除，可追溯）
     "ALTER TABLE messages ADD COLUMN superseded_by TEXT",
-    // 主机：能力矩阵 / 探测时间 / 负载上限 / 默认远端目录（见 docs/ARCH-hosts-stats.md）
+    // 主机：能力矩阵 / 探测时间 / 负载上限 / 默认远端目录（见 docs/arch/ARCH-hosts-stats.md）
     "ALTER TABLE hosts ADD COLUMN caps TEXT",
     "ALTER TABLE hosts ADD COLUMN last_probe INTEGER",
     "ALTER TABLE hosts ADD COLUMN latency_ms INTEGER",
@@ -117,7 +137,7 @@ export async function openDb(dir) {
     "ALTER TABLE runs ADD COLUMN queue_wait_ms INTEGER",
     "ALTER TABLE runs ADD COLUMN duration_ms INTEGER",
     "ALTER TABLE runs ADD COLUMN queue_reason TEXT",
-    // Super Agent / Mission（见 docs/ARCH-super-agent.md）
+    // Super Agent / Mission（见 docs/arch/ARCH-super-agent.md）
     "ALTER TABLE agents ADD COLUMN role TEXT DEFAULT 'worker'",
     "ALTER TABLE agents ADD COLUMN instructions TEXT DEFAULT ''",
     "ALTER TABLE agents ADD COLUMN max_children INTEGER DEFAULT 4",
@@ -130,23 +150,17 @@ export async function openDb(dir) {
     "ALTER TABLE runs ADD COLUMN terminal_id TEXT",
     "ALTER TABLE runs ADD COLUMN runtime TEXT",
     "ALTER TABLE runs ADD COLUMN worktree_cleaned INTEGER",
-  ]) { try { db.run(sql); } catch { /* exists */ } }
+  ]) { try { run(sql); } catch { /* exists */ } }
 
   // 独立收件箱已移除；旧版本数据库里的 inbox 表一并清理，避免遗留死数据。
-  try { db.run("DROP TABLE IF EXISTS inbox"); } catch { /* ignore */ }
+  try { run("DROP TABLE IF EXISTS inbox"); } catch { /* ignore */ }
 
   const state = {
     hosts: [], projects: [], agents: [], todos: [], runs: [], threads: [], messages: [],
     artifacts: [], events: [], context: {}, seq: 0, activeProjectId: null,
     missionPlans: [], delegations: [],
-    plugins: [], pluginKv: [], todoLinks: [], scenes: [], terminals: [],
+    plugins: [], pluginKv: [], todoLinks: [], scenes: [], coordinationScenes: [], terminals: [],
     settings: { ...DEFAULT_SETTINGS },
-  };
-
-  const rows = (sql) => {
-    const res = db.exec(sql);
-    if (!res.length) return [];
-    return res[0].values.map((v) => Object.fromEntries(res[0].columns.map((c, i) => [c, v[i]])));
   };
 
   // 老库没有 probes/caps：一律回落成空值，页面显示「未探测」而不是假的 0
@@ -228,6 +242,11 @@ export async function openDb(dir) {
   state.scenes = rows("SELECT * FROM scenes").map((r) => ({
     projectId: r.project_id, text: r.text || "", config: J(r.config, {}), updatedAt: r.updated_at || 0,
   }));
+  state.coordinationScenes = rows("SELECT * FROM coordination_scenes").map((r) => ({
+    id: r.id, name: r.name || "场景", projectId: r.project_id || null,
+    template: r.template || "office", config: J(r.config, {}),
+    createdAt: r.created_at || Date.now(), updatedAt: r.updated_at || Date.now(),
+  }));
   state.terminals = rows("SELECT * FROM terminals").map((r) => ({
     id: r.id, projectId: r.project_id || null, todoId: r.todo_id || null, runId: r.run_id || null,
     agentId: r.agent_id || null, cwd: r.cwd || "", kind: r.kind || "shell", title: r.title || "",
@@ -275,18 +294,21 @@ export async function openDb(dir) {
   state.messages = state.messages.filter((m) => m.threadId);
 
   let timer = null;
+  let closed = false;
   const writeNow = () => {
-    db.run("BEGIN");
-    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "terminals", "context", "settings", "meta"]) db.run(`DELETE FROM ${t}`);
-    for (const h of state.hosts) db.run(
+    if (closed) return;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "coordination_scenes", "terminals", "context", "settings", "meta"]) run(`DELETE FROM ${t}`);
+    for (const h of state.hosts) run(
       "INSERT INTO hosts (id,name,kind,addr,status,heartbeat,version,port,user,caps,last_probe,latency_ms,max_concurrency,default_cwd,probe_error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [h.id, h.name, h.kind, h.addr, h.status, h.heartbeat || 0, h.version || "—", h.port || 22, h.user || "",
         JSON.stringify(h.caps || []), h.lastProbe ?? null, h.latencyMs ?? null, h.maxConcurrency || 0, h.defaultCwd || "", h.probeError ?? null],
     );
-    for (const p of state.projects) db.run("INSERT INTO projects VALUES (?,?,?,?,?,?,?,?,?)", [p.id, p.name, p.path, p.desc || "", p.color || "slate", p.status || "in_progress", p.createdAt || Date.now(), p.lastOpenedAt || 0, p.alias || ""]);
-    for (const a of state.agents) db.run("INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [a.id, a.name, a.hostId, a.cli, a.cwd, a.max, a.approval, a.color, JSON.stringify(a.skills || []), a.alias || "", a.projectId || "", a.terminalId || "", a.role || "worker", a.instructions || "", a.maxChildren ?? 4]);
-    for (const t of state.todos) db.run("INSERT INTO todos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.key, t.title, t.desc || "", JSON.stringify(t.acceptance || []), t.status, t.agentId || null, t.priority, t.due || "", t.parentId || null, JSON.stringify(t.tags || []), JSON.stringify(t.subtasks || []), JSON.stringify(t.blockedBy || []), t.missingWriteback ? 1 : 0, t.lastRunFailed ? 1 : 0, t.cwd || "", t.createdAt || Date.now(), t.updatedAt || Date.now(), t.confirmed ? 1 : 0, t.projectId || null, t.kind || "task", t.missionState || null]);
-    for (const r of state.runs) db.run(
+    for (const p of state.projects) run("INSERT INTO projects VALUES (?,?,?,?,?,?,?,?,?)", [p.id, p.name, p.path, p.desc || "", p.color || "slate", p.status || "in_progress", p.createdAt || Date.now(), p.lastOpenedAt || 0, p.alias || ""]);
+    for (const a of state.agents) run("INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [a.id, a.name, a.hostId, a.cli, a.cwd, a.max, a.approval, a.color, JSON.stringify(a.skills || []), a.alias || "", a.projectId || "", a.terminalId || "", a.role || "worker", a.instructions || "", a.maxChildren ?? 4]);
+    for (const t of state.todos) run("INSERT INTO todos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.key, t.title, t.desc || "", JSON.stringify(t.acceptance || []), t.status, t.agentId || null, t.priority, t.due || "", t.parentId || null, JSON.stringify(t.tags || []), JSON.stringify(t.subtasks || []), JSON.stringify(t.blockedBy || []), t.missingWriteback ? 1 : 0, t.lastRunFailed ? 1 : 0, t.cwd || "", t.createdAt || Date.now(), t.updatedAt || Date.now(), t.confirmed ? 1 : 0, t.projectId || null, t.kind || "task", t.missionState || null]);
+    for (const r of state.runs) run(
       "INSERT INTO runs (id,todo_id,agent_id,status,trigger,started_at,ended_at,cost,tokens,error,parent_run_id,cwd,branch,host_id,created_at,tokens_in,tokens_out,usage_source,error_class,exit_code,queue_wait_ms,duration_ms,queue_reason,kind,delegation_id,terminal_id,runtime,worktree_cleaned) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [r.id, r.todoId, r.agentId, r.status, r.trigger || "assign", r.startedAt || null, r.endedAt || null, r.cost || 0,
         r.tokens ?? null, r.error || null, r.parentRunId || null, r.cwd || "", r.branch || null, r.hostId || null,
@@ -294,35 +316,58 @@ export async function openDb(dir) {
         r.exitCode ?? null, r.queueWaitMs ?? null, r.durationMs ?? null, r.queueReason || null,
         r.kind || "worker", r.delegationId || null, r.terminalId || null, r.runtime || null, r.worktreeCleaned ? 1 : 0],
     );
-    for (const t of state.threads) db.run("INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.todoId || null, t.title || "", t.projectId || null, t.project || "", t.agentId || null, t.createdAt || Date.now(), t.updatedAt || Date.now(), t.model || null, t.modelName || null, t.effort || null, t.kind || "chat"]);
-    for (const m of state.messages) db.run("INSERT INTO messages VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [m.id, m.todoId || null, m.runId || null, m.role, m.kind || "text", m.content, m.injected ? 1 : 0, m.createdAt, m.threadId || null, m.delivery || null, m.context ? JSON.stringify(m.context) : null, m.supersededBy || null]);
-    for (const a of state.artifacts) db.run("INSERT INTO artifacts VALUES (?,?,?,?,?,?,?,?,?)", [a.id, a.todoId, a.runId, a.kind, a.title, a.origin, a.ref, a.deepLink, a.createdAt || Date.now()]);
-    for (const e of state.events) db.run("INSERT INTO events VALUES (?,?,?,?)", [e.id, e.ts, e.type, e.text]);
-    for (const p of state.missionPlans || []) db.run("INSERT INTO mission_plans VALUES (?,?,?,?,?,?,?)", [p.id, p.missionId, p.revision || 1, p.status || "draft", JSON.stringify(p.plan || {}), p.createdAt || Date.now(), p.approvedAt || null]);
-    for (const d of state.delegations || []) db.run("INSERT INTO delegations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [d.id, d.missionId, d.supervisorRunId, d.childTodoId, d.childRunId || null, d.agentId, d.planStepKey || "", d.title, d.brief || "", JSON.stringify(d.acceptance || []), d.status || "proposed", d.resultSummary || "", JSON.stringify(d.artifacts || []), d.branch || null, d.createdAt || Date.now(), d.updatedAt || Date.now(), d.completedAt || null]);
-    for (const p of state.plugins || []) db.run("INSERT INTO plugins VALUES (?,?,?,?,?,?,?,?,?,?)", [p.id, p.version || "", p.path || "", p.enabled ? 1 : 0, p.builtin ? 1 : 0, JSON.stringify(p.manifest || {}), JSON.stringify(p.permissions || []), p.installedAt || 0, p.lastError || null, p.lastRunAt || null]);
-    for (const kv of state.pluginKv || []) db.run("INSERT INTO plugin_kv VALUES (?,?,?,?)", [kv.pluginId, kv.key, JSON.stringify(kv.value), kv.updatedAt || Date.now()]);
-    for (const l of state.todoLinks || []) db.run("INSERT INTO todo_links VALUES (?,?,?,?,?,?,?)", [l.id, l.todoId, l.pluginId, l.kind, l.ref, l.title || "", l.createdAt || Date.now()]);
-    for (const sc of state.scenes || []) db.run("INSERT INTO scenes VALUES (?,?,?,?)", [sc.projectId, sc.text || "", JSON.stringify(sc.config || {}), sc.updatedAt || Date.now()]);
-    for (const tm of state.terminals || []) db.run("INSERT INTO terminals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [tm.id, tm.projectId || null, tm.todoId || null, tm.runId || null, tm.agentId || null, tm.cwd || "", tm.kind || "shell", tm.title || "", tm.status || "exited", tm.exitCode ?? null, tm.tail || "", tm.createdAt || Date.now(), tm.endedAt ?? null]);
-    db.run("INSERT INTO context VALUES ('current', ?)", [JSON.stringify(state.context)]);
-    db.run("INSERT INTO settings VALUES ('app', ?)", [JSON.stringify(state.settings || {})]);
-    db.run("INSERT INTO meta VALUES ('seq', ?)", [String(state.seq)]);
-    db.run("INSERT INTO meta VALUES ('projectPath', ?)", [state.projectPath || ""]);
-    db.run("INSERT INTO meta VALUES ('projectId', ?)", [state.projectId || ""]);
-    db.run("INSERT INTO meta VALUES ('activeProjectId', ?)", [state.activeProjectId || ""]);
-    db.run("INSERT INTO meta VALUES ('chatScopeMigrated', ?)", [state.chatScopeMigrated ? "1" : "0"]);
-    db.run("INSERT INTO meta VALUES ('cliCapabilities', ?)", [JSON.stringify(state.cliCapabilities || [])]);
-    db.run("COMMIT");
-    fs.writeFileSync(file, Buffer.from(db.export()));
+    for (const t of state.threads) run("INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.todoId || null, t.title || "", t.projectId || null, t.project || "", t.agentId || null, t.createdAt || Date.now(), t.updatedAt || Date.now(), t.model || null, t.modelName || null, t.effort || null, t.kind || "chat"]);
+    for (const m of state.messages) run("INSERT INTO messages VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [m.id, m.todoId || null, m.runId || null, m.role, m.kind || "text", m.content, m.injected ? 1 : 0, m.createdAt, m.threadId || null, m.delivery || null, m.context ? JSON.stringify(m.context) : null, m.supersededBy || null]);
+    for (const a of state.artifacts) run("INSERT INTO artifacts VALUES (?,?,?,?,?,?,?,?,?)", [a.id, a.todoId, a.runId, a.kind, a.title, a.origin, a.ref, a.deepLink, a.createdAt || Date.now()]);
+    for (const e of state.events) run("INSERT INTO events VALUES (?,?,?,?)", [e.id, e.ts, e.type, e.text]);
+    for (const p of state.missionPlans || []) run("INSERT INTO mission_plans VALUES (?,?,?,?,?,?,?)", [p.id, p.missionId, p.revision || 1, p.status || "draft", JSON.stringify(p.plan || {}), p.createdAt || Date.now(), p.approvedAt || null]);
+    for (const d of state.delegations || []) run("INSERT INTO delegations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [d.id, d.missionId, d.supervisorRunId, d.childTodoId, d.childRunId || null, d.agentId, d.planStepKey || "", d.title, d.brief || "", JSON.stringify(d.acceptance || []), d.status || "proposed", d.resultSummary || "", JSON.stringify(d.artifacts || []), d.branch || null, d.createdAt || Date.now(), d.updatedAt || Date.now(), d.completedAt || null]);
+    for (const p of state.plugins || []) run("INSERT INTO plugins VALUES (?,?,?,?,?,?,?,?,?,?)", [p.id, p.version || "", p.path || "", p.enabled ? 1 : 0, p.builtin ? 1 : 0, JSON.stringify(p.manifest || {}), JSON.stringify(p.permissions || []), p.installedAt || 0, p.lastError || null, p.lastRunAt || null]);
+    for (const kv of state.pluginKv || []) run("INSERT INTO plugin_kv VALUES (?,?,?,?)", [kv.pluginId, kv.key, JSON.stringify(kv.value), kv.updatedAt || Date.now()]);
+    for (const l of state.todoLinks || []) run("INSERT INTO todo_links VALUES (?,?,?,?,?,?,?)", [l.id, l.todoId, l.pluginId, l.kind, l.ref, l.title || "", l.createdAt || Date.now()]);
+    for (const sc of state.scenes || []) run("INSERT INTO scenes VALUES (?,?,?,?)", [sc.projectId, sc.text || "", JSON.stringify(sc.config || {}), sc.updatedAt || Date.now()]);
+    for (const cs of state.coordinationScenes || []) run("INSERT INTO coordination_scenes VALUES (?,?,?,?,?,?,?)", [cs.id, cs.name || "场景", cs.projectId || null, cs.template || "office", JSON.stringify(cs.config || {}), cs.createdAt || Date.now(), cs.updatedAt || Date.now()]);
+    for (const tm of state.terminals || []) run("INSERT INTO terminals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [tm.id, tm.projectId || null, tm.todoId || null, tm.runId || null, tm.agentId || null, tm.cwd || "", tm.kind || "shell", tm.title || "", tm.status || "exited", tm.exitCode ?? null, tm.tail || "", tm.createdAt || Date.now(), tm.endedAt ?? null]);
+    run("INSERT INTO context VALUES ('current', ?)", [JSON.stringify(state.context)]);
+    run("INSERT INTO settings VALUES ('app', ?)", [JSON.stringify(state.settings || {})]);
+    run("INSERT INTO meta VALUES ('seq', ?)", [String(state.seq)]);
+    run("INSERT INTO meta VALUES ('projectPath', ?)", [state.projectPath || ""]);
+    run("INSERT INTO meta VALUES ('projectId', ?)", [state.projectId || ""]);
+    run("INSERT INTO meta VALUES ('activeProjectId', ?)", [state.activeProjectId || ""]);
+    run("INSERT INTO meta VALUES ('chatScopeMigrated', ?)", [state.chatScopeMigrated ? "1" : "0"]);
+    run("INSERT INTO meta VALUES ('cliCapabilities', ?)", [JSON.stringify(state.cliCapabilities || [])]);
+    db.exec("COMMIT");
+    } catch (err) {
+      try { db.exec("ROLLBACK"); } catch { /* 事务已结束 */ }
+      console.error("[db] write failed:", String(err?.message || err));
+      throw err;
+    }
   };
-  const persist = () => { clearTimeout(timer); timer = setTimeout(writeNow, 120); };
-  const flush = () => { clearTimeout(timer); writeNow(); };
+  // 落盘失败不能杀主进程：writeNow 内部已 rollback + 打日志，下一次 persist 会再试
+  const persist = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { try { writeNow(); } catch { /* 已记录 */ } }, 120);
+  };
+  /** 退出前把内存状态写完，并把 WAL 合回主文件，避免留下 -wal 给下次启动 */
+  const flush = () => {
+    clearTimeout(timer);
+    writeNow();
+    try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* 只读或被占用时忽略 */ }
+  };
+  const close = () => {
+    if (closed) return;
+    try { flush(); } catch { /* ignore */ }
+    closed = true;
+    try { stmts.clear(); db.close(); } catch { /* ignore */ }
+  };
 
   const nextId = (prefix) => { state.seq += 1; persist(); return `${prefix}${state.seq}`; };
   const addEvent = (type, text) => {
-    state.events.unshift({ id: nextId("e"), ts: Date.now(), type, text });
+    const at = Date.now();
+    const id = nextId("e");
+    state.events.unshift({ id, ts: at, type, text });
     state.events = state.events.slice(0, 300);
+    indexTranscript({ kind: "event", refId: id, at, text: `${type} ${text || ""}` });
     console.log(`[${type}] ${text}`);
   };
   // 消息的宿主是 thread；todoId 由 thread 派生（保留用于按项目过滤 / 旧数据兼容）
@@ -335,14 +380,22 @@ export async function openDb(dir) {
     state.messages.push(msg);
     if (thread) thread.updatedAt = Date.now();
     persist();
+    indexTranscript({ kind: "message", refId: msg.id, at: msg.createdAt, text: content, threadId, runId });
     return msg;
   };
   const updateMessage = (id, patch) => {
     const m = state.messages.find((x) => x.id === id);
-    if (m) { Object.assign(m, patch); persist(); }
+    if (m) {
+      Object.assign(m, patch);
+      persist();
+      // 正文被改写（比如流式拼接）时重写索引，否则搜出来的是旧文本
+      if (patch && patch.content != null) {
+        indexTranscript({ kind: "message", refId: m.id, at: m.createdAt, text: m.content, threadId: m.threadId, runId: m.runId });
+      }
+    }
     return m;
   };
 
   if (migrated) persist();
-  return { db, state, persist, flush, nextId, addEvent, addMessage, updateMessage, file };
+  return { db, state, persist, flush, close, nextId, addEvent, addMessage, updateMessage, file };
 }

@@ -380,7 +380,16 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
                     <span className="mono">{elapsed(t, state, now)}</span>
                   </div>
                   <WorktreeLine todo={t} state={state} act={act} />
-                  <QuickActions todo={t} state={state} act={act} confirmStop={confirmStop} onEdit={() => startEdit(t)} onAsk={() => askInChat(t)} onBroadcast={() => openBroadcast(t)} />
+                  <QuickActions
+                    todo={t}
+                    state={state}
+                    act={act}
+                    confirmStop={confirmStop}
+                    onEdit={() => startEdit(t)}
+                    onAsk={() => askInChat(t)}
+                    onBroadcast={() => openBroadcast(t)}
+                    onDetail={() => { onSelect(t.id); window.dispatchEvent(new CustomEvent("harness:task-detail")); }}
+                  />
                 </div>
               ))}
             </section>
@@ -516,7 +525,7 @@ function WorktreeLine({ todo, state, act }: { todo: Todo; state: State; act: Act
   );
 }
 
-function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk, onBroadcast }: { todo: Todo; state: State; act: Act; confirmStop: boolean; onEdit: () => void; onAsk: () => void; onBroadcast: () => void }) {
+function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk, onBroadcast, onDetail }: { todo: Todo; state: State; act: Act; confirmStop: boolean; onEdit: () => void; onAsk: () => void; onBroadcast: () => void; onDetail: () => void }) {
   const active = activeRun(todo, state.runs);
   const last = lastRun(todo, state.runs);
   if (todo.kind === "mission") {
@@ -538,6 +547,7 @@ function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk, onBroadcas
   };
   return (
     <div className="task-quick" onClick={(e) => e.stopPropagation()}>
+      <button className="btn tiny-btn" onClick={onDetail} title="在终端区域看完整详情：描述 / 验收 / 运行记录 / 产物">详情</button>
       <button className="btn tiny-btn" onClick={onEdit} title="编辑标题 / 描述 / 验收 / 优先级（⌘E）">编辑</button>
       <button className="btn tiny-btn" onClick={onAsk} title="带着预填问题跳到 Chat，先理清再动手">问清楚</button>
       {active && <button className="btn tiny-btn" onClick={() => stop(active.id)}>停止</button>}

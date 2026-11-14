@@ -630,7 +630,7 @@ export const TESTS = [
   {
     id: "SC-01",
     group: "SCENE",
-    title: "场景总览：项目 / 终端 / 配置保存",
+    title: "场景工作台：三 tab / 执行配置保存 / 场景库",
     async fn(ctx) {
       const dir = makeProject(ctx, "scene-project", { "README.md": "# Scene\n" }, false);
       await ctx.action("addProject", { path: dir, name: "E2E Scene" });
@@ -640,41 +640,106 @@ export const TESTS = [
       assert(project, "场景项目未添加");
       await ctx.action("switchProject", { id: project.id });
       await ctx.sleep(350);
-      await gotoRail(ctx, "场景", ".scene-page");
-      assert(await ctx.ev(`document.querySelectorAll(".scene-overview-bar .project-overview-item").length >= 4`), "场景概览不完整");
-      assert(await ctx.ev(`document.querySelectorAll(".scene-page .view-switch button").length === 2`), "场景缺少卡片/列表切换");
-      await ctx.ev(`(()=>{const b=[...document.querySelectorAll(".scene-page .view-switch button")].find((x)=>x.textContent.includes("列表")); if(b) window.__e2e.click(b); return true;})()`);
-      await ctx.sleep(250);
-      assert(await ctx.ev(`document.querySelectorAll(".scene-list-item").length >= 1`), "场景列表视图未渲染");
-      await ctx.ev(`(()=>{const b=[...document.querySelectorAll(".scene-page .view-switch button")].find((x)=>x.textContent.includes("卡片")); if(b) window.__e2e.click(b); return true;})()`);
-      await ctx.sleep(200);
-      assert(await ctx.ev(`document.querySelectorAll(".scene-card").length >= 1`), "场景卡片视图未恢复");
-      const opened = await ctx.ev(`(async()=>{
-        const card=[...document.querySelectorAll(".scene-card")].find((c)=>c.dataset.projectId === ${JSON.stringify(project.id)});
-        if(!card) return false;
-        const b=[...card.querySelectorAll(".btn")].find((x)=>x.textContent.includes("编辑配置"));
-        if(!b) return false;
-        window.__e2e.click(b);
-        return !!(await window.__e2e.until(() => document.querySelector(".scene-modal .scene-editor"), 3000));
-      })()`);
-      assert(opened, "执行配置弹窗未打开");
-      assert(await ctx.ev(`(()=>{const card=[...document.querySelectorAll(".scene-card")].find((c)=>c.dataset.projectId === ${JSON.stringify(project.id)}); return card ? card.querySelectorAll(".scene-card-stats span").length >= 4 : false;})()`), "执行配置状态卡片不完整");
+
+      // 场景页 = 场景库 / 实况 / 执行配置 三个 tab（旧的「项目卡片 + 弹窗」已经合并进这套工作台）
+      await gotoRail(ctx, "场景", ".off-page");
+      const tabs = await ctx.ev(`[...document.querySelectorAll(".off-tabs .off-tab")].map((b) => b.textContent.trim())`);
+      assert(tabs.length === 3, `场景 tab 数量=${tabs.length}：${tabs.join(" | ")}`);
+      for (const label of ["场景库", "实况", "执行配置"]) {
+        assert(tabs.some((t) => t.includes(label)), `缺少 tab「${label}」`);
+      }
+      const clickTab = async (label) => {
+        const ok = await ctx.ev(`(()=>{const b=[...document.querySelectorAll(".off-tabs .off-tab")].find((x)=>x.textContent.includes(${JSON.stringify(label)})); if(!b) return false; window.__e2e.click(b); return true;})()`);
+        assert(ok, `点不到 tab「${label}」`);
+        await ctx.sleep(250);
+      };
+
+      // 场景库：模板/卡片视图
+      await clickTab("场景库");
+      assert(await ctx.ev(`!!document.querySelector(".off-gallery")`), "场景库未渲染");
+      assert(await ctx.ev(`document.querySelectorAll(".off-scene-card, .off-gal-grid > *").length >= 1`), "场景库里没有任何场景卡");
+
+      // 执行配置：每个项目一份，保存后进 state.scenes
+      await clickTab("执行配置");
+      assert(await ctx.ev(`!!document.querySelector(".off-prof-text")`), "执行配置输入框不存在");
       const marker = `E2E scene ${Date.now()}`;
-      const text = `worktree: auto\nruntime: auto\nnotes: ${marker}`;
+      const sceneText = `worktree: auto\nruntime: acp\nnotes: ${marker}`;
       const changed = await ctx.ev(`(()=>{
-        const ta=document.querySelector(".scene-modal .scene-editor");
-        if(!ta) return false;
-        window.__e2e.setValue(ta, ${JSON.stringify(text)});
+        const ta = document.querySelector(".off-prof-text");
+        if (!ta) return false;
+        window.__e2e.setValue(ta, ${JSON.stringify(sceneText)});
         return true;
       })()`);
-      assert(changed, "执行配置输入框不存在");
+      assert(changed, "执行配置写不进去");
       const clicked = await ctx.ev(`(()=>{
-        const b=[...document.querySelectorAll(".scene-modal .btn")].find((x)=>x.textContent.includes("保存"));
-        if(!b) return false; window.__e2e.click(b); return true;
+        const b = [...document.querySelectorAll(".off-prof-foot .btn")].find((x) => x.textContent.includes("保存"));
+        if (!b) return false;
+        window.__e2e.click(b);
+        return true;
       })()`);
       assert(clicked, "执行配置保存按钮不存在");
-      const { value } = await waitForState(ctx, (s) => (s.scenes || []).find((x) => x.projectId === project.id && x.text.includes(marker)), 5000);
-      assert(value, "场景配置没有保存到 state");
+      const { value } = await waitForState(ctx, (s) => (s.scenes || []).find((x) => x.projectId === project.id && String(x.text || "").includes(marker)), 5000);
+      assert(value, "执行配置没有保存到 state");
+
+      // 实况：要么舞台，要么空态（还没有协作场景时必须给下一步）
+      await clickTab("实况");
+      assert(
+        await ctx.ev(`!!document.querySelector(".off-live") || !!document.querySelector(".off-page .empty-state, .off-page .empty")`),
+        "实况既没有舞台也没有空态",
+      );
+    },
+  },
+  {
+    id: "TD-01",
+    group: "TASK",
+    title: "任务详情：终端区切「任务」视图 / 不丢 pty",
+    async fn(ctx) {
+      const dir = makeProject(ctx, "task-detail", { "README.md": "# Task detail\n" }, false);
+      await ctx.action("addProject", { path: dir, name: "E2E Detail" });
+      await ctx.sleep(380);
+      const s0 = await ctx.state();
+      const project = s0.projects.find((p) => p.path === dir);
+      assert(project, "项目未添加");
+      await ctx.action("switchProject", { id: project.id });
+      await ctx.sleep(300);
+      const todo = await ctx.action("createTodo", { title: "详情视图用例 task", desc: "描述行一\n描述行二" });
+      assert(todo?.id, "createTodo 失败");
+      await openWorkspace(ctx);
+      await ctx.sleep(400);
+
+      // 选中任务 → 点行内「详情」→ 终端区切到任务视图
+      const clicked = await ctx.ev(`(()=>{
+        const row=[...document.querySelectorAll(".task-row")].find((r)=>r.textContent.includes("详情视图用例"));
+        if(!row) return "no-row";
+        window.__e2e.click(row);
+        const b=[...document.querySelectorAll(".task-quick .btn")].find((x)=>x.textContent.trim()==="详情");
+        if(!b) return "no-detail-btn:"+[...document.querySelectorAll(".task-quick .btn")].map((x)=>x.textContent.trim()).join("|");
+        window.__e2e.click(b);
+        return "ok";
+      })()`);
+      assert(clicked === "ok", `打开详情失败：${clicked}`);
+      await ctx.sleep(500);
+      const r = await ctx.ev(`(()=>({
+        view: document.querySelector(".term-slot-switch .seg-btn.on")?.textContent,
+        detail: !!document.querySelector(".task-detail"),
+        title: document.querySelector(".task-detail .td-h2")?.textContent || "",
+        desc: document.querySelector(".task-detail .td-text")?.textContent || "",
+        kv: document.querySelectorAll(".task-detail .td-kv dt").length,
+      }))()`);
+      assert(r.detail, "任务详情未渲染");
+      assert(r.view === "任务", `视图未切到任务：${r.view}`);
+      assert(r.title.includes("详情视图用例"), `详情标题不对：${r.title}`);
+      assert(r.desc.includes("描述行二"), "详情没显示描述全文");
+      assert(r.kv >= 4, `环境信息不完整：${r.kv}`);
+
+      // 切回终端：标签还在（pty 不能被卸载）
+      const back = await ctx.ev(`(()=>{
+        const b=[...document.querySelectorAll(".term-slot-switch .seg-btn")].find((x)=>x.textContent.trim()==="终端");
+        if(!b) return false; window.__e2e.click(b); return true;
+      })()`);
+      assert(back, "切不回终端视图");
+      await ctx.sleep(400);
+      assert(await ctx.ev(`!document.querySelector(".task-detail") && document.querySelectorAll(".term-tab").length >= 1`), "切回终端后标签/详情状态不对");
     },
   },
   {

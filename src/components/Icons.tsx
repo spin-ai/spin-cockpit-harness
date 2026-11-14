@@ -160,10 +160,6 @@ export const SplitDownIcon = (p: IconProps) => (
   <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 12h18" /></Svg>
 );
 
-export const PanelExpandIcon = (p: IconProps) => (
-  <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M14 4v16" /><path d="m9 10 2 2-2 2" /></Svg>
-);
-
 export const ChevronUpIcon = (p: IconProps) => (
   <Svg {...p}><path d="m6 15 6-6 6 6" /></Svg>
 );
@@ -210,10 +206,6 @@ export const RuleIcon = (p: IconProps) => (
 
 export const CheckSquareIcon = (p: IconProps) => (
   <Svg {...p}><rect x="3.5" y="3.5" width="17" height="17" rx="3" /><path d="m8 12.5 2.5 2.5L16 9.5" /></Svg>
-);
-
-export const NoteIcon = (p: IconProps) => (
-  <Svg {...p}><path d="M6 3.5h8.5L19 8v12.5H6z" /><path d="M14 3.5V8h5" /><path d="M9 12h7M9 16h5" /></Svg>
 );
 
 export const PencilIcon = (p: IconProps) => (

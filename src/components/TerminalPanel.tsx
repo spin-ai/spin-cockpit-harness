@@ -4,7 +4,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import type { ElementContext, State, Todo } from "../types";
-import { FileVisual, extOf } from "./FileVisual";
+import { FileVisual } from "./FileVisual";
+import { TaskDetail } from "./TaskDetail";
 import { PreviewSurface } from "./PreviewSurface";
 import { takeTerminalAdopt, takeTerminalRequests } from "../terminal-events";
 import { Splitter } from "./Splitter";
@@ -192,7 +193,7 @@ function cleanTitle(raw: string) {
   return String(raw || "").replace(/[\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
-export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, previewRoot, onCollapse, terminalFontSize = 12, terminalScrollback = 5000, previewHomeUrl }: {
+export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, previewRoot, onCollapse, terminalFontSize = 12, terminalScrollback = 5000, previewHomeUrl, onOpenThread, act }: {
   state: State; todo: Todo | null; onOpenProject: () => void;
   onPickedContext: (ctx: ElementContext) => void;
   previewRoot?: string;
@@ -200,6 +201,8 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
   terminalFontSize?: number;
   terminalScrollback?: number;
   previewHomeUrl?: string;
+  onOpenThread?: (threadId: string) => void;
+  act?: (type: string, payload?: unknown) => Promise<any>;
 }) {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [active, setActive] = useState<string | null>(null);
@@ -209,6 +212,10 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
   const [searchPaneId, setSearchPaneId] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [zoom, setZoom] = useState(readZoom);
+  // 终端槽位两个视图：终端（pty 标签）/ 任务（选中任务的详情）。pty 一直挂着，切视图不丢会话。
+  const [slotView, setSlotView] = useState<"term" | "task">(() => {
+    try { return localStorage.getItem("cmh.term.slot") === "task" ? "task" : "term"; } catch { return "term"; }
+  });
   const [focusToken, setFocusToken] = useState(0);
   const termToPane = useRef<Record<string, string>>({});
   const seq = useRef(1);
@@ -221,6 +228,13 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
   const activeUrl = activePane ? urlByPane[activePane.id] : undefined;
 
   useEffect(() => { try { localStorage.setItem(ZOOM_KEY, String(zoom)); } catch { /* ignore */ } }, [zoom]);
+  useEffect(() => { try { localStorage.setItem("cmh.term.slot", slotView); } catch { /* ignore */ } }, [slotView]);
+  // 从 TODO 的「详情」动作切过来
+  useEffect(() => {
+    const on = () => setSlotView("task");
+    window.addEventListener("harness:task-detail", on);
+    return () => window.removeEventListener("harness:task-detail", on);
+  }, []);
 
   // 终端里打印出 dev server 地址 → 记住并给出「打开预览」入口
   useEffect(() => window.harness.onTerminalUrl(({ id, url }) => {
@@ -659,7 +673,11 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
     <section className="terminal-pane" tabIndex={0} aria-label="终端">
       <div className="terminal-bar">
         <div className="row gap6" style={{ minWidth: 0 }}>
-          <span className="term-brand">Terminal</span>
+          <span className="term-brand" title="终端区：pty 会话与任务详情共用这块区域">Terminal</span>
+          <div className="seg term-slot-switch" role="group" aria-label="终端区域视图">
+            <button className={`seg-btn ${slotView === "term" ? "on" : ""}`} onClick={() => setSlotView("term")}>终端</button>
+            <button className={`seg-btn ${slotView === "task" ? "on" : ""}`} onClick={() => setSlotView("task")} title={todo ? `看 ${todo.key} 的详情` : "看选中任务的详情"}>任务</button>
+          </div>
           <button className="link" onClick={onOpenProject}>打开项目</button>
           {activeTab?.kind === "terminal" && activeTab.root && paneCount(activeTab.root) > 1 && (
             <span className="term-pane-count">{paneCount(activeTab.root)} 窗格</span>
@@ -709,6 +727,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
           )}
         </div>
       </div>
+      <div className="term-slot-body" style={{ display: slotView === "term" ? "contents" : "none" }}>
       <div className="term-tabs" ref={tabsRef}>
         {tabs.map((t) => (
           <div
@@ -847,6 +866,15 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
           </div>
         )}
       </div>
+      </div>
+      {slotView === "task" && (
+        <TaskDetail
+          state={state}
+          todo={todo}
+          act={act ?? (async () => null)}
+          onOpenThread={(id) => onOpenThread?.(id)}
+        />
+      )}
     </section>
   );
 }

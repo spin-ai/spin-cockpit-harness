@@ -28,7 +28,7 @@ export function Rail({ view, onChange, notesEnabled = false, badges = {} }: { vi
     { id: "git", label: "Git" },
     ...(notesEnabled ? [{ id: "notes" as View, label: "知识库" }] : []),
     { id: "memory" as View, label: "记忆" },
-    { id: "persona" as View, label: "人像" },
+    { id: "persona" as View, label: "人物" },
   ];
   return (
     <nav className="rail">

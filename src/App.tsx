@@ -17,7 +17,7 @@ import { Guide } from "./components/Guide";
 import { Notes } from "./components/Notes";
 import { Memory } from "./components/Memory";
 import { Persona } from "./components/Persona";
-import { ScenePage } from "./components/ScenePage";
+import { SceneWorkspace } from "./components/SceneWorkspace";
 import { requestTerminalAdopt, requestTerminalAt } from "./terminal-events";
 import { THEMES, isDarkTheme, resolveTheme } from "./themes";
 
@@ -31,6 +31,9 @@ export default function App() {
   const [threadId, setThreadId] = useState<string | null>(null);
   const [todoAll, setTodoAll] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // 错误不跟 toast 共用槽位：toast 3 秒就消失，报错一闪而过根本来不及看。
+  // 错误单独堆在右下角，永不自动消失，可复制全文，直到手动关掉。
+  const [errors, setErrors] = useState<{ id: number; action: string; text: string; at: number }[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingContext, setPendingContext] = useState<ElementContext | null>(null);
   const [notesOpenReq, setNotesOpenReq] = useState<{ path: string; n: number } | null>(null);
@@ -40,6 +43,13 @@ export default function App() {
   const [chatW, setChatW] = useStoredSize("cmh.layout.chatW", 300, 220, 700);
   const [filesW, setFilesW] = useStoredSize("cmh.layout.filesW", 280, 180, 640);
   const [focusedPane, setFocusedPane] = useState<PaneId | null>(null);
+  // 窗口变窄（或整窗放大）时，固定宽度的侧栏要跟着收，否则工作区会横向溢出
+  const [viewportW, setViewportW] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setViewportW(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   const [collapsed, setCollapsed] = useState<Record<PaneId, boolean>>(() => {
     try {
       const raw = JSON.parse(localStorage.getItem("cmh.layout.collapsed") || "{}");
@@ -151,15 +161,31 @@ export default function App() {
     (notify as any)._t = window.setTimeout(() => setToast(null), 3000);
   }, []);
 
+  /** 去掉 Electron IPC 的包装前缀，只留人话；完整原文仍在卡片里可复制 */
+  const cleanError = (raw: unknown) => String((raw as Error)?.message || raw || "未知错误")
+    .replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/i, "")
+    .replace(/^Error:\s*/i, "")
+    .trim();
+
+  const notifyError = useCallback((action: string, raw: unknown) => {
+    const text = cleanError(raw);
+    setErrors((prev) => {
+      // 同一个动作 + 同一句话 10 秒内不重复堆（轮询失败会每 1.2s 报一次）
+      const near = prev.find((e) => e.action === action && e.text === text && Date.now() - e.at < 10000);
+      if (near) return prev.map((e) => (e.id === near.id ? { ...e, at: Date.now() } : e));
+      return [{ id: Date.now() + Math.random(), action, text, at: Date.now() }, ...prev].slice(0, 5);
+    });
+  }, []);
+
   const act = useCallback(async (type: string, payload?: unknown) => {
     try {
       const r = await window.harness.action(type, payload);
       return r.result;
     } catch (e) {
-      notify(String((e as Error)?.message || e));
+      notifyError(type, e);
       return null;
     }
-  }, [notify]);
+  }, [notifyError]);
 
   useEffect(() => {
     const onDraft = (detail: { text?: string }) => {
@@ -262,12 +288,17 @@ export default function App() {
 
   useEffect(() => {
     const onToast = (e: Event) => {
-      const message = String((e as CustomEvent).detail || "");
-      if (message) notify(message);
+      const detail = (e as CustomEvent).detail;
+      const message = String(typeof detail === "string" ? detail : detail?.message || "");
+      if (!message) return;
+      // 带 level 的显式报错，或者文案明显是失败/异常：进常驻报错区，不要 3 秒就消失
+      const isError = detail?.level === "error" || /失败|错误|出错|异常|超时|不可用|缺少|无权|拒绝|error|failed|exception/i.test(message);
+      if (isError) notifyError("toast", message);
+      else notify(message);
     };
     window.addEventListener("harness:toast", onToast);
     return () => window.removeEventListener("harness:toast", onToast);
-  }, [notify]);
+  }, [notify, notifyError]);
 
   useEffect(() => {
     const onView = (e: Event) => {
@@ -310,17 +341,6 @@ export default function App() {
     if (t?.id) { setThreadId(t.id); setView("workspace"); }
   }, [act]);
 
-  const startMission = useCallback(async () => {
-    let supervisor = state?.agents.find((a) => a.role === "supervisor" && a.chatRunnable !== false) ?? null;
-    if (!supervisor) supervisor = await act("createAgent", { cli: "dsh", role: "supervisor" }) as typeof supervisor;
-    const hasWorker = state?.agents.some((a) => (a.role || "worker") !== "supervisor" && a.chatRunnable !== false);
-    if (!hasWorker) await act("createAgent", { cli: "dsh", role: "worker" });
-    const thread = await act("newThread", {}) as { id?: string } | null;
-    if (thread?.id && supervisor?.id) await act("setThreadAgent", { threadId: thread.id, agentId: supervisor.id });
-    if (thread?.id) setThreadId(thread.id);
-    setView("workspace");
-  }, [state, act]);
-
   const dispatchInWorkspace = useCallback((makeEvent: () => Event) => {
     setView("workspace");
     // 等 workspace / TaskPane / TerminalPanel 挂载后再派发，避免跨页面命令静默空操作
@@ -359,7 +379,7 @@ export default function App() {
       { id: "view-git", label: "Git / 源码管理", group: "导航", run: () => setView("git") },
       { id: "view-knowledge", label: "资料（知识库 → 文档）", group: "导航", run: () => setView("knowledge") },
       { id: "view-memory", label: "记忆（四层 / Dream）", group: "导航", run: () => setView("memory") },
-      { id: "view-persona", label: "人像（画像 / 决策辅助）", group: "导航", run: () => setView("persona") },
+      { id: "view-persona", label: "人物（建模 / 决策辅助）", group: "导航", run: () => setView("persona") },
       { id: "quick-capture", label: "快速记录到知识库", hint: "⌘⇧K", group: "任务", run: () => void act("openQuickCapture") },
       { id: "new-thread", label: "新建会话", hint: "⌘N", group: "任务", run: () => void newThread() },
       { id: "new-task", label: "新建任务", hint: "⌘⇧N", group: "任务", run: () => dispatchInWorkspace(() => new Event("harness:new-task")) },
@@ -467,6 +487,28 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.projects, scoped?.threads, threadId, paletteOpen, view]);
 
+  // 整窗缩放：⌘+ / ⌘- / ⌘0。终端里这个组合是终端字号，留给 xterm
+  useEffect(() => {
+    const onZoomKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const inTerminal = !!(e.target as HTMLElement)?.closest?.(".term-instance, .xterm");
+      if (inTerminal) return;
+      // 0 = 自动（按屏幕分辨率）；手动调一下就从当前生效值开始步进
+      const raw = Number(state?.settings?.uiScale);
+      const cur = raw > 0 ? raw : Number(state?.settings?.uiScaleResolved) || 100;
+      const clamp = (v: number) => Math.min(150, Math.max(80, Math.round(v / 10) * 10));
+      let next: number | null = null;
+      if (e.key === "=" || e.key === "+") next = clamp(cur + 10);
+      else if (e.key === "-" || e.key === "_") next = clamp(cur - 10);
+      else if (e.key === "0") next = 0;
+      if (next === null) return;
+      e.preventDefault();
+      void act("setSettings", { uiScale: next });
+    };
+    window.addEventListener("keydown", onZoomKey, true);
+    return () => window.removeEventListener("keydown", onZoomKey, true);
+  }, [act, state?.settings?.uiScale, state?.settings?.uiScaleResolved]);
+
   if (!state) return <div className="boot">启动中…</div>;
 
   const railBadges = {
@@ -476,12 +518,18 @@ export default function App() {
 
   // 终端默认吃掉剩余宽度；终端收起时，由仍展开的最右侧面板吃掉剩余宽度。
   const flexPane: PaneId | null = !collapsed.terminal ? "terminal" : !collapsed.files ? "files" : !collapsed.chat ? "chat" : !collapsed.todo ? "todo" : null;
+  // 可用宽度 = 窗口 - 左栏 - 终端最小宽 - 分隔条；固定列按比例收缩，保底 140px
+  const fixedSum = (collapsed.todo ? 0 : todoW) + (collapsed.chat ? 0 : chatW) + (collapsed.files ? 0 : filesW);
+  const usable = Math.max(420, viewportW - 64 - 300 - 18);
+  const shrink = fixedSum > usable ? usable / fixedSum : 1;
+  const shrunk = (w: number) => Math.max(140, Math.round(w * shrink));
+
   const paneCol = (id: PaneId, width: number, min: number) =>
     collapsed[id] ? `${COLLAPSED_PANE_W}px` : flexPane === id ? `minmax(${min}px, 1fr)` : `${width}px`;
-  const todoCol = paneCol("todo", todoW, 180);
-  const chatCol = paneCol("chat", chatW, 220);
-  const terminalCol = collapsed.terminal ? `${COLLAPSED_PANE_W}px` : "minmax(280px, 1fr)";
-  const filesCol = paneCol("files", filesW, 180);
+  const todoCol = paneCol("todo", shrunk(todoW), 140);
+  const chatCol = paneCol("chat", shrunk(chatW), 180);
+  const terminalCol = collapsed.terminal ? `${COLLAPSED_PANE_W}px` : "minmax(240px, 1fr)";
+  const filesCol = paneCol("files", shrunk(filesW), 140);
   const sep1 = !collapsed.todo && !collapsed.chat ? "6px" : "0px";
   const sep2 = !collapsed.chat && !collapsed.terminal ? "6px" : "0px";
   const sep3 = !collapsed.terminal && !collapsed.files ? "6px" : "0px";
@@ -524,7 +572,7 @@ export default function App() {
             {/* 收起只隐藏不卸载：保住 pty / 标签 / 文件预览；展开后 ResizeObserver 会重新 fit */}
             <div className="terminal-slot">
               <div className="terminal-slot-main" style={{ display: collapsed.terminal ? "none" : "flex" }}>
-                <TerminalPanel state={state} todo={selected} onOpenProject={() => void addProject()} onPickedContext={setPendingContext} previewRoot={workdir} onCollapse={() => togglePane("terminal")} terminalFontSize={state.settings?.terminalFontSize} terminalScrollback={state.settings?.terminalScrollback} previewHomeUrl={state.settings?.previewHomeUrl} />
+                <TerminalPanel state={state} todo={selected} act={act} onOpenThread={(id) => { setThreadId(id); setView("workspace"); }} onOpenProject={() => void addProject()} onPickedContext={setPendingContext} previewRoot={workdir} onCollapse={() => togglePane("terminal")} terminalFontSize={state.settings?.terminalFontSize} terminalScrollback={state.settings?.terminalScrollback} previewHomeUrl={state.settings?.previewHomeUrl} />
               </div>
               {collapsed.terminal && (
                 <CollapsedPane label="TERM" title="终端" icon={<TerminalIcon size={16} />} onExpand={() => togglePane("terminal")} />
@@ -546,7 +594,27 @@ export default function App() {
           </>
           </div>
         )}
-        {view === "scene" && <div className="wide"><ScenePage state={state} act={act} notify={notify} onOpenProject={(id) => void switchProject(id)} onOpenTerminal={(cwd) => { setView("workspace"); window.setTimeout(() => requestTerminalAt(cwd), 90); }} /></div>}
+        {view === "scene" && (
+          <div className="wide office-wide">
+            <SceneWorkspace
+              state={state}
+              now={now}
+              act={act}
+              notify={notify}
+              onOpenTask={(id) => void openTodoFromPalette(id)}
+              onOpenThread={(id) => { setThreadId(id); setView("workspace"); }}
+              onOpenTerminal={(cwd, terminalId) => {
+                setView("workspace");
+                window.setTimeout(() => {
+                  if (terminalId) requestTerminalAdopt({ terminalId, cwd, title: "Agent 终端" });
+                  else requestTerminalAt(cwd);
+                }, 90);
+              }}
+              onNewThread={() => void newThread()}
+              onOpenProjects={() => setView("projects")}
+            />
+          </div>
+        )}
         {view === "projects" && <div className="wide"><Projects state={state} now={now} act={act} notify={notify} onAdd={() => void addProject()} onSwitch={(id) => void switchProject(id)} onNewTask={(id) => void newTaskInProject(id)} /></div>}
         {view === "stats" && scoped && <div className="wide"><Stats state={state} onOpen={(id) => void openTodoFromPalette(id)} /></div>}
         {view === "hosts" && <div className="wide"><Hosts state={state} act={act} notify={notify} now={now} /></div>}
@@ -559,8 +627,32 @@ export default function App() {
         {view === "persona" && <div className="wide"><Persona act={act} /></div>}
       </div>
 
-      <CommandPalette open={paletteOpen} state={state} onClose={() => setPaletteOpen(false)} commands={commands} />
-      {state.approvals?.length > 0 && <ApprovalModal approval={state.approvals[0]} pendingCount={state.approvals.length} act={act} />}      {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
+      {state.approvals?.length > 0 && <ApprovalModal approval={state.approvals[0]} pendingCount={state.approvals.length} act={act} />}
+      {errors.length > 0 && (
+        <div className="errstack" role="alert" aria-live="assertive">
+          {errors.map((e) => (
+            <div className="errcard" key={e.id}>
+              <div className="errcard-head">
+                <b>出错了</b>
+                {e.action && <code className="errcard-action">{e.action}</code>}
+                <time>{new Date(e.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
+                <button
+                  className="errcard-btn"
+                  onClick={() => void navigator.clipboard?.writeText(e.action ? `${e.action}: ${e.text}` : e.text)}
+                  title="复制完整报错，便于贴出来定位"
+                >复制</button>
+                <button className="errcard-btn" onClick={() => setErrors((prev) => prev.filter((x) => x.id !== e.id))} aria-label="关闭这条报错">×</button>
+              </div>
+              <pre className="errcard-body">{e.text}</pre>
+            </div>
+          ))}
+          {errors.length > 1 && (
+            <button className="errcard-clear" onClick={() => setErrors([])}>清空全部（{errors.length}）</button>
+          )}
+        </div>
+      )}
+      {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
     </div>
   );
 }

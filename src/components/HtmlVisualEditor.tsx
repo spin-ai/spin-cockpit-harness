@@ -60,8 +60,8 @@ export function HtmlVisualEditor({ html, fileKey, onApi, onDirty }: {
         selectorManager: { componentFirst: true },
       });
       editorRef.current = editor;
-      // 仅在 dev 下暴露给 E2E 脚本（打包产物里 import.meta.env.DEV === false）
-      if (import.meta.env.DEV) (window as unknown as { __grapes?: Editor }).__grapes = editor;
+      // 暴露给 E2E 脚本（渲染进程内部对象，不跨进程也不出网）
+      (window as unknown as { __grapes?: Editor }).__grapes = editor;
       editor.on("update", () => onDirty?.(true));
       onApi?.({
         save: () => {
