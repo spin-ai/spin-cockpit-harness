@@ -3,6 +3,7 @@ import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
 import { RowMenu } from "./RowMenu";
 import { ListContextMenu } from "./ListContextMenu";
+import { UndoBar, useDensity, type UndoAction } from "./UndoBar";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
@@ -82,6 +83,8 @@ export function Persona({ act }: { act: Act }) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [lastPick, setLastPick] = useState("");
   const [ctx, setCtx] = useState<{ x: number; y: number; person: PersonRow } | null>(null);
+  const [undo, setUndo] = useState<UndoAction | null>(null);
+  const { dense, toggle: toggleDense } = useDensity("persona");
   const [job, setJob] = useState<{ running: boolean; total: number; done: number; current: string; cards: number; llmAdded: number; statsAdded: number; skippedCache: number; cancelled: boolean; failed: string[] } | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
@@ -241,6 +244,12 @@ export function Persona({ act }: { act: Act }) {
     try {
       const res = await act("personaRemoveMany", { personIds: ids });
       setNotice(`已删除 ${res?.people || 0} 人 / ${res?.removed || 0} 条观察`);
+      if (res?.snapshots?.length) {
+        setUndo({
+          label: `已删除 ${res.people} 人（${res.removed} 条观察）`,
+          run: async () => { await act("personaRestore", { snapshots: res.snapshots }); setNotice("已恢复"); await loadList(); },
+        });
+      }
       setPicked(new Set()); setPicking(false);
       await loadList();
     } catch (err) { setNotice(String((err as Error)?.message || err)); }
@@ -265,8 +274,11 @@ export function Persona({ act }: { act: Act }) {
   const removePersonById = async (p: PersonRow) => {
     if (!window.confirm(`删除「${p.name}」的全部观察？人设卡会一起消失。`)) return;
     try {
-      const res = await act("personaRemove", { personId: p.id });
-      setNotice(`已删除 ${res?.removed || 0} 条`);
+      const snap = await act("personaRemoveMany", { personIds: [p.id] });
+      setNotice(`已删除 ${snap?.removed || 0} 条`);
+      if (snap?.snapshots?.length) {
+        setUndo({ label: `已删除「${p.name}」`, run: async () => { await act("personaRestore", { snapshots: snap.snapshots }); await loadList(); } });
+      }
       if (selected === p.id) setSelected("");
       await loadList();
     } catch (err) { setNotice(String((err as Error)?.message || err)); }
@@ -599,7 +611,9 @@ export function Persona({ act }: { act: Act }) {
         ] : []}
       />
 
-      <div className="persona-grid">
+      <UndoBar action={undo} onDone={() => setUndo(null)} />
+
+      <div className={`persona-grid ${dense ? "list-compact" : ""}`}>
 
         {/* ── 左：人物列表常驻 ───────────────────────────── */}
         <aside className="persona-col">
@@ -618,6 +632,7 @@ export function Persona({ act }: { act: Act }) {
               </select>
               <button className={`list-chip ${onlyModeled ? "on" : ""}`} onClick={() => setOnlyModeled((v) => !v)}>已建模 {people.filter((p) => (p.tags || []).includes("已建模")).length}</button>
               <button className={`list-chip ${picking ? "on" : ""}`} onClick={() => { setPicking((v) => !v); setPicked(new Set()); }}>{picking ? "退出多选" : "多选"}</button>
+              <button className="list-chip" onClick={toggleDense} title="切换列表密度">{dense ? "舒适" : "紧凑"}</button>
               <button className={`list-chip ${tagFilter ? "on" : ""}`} onClick={() => setTagFilter("")} hidden={!tagFilter}>清除筛选</button>
             </div>
             {picking && (

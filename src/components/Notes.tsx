@@ -6,6 +6,7 @@ import { FileTextIcon, RefreshIcon, SearchIcon, SparkleIcon } from "./Icons";
 import { NotesEditor } from "./NotesEditor";
 import { Knowledge } from "./Knowledge";
 import { ListContextMenu } from "./ListContextMenu";
+import { UndoBar, useDensity, type UndoAction } from "./UndoBar";
 import { PageHeader } from "./PageHeader";
 import { RowMenu } from "./RowMenu";
 
@@ -74,6 +75,8 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   const [picking, setPicking] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [ctx, setCtx] = useState<{ x: number; y: number; page: PageSummary } | null>(null);
+  const [undo, setUndo] = useState<UndoAction | null>(null);
+  const { dense, toggle: toggleDense } = useDensity("wiki");
   useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
   const [query, setQuery] = useState("");
   const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
@@ -1021,12 +1024,21 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
     const ids = [...picked];
     if (!ids.length) return;
     if (!window.confirm(`删除所选 ${ids.length} 个页面？（可在回收站恢复）`)) return;
+    const titles = ids.map((id) => pages.find((p) => p.id === id)?.title).filter(Boolean) as string[];
     let ok = 0;
     for (const id of ids) {
       try { await invoke("wiki.deletePage", { id }); ok += 1; } catch { /* ignore */ }
     }
     setPicked(new Set()); setPicking(false);
-    setNotice(`已删除 ${ok} 个页面`); await refresh();
+    setNotice(`已删除 ${ok} 个页面（可在回收站恢复）`); await refresh();
+    const list = await invoke("wiki.list");
+    const trashIds = (list?.trash || []).filter((t: { kind: string; title: string }) => t.kind === "page" && titles.includes(t.title)).slice(0, ok).map((t: { id: string }) => t.id);
+    if (trashIds.length) {
+      setUndo({
+        label: `已删除 ${ok} 个页面`,
+        run: async () => { for (const id of trashIds) { try { await invoke("wiki.restoreTrash", { id }); } catch { /* ignore */ } } await refresh(); },
+      });
+    }
   };
 
   const deletePickedSources = async () => {
@@ -1228,7 +1240,9 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
           <Knowledge act={act} onOpenPage={(id) => { setTab("pages"); void openPage(id); }} />
         </div>
       )}
-      <div className="notes-layout" style={tab === "docs" ? { display: "none" } : undefined}>
+      <UndoBar action={undo} onDone={() => setUndo(null)} />
+
+      <div className={`notes-layout ${dense ? "list-compact" : ""}`} style={tab === "docs" ? { display: "none" } : undefined}>
         <aside className="notes-sidebar">
           {tabsBar}
           {tab !== "docs" && <div className="notes-search-wrap">
@@ -1287,6 +1301,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
                 {tab === "pages" && <option value="status">按状态</option>}
               </select>
               <button className={`list-chip ${picking ? "on" : ""}`} onClick={() => { setPicking((v) => !v); setPicked(new Set()); }}>{picking ? "退出多选" : "多选"}</button>
+              <button className="list-chip" onClick={toggleDense} title="切换列表密度">{dense ? "舒适" : "紧凑"}</button>
               {tab === "pages" && (
                 <div className="list-chips">
                   {([["", "全部"], ["draft", "草稿"], ["reviewed", "已审核"], ["stale", "已过期"]] as const).map(([id, label]) => (
@@ -1406,7 +1421,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
             {tab === "trash" && trash.length === 0 && <div className="notes-empty-list">回收站是空的。删除的页面和资料会在这里保留，可随时恢复。</div>}
             {tab === "pages" && filteredPages.length === 0 && (
               <div className="notes-empty-list">
-                还没有页面。
+                {statusFilter || query ? "没有匹配的页面。" : "还没有页面。"}
                 <div className="notes-empty-actions">
                   <button className="link tiny" onClick={() => void createPage()} disabled={busy}>＋ 新建</button>
                   <button className="link tiny" onClick={() => void generateWiki()} disabled={busy}>按资料生成</button>
