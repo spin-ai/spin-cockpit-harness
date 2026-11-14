@@ -3220,3 +3220,15 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .ptag.on{border-color:var(--brand-line);background:var(--brand-soft);color:var(--brand)}
 .persona-group em{font-style:normal;font-size:10px;color:var(--faint);margin-left:4px;font-variant-numeric:tabular-nums}
 .persona-ava.on{background:var(--brand-soft);color:var(--brand);box-shadow:inset 0 0 0 1px var(--brand-line)}
+/* 侧栏列表通用工具条：排序 + 标签筛选 */
+.list-tools{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin:4px 0 2px}
+.list-select{height:24px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--muted);font-size:10.5px;padding:0 4px;max-width:104px}
+.list-chips{display:flex;flex-wrap:wrap;gap:3px;margin:2px 0 4px}
+.list-chip{display:inline-flex;align-items:center;gap:3px;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--faint);font-size:9.5px;line-height:16px;padding:0 6px;cursor:pointer}
+.list-chip:hover{color:var(--fg-2);border-color:var(--border-strong)}
+.list-chip.on{background:var(--brand-soft);border-color:var(--brand-line);color:var(--brand)}
+.list-chip em{font-style:normal;font-size:9px;color:var(--faint);font-variant-numeric:tabular-nums}
+.persona-rowwrap{position:relative;display:flex;align-items:center}
+.persona-rowwrap>.persona-row{flex:1;min-width:0}
+.persona-rowwrap>.row-menu{display:none}
+.persona-rowwrap:hover>.row-menu{display:block}

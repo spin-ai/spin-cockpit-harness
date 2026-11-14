@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { State } from "../types";
 import { renderMarkdown } from "../markdown";
-import { ChevronDownIcon, ChevronRightIcon, FileTextIcon, FolderOpenIcon, RefreshIcon, SearchIcon, SparkleIcon } from "./Icons";
+import { relTime } from "../ui";
+import { FileTextIcon, RefreshIcon, SearchIcon, SparkleIcon } from "./Icons";
 import { NotesEditor } from "./NotesEditor";
 import { Knowledge } from "./Knowledge";
 import { PageHeader } from "./PageHeader";
@@ -33,19 +34,6 @@ function emptyPane(): Pane { return { tabs: [], active: null }; }
 function statusLabel(status: string) { return status === "reviewed" ? "已审核" : status === "stale" ? "已过期" : "草稿"; }
 function confidenceLabel(level?: string) { return level === "high" ? "高" : level === "low" ? "低" : "中"; }
 
-/** 相对时间：列表第二行用，避免一列绝对时间戳比标题还长 */
-function timeAgo(at?: number) {
-  if (!at) return "";
-  const diff = Date.now() - at;
-  const min = Math.round(diff / 60000);
-  if (min < 1) return "刚刚";
-  if (min < 60) return `${min} 分钟前`;
-  const hour = Math.round(min / 60);
-  if (hour < 24) return `${hour} 小时前`;
-  const day = Math.round(hour / 24);
-  if (day < 30) return `${day} 天前`;
-  return new Date(at).toLocaleDateString([], { month: "numeric", day: "numeric" });
-}
 function escapeRegExp(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 function markText(text: string, query: string) {
   const q = String(query || "").trim();
@@ -74,13 +62,14 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   const [trash, setTrash] = useState<TrashItem[]>([]);
   const [tags, setTags] = useState<{ tag: string; count: number }[]>([]);
   const [pins, setPins] = useState<string[]>([]);
-  const [recents, setRecents] = useState<{ id: string; at: number }[]>([]);
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickText, setQuickText] = useState("");
   const [quickBusy, setQuickBusy] = useState(false);
   const [log, setLog] = useState<{ id: string; kind: string; text: string; at: number }[]>([]);
   const [vault, setVault] = useState<VaultInfo>({ path: "", files: [] });
   const [tab, setTab] = useState<Tab>(initialTab || "pages");
+  const [listSort, setListSort] = useState<"updated" | "title" | "status">("updated");
+  const [statusFilter, setStatusFilter] = useState<"" | "draft" | "reviewed" | "stale">("");
   useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
   const [query, setQuery] = useState("");
   const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
@@ -160,7 +149,6 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       setReviews(Array.isArray(res.reviews) ? res.reviews : []);
       setTrash(Array.isArray(res.trash) ? res.trash : []);
       setPins(Array.isArray(res.pins) ? res.pins : []);
-      setRecents(Array.isArray(res.recents) ? res.recents : []);
       setLog(Array.isArray(res.log) ? res.log : []);
       try { setTags(await invoke("wiki.tags")); } catch { /* tags 可选 */ }
       try { setMemory(await invoke("wiki.memory", { maxChars: 12000 })); } catch { /* memory is optional */ }
@@ -212,10 +200,6 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
     setPane(where, (p) => ({ tabs: p.tabs.includes(pageId) ? p.tabs : [...p.tabs, pageId], active: pageId }));
     setFocus(where);
     setMode("preview");
-    try {
-      const next = await invoke("wiki.touch", { id: pageId });
-      if (Array.isArray(next)) setRecents(next);
-    } catch { /* 最近打开是可选功能 */ }
   }, [focus, split, loadPage, invoke]);
 
   const openVaultFile = useCallback(async (relPath: string, target: "left" | "right" = focus) => {
@@ -228,11 +212,6 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
     setMode("preview");
     setTab("vault");
   }, [focus, loadVaultFile, split]);
-
-  const openDoc = useCallback((docId: string, target: "left" | "right" = focus) => {
-    if (docId.startsWith("vault:")) void openVaultFile(docId.slice(6), target);
-    else void openPage(docId, target);
-  }, [focus, openPage, openVaultFile]);
 
   useEffect(() => {
     if (!openRequest?.path) return;
@@ -400,6 +379,28 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   };
 
   /** 自动整理：统一大纲 + 补「相关」链接 + 重建索引页（插件内确定性执行，不需要模型） */
+  /** 模型整理：只重写「摘要 + 要点」，写回 draft；reviewed 页面不碰 */
+  const curateWithModel = async () => {
+    const n = Math.min(8, draftCount);
+    if (!n) return;
+    if (!window.confirm(`用模型整理 ${n} 个草稿页面？\n\n每页一次调用（约 2k tokens），只改「摘要 + 要点」；原文摘录与已审核页面不动。内容没变过的页面会跳过。没有配置 Ark key 会直接失败。`)) return;
+    setBusy(true);
+    try {
+      const res = await act("wikiCurateLLM", { limit: 8 });
+      const errors: string[] = Array.isArray(res?.errors) ? res.errors : [];
+      setNotice(
+        `模型整理：更新 ${res?.updated || 0} 页 · 跳过 ${res?.skipped || 0} 页 · 调用 ${res?.calls || 0} 次${res?.tokens ? ` · ${(Number(res.tokens) / 1000).toFixed(1)}k tokens` : ""}`
+        + (errors.length ? ` · ${errors.length} 个失败：${errors.slice(0, 2).join("；")}` : ""),
+      );
+      await refresh();
+      const current = pane.active;
+      if (current && docs[current] && !docs[current].local) {
+        const fresh = await invoke("wiki.getPage", { id: current });
+        if (fresh) setDocs((cur) => ({ ...cur, [current]: { ...fresh, dirty: false } }));
+      }
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
   const curateWiki = async () => {
     setBusy(true);
     try {
@@ -657,8 +658,25 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
     try { setGraphData((await invoke("wiki.graph")) || { nodes: [], edges: [] }); } catch (err) { fail(err); } finally { setGraphLoading(false); }
   };
 
+  const draftCount = useMemo(
+    () => pages.filter((p) => p.status === "draft" && p.title !== "Wiki 索引").length,
+    [pages],
+  );
+
   const filteredSources = useMemo(() => sources.filter((s) => !query || `${s.title} ${s.uri || ""}`.toLowerCase().includes(query.toLowerCase())), [sources, query]);
-  const filteredPages = useMemo(() => pages.filter((p) => !query || `${p.title} ${p.summary}`.toLowerCase().includes(query.toLowerCase())), [pages, query]);
+  // 顺序沿用插件给的原顺序（新建的在前），不再插入「最近打开」——那会让点选和自动保存把行挪位。
+  const filteredPages = useMemo(() => {
+    const list = pages.filter((p) => {
+      if (statusFilter && p.status !== statusFilter) return false;
+      return !query || `${p.title} ${p.summary}`.toLowerCase().includes(query.toLowerCase());
+    });
+    const ranked = { draft: 0, stale: 1, reviewed: 2 } as Record<string, number>;
+    return [...list].sort((a, b) => {
+      if (listSort === "title") return a.title.localeCompare(b.title, "zh-Hans-CN");
+      if (listSort === "status") return (ranked[a.status] ?? 9) - (ranked[b.status] ?? 9) || b.updatedAt - a.updatedAt;
+      return (b.updatedAt || 0) - (a.updatedAt || 0);
+    });
+  }, [pages, query, statusFilter, listSort]);
   const filteredVaultFiles = useMemo(() => vault.files.filter((f) => !query || `${f.title} ${f.path}`.toLowerCase().includes(query.toLowerCase())), [vault.files, query]);
   const vaultGroups = useMemo(() => {
     const groups = new Map<string, VaultFile[]>();
@@ -726,7 +744,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               <span>③ 生成知识库（草稿）</span><i>→</i>
               <span>④ 编辑 / 审核</span>
             </div>
-            <div className="notes-hub-tip">「生成知识库」是确定性骨架（把资料变成草稿页面 + 引用）；想要写作质量更高，用资料页的「发送到 Chat」让 Agent 整理后回写。</div>
+            <div className="notes-hub-tip">「生成知识库」是确定性骨架（把资料变成草稿页面 + 引用）。整理有两条：<b>整理结构</b>只重排大纲、补互链、重建索引（免费、秒级）；<b>模型整理</b>逐页重写摘要与要点（每页一次调用，只写草稿）。</div>
           </div>
         ) : (
           <>
@@ -757,7 +775,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
                       <i>·</i>
                       {doc.citations.length} 引用
                       <i>·</i>
-                      {timeAgo(doc.updatedAt)}
+                      {relTime(doc.updatedAt)}
                       {doc.dirty && <span className="notes-dirty">未保存</span>}
                     </>
                   )}
@@ -1001,7 +1019,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
         <span className={`notes-status-dot ${p.status}`} />
         <span className="notes-file-main">
           <span className="ellipsis">{p.title}</span>
-          <span className="notes-file-sub">{statusLabel(p.status)} · {timeAgo(p.updatedAt)}</span>
+          <span className="notes-file-sub">{statusLabel(p.status)} · {relTime(p.updatedAt)}</span>
         </span>
       </button>
       <span className="notes-row-actions">
@@ -1015,9 +1033,8 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   const filteredHits = searchHits.filter((hit) => (searchKind === "all" || hit.kind === searchKind)
     && (searchStatus === "all" || hit.status === searchStatus)
     && (!timeCutoff || (hit.at || 0) >= timeCutoff));
-  const pinnedPages = pages.filter((p) => pins.includes(p.id));
-  const recentPages = recents.map((r) => pages.find((p) => p.id === r.id)).filter((p): p is PageSummary => Boolean(p)).filter((p) => !pins.includes(p.id)).slice(0, 4);
-  const restPages = filteredPages.filter((p) => !pins.includes(p.id) && !recentPages.some((r) => r.id === p.id));
+  const pinnedPages = filteredPages.filter((p) => pins.includes(p.id));
+  const restPages = filteredPages.filter((p) => !pins.includes(p.id));
 
   return (
     <div className="notes-page">
@@ -1112,7 +1129,13 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               onClick={() => void curateWiki()}
               disabled={busy || pages.length === 0}
               title="统一页面大纲（要点 / 原文摘录 / 相关）、补页面互链，并重建「知识库索引」页"
-            >整理知识库</button>
+            >整理结构</button>
+            <button
+              className="btn"
+              onClick={() => void curateWithModel()}
+              disabled={busy || !draftCount}
+              title={draftCount ? `用模型重写 ${Math.min(8, draftCount)} 个草稿页面的摘要与要点（每页一次调用）` : "没有草稿页面可整理"}
+            >{busy ? "整理中…" : `模型整理${draftCount ? ` (${Math.min(8, draftCount)})` : ""}`}</button>
             <button className="btn" onClick={() => setAskOpen(true)} title="只基于本地知识库页面回答，带页面引用">问知识库</button>
             <RowMenu title="更多知识库操作" popClassName="notes-menu">
               <div className="row-menu-label">本地目录</div>
@@ -1182,17 +1205,29 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
             </div>
           )}
           {filteredHits.length > 0 && <div className="notes-search-results">{filteredHits.slice(0, 12).map((hit) => <button key={hit.kind + hit.id} onClick={() => void openHit(hit)}><b>{markText(hit.title, query)}</b><span>{hit.kind}</span><em>{markText(hit.snippet, query)}</em></button>)}</div>}
+          {(tab === "pages" || tab === "sources") && (
+            <div className="list-tools">
+              <select className="list-select" value={listSort} onChange={(e) => setListSort(e.target.value as typeof listSort)} aria-label="排序">
+                <option value="updated">按最近更新</option>
+                <option value="title">按标题</option>
+                {tab === "pages" && <option value="status">按状态</option>}
+              </select>
+              {tab === "pages" && (
+                <div className="list-chips">
+                  {([["", "全部"], ["draft", "草稿"], ["reviewed", "已审核"], ["stale", "已过期"]] as const).map(([id, label]) => (
+                    <button key={id || "all"} className={`list-chip ${statusFilter === id ? "on" : ""}`} onClick={() => setStatusFilter(id)}>
+                      {label}<em>{id ? pages.filter((p) => p.status === id).length : pages.length}</em>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div className="notes-tree">
             {tab === "pages" && !tagFilter && pinnedPages.length > 0 && (
               <>
                 <div className="notes-folder-label">收藏 <em>{pinnedPages.length}</em></div>
                 {pinnedPages.map(pageRow)}
-              </>
-            )}
-            {tab === "pages" && !tagFilter && recentPages.length > 0 && (
-              <>
-                <div className="notes-folder-label">最近 <em>{recentPages.length}</em></div>
-                {recentPages.map(pageRow)}
               </>
             )}
             {tab === "pages" && tagFilter && (
@@ -1343,7 +1378,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
                 <div className="notes-meta-title">页面</div>
                 <div className="notes-meta-kv">
                   <span>字数</span><b>{String(activeDoc.content || "").replace(/\s+/g, " ").trim().length}</b>
-                  <span>更新</span><b>{timeAgo(activeDoc.updatedAt)}</b>
+                  <span>更新</span><b>{relTime(activeDoc.updatedAt)}</b>
                 </div>
               </div>
               <div className="notes-meta-block">
