@@ -13,7 +13,7 @@ import { openDb, DEFAULT_SETTINGS } from "./db.mjs";
 import { safeStorage } from "electron";
 import { AcpClient, dshPathEnv } from "./acp.mjs";
 import { createKnowledge } from "./knowledge/index.mjs";
-import { chat as arkChat } from "./knowledge/ark.mjs";
+import { chat as arkChat, resolveArkKey as resolveArkKeyFor } from "./knowledge/ark.mjs";
 import { curateMessages, parseCurated, spliceCurated, contentHash } from "./wiki-curate.mjs";
 import { createMemory } from "./memory/index.mjs";
 import { createPersona } from "./persona/index.mjs";
@@ -1053,7 +1053,7 @@ async function startRun(run, todo, agent) {
       .filter((m) => m.context)
       .map((m) => formatContext(m.context, contextDetail()))
       .filter(Boolean);
-    const wikiMemory = await wikiMemoryContext();
+    const wikiMemory = await memoryContext();
     // 记忆层：L4 目录/结论（预算内，超了做减法），和 wiki 索引一起注入
     let layers = "";
     try { layers = memory().inject({ maxChars: 6000 }).markdown; } catch { /* 记忆库不可用不影响跑 run */ }
@@ -1248,8 +1248,7 @@ function startWikiMcpServer() {
       const name = String(payload.name || "");
       const args = payload.arguments || {};
       let result;
-      if (name === "wiki_memory") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.memory", { maxChars: args.max_chars || 12000 });
-      else if (name === "wiki_search") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.search", { query: args.query });
+      if (name === "wiki_search") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.search", { query: args.query });
       else if (name === "wiki_list_sources") result = (await pluginHost.invoke("ai.cockpit.notes", "wiki.sources", {})).map((s) => ({ id: s.id, title: s.title, kind: s.kind, uri: s.uri }));
       else if (name === "wiki_read_source") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.source", { id: args.id });
       else if (name === "wiki_read_page") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: args.id });
@@ -1294,10 +1293,13 @@ function releaseWikiToken(runId) {
   for (const [token, rec] of wikiTokens) if (rec.runId === runId) wikiTokens.delete(token);
 }
 
-async function wikiMemoryContext() {
-  if (!pluginHost || !store.state.plugins?.some((p) => p.id === "ai.cockpit.notes" && p.enabled)) return "";
+/**
+ * L4 注入：唯一来源是记忆层（electron/memory）。
+ * 不要再读 notes 插件的 Wiki 索引，否则同一次会话会注入两份互不一致的「记忆」。
+ */
+async function memoryContext() {
   try {
-    const res = await pluginHost.invoke("ai.cockpit.notes", "wiki.memory", { maxChars: 12000 });
+    const res = await memory().inject({ maxChars: 12000 });
     return String(res?.markdown || "");
   } catch {
     return "";
@@ -2316,8 +2318,8 @@ async function startSupervisorRun(run, mission, agent) {
     await client.start();
     await client.newSession(cwd, mcpServers);
     await client.configure();
-    const memory = await wikiMemoryContext();
-    await supervisorPrompt(run, mission, handle, `${supervisorInitialPrompt(mission, agent)}${memory ? `\n\nWiki 记忆索引：\n${memory}` : ""}`);
+    const memoryText = await memoryContext();
+    await supervisorPrompt(run, mission, handle, `${supervisorInitialPrompt(mission, agent)}${memoryText ? `\n\n记忆索引：\n${memoryText}` : ""}`);
   } catch (err) {
     if (!handle.done) failMission(mission, err?.message || err);
   }
@@ -2629,7 +2631,9 @@ async function applyMemorySuggestion(sug) {
  */
 function arkKeyFromSettings() {
   const env = parseEnvText(decSecret(store?.state?.settings?.dshEnv || ""));
-  return String(env.ARK_API_KEY || "").trim();
+  // 设置里显式写了 ARK_API_KEY 就用它；否则回落到统一解析（环境变量 / ~/.pi/models.json），
+  // 否则「模型整理」会误报缺 key，而问知识库却能正常（两条路径解析不一致）。
+  return String(env.ARK_API_KEY || "").trim() || (resolveArkKeyFor() || "");
 }
 
 /** 知识索引：懒加载，首次使用时才建 userData/knowledge/kb.db（删掉即可重建）。 */

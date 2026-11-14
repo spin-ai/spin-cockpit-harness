@@ -217,7 +217,7 @@ export class PluginHost {
         const timer = setTimeout(() => reject(new Error("plugin activate timeout")), 15000);
         const ready = (evt) => {
           const msg = evt?.data ?? evt;
-          if (msg?.type === "ready") { clearTimeout(timer); child.off("message", ready); resolve(); }
+          if (msg?.type === "ready") { clearTimeout(timer); child.off("message", ready); resolve(child); }
           else if (msg?.type === "activate-error") { clearTimeout(timer); child.off("message", ready); reject(new Error(msg.error)); }
         };
       child.on("message", ready);

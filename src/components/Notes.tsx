@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { State } from "../types";
 import { renderMarkdown } from "../markdown";
 import { relTime } from "../ui";
-import { FileTextIcon, RefreshIcon, SearchIcon, SparkleIcon } from "./Icons";
+import { FileTextIcon, SearchIcon, SparkleIcon } from "./Icons";
 import { NotesEditor } from "./NotesEditor";
 import { Knowledge } from "./Knowledge";
 import { ListContextMenu } from "./ListContextMenu";
@@ -28,7 +28,6 @@ type Doc = Page & { dirty: boolean; local?: boolean; localPath?: string; mtime?:
 type Pane = { tabs: string[]; active: string | null };
 type Tab = "pages" | "sources" | "docs" | "review" | "vault" | "trash";
 type SourceDraft = { title: string; content: string; url: string; mode: "text" | "url" | "file" };
-type MemoryData = { markdown: string; pageCount: number; chars: number };
 type TrashItem = { id: string; kind: "page" | "source"; title: string; deletedAt: number };
 type SearchHit = { kind: string; id: string; title: string; status?: string; at?: number; snippet: string };
 
@@ -107,8 +106,6 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   const [graphLoading, setGraphLoading] = useState(false);
   const [sourceView, setSourceView] = useState<Source | null>(null);
   const [sourceDraft, setSourceDraft] = useState<SourceDraft | null>(null);
-  const [memory, setMemory] = useState<MemoryData | null>(null);
-  const [memoryOpen, setMemoryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -158,7 +155,6 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       setPins(Array.isArray(res.pins) ? res.pins : []);
       setLog(Array.isArray(res.log) ? res.log : []);
       try { setTags(await invoke("wiki.tags")); } catch { /* tags 可选 */ }
-      try { setMemory(await invoke("wiki.memory", { maxChars: 12000 })); } catch { /* memory is optional */ }
       setError("");
     } catch (err) { fail(err); }
   }, [enabled, invoke]);
@@ -350,7 +346,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       }
       setNotice(created ? `已生成 ${created} 个草稿页面，去「页面」里编辑或审核` : "没有新的资料需要生成（已有对应页面）");
       await refresh();
-      if (created) { setTab("pages"); setGraph(false); setMemoryOpen(false); }
+      if (created) { setTab("pages"); setGraph(false); }
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
@@ -390,8 +386,9 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   const curateWithModel = async () => {
     const n = Math.min(8, draftCount);
     if (!n) return;
-    if (!window.confirm(`用模型整理 ${n} 个草稿页面？\n\n每页一次调用（约 2k tokens），只改「摘要 + 要点」；原文摘录与已审核页面不动。内容没变过的页面会跳过。没有配置 Ark key 会直接失败。`)) return;
+    if (!window.confirm(`用模型整理 ${n} 个草稿页面？\n\n每页一次调用（约 2k tokens），只改「摘要 + 要点」；原文摘录与已审核页面不动。内容没变过的页面会跳过。`)) return;
     setBusy(true);
+    setNotice(`模型整理中：0/${n} 页…（逐页调用模型，可切走，完成后会提示）`);
     try {
       const res = await act("wikiCurateLLM", { limit: 8 });
       const errors: string[] = Array.isArray(res?.errors) ? res.errors : [];
@@ -641,25 +638,6 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
     window.addEventListener("pointerup", up);
   };
 
-  const openMemory = async () => {
-    setGraph(false);
-    setMemoryOpen(true);
-    try { setMemory(await invoke("wiki.memory", { maxChars: 12000 })); } catch (err) { fail(err); }
-  };
-
-  const dream = async () => {
-    setBusy(true);
-    try {
-      const res = await invoke("wiki.dream");
-      if (res) {
-        const issues = Array.isArray(res.issues) ? res.issues : [];
-        setMemory(res.memory || memory);
-        setNotice(issues.length ? `Dream 发现 ${issues.length} 个维护项（见通知/页面）` : "Dream 未发现明显问题");
-        if (issues.length) setSourceDraft(null);
-      }
-    } catch (err) { fail(err); } finally { setBusy(false); }
-  };
-
   const openGraph = async () => {
     setGraph(true); setGraphLoading(true);
     try { setGraphData((await invoke("wiki.graph")) || { nodes: [], edges: [] }); } catch (err) { fail(err); } finally { setGraphLoading(false); }
@@ -702,8 +680,8 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   const tabsBar = (
     <div className="notes-wiki-tabs">
       <button className={tab === "pages" ? "on" : ""} onClick={() => setTab("pages")}>页面</button>
-      <button className={tab === "sources" ? "on" : ""} onClick={() => setTab("sources")}>资料</button>
-      <button className={tab === "docs" ? "on" : ""} onClick={() => setTab("docs")}>文档</button>
+      <button className={tab === "sources" ? "on" : ""} onClick={() => setTab("sources")} title="页面引用的原始输入：粘贴文本 / URL / 本地 Markdown">来源</button>
+      <button className={tab === "docs" ? "on" : ""} onClick={() => setTab("docs")} title="导入的 PDF / Office / 网页，可检索并带页码出处">资料库</button>
       <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>审核{reviews.length ? `·${reviews.length}` : ""}</button>
       <button className={tab === "vault" ? "on" : ""} onClick={() => setTab("vault")}>本地</button>
       <button className={tab === "trash" ? "on" : ""} onClick={() => setTab("trash")}>回收站</button>
@@ -1168,7 +1146,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
         subtitle={(
           <div className="notes-stats">
             <span><b>{pages.length}</b> 页面</span>
-            <span><b>{sources.length}</b> 资料</span>
+            <span><b>{sources.length}</b> 来源</span>
             <span className={reviews.length ? "warn" : ""}><b>{reviews.length}</b> 待审核</span>
             {vault.path && <span><b>{vault.files.length}</b> 本地文件</span>}
           </div>
@@ -1182,38 +1160,29 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               disabled={busy}
               title="导入资料：粘贴文本 / Markdown、URL，或从磁盘选文件"
             >导入资料</button>
-            <button
-              className="btn"
-              onClick={() => void generateWiki()}
-              disabled={busy}
-              title={sources.length ? `按 ${sources.length} 份资料生成草稿页面` : vault.files.length ? `会先把本地 ${vault.files.length} 个 Markdown 导入为资料再生成` : "先打开本地目录或导入资料"}
-            >{busy ? "生成中…" : sources.length ? `生成知识库 (${sources.length})` : "生成知识库"}</button>
-            <button
-              className="btn"
-              onClick={() => void curateWiki()}
-              disabled={busy || pages.length === 0}
-              title="统一页面大纲（要点 / 原文摘录 / 相关）、补页面互链，并重建「知识库索引」页"
-            >整理结构</button>
-            <button
-              className="btn"
-              onClick={() => void curateWithModel()}
-              disabled={busy || !draftCount}
-              title={draftCount ? `用模型重写 ${Math.min(8, draftCount)} 个草稿页面的摘要与要点（每页一次调用）` : "没有草稿页面可整理"}
-            >{busy ? "整理中…" : `模型整理${draftCount ? ` (${Math.min(8, draftCount)})` : ""}`}</button>
             <button className="btn" onClick={() => setAskOpen(true)} title="只基于本地知识库页面回答，带页面引用">问知识库</button>
             <RowMenu title="更多知识库操作" popClassName="notes-menu">
+              <div className="row-menu-label">生成与整理</div>
+              <button
+                onClick={() => void generateWiki()}
+                disabled={busy}
+                title={sources.length ? `按 ${sources.length} 份资料生成草稿页面` : vault.files.length ? `会先把本地 ${vault.files.length} 个 Markdown 导入为资料再生成` : "先打开本地目录或导入资料"}
+              >{busy ? "生成中…" : sources.length ? `生成知识库 (${sources.length})` : "生成知识库"}</button>
+              <button onClick={() => void curateWiki()} disabled={busy || pages.length === 0} title="统一页面大纲（要点 / 原文摘录 / 相关）、补页面互链，并重建「知识库索引」页">整理结构</button>
+              <button onClick={() => void curateWithModel()} disabled={busy || !draftCount} title={draftCount ? `用模型重写 ${Math.min(8, draftCount)} 个草稿页面的摘要与要点（每页一次调用）` : "没有草稿页面可整理"}>{busy ? "整理中…" : `模型整理${draftCount ? ` (${Math.min(8, draftCount)})` : ""}`}</button>
               <div className="row-menu-label">本地目录</div>
               <button onClick={() => void pickLocalFolder()} disabled={busy}>{vault.path ? "更换本地目录…" : "打开本地目录…"}</button>
               <div className="row-menu-label">查看</div>
-              <button onClick={() => { setMemoryOpen(false); graph ? setGraph(false) : void openGraph(); }}>{graph ? "关闭图谱" : "图谱"}</button>
-              <button onClick={() => { setGraph(false); void openMemory(); }}>{memoryOpen ? "关闭记忆" : "记忆"}</button>
+              <button onClick={() => { graph ? setGraph(false) : void openGraph(); }}>{graph ? "关闭图谱" : "图谱"}</button>
+              <button onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: "memory" }))}>打开记忆页…</button>
               <button onClick={toggleSplit}>{split ? "取消分屏" : "分屏"}</button>
               <div className="row-menu-label">导出</div>
               <button onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: "knowledge" }))}>打开资料库…</button>
               <button onClick={() => void exportMarkdown()} disabled={busy || pages.length === 0}>导出 Markdown…</button>
               <button onClick={() => void exportPdf()} disabled={!activeDoc}>导出当前页 PDF…</button>
+              <div className="row-menu-label">状态</div>
+              <button onClick={() => void refresh()}>刷新</button>
             </RowMenu>
-            <button className="icon-btn" onClick={() => void refresh()} title="刷新" aria-label="刷新"><RefreshIcon size={13} /></button>
           </>
         )}
       />}
@@ -1237,7 +1206,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       {tab === "docs" && (
         <div className="notes-docs-page">
           {tabsBar}
-          <Knowledge act={act} onOpenPage={(id) => { setTab("pages"); void openPage(id); }} />
+          <Knowledge act={act} embedded onOpenPage={(id) => { setTab("pages"); void openPage(id); }} />
         </div>
       )}
       <UndoBar action={undo} onDone={() => setUndo(null)} />
@@ -1266,7 +1235,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               value={query}
               onChange={(e) => void search(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setQuery(""); void search(""); } }}
-              placeholder="搜索页面 / 资料 / 本地"
+              placeholder="搜索页面 / 来源 / 本地"
             />
             {query && <button className="notes-search-clear" title="清除（Esc）" onClick={() => { setQuery(""); void search(""); }}>×</button>}
           </div>}
@@ -1453,19 +1422,6 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
         <main className="notes-main">
           {tab === "docs" ? (
             <div className="notes-docs"><Knowledge embedded act={act} onOpenPage={(id) => { setTab("pages"); void openPage(id); }} /></div>
-          ) : memoryOpen ? (
-            <div className="notes-memory">
-              <div className="notes-memory-head"><b>Memory</b><span>{memory?.pageCount || 0} pages · {memory?.chars || 0} chars</span><button className="btn tiny-btn" onClick={() => void dream()} disabled={busy}>Dream</button></div>
-              <div className="notes-preview markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(wikiMarkdown(memory?.markdown || "还没有 Memory 索引。")) }} onClick={(e) => {
-                const anchor = (e.target as HTMLElement).closest("a");
-                const href = anchor?.getAttribute("href") || "";
-                if (!href.startsWith("#wiki/")) return;
-                e.preventDefault();
-                const title = decodeURIComponent(href.slice(6)).split("#")[0];
-                const target = pages.find((p) => p.title === title || p.slug === title || p.id === title);
-                if (target) { setMemoryOpen(false); void openPage(target.id, "left"); }
-              }} />
-            </div>
           ) : graph ? <GraphView data={graphData} loading={graphLoading} onOpen={(id) => { setGraph(false); void openPage(id, "left"); }} /> : (
             <div className={`notes-pane-layout ${split ? "split" : ""}`} ref={mainRef as React.RefObject<HTMLDivElement>} style={split ? { gridTemplateColumns: `${splitRatio * 100}% 5px minmax(0,1fr)` } : undefined}>
               {renderPane("left")}
