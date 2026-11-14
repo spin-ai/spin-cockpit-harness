@@ -13,10 +13,11 @@ import { openDb, DEFAULT_SETTINGS } from "./db.mjs";
 import { safeStorage } from "electron";
 import { AcpClient, dshPathEnv } from "./acp.mjs";
 import { createKnowledge } from "./knowledge/index.mjs";
-import { chat as arkChat, resolveArkKey as resolveArkKeyFor } from "./knowledge/ark.mjs";
+import { chat as arkChat } from "./knowledge/ark.mjs";
+import { curateMessages, parseCurated, spliceCurated, contentHash } from "./wiki-curate.mjs";
 import { createMemory } from "./memory/index.mjs";
 import { createPersona } from "./persona/index.mjs";
-import { computeFeatures, describePerson, modelCard } from "./persona/model.mjs";
+import { computeFeatures, describePerson, analyzePersonWithLLM } from "./persona/model.mjs";
 import { createImGateway, formatImCard, formatApprovalCard } from "./im/gateway.mjs";
 import { prepareWorktree, removeWorktree, repoRoot } from "./worktree.mjs";
 import { pickElement, cancelPick, detachPreview } from "./preview.mjs";
@@ -174,7 +175,7 @@ function sceneAgentFor(projectId) {
   return null;
 }
 
-/** 草稿会话的默认 Agent：设置里的默认值 → 项目 Agent → 任意可用 Agent。 *//** 草稿会话的默认 Agent：设置里的默认值 → 项目 Agent → 任意可用 Agent。 */
+/** 草稿会话的默认 Agent：设置里的默认值 → 项目 Agent → 任意可用 Agent。 */
 function defaultChatAgent(projectId = store.state.activeProjectId) {
   const preferred = pickChatAgent(store.state.settings?.defaultAgentId);
   if (preferred && (preferred.role || "worker") !== "supervisor") return preferred;
@@ -186,6 +187,21 @@ function defaultChatAgent(projectId = store.state.activeProjectId) {
     || runnable.find((a) => !a.projectId)
     || null;
 }
+/** 重新生成 / 编辑重发共用的选人逻辑：沿用它上次的 Agent → 项目 Scene → 默认 Agent */
+function bindChatAgent(thread, todo) {
+  const agent = store.state.agents.find((a) => a.id === (thread.agentId || todo.agentId))
+    || sceneAgentFor(todo.projectId)
+    || defaultChatAgent(todo.projectId);
+  if (!agent) throw new Error("没有可用的 Agent");
+  const err = chatAgentError(agent);
+  if (err) throw new Error(err);
+  thread.agentId = agent.id;
+  todo.agentId = agent.id;
+  thread.updatedAt = now();
+  todo.updatedAt = now();
+  return agent;
+}
+
 function defaultSupervisorAgent(projectId = store.state.activeProjectId) {
   return store.state.agents.find((a) => a.role === "supervisor" && chatRunnable(a) && (!a.projectId || a.projectId === projectId))
     || store.state.agents.find((a) => a.role === "supervisor" && chatRunnable(a))
@@ -496,7 +512,6 @@ function supervisorRunOf(todoId) {
   return store.state.runs.find((r) => r.todoId === todoId && r.kind === "supervisor" && ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"].includes(r.status)) || null;
 }
 function isMission(todo) { return todo?.kind === "mission"; }
-function missionOfRun(run) { return store.state.todos.find((t) => t.id === run?.todoId && t.kind === "mission") || null; }
 function delegationForChild(todoId) { return store.state.delegations.find((d) => d.childTodoId === todoId) || null; }
 function missionPlanLatest(missionId) {
   return [...store.state.missionPlans].filter((p) => p.missionId === missionId).sort((a, b) => b.revision - a.revision)[0] || null;
@@ -1483,6 +1498,7 @@ const SETTINGS_SPEC = {
   maxConcurrentRuns: { kind: "number", min: 0, max: 20, fallback: 0 },
   approvalPolicy: { kind: "enum", values: ["ask", "allow", "deny"], fallback: "ask" },
   dshEnv: { kind: "string", max: 4000 },
+  personaDatasetDir: { kind: "string", max: 1000 },
   // 即时通信（gateway 每次读取 settings 决定是否 listen）
   imEnabled: { kind: "boolean" },
   imTelegramToken: { kind: "string", max: 500 },
@@ -1502,6 +1518,8 @@ const SETTINGS_SPEC = {
   previewHomeUrl: { kind: "string", fallback: "http://localhost:5173/", max: 500 },
   elementScreenshots: { kind: "boolean", fallback: true },
   contextDetail: { kind: "enum", values: ["compact", "standard"], fallback: "standard" },
+  // 云端向量索引（Ark embedding）：默认关，开了才会把正文分块发出去
+  knowledgeCloudIndex: { kind: "boolean", fallback: false },
   superAgentEnabled: { kind: "boolean", fallback: true },
   maxSupervisorRuns: { kind: "number", min: 1, max: 4, fallback: 1 },
   maxMissionChildren: { kind: "number", min: 1, max: 12, fallback: 4 },
@@ -1677,7 +1695,6 @@ async function probeModels(agent) {
   }
 }
 
-
 // ── Super Agent / Mission ─────────────────────────────────────────────
 // Mission 模式：supervisor 只负责计划、分派、追踪、汇总；代码改动由 child worker run
 // 在独立 worktree 里完成。dsh 原生 subagent/team 被 profile patch 关闭，避免双调度。
@@ -1833,12 +1850,6 @@ function missionChildSummary(todo, run) {
     branch: run?.branch || delegation?.branch || null,
     delegationId: delegation?.id || null,
   };
-}
-
-function missionProgress(mission) {
-  const delegations = missionDelegations(mission.id);
-  const done = delegations.filter((d) => ["accepted", "completed"].includes(d.status)).length;
-  return { total: delegations.length, done };
 }
 
 function createMissionChild(mission, supervisorRun, step, agent, blockedBy = []) {
@@ -2525,6 +2536,27 @@ async function imNotifyRun(todo, run, handle) {
   void handle;
 }
 
+/** 人物语料目录：设置优先；开发时用仓库 datasets；装好后用 userData 里的副本 */
+function personaDatasetDir() {
+  const configured = String(store?.state?.settings?.personaDatasetDir || "").trim();
+  if (configured && fs.existsSync(configured)) return configured;
+  const candidates = [
+    path.join(app.getPath("userData"), "datasets", "wechat"),
+    path.join(__dirname, "..", "datasets", "wechat"),
+    path.join(process.cwd(), "datasets", "wechat"),
+    path.join(app.getAppPath(), "..", "datasets", "wechat"),
+  ];
+  return candidates.find((p) => fs.existsSync(p)) || "";
+}
+
+/** AI 建模任务状态（单实例、可取消、可查询进度） */
+const personaJob = {
+  running: false, cancelled: false, // 启动时断言为未运行，避免上次异常退出留下脏状态
+  total: 0, done: 0, current: "", startedAt: 0, finishedAt: 0,
+  cards: 0, llmAdded: 0, statsAdded: 0, skippedCache: 0, failed: [], mode: "",
+  runId: "", lastError: "",
+};
+
 /** 只读检索历史：transcript（消息）/ run / 事件，带时间与来源会话 */
 function transcriptSearch(query, limit = 8) {
   const q = String(query || "").trim().toLowerCase();
@@ -2590,12 +2622,25 @@ async function applyMemorySuggestion(sug) {
   return { applied: false };
 }
 
+/**
+ * 从设置里的 dshEnv（已解密）解析出 ARK_API_KEY。
+ * 只取这一把 key：不要拿整段 env 文本当 key（会把 "A=1\nB=2" 当 Bearer 发出去），
+ * 也不要去翻别的应用的配置目录。
+ */
+function arkKeyFromSettings() {
+  const env = parseEnvText(decSecret(store?.state?.settings?.dshEnv || ""));
+  return String(env.ARK_API_KEY || "").trim();
+}
+
 /** 知识索引：懒加载，首次使用时才建 userData/knowledge/kb.db（删掉即可重建）。 */
 let knowledgeStore = null;
 function knowledge() {
   if (!knowledgeStore) {
     knowledgeStore = createKnowledge({
       dir: path.join(app.getPath("userData"), "knowledge"),
+      // 云端向量默认关闭；开关读设置（函数形式，改完即时生效）
+      embed: () => store?.state?.settings?.knowledgeCloudIndex === true,
+      arkKey: () => arkKeyFromSettings(),
       engineSeal: (value) => (safeStorage.isEncryptionAvailable()
         ? safeStorage.encryptString(value).toString("base64")
         : value),
@@ -2610,7 +2655,7 @@ function knowledge() {
 const actions = {
   knowledgeStatus: async () => {
     const kb = knowledge();
-    return { ...kb.status(), hasKey: kb.hasKey, root: kb.root };
+    return { ...kb.status(), hasKey: kb.hasKey, root: kb.root, embedding: kb.embeddingInfo() };
   },
   knowledgeList: async ({ kb, limit } = {}) => knowledge().listDocuments({ kb, limit }),
   knowledgeEngines: async () => knowledge().engines(),
@@ -2767,24 +2812,32 @@ const actions = {
   personaRemove: async ({ personId, from, to, sourcePrefix } = {}) => persona().remove({ personId, from, to, sourcePrefix }),
   personaConflicts: async () => persona().detectConflicts(),
   /**
-   * 人物建模：把聊天记录算成可观测特征（话量/句长/回复速度/语气/话题/活跃时段），
-   * 可选再让模型写一版人设卡草稿。写入 observations 默认 pending，带证据原话。
+   * 人物建模（可直接从界面调用）：
+   * - mode="llm"：统计事实 + 每个联系人的一次 Ark 分析（oneLiner / 身份 / 性格 / 沟通 / 价值 / 目标 / 决策）
+   * - mode="stats"：只算可观测统计，不花钱
+   * 进度写到 personaModelStatus()，可用 personaModelCancel() 中途停止；样本 hash 缓存，不重复花钱。
    */
-  personaModel: async ({ limit = 40, useModel = false, modelTop = 8, minMessages = 20, autoConfirm = true } = {}) => {
-    const candidates = [
-      path.join(__dirname, "..", "datasets", "wechat"),   // 开发：仓库根
-      path.join(process.cwd(), "datasets", "wechat"),
-      path.join(app.getAppPath(), "..", "datasets", "wechat"),
-    ];
-    const rootDs = candidates.find((p) => fs.existsSync(p));
-    if (!rootDs) throw new Error(`没有数据集目录（找过：${candidates.join(" / ")}）`);
-    // 1) 汇总：人 → 该人所有发言
-    const byPerson = new Map();
+  personaModel: async ({ mode = "llm", limit = 12, minMessages = 30, model = "", autoConfirmStats = true } = {}) => {
+    if (personaJob.running) throw new Error("已经有一个建模任务在跑");
+    Object.assign(personaJob, {
+      running: true, cancelled: false, total: 0, done: 0, current: "", startedAt: Date.now(), finishedAt: 0,
+      cards: 0, llmAdded: 0, statsAdded: 0, skippedCache: 0, failed: [], mode, runId: `pm-${Date.now().toString(36)}`, lastError: "",
+    });
+    const rootDs = personaDatasetDir();
+    if (!rootDs) {
+      personaJob.running = false;
+      throw new Error("没找到人物语料目录。装好的 App 读不到仓库里的 datasets —— 到「设置 → 执行 → 人物语料目录」指定路径，或点旁边的「复制到应用目录」。");
+    }
+
+    // 语料 + 语料上下文
+    const chats = new Map();
     for (const chat of fs.readdirSync(rootDs)) {
       const file = path.join(rootDs, chat, "dataset.json");
       if (!fs.existsSync(file)) continue;
-      let list = [];
-      try { list = JSON.parse(fs.readFileSync(file, "utf8")); } catch { continue; }
+      try { chats.set(chat, JSON.parse(fs.readFileSync(file, "utf8"))); } catch { /* ignore */ }
+    }
+    const byPerson = new Map();
+    for (const [chat, list] of chats) {
       for (const m of list) {
         const who = String(m.from || "").trim();
         if (!who || who === "我") continue;
@@ -2792,67 +2845,166 @@ const actions = {
         byPerson.get(who).push({ ...m, chat });
       }
     }
-    const contextByChat = new Map();
-    for (const chat of fs.readdirSync(rootDs)) {
-      const file = path.join(rootDs, chat, "dataset.json");
-      if (!fs.existsSync(file)) continue;
-      try { contextByChat.set(chat, JSON.parse(fs.readFileSync(file, "utf8"))); } catch { /* ignore */ }
-    }
-    // 2) 只建模库里已有的人，按发言量取前 limit 个
     const people = persona().people();
     const known = new Map(people.map((p) => [p.name, p]));
     const targets = [...byPerson.entries()]
       .filter(([name, msgs]) => known.has(name) && msgs.length >= minMessages)
-      .sort((a, b) => b[1].length - a[1].length)
-      .slice(0, Math.max(1, Number(limit) || 40));
+      .sort((a, b) => b[1].length - a[1].length);
+    // limit<=0 → 全部（一键全部建模）；默认 12
+    const limited = Number(limit) > 0 ? targets.slice(0, Number(limit)) : targets;
+    targets.length = 0;
+    targets.push(...limited);
+    personaJob.total = targets.length;
+    broadcast();
 
-    let added = 0;
     const byField = {};
-    const modelled = [];
-    for (const [name, msgs] of targets) {
-      const person = known.get(name);
-      const chats = [...new Set(msgs.map((m) => m.chat).filter(Boolean))];
-      const context = chats.flatMap((c) => contextByChat.get(c) || []);
-      const f = computeFeatures(msgs, name, context);
-      if (!f) continue;
-      for (const d of describePerson(name, f)) {
-        const res = persona().addObservation({
-          personId: person.id, person: name, field: d.field, value: d.value,
-          quote: d.quote, sourceKind: "model", sourceRef: `chat:${msgs[0]?.chat || ""}`,
-          // 统计类结论（话量/时延/话题）可直接生效；它们是数出来的，不是推断
-          status: autoConfirm ? "confirmed" : "pending",
-        });
-        if (res) { added += 1; byField[d.field] = (byField[d.field] || 0) + 1; }
-      }
-      modelled.push({ name, count: f.count, medianLen: f.medianLen });
-    }
-
-    // 3) 可选：模型写人设卡草稿（只给 top N，且有 key）
-    let modelCards = 0;
-    if (useModel) {
-      for (const [name, msgs] of targets.slice(0, Math.max(1, Number(modelTop) || 8))) {
+    try {
+      for (const [name, msgs] of targets) {
+        if (personaJob.cancelled) break;
+        personaJob.current = name;
+        broadcast();
         const person = known.get(name);
-        const f = computeFeatures(msgs, name);
-        const card = await modelCard({ name, features: f, relation: person.relation || "" }).catch(() => null);
-        if (!card) continue;
-        modelCards += 1;
-        const push = (field, value) => {
+        const chatNames = [...new Set(msgs.map((m) => m.chat).filter(Boolean))];
+        const context = chatNames.flatMap((c) => chats.get(c) || []);
+        const f = computeFeatures(msgs, name, context);
+        if (!f) { personaJob.done += 1; continue; }
+
+        // 统计事实（可数）
+        for (const d of describePerson(name, f)) {
           const res = persona().addObservation({
-            personId: person.id, person: name, field, value: String(value).slice(0, 120),
-            quote: (card.evidence || []).slice(0, 2).join(" / "), sourceKind: "model",
-            sourceRef: `chat:${msgs[0]?.chat || ""}`, confidence: 0.55,
+            personId: person.id, person: name, field: d.field, value: d.value, quote: d.quote,
+            sourceKind: "stats", sourceRef: `${personaJob.runId}:chat:${chatNames[0] || ""}`,
+            status: autoConfirmStats ? "confirmed" : "pending",
           });
-          if (res) { added += 1; byField[field] = (byField[field] || 0) + 1; }
-        };
-        (card.traits || []).slice(0, 4).forEach((t) => push("traits", t));
-        (card.communication || []).slice(0, 3).forEach((t) => push("communication", t));
-        (card.topics || []).slice(0, 3).forEach((t) => push("situation", `常聊话题：${t}`));
-        if (card.oneLiner) push("style", card.oneLiner);
+          if (res) { personaJob.statsAdded += 1; byField[d.field] = (byField[d.field] || 0) + 1; }
+        }
+
+        if (mode === "llm") {
+          const hash = crypto.createHash("sha1").update(`${name}|${f.samples.map((s) => s.text).join("")}`).digest("hex");
+          if (persona().analysisCache({ personId: person.id }) === hash) {
+            personaJob.skippedCache += 1;
+          } else {
+            let card = null;
+            try {
+              // 单个人最多等 50s：模型偶发慢请求不能把整批卡死
+              card = await Promise.race([
+                analyzePersonWithLLM({
+                  name, relation: person.relation || "", stats: f,
+                  samples: f.samples.slice(-12).map((s) => ({ text: s.text, at: s.at })),
+                  context: context.slice(-12).map((c) => ({ from: c.from, text: c.text })),
+                  model: model || undefined,
+                }),
+                new Promise((resolve) => setTimeout(() => resolve(null), 28000)),
+              ]);
+            } catch (err) {
+              personaJob.failed.push(`${name}: ${String(err?.message || err).slice(0, 80)}`);
+            }
+            if (card) {
+              persona().setAnalysisCache({ personId: person.id, hash });
+              personaJob.cards += 1;
+              const push = (field, value, evidence) => {
+                const text = String(value || "").trim();
+                if (!text || /^(未知|不确定|unknown)$/i.test(text)) return;
+                const res = persona().addObservation({
+                  personId: person.id, person: name, field, value: text.slice(0, 120),
+                  quote: String(evidence || "").slice(0, 240), sourceKind: "llm",
+                  sourceRef: `${personaJob.runId}:chat:${chatNames[0] || ""}`, status: "pending",
+                  confidence: Number(card.confidence) || 0.55,
+                });
+                if (res) { personaJob.llmAdded += 1; byField[field] = (byField[field] || 0) + 1; }
+              };
+              const pair = (field, item) => push(field, item?.value, item?.evidence);
+              pair("identity", card.identity); pair("role", card.role); pair("relation", card.relationshipToMe);
+              (card.traits || []).slice(0, 3).forEach((x) => pair("traits", x));
+              (card.communication || []).slice(0, 3).forEach((x) => pair("communication", x));
+              (card.values || []).slice(0, 3).forEach((x) => pair("value", x));
+              (card.goals || []).slice(0, 3).forEach((x) => pair("goal", x));
+              (card.decisions || []).slice(0, 3).forEach((x) => pair("decision", x));
+              (card.topics || []).slice(0, 4).forEach((t) => push("situation", `常聊话题：${t}`, "(模型归纳)"));
+              if (card.oneLiner) persona().setOneLiner({ personId: person.id, text: card.oneLiner });
+            }
+          }
+        }
+        personaJob.done += 1;
+        broadcast();
+      }
+    } catch (err) {
+      personaJob.lastError = String(err?.message || err);
+    } finally {
+      personaJob.running = false;
+      personaJob.finishedAt = Date.now();
+      personaJob.current = "";
+      store.addEvent("persona.model", `persona.model ${personaJob.mode} cards=${personaJob.cards} llm=${personaJob.llmAdded} stats=${personaJob.statsAdded} cancelled=${personaJob.cancelled}`);
+      broadcast();
+    }
+    return {
+      mode, runId: personaJob.runId, people: personaJob.total, done: personaJob.done,
+      statsAdded: personaJob.statsAdded, llmAdded: personaJob.llmAdded, cards: personaJob.cards,
+      skippedCache: personaJob.skippedCache, cancelled: personaJob.cancelled,
+      failed: personaJob.failed.slice(0, 5), byField,
+    };
+  },
+  personaDatasetInfo: async () => {
+    const dir = personaDatasetDir();
+    let chats = 0;
+    if (dir) { try { chats = fs.readdirSync(dir).filter((n) => fs.existsSync(path.join(dir, n, "dataset.json"))).length; } catch { chats = 0; } }
+    return { dir, chats, fromSetting: Boolean(store?.state?.settings?.personaDatasetDir), userData: app.getPath("userData") };
+  },
+  /** 把仓库里的 datasets/wechat 复制到 userData，装好的 App 就能直接建模 */
+  personaDatasetCopy: async () => {
+    const sources = [
+      path.join(__dirname, "..", "datasets", "wechat"),
+      path.join(process.cwd(), "datasets", "wechat"),
+    ];
+    const src = sources.find((p) => fs.existsSync(p));
+    if (!src) throw new Error("仓库里也没有 datasets/wechat —— 先用 scripts/import-wechat.mjs 生成");
+    const dest = path.join(app.getPath("userData"), "datasets", "wechat");
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true });
+    fs.cpSync(src, dest, { recursive: true, dereference: true });
+    const chats = fs.readdirSync(dest).filter((n) => fs.existsSync(path.join(dest, n, "dataset.json"))).length;
+    store.state.settings = { ...(store.state.settings || {}), personaDatasetDir: dest };
+    store.addEvent("persona.dataset", `persona.dataset copied ${chats} chats → ${dest}`);
+    broadcast();
+    return { dir: dest, chats };
+  },
+  /** 建模计划：给「一键全部建模」用，先告诉用户要花多少次调用 */
+  personaModelPlan: async ({ minMessages = 30 } = {}) => {
+    const dir = personaDatasetDir();
+    if (!dir) return { dir: "", eligible: 0, cached: 0, calls: 0, people: 0 };
+    const counts = new Map();
+    for (const chat of fs.readdirSync(dir)) {
+      const file = path.join(dir, chat, "dataset.json");
+      if (!fs.existsSync(file)) continue;
+      let list = [];
+      try { list = JSON.parse(fs.readFileSync(file, "utf8")); } catch { continue; }
+      for (const m of list) {
+        const who = String(m.from || "").trim();
+        if (!who || who === "我") continue;
+        counts.set(who, (counts.get(who) || 0) + 1);
       }
     }
-
-    store.addEvent("persona.model", `persona.model people=${modelled.length} added=${added} model=${modelCards}`);
-    return { people: modelled.length, added, byField, modelCards, sample: modelled.slice(0, 5) };
+    const people = persona().people();
+    const known = new Set(people.map((p) => p.name));
+    const eligible = [...counts.entries()].filter(([n, c]) => known.has(n) && c >= minMessages);
+    let cached = 0;
+    for (const [name] of eligible) {
+      const p = people.find((x) => x.name === name);
+      if (p && persona().analysisCache({ personId: p.id })) cached += 1;
+    }
+    return { dir, people: people.length, eligible: eligible.length, cached, calls: Math.max(0, eligible.length - cached) };
+  },
+  personaModelStatus: async () => ({
+    ...personaJob,
+    failed: personaJob.failed.slice(0, 5),
+    rephrased: undefined,
+  }),
+  personaModelCancel: async () => { personaJob.cancelled = true; return { cancelled: true }; },
+  /** 把某次 AI 建模产生的 pending 一次确认/拒绝 */
+  personaModelResolve: async ({ runId, accept = true } = {}) => {
+    const res = persona().bulkResolve({ sourceKind: "llm", since: 0, accept });
+    store.addEvent("persona.model", `persona.model ${accept ? "accept" : "reject"} run=${runId || "-"} n=${res.resolved}`);
+    return res;
   },
   personaImportPick: async () => {
     const res = await dialog.showOpenDialog(win, {
@@ -2887,6 +3039,65 @@ const actions = {
     return persona().import({ text: body, selfName, format, kind: importKind, title: docTitle });
   },
 
+  /**
+   * 模型整理知识库：逐页调用 Ark，只产出「摘要 + 要点」并写回 draft。
+   * 原文摘录 / 相关 / 用户自己写的小节不动；reviewed 页面默认跳过。
+   * 没有 key 时明确报错，让 UI 退回「整理结构」。
+   */
+  wikiCurateLLM: async ({ ids, limit = 8, force = false } = {}) => {
+    if (!pluginHost) throw new Error("插件宿主未启动");
+    const key = arkKeyFromSettings();
+    if (!key) throw new Error("模型整理需要 Ark key（设置 → 模型网关）；没有 key 可以先用「整理结构」");
+    const list = await pluginHost.invoke("ai.cockpit.notes", "wiki.list", {});
+    const all = list?.pages || [];
+    const drafts = all.filter((p) => p.status === "draft" && p.title !== "Wiki 索引");
+    const wanted = Array.isArray(ids) && ids.length ? drafts.filter((p) => ids.includes(p.id)) : drafts;
+    const picked = wanted.slice(0, Math.max(1, Math.min(30, Number(limit) || 8)));
+
+    const cacheFile = path.join(app.getPath("userData"), "wiki-curate-cache.json");
+    let cache = {};
+    try { cache = JSON.parse(fs.readFileSync(cacheFile, "utf8")) || {}; } catch { cache = {}; }
+
+    let updated = 0; let skipped = 0; let calls = 0; let tokens = 0; const errors = [];
+    for (const summary of picked) {
+      try {
+        const page = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: summary.id });
+        if (!page?.content) { skipped += 1; continue; }
+        if (!force && cache[page.id]?.hash === contentHash(page.content)) { skipped += 1; continue; }
+        calls += 1;
+        // 有的网关不认 response_format=json_object：先试严格 JSON，失败再退回纯文本 + 宽容解析
+        let text = "";
+        try {
+          const r = await arkChat(curateMessages(page), { key, maxTokens: 700, temperature: 0.2, json: true });
+          text = r?.text || "";
+          tokens += Number(r?.usage?.total_tokens || 0);
+        } catch {
+          const r = await arkChat(curateMessages(page), { key, maxTokens: 700, temperature: 0.2 });
+          text = r?.text || "";
+          tokens += Number(r?.usage?.total_tokens || 0);
+        }
+        if (!text.trim()) { errors.push(`${page.title}：模型返回为空`); continue; }
+        const parsed = parseCurated(text);
+        if (!parsed.ok) { errors.push(`${page.title}：模型输出无法解析`); continue; }
+        const nextContent = spliceCurated(page.content, parsed);
+        if (nextContent === page.content && (parsed.summary || "") === (page.summary || "")) { skipped += 1; continue; }
+        await pluginHost.invoke("ai.cockpit.notes", "wiki.savePage", {
+          id: page.id,
+          content: nextContent,
+          summary: parsed.summary || page.summary || "",
+          status: "draft",
+        });
+        cache[page.id] = { hash: contentHash(nextContent), at: Date.now() };
+        updated += 1;
+      } catch (err) {
+        errors.push(`${summary.title || summary.id}：${String(err?.message || err)}`);
+      }
+    }
+    try { fs.writeFileSync(cacheFile, JSON.stringify(cache, null, 0)); } catch { /* 缓存写失败不影响结果 */ }
+    store.addEvent("wiki.curate.llm", `wiki.curate.llm updated=${updated} calls=${calls} errors=${errors.length}`);
+    return { candidates: drafts.length, picked: picked.length, updated, skipped, calls, tokens, errors };
+  },
+
   knowledgeReparse: async ({ id, engine } = {}) => {
     const doc = knowledge().listDocuments({ limit: 1000 }).find((d) => d.id === String(id || ""));
     if (!doc) throw new Error("文档不存在");
@@ -2897,7 +3108,7 @@ const actions = {
     // 「问知识库」优先走模型：知识库页面作候选集，答案必须带页面引用；没有 key 时落回插件的检索式
     if (String(pluginId) === "ai.cockpit.notes" && String(method) === "wiki.ask") {
       const question = String(args?.question || "").trim();
-      const key = resolveArkKeyFor(store.state.settings?.dshEnv ? decSecret(store.state.settings.dshEnv) : "");
+      const key = arkKeyFromSettings();
       if (question && key) {
         try {
           const hits = await pluginHost.invoke("ai.cockpit.notes", "wiki.search", { query: question, limit: 6 });
@@ -3701,16 +3912,7 @@ const actions = {
     if (todo.confirmed) throw new Error("任务已确认，不能再重新生成");
     const lastUser = [...store.state.messages].reverse().find((m) => m.threadId === thread.id && m.role === "user");
     if (!lastUser) throw new Error("没有找到上一轮提问");
-    const agent = store.state.agents.find((a) => a.id === (thread.agentId || todo.agentId))
-      || sceneAgentFor(todo.projectId)
-      || defaultChatAgent(todo.projectId);
-    if (!agent) throw new Error("没有可用的 Agent");
-    const err = chatAgentError(agent);
-    if (err) throw new Error(err);
-    thread.agentId = agent.id;
-    todo.agentId = agent.id;
-    thread.updatedAt = now();
-    todo.updatedAt = now();
+    const agent = bindChatAgent(thread, todo);
     const run = queueRun(todo, agent, "regenerate");
     // 新 run 的 prompt 只收「绑定到该 run 的用户消息」：不重新绑定就等于空跑一次
     store.updateMessage(lastUser.id, { runId: run.id });
@@ -3743,16 +3945,7 @@ const actions = {
       return { mode: "steer", delivery };
     }
     if (todo.confirmed) throw new Error("任务已确认，不能再重发");
-    const agent = store.state.agents.find((a) => a.id === (thread.agentId || todo.agentId))
-      || sceneAgentFor(todo.projectId)
-      || defaultChatAgent(todo.projectId);
-    if (!agent) throw new Error("没有可用的 Agent");
-    const err = chatAgentError(agent);
-    if (err) throw new Error(err);
-    thread.agentId = agent.id;
-    todo.agentId = agent.id;
-    thread.updatedAt = now();
-    todo.updatedAt = now();
+    const agent = bindChatAgent(thread, todo);
     // 编辑后重发相当于从这里开新分支：把这条消息之后的旧回答/旧追问软置为「已被取代」，
     // 否则新回答会追加在整段历史末尾，看起来像是「结果跑到了错误的位置」。
     const cutoff = Number(msg.createdAt) || 0;
@@ -4721,7 +4914,6 @@ ipcMain.handle("shell:openExternal", async (_e, { url } = {}) => {
   await shell.openExternal(value);
   return true;
 });
-
 
 ipcMain.handle("preview:pick", async (_e, { webContentsId, root } = {}) => {
   let abs;
