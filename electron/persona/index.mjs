@@ -206,14 +206,19 @@ export function createPersona({ dir }) {
   fs.mkdirSync(dir, { recursive: true });
   const db = new DatabaseSync(path.join(dir, "persona.db"));
   db.exec(SCHEMA);
+  try { db.exec("ALTER TABLE people ADD COLUMN one_liner TEXT"); } catch { /* 已存在 */ }
   const rows = (sql, p = []) => db.prepare(sql).all(...p);
   const one = (sql, p = []) => db.prepare(sql).get(...p);
   const run = (sql, p = []) => db.prepare(sql).run(...p);
+
+  const metaGet = (k) => { try { return one("SELECT v FROM meta WHERE k=?", [k])?.v || null; } catch { return null; } };
+  const metaSet = (k, v) => run("INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", [k, String(v ?? "")]);
 
   const personRow = (r) => ({
     id: r.id, name: r.name, aliases: J(r.aliases, []), relation: r.relation,
     strength: r.strength, direction: r.direction, groupOnly: !!r.group_only,
     isSelf: !!r.is_self, createdAt: r.created_at, updatedAt: r.updated_at,
+    oneLiner: r.one_liner || "",
   });
   const obsRow = (r) => ({
     id: r.id, personId: r.person_id, person: r.person, field: r.field, value: r.value,
@@ -229,7 +234,11 @@ export function createPersona({ dir }) {
     if (found) return found;
     const at = Date.now();
     const id = uid("p");
-    run("INSERT INTO people VALUES (?,?,?,?,?,?,?,?,?,?)", [id, name, "[]", "", isSelf ? 1 : 0.45, "", groupOnly ? 1 : 0, isSelf ? 1 : 0, at, at]);
+    // 显式列名：people 表会继续加列（one_liner 已经加过），不能再用 VALUES 全列占位
+    run(
+      "INSERT INTO people (id, name, aliases, relation, strength, direction, group_only, is_self, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+      [id, name, "[]", "", isSelf ? 1 : 0.45, "", groupOnly ? 1 : 0, isSelf ? 1 : 0, at, at],
+    );
     return personRow(one("SELECT * FROM people WHERE id=?", [id]));
   }
 
@@ -287,7 +296,8 @@ export function createPersona({ dir }) {
     // 一句话概括：只用已确认的观察，不靠模型编
     const pick = (f) => (byField[f] || [])[0]?.value || "";
     const bits = [pick("traits"), pick("decision"), pick("conflict"), pick("communication"), pick("value"), pick("preference")].filter(Boolean);
-    const oneLiner = bits.length ? `${[...new Set(bits)].slice(0, 3).join("；")}。` : "";
+    const autoOneLiner = bits.length ? `${[...new Set(bits)].slice(0, 3).join("；")}。` : "";
+    const oneLiner = person.oneLiner || autoOneLiner;
 
     const covered = CARD_FIELDS.filter((f) => support(f) > 0).length;
     const completeness = Math.min(100, Math.round((covered / CARD_FIELDS.length) * 100) + Math.min(8, Math.floor(safe.length / 6)));
@@ -307,7 +317,9 @@ export function createPersona({ dir }) {
 
     /** 左栏列表：带已确认 / 待确认计数与人设卡完整度 */
     peopleList() {
-      return rows("SELECT * FROM people ORDER BY is_self DESC, updated_at DESC").map(personRow).map((p) => {
+      // 按 created_at 排，不按 updated_at：建模 / 改写一句话会刷 updated_at，
+      // 用它排序会让「刚操作过的人」在左栏里跳到最前面。
+      return rows("SELECT * FROM people ORDER BY is_self DESC, COALESCE(created_at, 0) DESC, name").map(personRow).map((p) => {
         const covered = new Set(
           rows("SELECT DISTINCT field FROM observations WHERE person_id=? AND status='confirmed'", [p.id])
             .map((r) => r.field).filter((f) => CARD_FIELDS.includes(f)),
@@ -315,10 +327,25 @@ export function createPersona({ dir }) {
         const confirmed = one("SELECT COUNT(*) n FROM observations WHERE person_id=? AND status='confirmed'", [p.id]).n;
         const pending = one("SELECT COUNT(*) n FROM observations WHERE person_id=? AND status='pending'", [p.id]).n;
         const lastAt = one("SELECT MAX(updated_at) t FROM observations WHERE person_id=?", [p.id]).t || p.updatedAt;
-        return {
-          ...p, confirmed, pending, lastAt,
-          completeness: Math.min(100, Math.round((covered.size / CARD_FIELDS.length) * 100) + Math.min(8, Math.floor(confirmed / 6))),
-        };
+        const completeness = Math.min(100, Math.round((covered.size / CARD_FIELDS.length) * 100) + Math.min(8, Math.floor(confirmed / 6)));
+
+        // 标签：一眼看出「建模过什么、是什么类型的人」
+        const tags = [];
+        const values = rows("SELECT field, value, source_kind FROM observations WHERE person_id=? AND status='confirmed'", [p.id]);
+        const has = (field, re) => values.some((v) => v.field === field && re.test(v.value));
+        if (values.some((v) => v.source_kind === "llm") || p.oneLiner) tags.push("已建模");
+        if (completeness >= 50) tags.push("人设卡");
+        if (has("role", /营销|官方|客服|公众号|运营/) || /营销号|官方号|公众号/.test(p.oneLiner || "")) tags.push("营销/官方");
+        else if (has("role", /技术|开发|工程师|程序|研发/) || has("identity", /技术|开发|工程师|研发/)) tags.push("技术");
+        if (has("traits", /话多/)) tags.push("话多");
+        else if (has("traits", /话少/)) tags.push("话少");
+        if (has("communication", /回复(很快|极快)/)) tags.push("秒回");
+        if (values.some((v) => v.field === "situation" && /私聊 100%/.test(v.value))) tags.push("私聊为主");
+        if (values.some((v) => v.field === "situation" && /群聊 100%/.test(v.value))) tags.push("群聊为主");
+        if (p.groupOnly) tags.push("仅群聊");
+        if (rows("SELECT 1 FROM observations WHERE person_id=? AND sensitive=1 LIMIT 1", [p.id]).length) tags.push("敏感");
+
+        return { ...p, confirmed, pending, lastAt, completeness, tags };
       });
     },
 
@@ -422,6 +449,17 @@ export function createPersona({ dir }) {
       return { deduped: false, importId: id, format: fmt, messages: messages.length, people: new Set(messages.map((m) => m.speaker)).size, added };
     },
 
+    /** LLM 分析缓存：同一份样本不重复花钱 */
+    analysisCache({ personId } = {}) { return metaGet(`llm:${personId}`); },
+    setAnalysisCache({ personId, hash } = {}) { metaSet(`llm:${personId}`, hash); return true; },
+
+    /** 写「一句话概括」（LLM 生成时用；空则回落到事实拼装） */
+    setOneLiner({ personId, text } = {}) {
+      const value = String(text || "").trim().slice(0, 200);
+      run("UPDATE people SET one_liner=?, updated_at=? WHERE id=?", [value || null, Date.now(), personId]);
+      return personRow(one("SELECT * FROM people WHERE id=?", [personId]));
+    },
+
     /** 建模写入用：按 (person, field, value) 去重，默认 pending */
     addObservation({ personId, person, field, value, quote = "", sourceKind = "model", sourceRef = "", status = "pending", confidence = 0.7 } = {}) {
       const text = String(value || "").trim();
@@ -436,6 +474,18 @@ export function createPersona({ dir }) {
         status, 0, null, at, at,
       ]);
       return obsRow(one("SELECT * FROM observations WHERE id=?", [id]));
+    },
+
+    /** 批量确认/拒绝：按来源筛选（如把某次 AI 建模的 pending 一次确认） */
+    bulkResolve({ sourceKind, accept = true, since = 0, limit = 500 } = {}) {
+      const params = [];
+      let sql = "SELECT id FROM observations WHERE status='pending'";
+      if (sourceKind) { sql += " AND source_kind=?"; params.push(sourceKind); }
+      if (since) { sql += " AND created_at>=?"; params.push(Number(since)); }
+      sql += " LIMIT ?"; params.push(limit);
+      const ids = rows(sql, params).map((r) => r.id);
+      for (const id of ids) { try { this.resolve({ id, accept }); } catch { /* ignore */ } }
+      return { resolved: ids.length, accept };
     },
 
     pending({ limit = 200 } = {}) {
@@ -463,7 +513,7 @@ export function createPersona({ dir }) {
     },
 
     people({ includeGroup = true } = {}) {
-      return rows("SELECT * FROM people ORDER BY is_self DESC, updated_at DESC").map(personRow)
+      return rows("SELECT * FROM people ORDER BY is_self DESC, COALESCE(created_at, 0) DESC, name").map(personRow)
         .filter((p) => includeGroup || !p.groupOnly);
     },
     merge({ keepId, aliasIds = [] } = {}) {
@@ -488,7 +538,7 @@ export function createPersona({ dir }) {
       const person = personId ? personRow(one("SELECT * FROM people WHERE id=?", [personId])) : null;
       const obs = (pid) => rows("SELECT * FROM observations WHERE person_id=? AND status='confirmed' ORDER BY field, COALESCE(valid_from, created_at) DESC", [pid]).map(obsRow);
       const self = personRow(one("SELECT * FROM people WHERE is_self=1 LIMIT 1") || {});
-      const others = rows("SELECT * FROM people WHERE is_self=0").map(personRow);
+      const others = rows("SELECT * FROM people WHERE is_self=0 ORDER BY COALESCE(created_at, 0) DESC, name").map(personRow);
       const rels = rows("SELECT * FROM relations WHERE status='confirmed'").map((r) => ({
         id: r.id, from: r.from_id, to: r.to_id, type: r.type, strength: r.strength, direction: r.direction, sourceRef: r.source_ref,
       }));
