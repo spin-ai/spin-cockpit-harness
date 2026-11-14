@@ -3249,3 +3249,15 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .persona-list:focus-visible{outline:1px solid var(--brand-line);outline-offset:2px;border-radius:var(--radius-sm)}
 .pr-entry.active{background:var(--surface-hover);border-radius:var(--radius-sm);padding-left:6px}
 .pr-entries:focus-visible,.notes-tree:focus-visible{outline:1px solid var(--brand-line);outline-offset:2px;border-radius:var(--radius-sm)}
+/* 撤销条 */
+.undo-bar{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:650;display:flex;align-items:center;gap:10px;padding:7px 10px 7px 12px;border:1px solid var(--border-strong);border-radius:999px;background:var(--surface);box-shadow:var(--shadow-float);font-size:11.5px;color:var(--fg-2)}
+.undo-btn{border:0;background:var(--brand-soft);color:var(--brand);border-radius:999px;padding:3px 10px;font-size:11.5px;cursor:pointer}
+.undo-btn em{font-style:normal;font-size:10px;color:var(--faint);margin-left:3px}
+/* 列表密度 */
+.list-compact .persona-row{padding-top:2px;padding-bottom:2px}
+.list-compact .persona-tags{display:none}
+.list-compact .pr-entry{padding-top:6px;padding-bottom:6px}
+.list-compact .notes-row>.notes-file{min-height:26px}
+.list-compact .notes-file-sub{display:none}
+.list-empty{display:flex;flex-direction:column;gap:4px;padding:14px 8px;color:var(--faint);font-size:11.5px;text-align:center}
+.list-empty p{margin:0}

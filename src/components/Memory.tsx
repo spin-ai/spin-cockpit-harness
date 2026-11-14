@@ -3,6 +3,7 @@ import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
 import { RowMenu } from "./RowMenu";
 import { ListContextMenu } from "./ListContextMenu";
+import { UndoBar, useDensity, type UndoAction } from "./UndoBar";
 import { relTime } from "../ui";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
@@ -42,6 +43,8 @@ export function Memory({ act }: { act: Act }) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [activeEntry, setActiveEntry] = useState("");
   const [ctx, setCtx] = useState<{ x: number; y: number; entry: Entry } | null>(null);
+  const [undo, setUndo] = useState<UndoAction | null>(null);
+  const { dense, toggle: toggleDense } = useDensity("memory");
   const [archived, setArchived] = useState<Entry[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [dreamCfg, setDreamCfg] = useState<{ enabled: boolean; maxSuggestions: number }>({ enabled: true, maxSuggestions: 40 });
@@ -106,8 +109,12 @@ export function Memory({ act }: { act: Act }) {
   };
 
   const archive = async (entry: Entry) => {
-    try { await act("memoryEntryArchive", { id: entry.id }); setNotice("已标为过期（可从来源追溯）"); await load(); }
-    catch (err) { fail(err); }
+    try {
+      await act("memoryEntryArchive", { id: entry.id });
+      setNotice("已标为过期");
+      setUndo({ label: `已标为过期「${entry.title}」`, run: async () => { await act("memoryEntryRestore", { id: entry.id }); await load(); } });
+      await load();
+    } catch (err) { fail(err); }
   };
 
   const resolveNote = async (id: string, status: "verified" | "stale") => {
@@ -162,6 +169,9 @@ export function Memory({ act }: { act: Act }) {
     try {
       const res = await act("memoryEntryBulk", { ids, action });
       setNotice(`已${label} ${res?.count || 0} 条`);
+      if (action === "archive" && ids.length) {
+        setUndo({ label: `已标为过期 ${ids.length} 条`, run: async () => { await act("memoryEntryBulk", { ids, action: "restore" }); await load(); } });
+      }
       setPicked(new Set()); setPicking(false);
       await load();
     } catch (err) { fail(err); }
@@ -242,7 +252,9 @@ export function Memory({ act }: { act: Act }) {
         ] : []}
       />
 
-      <div className="pr-grid">
+      <UndoBar action={undo} onDone={() => setUndo(null)} />
+
+      <div className={`pr-grid ${dense ? "list-compact" : ""}`}>
         {/* 左：层级 / 来源 / 其它 */}
         <aside className="pr-col">
           <div className="pr-block">
@@ -292,6 +304,7 @@ export function Memory({ act }: { act: Act }) {
             </div>
             <span className="row gap6">
               <button className={`list-chip ${picking ? "on" : ""}`} onClick={() => { setPicking((v) => !v); setPicked(new Set()); }}>{picking ? "退出多选" : "多选"}</button>
+              <button className="list-chip" onClick={toggleDense} title="切换列表密度">{dense ? "舒适" : "紧凑"}</button>
               <select className="list-select" value={entrySort} onChange={(e) => setEntrySort(e.target.value as typeof entrySort)} aria-label="排序">
                 <option value="updated">按最近更新</option>
                 <option value="title">按标题</option>
@@ -353,7 +366,13 @@ export function Memory({ act }: { act: Act }) {
             }}
           >
             {shownEntries.length === 0 && (
-              <EmptyState compact mark="◍" title={`「${layerMeta.name}」还是空的`} desc={layer === "L4" ? "接受 Dream 的「晋升」建议会写到这里，也可以手动添加。" : "条目只由 Dream 建议或人工写入。"} />
+              <EmptyState
+                compact
+                mark="◍"
+                title={`「${layerMeta.name}」还是空的`}
+                desc={layer === "L4" ? "接受 Dream 的「晋升」建议会写到这里，也可以手动添加。" : "条目只由 Dream 建议或人工写入。"}
+                action={<button className="btn tiny-btn primary" onClick={() => document.querySelector<HTMLTextAreaElement>(".pr-new-entry")?.focus()}>写一条</button>}
+              />
             )}
             {showArchived && (
               <div className="pr-block">

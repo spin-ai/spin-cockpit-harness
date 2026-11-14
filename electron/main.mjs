@@ -2825,11 +2825,24 @@ const actions = {
   /** 批量删除（按 personId） */
   personaRemoveMany: async ({ personIds = [] } = {}) => {
     let removed = 0;
+    const snapshots = [];
     for (const personId of personIds) {
-      try { removed += persona().remove({ personId })?.removed || 0; } catch { /* ignore */ }
+      try {
+        snapshots.push(persona().snapshotPerson({ personId }));
+        removed += persona().remove({ personId })?.removed || 0;
+      } catch { /* ignore */ }
     }
     store.addEvent("persona.remove", `persona.remove people=${personIds.length} observations=${removed}`);
-    return { people: personIds.length, removed };
+    return { people: personIds.length, removed, snapshots };
+  },
+  /** 撤销删除：把快照写回（人物 + 观察 + 关系） */
+  personaRestore: async ({ snapshots = [] } = {}) => {
+    let restored = 0;
+    for (const snap of snapshots) {
+      try { restored += persona().restoreSnapshot({ snapshot: snap })?.restored || 0; } catch { /* ignore */ }
+    }
+    store.addEvent("persona.restore", `persona.restore snapshots=${snapshots.length} observations=${restored}`);
+    return { restored, people: snapshots.length };
   },
   /** 批量复制角色卡：返回数组，由 UI 放进剪贴板 */
   personaCards: async ({ personIds = [] } = {}) => personIds.map((id) => {

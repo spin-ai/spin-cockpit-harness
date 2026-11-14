@@ -647,6 +647,41 @@ export function createPersona({ dir }) {
       return { found: true, answer: lines.join("\n"), citations };
     },
 
+    /** 删除前快照（用于撤销） */
+    snapshotPerson({ personId } = {}) {
+      return {
+        person: personRow(one("SELECT * FROM people WHERE id=?", [personId])),
+        observations: rows("SELECT * FROM observations WHERE person_id=?", [personId]).map(obsRow),
+        relations: rows("SELECT * FROM relations WHERE from_id=? OR to_id=?", [personId, personId]).map((r) => ({ ...r })),
+      };
+    },
+    /** 撤销删除：把人、观察、关系写回去 */
+    restoreSnapshot({ snapshot } = {}) {
+      if (!snapshot?.person?.id) throw new Error("快照无效");
+      const p = snapshot.person;
+      if (!one("SELECT id FROM people WHERE id=?", [p.id])) {
+        run("INSERT INTO people(id,name,aliases,relation,strength,direction,group_only,is_self,created_at,updated_at,one_liner) VALUES(?,?,?,?,?,?,?,?,?,?,?)", [
+          p.id, p.name, JSON.stringify(p.aliases || []), p.relation || "", p.strength ?? 0.5, p.direction || "",
+          p.groupOnly ? 1 : 0, p.isSelf ? 1 : 0, p.createdAt || Date.now(), Date.now(), p.oneLiner || null,
+        ]);
+      }
+      let restored = 0;
+      for (const o of snapshot.observations || []) {
+        if (one("SELECT id FROM observations WHERE id=?", [o.id])) continue;
+        run("INSERT INTO observations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
+          o.id, o.personId, o.person, o.field, o.value, o.validFrom ?? null, o.validTo ?? null,
+          o.confidence ?? 0.6, o.sourceKind || "manual", o.sourceRef || null, o.quote || "",
+          o.status || "confirmed", o.sensitive ? 1 : 0, o.conflict || null, o.createdAt || Date.now(), o.updatedAt || Date.now(),
+        ]);
+        restored += 1;
+      }
+      for (const r of snapshot.relations || []) {
+        if (one("SELECT id FROM relations WHERE id=?", [r.id])) continue;
+        run("INSERT INTO relations VALUES (?,?,?,?,?,?,?,?,?)", [r.id, r.from_id, r.to_id, r.type, r.strength, r.direction, r.source_ref, r.status, r.created_at]);
+      }
+      return { restored };
+    },
+
     /** 按人 / 时间段 / 来源删除 */
     remove({ personId, from, to, sourcePrefix } = {}) {
       let sql = "DELETE FROM observations WHERE 1=1";
