@@ -162,6 +162,20 @@ export function Persona({ act }: { act: Act }) {
     } catch (err) { setNotice(String((err as Error)?.message || err)); }
   };
 
+  // 切走再回来：任务是在主进程里跑的，挂载时把状态接回来（否则进度条消失）
+  useEffect(() => {
+    let alive = true;
+    void act("personaModelStatus").then((st) => {
+      if (!alive || !st) return;
+      const recent = st.finishedAt && Date.now() - st.finishedAt < 30 * 60 * 1000;
+      if (st.running || (st.done > 0 && recent)) {
+        setJob(st);
+        setProgress(st.total ? Math.round((st.done / st.total) * 100) : 0);
+      }
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [act]);
+
   useEffect(() => {
     if (!job?.running) return;
     let stopped = false;
