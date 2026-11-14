@@ -63,6 +63,7 @@ export function normalizeConfig(raw = {}) {
   const config = mergeConfig(ENGINE_DEFAULTS, raw);
   if (!config.engines || typeof config.engines !== "object") config.engines = clone(ENGINE_DEFAULTS.engines);
   if (!Array.isArray(config.extras)) config.extras = [];
+  config.extras = config.extras.filter((extra) => extra && typeof extra === "object" && extra.name);
   config.defaultEngine = String(config.defaultEngine || "auto");
   config.fallbackEngine = String(config.fallbackEngine || "builtin");
   return config;
@@ -130,6 +131,7 @@ function decodeSecrets(value, open) {
 
 function publicEngineConfig(config = {}) {
   const out = {};
+  if (!config || typeof config !== "object") return out;
   for (const [key, value] of Object.entries(config)) {
     if (SECRET_FIELDS.has(key)) {
       out[`${key}Set`] = Boolean(value);

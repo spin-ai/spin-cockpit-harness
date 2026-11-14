@@ -75,6 +75,31 @@ async function main() {
   check("查询切分去重", q === "检索" || q.split(" ").every((t, i, a) => a.indexOf(t) === i), q);
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cockpit-kb-"));
+
+  // 隐私回归：默认（开关关）不能发任何网络请求；开了才允许出网
+  console.log("\n[1.5] 出网边界");
+  {
+    const egressDir = fs.mkdtempSync(path.join(os.tmpdir(), "cockpit-kb-egress-"));
+    const sample = path.join(egressDir, "egress.md");
+    fs.writeFileSync(sample, "# 出网\n\n默认不应发出任何请求。\n", "utf8");
+    const seen = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (input, init) => { seen.push(String(input?.url || input)); return realFetch(input, init); };
+    try {
+      const kbQuiet = createKnowledge({ dir: path.join(egressDir, "kb"), arkKey: () => "dummy-key-not-used" });
+      const info = kbQuiet.embeddingInfo();
+      check("默认不开云端向量", info.enabled === false, JSON.stringify(info));
+      const res = await kbQuiet.ingestFile({ source: sample });
+      check("默认索引模式 local-fts-only", res.indexMode === "local-fts-only", res.indexMode);
+      check("默认导入不出网", seen.length === 0, seen.join(", "));
+      await kbQuiet.search("默认不应发出");
+      check("默认检索不出网", seen.length === 0, seen.join(", "));
+      kbQuiet.close();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
   const kb = createKnowledge({ dir, embed: false });
   console.log(`\n[2] 摄入（${dir}）`);
 
@@ -105,6 +130,22 @@ async function main() {
   console.log("\n[4] 引用定位");
   const hit = (await kb.search("RRF 融合", { mode: "fts" })).hits[0];
   check("命中带页号与标题", Boolean(hit?.page_no) && Boolean(hit?.heading), `p${hit?.page_no} / ${hit?.heading}`);
+
+  console.log("\n[4.5] 列表顺序稳定");
+  const order1 = kb.listDocuments({ limit: 50 }).map((d) => d.id);
+  check("按导入时间给出初始顺序", order1.length === FIXTURES.length, `${order1.length} 份`);
+  // 重新解析 / 换引擎只会刷新 indexed_at：不能因此改变列表顺序
+  const oldest = order1[order1.length - 1];
+  const { DatabaseSync } = await import("node:sqlite");
+  const raw = new DatabaseSync(path.join(dir, "kb.db"));
+  raw.prepare("UPDATE documents SET indexed_at = ? WHERE id = ?").run(Date.now() + 60_000, oldest);
+  raw.close();
+  const order2 = kb.listDocuments({ limit: 50 }).map((d) => d.id);
+  check("重新解析不改变顺序", order2.join(",") === order1.join(","), `${order2.length} 份`);
+  const added = await kb.ingestText({ title: "顺序验证", markdown: "# 顺序\n新导入的资料应该出现在最前面。" });
+  const order3 = kb.listDocuments({ limit: 50 });
+  check("新导入排在最前", added.ok && order3[0]?.id === added.docId, order3[0]?.title);
+  check("其余顺序不变", order3.slice(1).map((d) => d.id).join(",") === order1.join(","));
 
   console.log("\n[5] 删除传播");
   kb.remove(ids["接口设计.md"]);

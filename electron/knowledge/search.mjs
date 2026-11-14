@@ -10,7 +10,10 @@ export const DEFAULTS = { ftsLimit: 30, vecLimit: 30, topK: 8, rrfK: 60 };
 
 /** 关键词检索。bm25 越小越相关，这里转成越大越好。 */
 export function ftsSearch(db, query, { limit = DEFAULTS.ftsLimit, kb, docIds } = {}) {
-  const match = queryText(query);
+  // FTS5 的空格分隔是 AND：一句自然语言问题会被要求「所有词都出现」，几乎必然 0 命中。
+  // 这里显式用 OR，让 bm25 负责排序；词太多时截断，避免查询爆炸。
+  const tokens = queryText(query).split(" ").filter(Boolean).slice(0, 24);
+  const match = tokens.length > 1 ? tokens.join(" OR ") : tokens[0] || "";
   if (!match) return [];
   const params = [match];
   let sql = `

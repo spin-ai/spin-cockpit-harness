@@ -14,15 +14,6 @@ import path from "node:path";
 const TEXT_EXT = new Set([".md", ".markdown", ".txt", ".text", ".log", ".csv", ".json", ".yaml", ".yml", ".ini", ".toml", ".sql", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".py", ".go", ".rs", ".java", ".c", ".h", ".cpp", ".sh", ".zsh", ".html", ".htm"]);
 const CODE_EXT = new Set([".js", ".mjs", ".ts", ".tsx", ".jsx", ".py", ".go", ".rs", ".java", ".c", ".h", ".cpp", ".sh", ".zsh", ".sql"]);
 
-export const SUPPORTED = [
-  { ext: [".md", ".markdown", ".txt", ".csv", ".json", ".html", ".htm"], parser: "text", level: "builtin" },
-  { ext: [".pdf"], parser: "pdf", level: "unpdf" },
-  { ext: [".docx"], parser: "docx", level: "mammoth" },
-  { ext: [".xlsx", ".xls"], parser: "xlsx", level: "xlsx" },
-  { ext: [".pptx", ".pptm", ".odt", ".ods", ".odp"], parser: "office", level: "officeparser" },
-  { ext: [".epub"], parser: "epub", level: "epub2" },
-];
-
 function attempt(name) {
   const err = new Error(`解析器未安装：${name}`);
   err.code = "parser-missing";

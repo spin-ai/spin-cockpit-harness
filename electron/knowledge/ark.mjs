@@ -8,10 +8,6 @@
  * 所以：一把 key 覆盖问答 / VLM / embedding，rerank 第一版不做。
  */
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
 export const ARK_BASE = "https://ark.cn-beijing.volces.com/api/plan/v3";
 
 export const MODELS = {
@@ -20,23 +16,18 @@ export const MODELS = {
   embed: "doubao-embedding-vision-250328", // 2048 维，文本 + 图片同空间
 };
 
-/** 依次尝试：显式传入 → 环境变量 → pi 的 models.json → null */
+/**
+ * 只认「显式传入」和「本进程环境变量」两种来源，且必须是 ARK_API_KEY。
+ *
+ * 早期版本还会顺手去读 `~/.pi/agent/models.json` 里任意 provider 的 key ——
+ * 那相当于借用别的应用的凭据往火山发数据，用户完全不知情，已删除。
+ * 需要 key 的场景（embedding / 问答）必须先在本应用里配置：
+ * 设置 → 执行 → 模型密钥 / 环境变量里写 `ARK_API_KEY=...`。
+ */
 export function resolveArkKey(explicit) {
-  if (explicit) return explicit;
-  if (process.env.ARK_API_KEY) return process.env.ARK_API_KEY;
-  const candidates = [
-    path.join(os.homedir(), ".pi", "agent", "models.json"),
-    path.join(os.homedir(), ".pi", "models.json"),
-  ];
-  for (const file of candidates) {
-    try {
-      const raw = JSON.parse(fs.readFileSync(file, "utf8"));
-      for (const provider of Object.values(raw.providers || {})) {
-        if (provider?.apiKey) return provider.apiKey;
-      }
-    } catch { /* 忽略 */ }
-  }
-  return null;
+  if (explicit) return String(explicit).trim() || null;
+  const fromEnv = String(process.env.ARK_API_KEY || "").trim();
+  return fromEnv || null;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS documents (
   indexed_at INTEGER,
   deleted_at INTEGER
 );
-CREATE UNIQUE INDEX IF NOT EXISTS documents_hash ON documents(kb, file_hash) WHERE file_hash IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS documents_hash ON documents(kb, file_hash) WHERE file_hash IS NOT NULL AND deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS chunks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,9 +81,22 @@ export function openKnowledgeDb(file) {
   db.exec("PRAGMA foreign_keys = ON");
   db.exec(SCHEMA);
   ensureColumn(db, "documents", "engine", "TEXT");
-  const current = getMeta(db, "schema_version");
-  if (current === null || Number(current) < SCHEMA_VERSION) setMeta(db, "schema_version", String(SCHEMA_VERSION));
+  migrate(db);
   return db;
+}
+
+/**
+ * 迁移：只做能重复执行的动作。
+ * v3：documents_hash 加上 `deleted_at IS NULL` —— 否则删除资料后再导入同一份会撞 UNIQUE。
+ */
+function migrate(db) {
+  const current = Number(getMeta(db, "schema_version") || 0);
+  if (current < 3) {
+    db.exec("DROP INDEX IF EXISTS documents_hash");
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS documents_hash ON documents(kb, file_hash) WHERE file_hash IS NOT NULL AND deleted_at IS NULL");
+  }
+  if (current < SCHEMA_VERSION) setMeta(db, "schema_version", String(SCHEMA_VERSION));
+  return current;
 }
 
 /** 兼容老 kb.db：只加列，不重建。 */
@@ -101,12 +114,6 @@ export function setMeta(db, k, v) {
   db.prepare("INSERT INTO meta(k, v) VALUES(?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(k, String(v));
 }
 
-export function bumpMemoryVersion(db) {
-  const next = Number(getMeta(db, "memory_version") || 0) + 1;
-  setMeta(db, "memory_version", String(next));
-  return next;
-}
-
 export function stats(db) {
   const one = (sql) => db.prepare(sql).get()?.n ?? 0;
   return {
@@ -117,7 +124,6 @@ export function stats(db) {
     vectors: one("SELECT COUNT(*) AS n FROM chunk_vec"),
     dim: Number(getMeta(db, "embedding_dim") || 0),
     embeddingModel: getMeta(db, "embedding_model") || "",
-    memoryVersion: Number(getMeta(db, "memory_version") || 0),
   };
 }
 
