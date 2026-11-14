@@ -4,9 +4,10 @@ Cockpit Harness 的 agent / contributor 入口。
 
 ## 先读
 
+- **文档地图**：[`docs/README.md`](docs/README.md) —— 四层结构、阅读路径、每篇状态
 - UI / 视觉 / 布局改动：**必须先读 [`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md)**
-- 架构：`docs/ARCH-*.md`
-- 插件：`docs/ARCH-plugins.md`
+- 架构：`docs/arch/ARCH-*.md`（总图先看 `ARCH-multi-agent-workspace.md`；**五件关键技术的能力边界与判据见 `ARCH-key-tech.md`**）
+- 插件：`docs/arch/ARCH-plugins.md`
 
 ## UI 硬规则
 
@@ -41,6 +42,43 @@ wade implement <issue>
 npm run typecheck
 npm run build
 npm run verify:plugins
+npm run verify:docs
+# 人物画像（接线 / 导入格式 / 生命周期语义，纯后端 + 渲染层预览，不启动窗口）
+npm run verify:persona
+npm run persona:preview
 ```
+
+### 调试 UI 时不要抢焦点
+
+需要跑真实应用验证 UI（截图 / CDP / 点选）时，**必须后台启动**，不要激活或把窗口弹到用户面前：
+
+```bash
+open -g -j -a "/Applications/Cockpit Harness.app" --args --remote-debugging-port=9222
+# 结束后退出，并把应用恢复成用户原来的状态
+osascript -e 'tell application "Cockpit Harness" to quit'
+```
+
+- 优先用渲染层的隔离预览（vite + mock act）验证 UI，不必启动 Electron；
+- 后端逻辑用 `node scripts/*selftest.mjs` 在临时目录跑，不碰用户的 userData；
+- 不要用 `open -a` / 直接跑二进制（会激活窗口）。
+
+### 打包 / 安装只保留一份
+
+`release/mac-arm64/Cockpit Harness.app` 是构建产物，`/Applications/Cockpit Harness.app` 才是安装。两份同名 app 会让 Spotlight / Launchpad 出现重复图标，用户会以为装了两套。
+
+- **不要双击 / 挂载 DMG 做验证**：挂载过的卷会在 `/Volumes` 留下 LaunchServices 登记，卸载后图标仍然在；验证装没装对，读 asar 就行：
+  ```bash
+  node -e "const a=require('@electron/asar');const p='/Applications/Cockpit Harness.app/Contents/Resources/app.asar';const i=a.listPackage(p).find(f=>/dist\/assets\/index-.*\.js$/.test(f));console.log(a.extractFile(p,i.replace(/^\//,'')).toString().includes('关键词'))"
+  ```
+- **`release/` 必须有 `.metadata_never_index`**（`install-mac.mjs` 会自动写）：没有它，Spotlight 会把构建产物的 app 也索引成第二个「Cockpit Harness」。
+- 安装后若用户反馈「有两个」，按这个顺序查：
+  ```bash
+  ls -d /Applications/*.app | grep -i cockpit          # 磁盘上应该只有一份
+  mdfind "kMDItemContentType == 'com.apple.application-bundle'" | grep -i cockpit
+  lsregister -dump | grep -E "^path:.*Cockpit Harness\.app"   # 看有没有 /Volumes、.Trash 的失效登记
+  lsregister -u <失效路径> && killall Dock              # 清登记 + 刷新 Launchpad 缓存
+  ```
+- `release/mac-arm64` 删掉也无妨（下次打包会重建），但根治靠索引排除，不要靠每次手动删；
+  也不要把它加进「应用程序」或做别名，那才是真造出第二份。
 
 UI 改动建议同时截图检查：工作区、项目、统计、Git、设置、说明，亮色 + 暗色。

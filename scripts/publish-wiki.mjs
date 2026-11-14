@@ -31,6 +31,7 @@ const PAGES = [
   { id: "agents", file: "Agents.md", source: "resources/wiki/agents.md", group: "系统", label: "Agent 与执行适配器" },
   { id: "super-agent", file: "Super-Agent.md", source: "resources/wiki/super-agent.md", group: "系统", label: "Super Agent / Mission" },
   { id: "design-notes", file: "Design-Notes.md", source: "resources/wiki/design-notes.md", group: "系统", label: "设计取舍与踩坑" },
+  { id: "persona", file: "Persona.md", source: "resources/wiki/persona.md", group: "系统", label: "人物画像与记忆语义" },
   { id: "terminal", file: "Terminal.md", source: "resources/wiki/terminal.md", group: "系统", label: "终端与预览" },
   { id: "themes", file: "Themes.md", source: "resources/wiki/themes.md", group: "扩展", label: "主题系统" },
   { id: "plugins", file: "Plugins.md", source: "resources/wiki/plugins.md", group: "扩展", label: "插件与 LLM Wiki" },

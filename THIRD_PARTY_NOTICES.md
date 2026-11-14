@@ -18,6 +18,7 @@ This file summarizes the third-party software distributed with, or used to build
 | sql.js | MIT | https://github.com/sql-js/sql.js |
 | marked | MIT | https://github.com/markedjs/marked |
 | DOMPurify | MPL-2.0 OR Apache-2.0 | https://github.com/cure53/DOMPurify |
+| three.js | MIT | https://github.com/mrdoob/three.js |
 
 ## Bundled Agent runtime
 

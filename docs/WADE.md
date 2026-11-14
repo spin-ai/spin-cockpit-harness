@@ -1,3 +1,5 @@
+> 层：指南 · 状态：已落地 · 核对：2026-11-14 · 覆盖：WADE 开发流程
+
 # WADE 开发环境
 
 > 从 `spin-yieldmind-app` 迁移到 Cockpit Harness。WADE 是 AI-agent-driven git

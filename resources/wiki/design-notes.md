@@ -1,6 +1,6 @@
 # 设计取舍与踩坑
 
-> 记录项目为什么长成现在这样，以及哪些坑已经踩过。参考 `docs/ARTICLE-zhihu-multi-agent-terminal.md`。
+> 记录项目为什么长成现在这样，以及哪些坑已经踩过。参考 `docs/articles/ARTICLE-zhihu-multi-agent-terminal.md`。
 
 ## 顺序：先协议，再 UI
 

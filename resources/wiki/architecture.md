@@ -91,4 +91,5 @@ send(threadId, text)
 ## 继续阅读
 
 - [设计取舍与踩坑](#/wiki/design-notes)：为什么不是 TUI / IDE、为什么用 ACP、16 条已踩的坑。
+- [人物画像与记忆语义](#/wiki/persona)：四种「忘」（失效 / 衰减 / 到期 / 合并）、可观测特征与事实的分界。
 - [Super Agent / Mission](#/wiki/super-agent)：Mission、Plan、Delegation 与 MCP 编排。

@@ -99,6 +99,7 @@ Chat 说一句话
 - [架构](#/wiki/architecture)：Main / Renderer / Executor / Storage 的边界。
 - [Super Agent / Mission](#/wiki/super-agent)：多个 Agent 由谁组织。
 - [LLM Wiki](#/wiki/llm-wiki)：Source → Page → Citation → Review。
+- [人物画像](#/wiki/persona)：谁是什么样、什么时候会变、什么时候该忘。
 - [设计取舍与踩坑](#/wiki/design-notes)：为什么长成现在这样。
 - [终端与预览](#/wiki/terminal)
 - [主题系统](#/wiki/themes)

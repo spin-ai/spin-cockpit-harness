@@ -12,7 +12,7 @@ Electron 桌面应用，本地 SQLite，执行走 `dsh --profile acp`；仓库�
 
 在线文档（GitHub Pages）：<https://spin-ai.github.io/spin-cockpit-harness/>
 
-> **当前版本：`v0.2.0-alpha.2`（Liftoff，公开 Alpha）**
+> **当前版本：`v0.2.0-alpha.3`（Liftoff，公开 Alpha）**
 > Alpha 阶段数据库结构、IPC 与 UI 仍可能变化；升级前请备份本地数据。
 
 ## 下载
@@ -63,10 +63,10 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 - **TODO LIST**：一条任务列表，按状态分组；支持搜索（标题/编号/描述/标签）、筛选（全部/进行中/待确认/已确认）、分组折叠、悬停或键盘聚焦显示快捷操作
 - **项目**：在 TODO LIST 下方的常驻项目区，本地目录即项目；支持添加 / 切换 / 管理 / 在 Finder 中显示，任务、终端、文件树跟随当前项目
 - **Chat**：单一输入路径。会话（thread）永远存在：说一句话即派活，运行中发消息即纠偏（带投递回执），已确认任务的消息仅记录；**未派活的对话是全局的**（切项目不消失），composer 里用 `◎ 全局 / 项目 · xxx` 选择这次对话的作用域；**模型可按会话选择**（选项来自 dsh ACP `session/new` 的 configOptions，下一次运行生效）；草稿会话发送 = 派活并创建任务
-- **Super Agent / Mission**：在 Chat 里选择 `✦ 主管` 或点「＋ 主管」创建 supervisor；一句话先出计划（Mission Plan Card，可退回修改），人工批准后自动创建 child Todo + Delegation + worker run；worker 在独立 worktree 执行，Mission 面板汇总子任务、可取消/恢复/确认；supervisor 通过受控 MCP 工具读写 Mission，不直接改代码（见 [docs/ARCH-super-agent.md](docs/ARCH-super-agent.md)）
+- **Super Agent / Mission**：在 Chat 里选择 `✦ 主管` 或点「＋ 主管」创建 supervisor；一句话先出计划（Mission Plan Card，可退回修改），人工批准后自动创建 child Todo + Delegation + worker run；worker 在独立 worktree 执行，Mission 面板汇总子任务、可取消/恢复/确认；supervisor 通过受控 MCP 工具读写 Mission，不直接改代码（见 [docs/arch/ARCH-super-agent.md](docs/arch/ARCH-super-agent.md)）
 - **Terminal**：任务绑定项目的真实 pty（node-pty + xterm），可多标签、可直接输入；**资源管理器里的文件也在终端区按标签预览**；多标签切换（⌃Tab / ⌘⇧[ ] / ⌘⇧1…9）、**终端窗格任意拆分**（⌘D 右拆 / ⇧⌘D 下拆，递归嵌套 + 拖拽分隔条 + ⌘⌥方向键切焦点）、标签重命名与中键关闭、⌘F 查找、右键菜单（复制 / 粘贴 / 清屏 / 重启）、⌘+/- 字号缩放、链接点击打开、进程退出后可重启；挂载前的输出会回放，不会丢 banner；**预览默认复用同一个标签**：打开 HTML/文本文件就切成文件模式（渲染 / 源码），点地址栏「URL」或终端识别到的 `打开预览 :PORT` 就切成地址模式；需要并排时点「＋ 预览」显式新建，最多 3 个，后台 webview 不卸载
 - **UI 上下文**：预览页里点中元素 → Chat 输入框出现元素 chip（selector / 源文件 / 截图）→ 随消息注入当前会话（运行中即 steer）
-- **插件**：Settings → 插件可安装 `.cockpit-plugin` / 目录、启停；**Notes 是内置 first-party 插件**，无需额外安装，原生 Source / Page / Citation / Review、Memory 顶层索引 / 注入、CodeMirror 编辑、多 tab、可拖拽左右分屏、搜索、Graph、任务 / Chat 联动；也支持打开本地 Markdown 目录，直接编辑写回或导入为 Source（见 [docs/ARCH-plugins.md](docs/ARCH-plugins.md)、[docs/PLUGIN-notes.md](docs/PLUGIN-notes.md)）
+- **插件**：Settings → 插件可安装 `.cockpit-plugin` / 目录、启停；**Notes 是内置 first-party 插件**，无需额外安装，原生 Source / Page / Citation / Review、Memory 顶层索引 / 注入、CodeMirror 编辑、多 tab、可拖拽左右分屏、搜索、Graph、任务 / Chat 联动；也支持打开本地 Markdown 目录，直接编辑写回或导入为 Source（见 [docs/arch/ARCH-plugins.md](docs/arch/ARCH-plugins.md)、[docs/arch/PLUGIN-notes.md](docs/arch/PLUGIN-notes.md)）
 - **右侧栏**：三块
   - **资源管理器**：树形展开 / 折叠、文件类型标识、名称筛选（默认隐藏点文件）、全部折叠；**右键菜单**（新建文件/文件夹、在终端打开、Finder 显示、复制路径/相对路径、重命名 F2、复制副本、删除 ⌫）、工具栏新建、行内重命名、自动刷新（窗口重新聚焦时）
   - **会话历史**：按今天 / 昨天 / 更早分组；每行显示标题、状态、Agent、项目、消息数、最近一条消息；点行回到对应 Chat 会话，可展开最近消息
@@ -77,9 +77,9 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 - 资源管理器带 Git 装饰：修改 / 新增 / 已暂存 / 删除各自着色并带状态字母，被 `.gitignore` 忽略的文件与目录淡色斜体，目录内有改动时显示状态点
 - Wiki / 笔记：一键「整理 Wiki」自动改标题（正文 H1 / slug 美化，旧 `[[链接]]` 一起改写）+ 统一页面大纲（要点 / 原文摘录 / 相关）+ 页面互链 + 重建「Wiki 索引」，幂等；支持从磁盘导入文档（md/txt/json/csv/yml/html… 可多选，自动跳过二进制与重复项）；资料可删除（连带清引用）、页面可删除、审核列表可直接接受/退回、搜索 Esc 清空；打开本地 Markdown 目录 → 「全部导入为资料」→ 「生成 Wiki」（每份资料生成一个草稿页面 + citation，确定性生成、不依赖模型）→ 编辑 / 审核；图谱包含页面 / 资料 / 本地文件三类节点
 - 右侧栏新增 **Git** 标签（资源管理器 / 会话历史旁边）：分支、暂存/取消暂存、全部暂存、提交框（⌘Enter）、拉取/推送、一键「全屏」看 diff
-- Git（Source Control）：分支 / 上游 / ahead-behind、文件暂存与丢弃、Diff 查看（+N -M）、提交框（⌘Enter）、推送/拉取、分支切换与新建、最近提交；非仓库可一键 `git init`（见 [docs/ARCH-git.md](docs/ARCH-git.md)）
+- Git（Source Control）：分支 / 上游 / ahead-behind、文件暂存与丢弃、Diff 查看（+N -M）、提交框（⌘Enter）、推送/拉取、分支切换与新建、最近提交；非仓库可一键 `git init`（见 [docs/arch/ARCH-git.md](docs/arch/ARCH-git.md)）
 - Git → 项目 Wiki：内置项目介绍 / 工作流 / 界面与流程 / 架构 / Agent / Super Agent / LLM Wiki / 设计取舍 / 终端 / 主题 / 插件 / 构建 / 版本记录；支持搜索（⌘F）、目录、页间链接、图片灯箱、代码复制和可播放的流程 Demo，带 Git 分支 / HEAD 标识；内容来自 `resources/wiki/*.md` + `CHANGELOG.md`，随仓库版本发布；`npm run wiki:publish` 可同步到 GitHub Wiki（独立 `.wiki.git` 仓库）
-- 主机页：本机 + SSH 主机卡片，一次往返探测 CLI / 版本 / git / 远端目录（`caps`），页面可见时 60s 心跳（连续 2 次失败才标离线），每主机并发上限（失焦提交），SSH 主机可编辑地址/用户/端口/远端 cwd，Agent 运行位置切换有确认；主机离线时 Chat 顶部提示并可一键改用本机（见 [docs/ARCH-hosts-stats.md](docs/ARCH-hosts-stats.md)）
+- 主机页：本机 + SSH 主机卡片，一次往返探测 CLI / 版本 / git / 远端目录（`caps`），页面可见时 60s 心跳（连续 2 次失败才标离线），每主机并发上限（失焦提交），SSH 主机可编辑地址/用户/端口/远端 cwd，Agent 运行位置切换有确认；主机离线时 Chat 顶部提示并可一键改用本机（见 [docs/arch/ARCH-hosts-stats.md](docs/arch/ARCH-hosts-stats.md)）
 - 统计页：**全部项目 / 单项目范围切换** + 成功率 / 中位耗时 / 排队 p50 / Token（未上报就显示未上报，不写 0）+ 每日趋势（图例 + 空态）+ 4 类失败分类 + 按 Agent/项目/主机分组 + 失败下钻 + CSV 导出；不估算费用
 - 主机只显示机器与可用 CLI；Agent 在项目 Terminal 里启动，带项目内唯一 `@别名`
 
@@ -93,7 +93,8 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 - Chat 内按 run 分组展示；agent 可切换，项目在派活前选择（派活后锁定）
 - Chat 的 Agent 有两种执行方式：`dsh` 走 ACP（结构化流 / 审批 / 纠偏回执）；`pi / claude / codex / opencode` 走真实 pty（Chat 派活后自动开终端标签、在 worktree 里启动 CLI；后续消息直接写入同一个 pty）
 - Chat 派活前可先看**分配建议**（项目 / Agent / runtime / worktree / 理由），确认后才创建任务；支持不建可见任务的「只聊」会话，可随时转为 TODO
-- Chat / TODO 有**全局进展**：当前会话 / 当前项目 / 所有项目；未绑定任务的终端 Agent 也会出现在进展和场景页
+- Chat / TODO 有**全局进展**：当前会话 / 当前项目 / 所有项目；未绑定任务的终端 Agent 也会出现在进展和办公室
+- **场景 → 实况（办公室）**：把 Agent / run / 审批 / 验收 / 终端 / 茶歇 / 会议角按真实状态投影成办公室舞台；Inspector 抽屉提供打开任务 / 会话 / 终端 / 停止 / 重试 / 审批；「配置」可编辑本地阵容 / 座位 / 呈现；「场景库」和「执行配置」仍在同一页（见 [docs/ARCH-office.md](docs/ARCH-office.md)）
 - Chat 里可以无终端纳管 dsh，也可以用「＋ Agent」创建 pi 等终端 Agent
 - Mission 模式：`agents.role=supervisor`、计划审批、child Todo/Run/Delegation、worktree 并行、取消级联、重启恢复、Mission 级待处理/统计；Mission child 也支持 terminal Agent（自动开终端，退出后回写 delegation）；supervisor 会话禁用 dsh 原生 subagent/team/workflow，避免双调度
 - dsh ACP 真实执行：`session/new → prompt → session/update` 流式落库
@@ -102,7 +103,7 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 - 队列 / 每 agent 并发；停止 / 重试
 - 状态分组 + 确认 → 就地进入「已确认」
 - 终端（真实 pty）、项目文件树；文件预览与网页预览统一在终端标签区
-- 终端易用性：多标签快捷键、**窗格拆分**（二进制布局 / 拖拽比例 / 方向键切焦点）、**预览标签拖入拆分的另一半**（或终端右键「在右侧打开预览」）、查找高亮、右键菜单、链接打开、字号缩放、标签重命名 / 运行中提示点、退出重启、挂载前输出回放（见 [docs/ARCH-terminal-ux.md](docs/ARCH-terminal-ux.md)）
+- 终端易用性：多标签快捷键、**窗格拆分**（二进制布局 / 拖拽比例 / 方向键切焦点）、**预览标签拖入拆分的另一半**（或终端右键「在右侧打开预览」）、查找高亮、右键菜单、链接打开、字号缩放、标签重命名 / 运行中提示点、退出重启、挂载前输出回放（见 [docs/arch/ARCH-terminal-ux.md](docs/arch/ARCH-terminal-ux.md)）
 - 前端预览 + 元素拾取（CDP）：预览作为终端标签页（与 pty 标签并列，⌘W / 中键关闭），终端打印的 dev server 地址自动识别；拾取元素 → 结构化 `<ui-context>` 注入 Agent；源码位置优先 `data-ym-src` / React `_debugSource`；截图落 `userData/ui-context`，不污染 worktree
 - Chat 终端模式：派活时准备 worktree、打开终端标签、启动 CLI 并写入任务；运行中消息直接写回 pty；pty 退出后 run 进入待确认
 - 审批弹窗（ACP `session/request_permission`）：按 ACP 选项渲染（允许一次 / 总是允许 / 拒绝），支持多审批队列提示、焦点陷阱/aria；可在设置里改为自动批准 / 自动拒绝
@@ -196,9 +197,9 @@ npm run pack:system
 
 | 平台 | 产物 | 验证 |
 |---|---|---|
-| macOS arm64 | `Cockpit.Harness-0.2.0-alpha.2-arm64.dmg` | CI `macos-14`；dsh `--version` + ACP initialize/session/new |
-| Linux x86_64 | `Cockpit.Harness-0.2.0-alpha.2.AppImage` | CI `ubuntu-24.04`；dsh ACP、node-pty（ELF）与 Electron 启动通过 |
-| Windows x64 | `Cockpit.Harness.Setup.0.2.0-alpha.2.exe` | CI `windows-2022`；内置 dsh/PTY 与 `app.asar` 结构通过 |
+| macOS arm64 | `Cockpit.Harness-0.2.0-alpha.3-arm64.dmg` | CI `macos-14`；dsh `--version` + ACP initialize/session/new |
+| Linux x86_64 | `Cockpit.Harness-0.2.0-alpha.3.AppImage` | CI `ubuntu-24.04`；dsh ACP、node-pty（ELF）与 Electron 启动通过 |
+| Windows x64 | `Cockpit.Harness.Setup.0.2.0-alpha.3.exe` | CI `windows-2022`；内置 dsh/PTY 与 `app.asar` 结构通过 |
 
 ## 开源与参与
 
@@ -212,27 +213,10 @@ npm run pack:system
 
 ## 文档
 
-- [docs/REQ-original.md](docs/REQ-original.md)（纠正版需求）
-- [docs/REQ-multi-agent-workspace.md](docs/REQ-multi-agent-workspace.md)（43 条规格）
-- [docs/REQ-modules-original.md](docs/REQ-modules-original.md)（原始需求 · 按模块：场景 / 项目 / TODO / Mission / Chat / Terminal / Wiki / 主机 / 设置 / 打包）
-- [docs/TEST-REQ-modules-original.md](docs/TEST-REQ-modules-original.md)（对应测试用例：按模块 / 优先级 / 现状 / 待确认项）
-- [docs/GAP-requirements.md](docs/GAP-requirements.md)（需求落地清单：P0/P1/P2 改造项）
-- [docs/WADE.md](docs/WADE.md)（WADE 开发环境：worktree / 模型 / 提交与推送门禁）
-- [docs/DESIGN-SYSTEM.md](docs/DESIGN-SYSTEM.md)（设计系统：Geist / 中性色 / token / 页面与组件规则）
-- [AGENTS.md](AGENTS.md)（Agent / contributor 的 UI 硬规则）
-- [docs/ARCH-multi-agent-workspace.md](docs/ARCH-multi-agent-workspace.md)（4+1 视图）
-- [docs/ARCH-super-agent.md](docs/ARCH-super-agent.md)（Super Agent：Mission / Delegation / MCP / 迁移与验证）
-- [docs/USAGE-super-agent.md](docs/USAGE-super-agent.md)（Super Agent 使用说明：准备 Agent / 审批计划 / 子任务 / 恢复）
-- [docs/ARCH-persona-suite.md](docs/ARCH-persona-suite.md)（人像记忆 / 决策评估 / PKM / 多智能体终端 / IM 网关：宿主改造、接口契约、里程碑）
-- [docs/ARCH-plugins.md](docs/ARCH-plugins.md)（插件宿主：manifest / 权限 / utilityProcess / API / 执行器 / UI）
-- [docs/PLUGIN-notes.md](docs/PLUGIN-notes.md)（原生 LLM Wiki：Source / Page / Citation / Review / Graph）
-- [docs/ARCH-chat-thread.md](docs/ARCH-chat-thread.md)（CHAT 单会话模型：thread / send 状态机 / 迁移）
-- [docs/ARCH-ui-context.md](docs/ARCH-ui-context.md)（预览元素拾取 → Agent 上下文：CDP / 安全边界 / 协议）
-- [docs/ARCH-settings.md](docs/ARCH-settings.md)（设置：分区、逐项生效点、持久化与新增步骤）
-- [docs/ARCH-git.md](docs/ARCH-git.md)（Git / Source Control：IPC 表、交互要点、明确不做的部分）
-- [docs/ARCH-hosts-stats.md](docs/ARCH-hosts-stats.md)（主机探测/心跳/运行位置 + 统计口径：未上报不写 0）
-- [docs/ARCH-terminal-ux.md](docs/ARCH-terminal-ux.md)（终端易用性：标签 / 拆分 / 查找 / 右键菜单 / 输入回放）
-- [docs/ARCH-chat-ui.md](docs/ARCH-chat-ui.md)（Chat UI：扁平消息 / 工具折叠 / 卡片 composer）
-- [docs/ARCH-usability-pass.md](docs/ARCH-usability-pass.md)（易用性改进：已完成项与仍待做的重型能力）
-- [docs/ARCH-file-explorer.md](docs/ARCH-file-explorer.md)（资源管理器：右键菜单 / 文件操作 / 安全边界）
-- [docs/GAP-chat.md](docs/GAP-chat.md)（CHAT 实现现状与需求差距）
+文档地图：[`docs/README.md`](docs/README.md) —— 四层结构、三条阅读路径、全量状态一览。**先看这个，再看具体某篇。**
+
+- **需求**（为什么做 / 差什么）：[`docs/product/`](docs/product/) —— `REQ-*` / `GAP-*` / `TEST-*`
+- **架构**（怎么做 / 边界在哪）：[`docs/arch/`](docs/arch/) —— 一个子系统一篇，总图看 [`ARCH-multi-agent-workspace.md`](docs/arch/ARCH-multi-agent-workspace.md)
+- **指南**（怎么用 / 硬规则）：[`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md) · [`docs/WADE.md`](docs/WADE.md) · [`docs/guides/USAGE-super-agent.md`](docs/guides/USAGE-super-agent.md)
+- **叙事**（对外文章，事实以 `arch/` 为准）：[`docs/articles/`](docs/articles/)
+- 文档校验：`npm run verify:docs`（状态头 / 链接 / 索引登记）

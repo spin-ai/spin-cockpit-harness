@@ -577,7 +577,7 @@ function architecture() {
     ["Run Supervisor", "ACP 生命周期", "取消 / 重试 / 收尾", C.green],
     ["Host Probe", "CLI caps / 心跳", "远端目录 / 并发上限", C.cyan],
     ["Stats & Audit", "耗时 / 排队 / Token", "错误分类 / CSV", C.amber],
-    ["Persist", "SQLite（sql.js）", "事件先落库再广播", C.red],
+    ["Persist", "SQLite（node:sqlite · WAL）", "事件先落库再广播", C.red],
   ];
   main.forEach(([title, s1, s2, color], i) => {
     const col = i % 3, row = Math.floor(i / 3);
@@ -1012,7 +1012,7 @@ function packaging() {
   const dirs = [
     ["MacOS/", "Cockpit Harness", "Electron 主程序", C.blue],
     ["Resources/app.asar", "dist/**/* · electron/**/* · package.json", "前端 + 主进程代码", C.purple],
-    ["Resources/app.asar.unpacked/", "node_modules/node-pty/** · sql.js/*.wasm", "原生模块 / WASM 必须解包", C.amber],
+    ["Resources/app.asar.unpacked/", "node_modules/node-pty/**", "原生模块必须解包", C.amber],
     ["Resources/dsh/", "dsh · dsh-rg · dsh-spawn-helper · manifest.json", "内置单文件运行时", C.green],
   ];
   dirs.forEach(([name, sub, note, color], i) => {

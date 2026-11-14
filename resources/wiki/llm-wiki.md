@@ -92,17 +92,17 @@ wiki_add_citation
 
 ## 维护：Dream pass
 
-当前有一个确定性的 dream pass：
+维护扫描是确定性的，结果进「审核」队列（人看过 diff 才写）：
 
 ```text
-wiki.dream
-  → missing-citation
-  → stale-draft
-  → duplicate-title
-  → 重新生成 Memory 索引
+wiki.maintain
+  → 漏引用（页面某行与资料某行高度重合，且还没引用它）
+  → 疑似重复（标题几乎一样，或摘要高度重合）
+  → 建议进 suggestions（引用只加出处；合并只生成草稿，原页面不动）
 ```
 
-它只产出维护项，不自动修改 reviewed 页面。后续的 LLM Dreaming 会读 session transcript、对照 source 检查 claim、生成 revision + diff，再进入 Review 队列——仍然不自动 reviewed。
+`wiki.dream` 只是它的兼容壳（默认 dry-run）。整理/模型整理/维护扫描都不直接改 `reviewed`；
+人改过的句子会记成人工结论（claim），整理会动到它们时整页自动整理被拦下，改成待审建议。
 
 ## UI
 
