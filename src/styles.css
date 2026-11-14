@@ -3275,3 +3275,10 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 /* 与撤销条同屏时错开 */
 .undo-bar{bottom:22px}
 .bulk-float + .undo-bar,.undo-bar ~ .bulk-float{bottom:64px}
+/* 人设卡：手工加事实 + 删除单条依据 */
+.pr-addfact{display:flex;align-items:center;gap:6px;padding:7px 9px;margin:6px 0;border:1px solid var(--brand-line);border-radius:var(--radius-sm);background:var(--brand-soft)}
+.pr-addfact .kv-input{flex:1;height:26px}
+.persona-ev-item{position:relative}
+.persona-ev-item .ev-del{position:absolute;right:2px;top:2px;border:0;background:transparent;color:var(--faint);font-size:12px;line-height:1;padding:2px 4px;cursor:pointer;opacity:0;transition:opacity .12s}
+.persona-ev-item:hover .ev-del{opacity:1}
+.persona-ev-item .ev-del:hover{color:var(--red)}
