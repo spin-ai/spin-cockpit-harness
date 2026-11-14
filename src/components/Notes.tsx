@@ -1242,6 +1242,20 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       )}
       <UndoBar action={undo} onDone={() => setUndo(null)} />
 
+      {picking && tab !== "docs" && (
+        <div className="bulk-float">
+          <span>已选 {picked.size}</span>
+          <button className="link tiny" onClick={() => setPicked(new Set(tab === "sources" ? filteredSources.map((x) => x.id) : filteredPages.map((p) => p.id)))}>全选</button>
+          <button className="link tiny" onClick={() => setPicked(new Set())} disabled={!picked.size}>清空</button>
+          <span style={{ flex: 1 }} />
+          {tab === "pages" && <button className="btn tiny-btn" onClick={() => void reviewPicked("accept")} disabled={!picked.size}>接受</button>}
+          {tab === "pages" && <button className="btn tiny-btn" onClick={() => void reviewPicked("reject")} disabled={!picked.size}>退回</button>}
+          <button className="btn tiny-btn" onClick={() => void (tab === "sources" ? deletePickedSources() : deletePickedPages())} disabled={!picked.size}>删除</button>
+          <button className="icon-btn" title="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}>×</button>
+        </div>
+      )}
+
+
       <div className={`notes-layout ${dense ? "list-compact" : ""}`} style={tab === "docs" ? { display: "none" } : undefined}>
         <aside className="notes-sidebar">
           {tabsBar}
@@ -1282,17 +1296,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
             </div>
           )}
           {filteredHits.length > 0 && <div className="notes-search-results">{filteredHits.slice(0, 12).map((hit) => <button key={hit.kind + hit.id} onClick={() => void openHit(hit)}><b>{markText(hit.title, query)}</b><span>{hit.kind}</span><em>{markText(hit.snippet, query)}</em></button>)}</div>}
-          {picking && (
-            <div className="bulk-bar">
-              <span>已选 {picked.size}</span>
-              <button className="link tiny" onClick={() => setPicked(new Set(filteredPages.map((p) => p.id)))}>{tab === "sources" ? "全选资料" : "全选页面"}</button>
-              <button className="link tiny" onClick={() => setPicked(new Set())} disabled={!picked.size}>清空</button>
-              <span style={{ flex: 1 }} />
-              {tab === "pages" && <button className="btn tiny-btn" onClick={() => void reviewPicked("accept")} disabled={!picked.size}>接受</button>}
-              {tab === "pages" && <button className="btn tiny-btn" onClick={() => void reviewPicked("reject")} disabled={!picked.size}>退回</button>}
-              <button className="btn tiny-btn" onClick={() => void (tab === "sources" ? deletePickedSources() : deletePickedPages())} disabled={!picked.size}>删除</button>
-            </div>
-          )}
+
           {(tab === "pages" || tab === "sources") && (
             <div className="list-tools">
               <select className="list-select" value={listSort} onChange={(e) => setListSort(e.target.value as typeof listSort)} aria-label="排序">

@@ -85,6 +85,7 @@ export function Persona({ act }: { act: Act }) {
   const [ctx, setCtx] = useState<{ x: number; y: number; person: PersonRow } | null>(null);
   const [undo, setUndo] = useState<UndoAction | null>(null);
   const { dense, toggle: toggleDense } = useDensity("persona");
+  const [showFilter, setShowFilter] = useState(false);
   const [job, setJob] = useState<{ running: boolean; total: number; done: number; current: string; cards: number; llmAdded: number; statsAdded: number; skippedCache: number; cancelled: boolean; failed: string[] } | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
@@ -613,6 +614,19 @@ export function Persona({ act }: { act: Act }) {
 
       <UndoBar action={undo} onDone={() => setUndo(null)} />
 
+      {picking && (
+        <div className="bulk-float">
+          <span>已选 {picked.size}</span>
+          <button className="link tiny" onClick={pickAll}>全选</button>
+          <button className="link tiny" onClick={() => setPicked(new Set())} disabled={!picked.size}>清空</button>
+          <span style={{ flex: 1 }} />
+          <button className="btn tiny-btn primary" onClick={() => void batchModel()} disabled={!picked.size}>建模所选</button>
+          <button className="btn tiny-btn" onClick={() => void batchCopyCards()} disabled={!picked.size}>复制角色卡</button>
+          <button className="btn tiny-btn" onClick={() => void batchRemove()} disabled={!picked.size}>删除</button>
+          <button className="icon-btn" title="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}>×</button>
+        </div>
+      )}
+
       <div className={`persona-grid ${dense ? "list-compact" : ""}`}>
 
         {/* ── 左：人物列表常驻 ───────────────────────────── */}
@@ -625,32 +639,34 @@ export function Persona({ act }: { act: Act }) {
             />
             <div className="list-tools">
               <select className="list-select" value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} aria-label="排序">
-                <option value="score">按完整度</option>
-                <option value="recent">按最近更新</option>
-                <option value="pending">按待确认</option>
-                <option value="name">按姓名</option>
+                <option value="score">完整度</option>
+                <option value="recent">最近</option>
+                <option value="pending">待确认</option>
+                <option value="name">姓名</option>
               </select>
-              <button className={`list-chip ${onlyModeled ? "on" : ""}`} onClick={() => setOnlyModeled((v) => !v)}>已建模 {people.filter((p) => (p.tags || []).includes("已建模")).length}</button>
-              <button className={`list-chip ${picking ? "on" : ""}`} onClick={() => { setPicking((v) => !v); setPicked(new Set()); }}>{picking ? "退出多选" : "多选"}</button>
+              <button className={`list-chip ${showFilter || tagFilter || onlyModeled ? "on" : ""}`} onClick={() => setShowFilter((v) => !v)}>
+                筛选{(tagFilter || onlyModeled) ? " ·1" : ""}
+              </button>
+              <button className={`list-chip ${picking ? "on" : ""}`} onClick={() => { setPicking((v) => !v); setPicked(new Set()); }}>
+                {picking ? "退出" : "多选"}
+              </button>
               <button className="list-chip" onClick={toggleDense} title="切换列表密度">{dense ? "舒适" : "紧凑"}</button>
-              <button className={`list-chip ${tagFilter ? "on" : ""}`} onClick={() => setTagFilter("")} hidden={!tagFilter}>清除筛选</button>
             </div>
-            {picking && (
-              <div className="bulk-bar">
-                <span>已选 {picked.size}</span>
-                <button className="link tiny" onClick={pickAll}>全选可见</button>
-                <button className="link tiny" onClick={() => setPicked(new Set())} disabled={!picked.size}>清空</button>
-                <span style={{ flex: 1 }} />
-                <button className="btn tiny-btn primary" onClick={() => void batchModel()} disabled={!picked.size}>建模所选</button>
-                <button className="btn tiny-btn" onClick={() => void batchCopyCards()} disabled={!picked.size}>复制角色卡</button>
-                <button className="btn tiny-btn" onClick={() => void batchRemove()} disabled={!picked.size}>删除</button>
+            {showFilter && (
+              <div className="filter-pop">
+                <label className="filter-row">
+                  <input type="checkbox" checked={onlyModeled} onChange={(e) => setOnlyModeled(e.target.checked)} /> 只看已建模（{people.filter((p) => (p.tags || []).includes("已建模")).length}）
+                </label>
+                <div className="filter-tags">
+                  {allTags.map(([t, n]) => (
+                    <button key={t} className={`list-chip ${tagFilter === t ? "on" : ""}`} onClick={() => setTagFilter(tagFilter === t ? "" : t)}>{t} <em>{n}</em></button>
+                  ))}
+                </div>
+                {(tagFilter || onlyModeled) && (
+                  <button className="link tiny" onClick={() => { setTagFilter(""); setOnlyModeled(false); }}>清除筛选</button>
+                )}
               </div>
             )}
-            <div className="list-chips">
-              {allTags.map(([t, n]) => (
-                <button key={t} className={`list-chip ${tagFilter === t ? "on" : ""}`} onClick={() => setTagFilter(tagFilter === t ? "" : t)}>{t} <em>{n}</em></button>
-              ))}
-            </div>
             {listSelf.length > 0 && <div className="persona-group">本人</div>}
             <div
               className="persona-list"

@@ -254,6 +254,21 @@ export function Memory({ act }: { act: Act }) {
 
       <UndoBar action={undo} onDone={() => setUndo(null)} />
 
+      {picking && (
+        <div className="bulk-float">
+          <span>已选 {picked.size}</span>
+          <button className="link tiny" onClick={() => setPicked(new Set(shownEntries.map((e) => e.id)))}>全选本层</button>
+          <button className="link tiny" onClick={() => setPicked(new Set())} disabled={!picked.size}>清空</button>
+          <span style={{ flex: 1 }} />
+          <button className="btn tiny-btn" onClick={() => void bulkAction("demote")} disabled={!picked.size}>降级</button>
+          {showArchived
+            ? <button className="btn tiny-btn" onClick={() => void bulkAction("restore")} disabled={!picked.size}>恢复</button>
+            : <button className="btn tiny-btn" onClick={() => void bulkAction("archive")} disabled={!picked.size}>标为过期</button>}
+          <button className="icon-btn" title="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}>×</button>
+        </div>
+      )}
+
+
       <div className={`pr-grid ${dense ? "list-compact" : ""}`}>
         {/* 左：层级 / 来源 / 其它 */}
         <aside className="pr-col">
@@ -328,18 +343,7 @@ export function Memory({ act }: { act: Act }) {
             </div>
           </div>
 
-          {picking && (
-            <div className="bulk-bar">
-              <span>已选 {picked.size}</span>
-              <button className="link tiny" onClick={() => setPicked(new Set(shownEntries.map((e) => e.id)))}>全选本层</button>
-              <button className="link tiny" onClick={() => setPicked(new Set())} disabled={!picked.size}>清空</button>
-              <span style={{ flex: 1 }} />
-              <button className="btn tiny-btn" onClick={() => void bulkAction("demote")} disabled={!picked.size}>降级</button>
-              {showArchived
-                ? <button className="btn tiny-btn" onClick={() => void bulkAction("restore")} disabled={!picked.size}>恢复</button>
-                : <button className="btn tiny-btn" onClick={() => void bulkAction("archive")} disabled={!picked.size}>标为过期</button>}
-            </div>
-          )}
+
 
           <div
             className="pr-entries"

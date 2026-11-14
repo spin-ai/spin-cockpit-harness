@@ -3261,3 +3261,17 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .list-compact .notes-file-sub{display:none}
 .list-empty{display:flex;flex-direction:column;gap:4px;padding:14px 8px;color:var(--faint);font-size:11.5px;text-align:center}
 .list-empty p{margin:0}
+/* 紧凑工具条 + 筛选浮层 + 底部批量条 */
+.list-tools{gap:3px;margin:4px 0 3px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+.list-tools::-webkit-scrollbar{display:none}
+.list-tools .list-select{max-width:78px;height:22px;font-size:10px}
+.list-tools .list-chip{flex:none;height:22px;line-height:20px}
+.filter-pop{display:flex;flex-direction:column;gap:6px;padding:8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);margin-bottom:4px}
+.filter-row{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted)}
+.filter-tags{display:flex;flex-wrap:wrap;gap:3px}
+.bulk-float{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:640;display:flex;align-items:center;gap:8px;padding:6px 8px 6px 12px;border:1px solid var(--border-strong);border-radius:999px;background:var(--surface);box-shadow:var(--shadow-float);font-size:11.5px;color:var(--fg-2)}
+.bulk-float .link.tiny{color:var(--muted)}
+.bulk-float .icon-btn{width:22px;height:22px}
+/* 与撤销条同屏时错开 */
+.undo-bar{bottom:22px}
+.bulk-float + .undo-bar,.undo-bar ~ .bulk-float{bottom:64px}

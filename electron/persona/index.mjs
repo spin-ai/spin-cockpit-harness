@@ -319,7 +319,7 @@ export function createPersona({ dir }) {
     peopleList() {
       // 按 created_at 排，不按 updated_at：建模 / 改写一句话会刷 updated_at，
       // 用它排序会让「刚操作过的人」在左栏里跳到最前面。
-      return rows("SELECT * FROM people ORDER BY is_self DESC, COALESCE(created_at, 0) DESC, name").map(personRow).map((p) => {
+      return rows("SELECT * FROM people WHERE is_self=1 OR EXISTS (SELECT 1 FROM observations o WHERE o.person_id = people.id) ORDER BY is_self DESC, COALESCE(created_at, 0) DESC, name").map(personRow).map((p) => {
         const covered = new Set(
           rows("SELECT DISTINCT field FROM observations WHERE person_id=? AND status='confirmed'", [p.id])
             .map((r) => r.field).filter((f) => CARD_FIELDS.includes(f)),
@@ -693,6 +693,12 @@ export function createPersona({ dir }) {
       const before = one("SELECT COUNT(*) n FROM observations").n;
       run(sql, p);
       const after = one("SELECT COUNT(*) n FROM observations").n;
+      // 按人删除时，人物实体与关系边也要一起清掉，否则列表里会留下 0 条观察的空壳
+      if (personId && !from && !to && !sourcePrefix) {
+        run("DELETE FROM relations WHERE from_id=? OR to_id=?", [personId, personId]);
+        run("DELETE FROM people WHERE id=?", [personId]);
+        run("DELETE FROM meta WHERE k=?", [`llm:${personId}`]);
+      }
       return { removed: before - after };
     },
 
