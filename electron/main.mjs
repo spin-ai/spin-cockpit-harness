@@ -3007,6 +3007,9 @@ const actions = {
     return { dir: dest, chats };
   },
   /** 建模计划：给「一键全部建模」用，先告诉用户要花多少次调用 */
+  personaObsAdd: async ({ personId, field, value, quote = "" } = {}) => persona().addManual({ personId, field, value, quote }),
+  personaObsUpdate: async ({ id, value, field } = {}) => persona().updateObservation({ id, value, field }),
+  personaObsRemove: async ({ id } = {}) => persona().removeObservation({ id }),
   personaModelPlan: async ({ minMessages = 30 } = {}) => {
     const dir = personaDatasetDir();
     if (!dir) return { dir: "", eligible: 0, cached: 0, calls: 0, people: 0 };

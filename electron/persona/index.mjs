@@ -647,6 +647,29 @@ export function createPersona({ dir }) {
       return { found: true, answer: lines.join("\n"), citations };
     },
 
+    /** 手工改一条观察（值 / 字段） */
+    updateObservation({ id, value, field, status } = {}) {
+      const row = one("SELECT * FROM observations WHERE id=?", [id]);
+      if (!row) throw new Error("观察不存在");
+      const next = {
+        value: value !== undefined ? String(value).trim().slice(0, 200) : row.value,
+        field: field || row.field,
+        status: status || row.status,
+      };
+      if (!next.value) throw new Error("内容不能为空");
+      run("UPDATE observations SET value=?, field=?, status=?, updated_at=? WHERE id=?", [next.value, next.field, next.status, Date.now(), id]);
+      return obsRow(one("SELECT * FROM observations WHERE id=?", [id]));
+    },
+    /** 删一条观察（单人单条，不进回收站；卡片上的 × 用这个） */
+    removeObservation({ id } = {}) {
+      run("DELETE FROM observations WHERE id=?", [id]);
+      return { removed: 1 };
+    },
+    /** 手工加一条（默认 confirmed，因为是人写的） */
+    addManual({ personId, field, value, quote = "" } = {}) {
+      return this.addObservation({ personId, person: "", field, value, quote, sourceKind: "manual", status: "confirmed", confidence: 0.9 });
+    },
+
     /** 删除前快照（用于撤销） */
     snapshotPerson({ personId } = {}) {
       return {

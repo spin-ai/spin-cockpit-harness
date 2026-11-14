@@ -86,6 +86,7 @@ export function Persona({ act }: { act: Act }) {
   const [undo, setUndo] = useState<UndoAction | null>(null);
   const { dense, toggle: toggleDense } = useDensity("persona");
   const [showFilter, setShowFilter] = useState(false);
+  const [adding, setAdding] = useState<{ field: string; value: string } | null>(null);
   const [job, setJob] = useState<{ running: boolean; total: number; done: number; current: string; cards: number; llmAdded: number; statsAdded: number; skippedCache: number; cancelled: boolean; failed: string[] } | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
@@ -269,6 +270,15 @@ export function Persona({ act }: { act: Act }) {
       const cards = await act("personaCards", { personIds: [...picked] });
       await navigator.clipboard.writeText(JSON.stringify(cards, null, 2));
       setNotice(`已复制 ${cards?.length || 0} 张角色卡 JSON`);
+    } catch (err) { setNotice(String((err as Error)?.message || err)); }
+  };
+
+  const saveFact = async () => {
+    if (!adding || !card || !adding.value.trim()) return;
+    try {
+      await act("personaObsAdd", { personId: card.person.id, field: adding.field, value: adding.value.trim() });
+      setAdding(null); setNotice("已加入人设卡");
+      await openPerson(card.person.id);
     } catch (err) { setNotice(String((err as Error)?.message || err)); }
   };
 
@@ -496,6 +506,11 @@ export function Persona({ act }: { act: Act }) {
           <div className="persona-ev">
             {evidenceRows.slice(0, 8).map(({ e, row }) => (
               <div className="persona-ev-item" key={e.id}>
+                <button
+                  className="ev-del"
+                  title="删除这条依据"
+                  onClick={() => void act("personaObsRemove", { id: e.id }).then(async () => { setNotice("已删除该条事实"); if (card) await openPerson(card.person.id); })}
+                >×</button>
                 <q>{e.quote || e.value}</q>
                 <div className="persona-ev-meta">
                   <span>{row.label}</span>
@@ -746,6 +761,7 @@ export function Persona({ act }: { act: Act }) {
                       <i style={{ width: `${card.completeness}%` }} />
                     </span>
                   </div>
+                  <button className="btn tiny-btn" onClick={() => setAdding({ field: "traits", value: "" })}>＋ 事实</button>
                   <RowMenu title="人物操作">
                     <button onClick={() => void copyInject()}>复制注入片段</button>
                     <button onClick={() => void exportCard()}>导出角色卡 JSON</button>
@@ -773,6 +789,29 @@ export function Persona({ act }: { act: Act }) {
                       {card.oneLiner}
                       <span>由 {card.counts.confirmed} 条已确认观察归纳 · 可改写；没有依据的推断进不来</span>
                     </p>
+                  )}
+
+                  {adding && (
+                    <div className="pr-addfact">
+                      <select className="list-select" value={adding.field} onChange={(e) => setAdding({ ...adding, field: e.target.value })} aria-label="字段">
+                        {[["identity", "身份"], ["role", "角色"], ["situation", "处境"], ["traits", "性格"], ["value", "价值观"], ["goal", "目标"], ["decision", "处事"], ["communication", "沟通"], ["style", "说话"], ["preference", "偏好"], ["constraint", "约束"], ["relation", "关系"]].map(([id, label]) => (
+                          <option key={id} value={id}>{label}</option>
+                        ))}
+                      </select>
+                      <input
+                        className="kv-input"
+                        autoFocus
+                        value={adding.value}
+                        placeholder="写一条事实，例如：只在上午回消息"
+                        onChange={(e) => setAdding({ ...adding, value: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") setAdding(null);
+                          if (e.key === "Enter" && adding.value.trim()) void saveFact();
+                        }}
+                      />
+                      <button className="btn tiny-btn" onClick={() => setAdding(null)}>取消</button>
+                      <button className="btn tiny-btn primary" disabled={!adding.value.trim()} onClick={() => void saveFact()}>保存</button>
+                    </div>
                   )}
 
                   {card.sections.map(renderSection)}
