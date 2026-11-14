@@ -8,12 +8,13 @@ import { relTime } from "../ui";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
-type Note = { id: string; body: string; sourceKind: string; sourceRef: string; status: string; createdAt: number };
-type Entry = { id: string; layer: string; title: string; body: string; sourceRefs: string[]; status: string; updatedAt: number };
-type Sug = { id: string; action: string; title: string; detail: string; targetKind: string; targetId: string; status: string };
+type Note = { id: string; body: string; kind: string; confidence: number; sourceKind: string; sourceRef: string; status: string; expiresAt: number; expired: boolean; createdAt: number };
+type Entry = { id: string; layer: string; title: string; body: string; sourceRefs: string[]; status: string; pinned: boolean; invalidAt: number; supersededBy: string; supersedes: string[]; updatedAt: number };
+type Sug = { id: string; action: string; title: string; detail: string; targetKind: string; targetId: string; status: string; payload?: { body?: string; kind?: string } | null };
 type Hit = { kind: string; id: string; at: number; snippet: string };
-type InjectItem = { id: string; layer: string; title: string; chars: number; included: boolean; reason: string };
+type InjectItem = { id: string; layer: string; title: string; chars: number; included: boolean; reason: string; score?: number };
 type Inject = { markdown: string; chars: number; budget: number; dropped: number; items: InjectItem[] };
+type InjStats = { runs: number; injected: number; cited: number; hitRate: number; avgChars: number };
 
 /** 层级用语义名，不用 L1–L4 这类内部编号 */
 const LAYERS = [
@@ -23,8 +24,20 @@ const LAYERS = [
   { id: "L1", name: "原始", desc: "会话与 run 原文，只用于回查" },
 ] as const;
 
-const ACTION_LABEL: Record<string, string> = { fix: "校正", build: "构建", fill: "补洞", promote: "晋升", prune: "剪枝" };
+const ACTION_LABEL: Record<string, string> = { fix: "修引用", correct: "校正", merge: "合并", rewrite: "改写", build: "构建", fill: "补洞", promote: "晋升", prune: "剪枝" };
 const SOURCE_LABEL: Record<string, string> = { transcript: "来自会话", page: "来自资料", manual: "人工写入", dream: "Dream" };
+/** note 种类用中文短标签；guess 不标（免得每条都挂一个“猜测”） */
+const KIND_LABEL: Record<string, string> = { rule: "规则", gotcha: "踩坑", preference: "偏好", decision: "决定" };
+
+/** 观察的剩余寿命：队列行空间很窄，只给短形式；完整日期放 title */
+const ttlLabel = (n: Note) => {
+  if (!n.expiresAt) return "";
+  if (n.expired) return " · 已到期";
+  const d = new Date(n.expiresAt);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return ` · 至 ${sameYear ? `${String(d.getMonth() + 1).padStart(2, "0")} 月` : `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}`}`;
+};
+const ttlFull = (n: Note) => (n.expiresAt ? new Date(n.expiresAt).toLocaleString("zh-CN") : "");
 
 
 /** 记忆：左选层级/来源 → 中看条目 → 右处理复核、注入与回查 */
@@ -35,6 +48,7 @@ export function Memory({ act }: { act: Act }) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [sugs, setSugs] = useState<Sug[]>([]);
   const [inject, setInject] = useState<Inject | null>(null);
+  const [injStats, setInjStats] = useState<InjStats | null>(null);
   const [tab, setTab] = useState<"notes" | "dream">("notes");
   const [openInjectId, setOpenInjectId] = useState<string>("");
   const [srcFilter, setSrcFilter] = useState("");
@@ -48,7 +62,8 @@ export function Memory({ act }: { act: Act }) {
   const { dense, toggle: toggleDense } = useDensity("memory");
   const [archived, setArchived] = useState<Entry[]>([]);
   const [showArchived, setShowArchived] = useState(false);
-  const [dreamCfg, setDreamCfg] = useState<{ enabled: boolean; maxSuggestions: number }>({ enabled: true, maxSuggestions: 40 });
+  type DreamCfg = { enabled: boolean; maxSuggestions: number; llmPass: boolean; budget?: { used: number; limit: number }; modelBudget?: { used: number; limit: number } };
+  const [dreamCfg, setDreamCfg] = useState<DreamCfg>({ enabled: true, maxSuggestions: 40, llmPass: false });
   const [budgetDraft, setBudgetDraft] = useState<string>("");
   const [entryQuery, setEntryQuery] = useState("");
   const [entryHits, setEntryHits] = useState<Entry[]>([]);
@@ -65,18 +80,19 @@ export function Memory({ act }: { act: Act }) {
 
   const load = useCallback(async () => {
     try {
-      const [ov, list, ns, ss, inj] = await Promise.all([
+      const [ov, list, ns, ss, inj, stats] = await Promise.all([
         act("memoryOverview"),
         act("memoryEntryList", { layer }),
         act("memoryNoteList", { status: "new" }),
         act("memorySuggestions", { status: "pending" }),
-        act("memoryInject", { maxChars: 12000 }),
+        act("memoryInject"),
+        act("memoryInjectStats", { limit: 20 }),
       ]);
-      setOverview(ov); setEntries(list || []); setNotes(ns || []); setSugs(ss || []); setInject(inj);
+      setOverview(ov); setEntries(list || []); setNotes(ns || []); setSugs(ss || []); setInject(inj); setInjStats(stats);
       if (!budgetDraft) setBudgetDraft(String(inj?.budget || 12000));
       const [arc, cfg] = await Promise.all([act("memoryEntryArchived", { limit: 100 }), act("memoryDreamStatus")]);
       setArchived(arc || []);
-      if (cfg) setDreamCfg({ enabled: Boolean(cfg.enabled), maxSuggestions: Number(cfg.maxSuggestions) || 40 });
+      if (cfg) setDreamCfg({ enabled: Boolean(cfg.enabled), maxSuggestions: Number(cfg.maxSuggestions) || 40, llmPass: Boolean(cfg.llmPass), budget: cfg.budget, modelBudget: cfg.modelBudget });
     } catch (err) { fail(err); }
   }, [act, layer]);
 
@@ -118,6 +134,16 @@ export function Memory({ act }: { act: Act }) {
     } catch (err) { fail(err); }
   };
 
+  /** 失效 ≠ 过期：事实被推翻但保留溯源，不删除、不进注入 */
+  const invalidate = async (entry: Entry) => {
+    try {
+      await act("memoryEntryInvalidate", { id: entry.id });
+      setNotice("已标记失效（保留溯源，可撤销）");
+      setUndo({ label: `已标记失效「${entry.title}」`, run: async () => { await act("memoryEntryRestore", { id: entry.id }); await load(); } });
+      await load();
+    } catch (err) { fail(err); }
+  };
+
   const resolveNote = async (id: string, status: "verified" | "stale") => {
     try { await act("memoryNoteSet", { id, status }); await load(); } catch (err) { fail(err); }
   };
@@ -135,7 +161,9 @@ export function Memory({ act }: { act: Act }) {
     setBusy(true);
     try {
       const res = await act("memoryDream");
-      setNotice(`Dream 生成 ${res?.created?.length || 0} 条建议`);
+      const skip = res?.semantic?.skipped;
+      const why = skip === "budget" ? "今日模型预算用完" : skip === "nokey" ? "没配模型密钥" : skip === "too-few" ? "观察太少" : skip === "error" ? "调用失败" : "";
+      setNotice(`Dream 生成 ${res?.created?.length || 0} 条建议${why ? `（语义 pass 未跑：${why}）` : ""}`);
       setTab("dream");
       await load();
     } catch (err) { fail(err); } finally { setBusy(false); }
@@ -192,10 +220,10 @@ export function Memory({ act }: { act: Act }) {
     const n = Number(budgetDraft) || 12000;
     try { await act("memorySetInjectBudget", { maxChars: n }); setNotice(`注入预算改为 ${n} 字符`); await load(); } catch (err) { fail(err); }
   };
-  const saveDreamCfg = async (patch: Partial<{ enabled: boolean; maxSuggestions: number }>) => {
+  const saveDreamCfg = async (patch: Partial<{ enabled: boolean; maxSuggestions: number; llmPass: boolean }>) => {
     try {
       const next = await act("memoryDreamConfig", { patch: { ...dreamCfg, ...patch } });
-      if (next) setDreamCfg({ enabled: Boolean(next.enabled), maxSuggestions: Number(next.maxSuggestions) || 40 });
+      if (next) setDreamCfg({ enabled: Boolean(next.enabled), maxSuggestions: Number(next.maxSuggestions) || 40, llmPass: Boolean(next.llmPass), budget: next.budget, modelBudget: next.modelBudget });
       setNotice(`Dream 已${next?.enabled ? "开启" : "关闭"} · 单次最多 ${next?.maxSuggestions} 条建议`);
     } catch (err) { fail(err); }
   };
@@ -389,7 +417,11 @@ export function Memory({ act }: { act: Act }) {
                       <h3>{e.title}</h3>
                       <button className="btn tiny-btn" onClick={() => void restore(e)}>恢复</button>
                     </div>
-                    <div className="pr-entry-meta"><span className="kv-type">{e.layer}</span><span className="time">更新 {relTime(e.updatedAt)}</span></div>
+                    <div className="pr-entry-meta">
+                      <span className="kv-type">{e.layer}</span>
+                      {e.invalidAt ? <span className="chip">已失效{e.supersededBy ? " · 有新结论取代" : ""}</span> : null}
+                      <span className="time">更新 {relTime(e.updatedAt)}</span>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -441,6 +473,7 @@ export function Memory({ act }: { act: Act }) {
                     <button onClick={() => setEditing({ id: e.id, title: e.title, body: e.body })}>编辑</button>
                     <button onClick={() => void demote(e)}>降级到下一层</button>
                     <button className="danger" onClick={() => void archive(e)}>标为过期</button>
+                    <button className="danger" onClick={() => void invalidate(e)}>标记失效（保留溯源）</button>
                   </RowMenu>
                 </div>
                 {editing?.id === e.id ? (
@@ -457,6 +490,7 @@ export function Memory({ act }: { act: Act }) {
                 )}
                 <div className="pr-entry-meta">
                   <span className="chip">来源 {e.sourceRefs?.length || 0}</span>
+                  {e.pinned ? <span className="chip">置顶</span> : null}
                   <span className="time">更新 {relTime(e.updatedAt)}</span>
                 </div>
                 {(e.sourceRefs || []).length > 0 && (
@@ -493,6 +527,15 @@ export function Memory({ act }: { act: Act }) {
                   onBlur={(e) => void saveDreamCfg({ maxSuggestions: Number(e.target.value) || 40 })}
                 />
               </label>
+              <label className="tiny faint" title="调模型找「换个说法的同一件事」和「已经不成立的观察」；只产建议，不直接改内容">
+                <input type="checkbox" checked={Boolean(dreamCfg.llmPass)} onChange={(e) => void saveDreamCfg({ llmPass: e.target.checked })} /> 语义 pass
+              </label>
+              {dreamCfg.budget ? (
+                <span className="tiny faint" title="每天建议上限：没有上限会把复核队列淹掉">今日 {dreamCfg.budget.used} / {dreamCfg.budget.limit}</span>
+              ) : null}
+              {dreamCfg.llmPass && dreamCfg.modelBudget ? (
+                <span className="tiny faint" title="语义 pass 的每日模型调用上限">模型 {dreamCfg.modelBudget.used} / {dreamCfg.modelBudget.limit}</span>
+              ) : null}
             </div>
 
             {tab === "notes" && (
@@ -500,10 +543,15 @@ export function Memory({ act }: { act: Act }) {
                 {shownNotes.length === 0 && <p className="notes-meta-empty">队列已清空。下次运行 Dream 或导入后才会再出现。</p>}
                 {shownNotes.map((n) => (
                   <div key={n.id} className="pr-qitem">
-                    <div className="pr-qh">观察<span className="kv-type">{SOURCE_LABEL[n.sourceKind] || n.sourceKind}</span></div>
+                    <div className="pr-qh">
+                      观察
+                      <span className="kv-type">{SOURCE_LABEL[n.sourceKind] || n.sourceKind}</span>
+                      {n.kind && n.kind !== "guess" ? <span className="kv-type page">{KIND_LABEL[n.kind] || n.kind}</span> : null}
+                      {n.expired ? <span className="kv-type" title="到期后不再注入，行仍保留">已过期</span> : null}
+                    </div>
                     <p>{n.body.slice(0, 200)}</p>
                     <div className="pr-qf">
-                      <span className="src">{n.sourceRef || "无来源"} · {relTime(n.createdAt)}</span>
+                      <span className="src" title={ttlFull(n)}>{n.sourceRef || "无来源"} · {relTime(n.createdAt)}{ttlLabel(n)}</span>
                       <span className="row gap6">
                         <button className="btn tiny-btn" onClick={() => void resolveNote(n.id, "stale")}>拒绝</button>
                         <button className="btn tiny-btn" onClick={() => void promoteNote(n.id)} title="晋升为结论条目">晋升</button>
@@ -531,6 +579,9 @@ export function Memory({ act }: { act: Act }) {
                       <b>{sg.title}</b>
                     </div>
                     <p>{sg.detail}</p>
+                    {sg.action === "rewrite" && sg.payload?.body ? (
+                      <p><span className="chip">拟改为</span> {sg.payload.body}</p>
+                    ) : null}
                     <div className="pr-qf">
                       <span className="src">影响 1 条 · 只产建议</span>
                       <span className="row gap6">
@@ -566,10 +617,16 @@ export function Memory({ act }: { act: Act }) {
                 <span className="tiny faint">字符</span>
               </span>
             </div>
-            {[...included, ...cut].slice(0, 10).map((it) => (
+            {injStats && injStats.runs > 0 ? (
+              <p className="notes-meta-empty">
+                最近 {injStats.runs} 轮：注入 {injStats.injected} 条，回答里用到 {injStats.cited} 条
+                {injStats.injected ? `（${Math.round(injStats.hitRate * 100)}%）` : ""} · 平均 {injStats.avgChars} 字符
+              </p>
+            ) : null}
+            {[...included, ...cut].slice(0, 12).map((it) => (
               <div key={it.id} className={`pr-inj ${it.included ? "" : "cut"}`}>
                 <button className="pr-inj-item" onClick={() => setOpenInjectId((v) => (v === it.id ? "" : it.id))}>
-                  <span className="k">{it.layer}</span>
+                  <span className="k">{it.layer === "note" ? "观察" : it.layer}</span>
                   <span className="t ellipsis">{it.title}</span>
                   <span className="k">{it.included ? "入选" : "被裁"}</span>
                 </button>
@@ -577,7 +634,7 @@ export function Memory({ act }: { act: Act }) {
               </div>
             ))}
             {!(inject?.items || []).length && <p className="notes-meta-empty">还没有可注入的条目。</p>}
-            <p className="notes-meta-empty">点任意一条看入选 / 被裁原因。预算不足时按「结论 → 项目 → 事实」做减法。</p>
+            <p className="notes-meta-empty">按分数排序后自然截止：置顶 50 · 有来源 30 · 层级 · 近两周 10 · 被用过；L1 永不注入，note 单独留一块预算。点任意一条看入选 / 被裁原因。</p>
           </div>
 
           <div className="pr-block">

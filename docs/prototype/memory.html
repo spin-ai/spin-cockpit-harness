@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>记忆 · 原型</title>
+<!--
+  记忆页面优化原型
+  对照问题：
+    1. L4/L3/L2/L1 是内部词汇 —— 改成语义名（结论 / 项目 / 事实 / 原始），编号退到次要位置
+    2. 复核队列（未验证观察 + Dream 建议）被压在正文下面 —— 提到右栏顶部，和人物页同一套复核模式
+    3. 主 CTA 是「运行 Dream」（生成更多待办）—— 改成「复核 N」，Dream 降为次级
+    4. 注入预览是只读 <pre> —— 改成逐条可点，标出入选/被裁与原因
+  全部取值来自 src/design-system.css token。
+-->
+<style>
+:root{
+  --font-sans:"Geist Variable","Geist",-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:"Geist Mono Variable","Geist Mono","SF Mono",SFMono-Regular,ui-monospace,Menlo,Consolas,monospace;
+  --radius:10px;--radius-sm:6px;--radius-control:8px;
+  --shadow-1:0 1px 2px rgba(10,10,10,.045);
+  --shadow-float:0 18px 46px rgba(0,0,0,.22),0 2px 8px rgba(0,0,0,.10);
+}
+:root[data-theme="light"]{
+  --page-canvas:#fafafa;--surface:#ffffff;--surface-hover:#f5f5f5;--surface-selected:#ededed;
+  --border:#e5e5e5;--border-strong:#d4d4d4;--input:#e5e5e5;
+  --fg:#0a0a0a;--fg-2:#404040;--muted:#696969;--faint:#a3a3a3;
+  --brand:#171717;--brand-soft:#f2f2f2;--brand-line:#dedede;
+  --green:#3f9a68;--green-soft:#edf8f2;--green-line:#d5eedf;
+  --amber:#a97a2f;--amber-soft:#fdf8ee;--amber-line:#f2e3c4;
+  --red:#cf5f5d;--red-soft:#fdf2f2;--red-line:#f4d7d7;
+  --purple:#7d67d1;--purple-soft:#f4f2fd;--purple-line:#e3ddf8;
+}
+:root[data-theme="dark"]{
+  --page-canvas:#0a0a0a;--surface:#171717;--surface-hover:#262626;--surface-selected:#2e2e2e;
+  --border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.14);--input:rgba(255,255,255,.16);
+  --fg:#f0f0f0;--fg-2:#d4d4d4;--muted:#a3a3a3;--faint:#737373;
+  --brand:#e5e5e5;--brand-soft:#262626;--brand-line:#3a3a3a;
+  --green:#5fb884;--green-soft:rgba(95,184,132,.12);--green-line:rgba(95,184,132,.28);
+  --amber:#c9a25c;--amber-soft:rgba(201,162,92,.12);--amber-line:rgba(201,162,92,.26);
+  --red:#d97a78;--red-soft:rgba(217,122,120,.12);--red-line:rgba(217,122,120,.26);
+  --purple:#9c8ae0;--purple-soft:rgba(156,138,224,.12);--purple-line:rgba(156,138,224,.26);
+  --shadow-1:0 1px 2px rgba(0,0,0,.22);
+  --shadow-float:0 18px 46px rgba(0,0,0,.52),0 2px 8px rgba(0,0,0,.28);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--page-canvas);color:var(--fg);font:13px/1.55 var(--font-sans);-webkit-font-smoothing:antialiased}
+::selection{background:color-mix(in srgb,var(--fg) 14%,transparent);color:inherit}
+button{font-family:inherit}
+.shell{max-width:1280px;margin:0 auto;padding:22px 28px 44px;display:flex;flex-direction:column;gap:14px}
+
+.page-header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 20px;align-items:end}
+.page-header-copy{min-width:0;display:flex;flex-direction:column;gap:3px}
+.kicker{font-size:10px;line-height:1.4;letter-spacing:.16em;text-transform:uppercase;color:var(--brand);font-weight:700}
+h1{margin:0;font-size:22px;line-height:1.15;font-weight:600;letter-spacing:-.03em}
+.stats{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.stats b{color:var(--fg);font-weight:600;font-family:var(--mono);font-size:11.5px}
+.stats .warn b{color:var(--amber)}
+.page-actions{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+
+.btn{height:30px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--surface);
+  color:var(--fg-2);font-size:12.5px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;transition:background .12s,border-color .12s}
+.btn:hover{background:var(--surface-hover);border-color:var(--border-strong)}
+.btn.primary{background:var(--fg);border-color:var(--fg);color:var(--surface);box-shadow:var(--shadow-1)}
+.btn.primary:hover{background:color-mix(in srgb,var(--fg) 92%,var(--surface))}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.btn.ghost:hover{background:var(--surface);color:var(--fg);box-shadow:var(--shadow-1)}
+.btn.tiny{height:26px;padding:0 8px;font-size:11.5px}
+.btn.ok{color:var(--green);background:var(--green-soft);border-color:var(--green-line)}
+.btn.ok:hover{background:var(--green-soft);border-color:var(--green)}
+.btn em{font-style:normal;font-family:var(--mono);font-size:11px;opacity:.7}
+.icon-btn{width:26px;height:26px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--muted);display:grid;place-items:center;font-size:13px;cursor:pointer}
+.icon-btn:hover{background:var(--surface-hover);color:var(--fg)}
+.link{border:0;background:none;color:var(--muted);font-size:11.5px;padding:0;cursor:pointer}
+.link:hover{color:var(--fg)}
+button:focus-visible,input:focus-visible{outline:2px solid color-mix(in srgb,var(--fg) 30%,transparent);outline-offset:2px}
+input[type="search"]{height:28px;width:100%;border:1px solid var(--input);border-radius:var(--radius-sm);background:var(--surface);
+  color:var(--fg);padding:0 8px;font:11.5px var(--font-sans);outline:none}
+input[type="search"]:focus{border-color:var(--border-strong);box-shadow:var(--shadow-1)}
+
+.grid{display:grid;grid-template-columns:216px minmax(0,1fr) 330px;gap:18px;align-items:start}
+.col{min-width:0;display:flex;flex-direction:column;gap:16px}
+.block{display:flex;flex-direction:column;gap:7px;padding:12px 0;border-top:1px solid var(--border)}
+.block:first-child{border-top:0;padding-top:0}
+.block-title{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:var(--fg-2)}
+.block-title em{font-style:normal;font-family:var(--mono);font-size:10.5px;color:var(--faint);font-weight:500}
+.spacer{flex:1}
+.small-note{margin:0;font-size:11px;line-height:1.6;color:var(--faint)}
+
+/* 左：层级（语义名 + 编号） */
+.layer{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;align-items:baseline;width:100%;padding:7px 8px;
+  border:0;border-radius:var(--radius-sm);background:transparent;text-align:left;cursor:pointer;color:var(--fg-2)}
+.layer:hover{background:var(--surface-hover)}
+.layer.on{background:var(--surface-selected);box-shadow:inset 2px 0 0 var(--brand)}
+.layer b{font-size:11.5px;font-weight:550;color:var(--fg-2)}
+.layer.on b{color:var(--fg)}
+.layer em{font-style:normal;font:10px var(--mono);color:var(--faint)}
+.layer span{grid-column:1/-1;font-size:11px;line-height:1.5;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.group-label{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);font-weight:600;padding:4px 0 2px}
+
+/* 中：条目 */
+.main{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-1);padding:16px 18px 18px;display:flex;flex-direction:column;gap:12px}
+.layer-head{display:flex;align-items:flex-start;gap:9px}
+.layer-head h2{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:7px}
+.layer-head h2 em{font-style:normal;font-family:var(--mono);font-size:10.5px;color:var(--faint);font-weight:500}
+.layer-head p{margin:3px 0 0;font-size:11px;line-height:1.6;color:var(--muted)}
+.tag{height:16px;padding:0 6px;border-radius:999px;font-size:10px;line-height:16px;background:var(--brand-soft);color:var(--muted);border:1px solid var(--border)}
+.tag.warn{background:var(--amber-soft);color:var(--amber);border-color:var(--amber-line)}
+.tag.ok{background:var(--green-soft);color:var(--green);border-color:var(--green-line)}
+.tag.p0{background:var(--fg);color:var(--surface);border-color:var(--fg)}
+
+.entries{display:flex;flex-direction:column}
+.entry{position:relative;padding:10px 0;border-bottom:1px solid var(--border)}
+.entry:last-child{border-bottom:0;padding-bottom:0}
+.entry-head{display:flex;align-items:flex-start;gap:8px}
+.entry h3{margin:0;font-size:12.5px;font-weight:600;color:var(--fg-2);flex:1;min-width:0}
+.entry p{margin:3px 0 0;font-size:11.5px;line-height:1.7;color:var(--muted)}
+.entry .meta{display:flex;align-items:center;gap:7px;margin-top:5px;flex-wrap:wrap}
+.entry .meta .chip{height:18px;padding:0 6px;border-radius:999px;border:1px solid var(--border);background:var(--page-canvas);
+  font-size:10px;line-height:16px;color:var(--muted)}
+.entry .meta .time{font:10px var(--mono);color:var(--faint)}
+.menu{position:relative;flex:none}
+.menu>button{width:22px;height:22px;border:0;border-radius:4px;background:transparent;color:var(--faint);cursor:pointer;font-size:13px;line-height:1}
+.menu>button:hover{background:var(--surface-hover);color:var(--fg)}
+.menu-pop[hidden]{display:none}
+.menu-pop{position:absolute;right:0;top:24px;z-index:70;min-width:172px;padding:5px;display:flex;flex-direction:column;gap:1px;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-float)}
+.menu-pop button{border:0;background:transparent;color:var(--fg-2);text-align:left;font-size:12px;padding:6px 8px;border-radius:5px;cursor:pointer;white-space:nowrap}
+.menu-pop button:hover{background:var(--surface-hover);color:var(--fg)}
+.menu-pop button.danger{color:var(--red)}
+.menu-pop button.danger:hover{background:var(--red-soft)}
+.evidence[hidden]{display:none}
+.evidence{margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--page-canvas);display:flex;flex-direction:column;gap:6px}
+.evidence q{quotes:none;display:block;font-size:11px;line-height:1.65;color:var(--muted)}
+.evidence .em{font:10px var(--mono);color:var(--faint)}
+
+/* 右：复核台 / 注入 / 回查 */
+.tabs{display:flex;gap:2px;padding:2px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--page-canvas);width:fit-content}
+.tabs button{border:0;background:transparent;color:var(--muted);font-size:11px;padding:4px 8px;border-radius:5px;cursor:pointer;display:flex;align-items:center;gap:4px}
+.tabs button em{font-style:normal;font:10px var(--mono);color:var(--faint)}
+.tabs button.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow-1)}
+.qitem{display:flex;flex-direction:column;gap:6px;padding:9px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)}
+.qitem .qh{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:550;color:var(--fg-2)}
+.qitem q{quotes:none;display:block;font-size:11px;line-height:1.6;color:var(--muted);font-style:italic}
+.qitem .qf{display:flex;align-items:center;gap:6px}
+.qitem .src{flex:1;min-width:0;font:10px var(--mono);color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.batch{display:flex;align-items:center;gap:6px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--brand-soft);font-size:11px;color:var(--muted)}
+
+.budget{display:flex;align-items:center;gap:8px}
+.budget .track{flex:1;height:3px;border-radius:999px;background:color-mix(in srgb,var(--fg) 8%,transparent);overflow:hidden}
+.budget .track i{display:block;height:100%;background:color-mix(in srgb,var(--fg) 50%,transparent)}
+.budget em{font:10px var(--mono);color:var(--faint);font-style:normal;white-space:nowrap}
+.inj{display:flex;flex-direction:column;gap:2px}
+.inj-item{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:7px;align-items:center;padding:5px 6px;border-radius:5px;
+  border:0;background:transparent;text-align:left;cursor:pointer;font-size:11px;color:var(--fg-2)}
+.inj-item:hover{background:var(--surface-hover)}
+.inj-item .t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.inj-item .k{font:10px var(--mono);color:var(--faint)}
+.inj-item.cut{border-left:2px solid var(--amber-line)}
+.inj-item.cut .t{color:var(--faint)}
+.inj-item.cut .k{color:var(--amber)}
+.inj-reason-row{display:none;padding:0 6px 6px 24px;font-size:10.5px;line-height:1.55;color:var(--muted)}
+.inj-reason-row.show{display:block}
+pre.inject{margin:0;max-height:150px;overflow:auto;white-space:pre-wrap;font:10.5px/1.6 var(--mono);color:var(--muted);
+  background:var(--page-canvas);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 9px}
+
+.hits{display:flex;flex-direction:column;gap:6px}
+.hit{padding:7px 9px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)}
+.hit .hh{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--fg-2);font-weight:550}
+.hit .hh em{font-style:normal;font:10px var(--mono);color:var(--faint);margin-left:auto}
+.hit p{margin:3px 0 0;font-size:11px;line-height:1.6;color:var(--muted)}
+
+.proto-note{font-size:10.5px;line-height:1.7;color:var(--faint);border-top:1px solid var(--border);padding-top:10px}
+.proto-note b{color:var(--muted);font-weight:600}
+@media (max-width:1080px){.grid{grid-template-columns:1fr}.col.side{order:3}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header class="page-header">
+    <div class="page-header-copy">
+      <div class="kicker">Memory</div>
+      <h1>记忆</h1>
+      <div class="stats">
+        <span><b>12</b> 结论</span>
+        <span><b>34</b> 项目</span>
+        <span><b>120</b> 事实</span>
+        <span><b>2.4k</b> 原始</span>
+        <span class="warn"><b id="stat-review">8</b> 待复核</span>
+        <span><b>2</b> 冲突</span>
+      </div>
+    </div>
+    <div class="page-actions">
+      <button class="btn primary" id="cta-review">复核 <em id="cta-num">8</em></button>
+      <button class="btn ghost">运行 Dream</button>
+      <button class="icon-btn" id="theme" title="切换亮色 / 暗色" aria-label="切换主题">◐</button>
+    </div>
+  </header>
+
+  <div class="grid">
+
+    <!-- 左：层级用语义名 -->
+    <aside class="col">
+      <div class="block">
+        <div class="block-title">层级 <em>4</em></div>
+        <button class="layer on" data-layer="L4">
+          <b>结论</b><em>L4 · 12</em>
+          <span>目录、结论、入口；注入时最优先</span>
+        </button>
+        <button class="layer" data-layer="L3">
+          <b>项目</b><em>L3 · 34</em>
+          <span>进行中的事与它们的边界</span>
+        </button>
+        <button class="layer" data-layer="L2">
+          <b>事实</b><em>L2 · 120</em>
+          <span>稳定的、可复用的判断与偏好</span>
+        </button>
+        <button class="layer" data-layer="L1">
+          <b>原始</b><em>L1 · 2.4k</em>
+          <span>会话与 run 原文，只用于回查</span>
+        </button>
+      </div>
+
+      <div class="block">
+        <div class="block-title">来源</div>
+        <button class="layer"><b>全部来源</b><em>166</em></button>
+        <button class="layer"><b>会话</b><em>98</em></button>
+        <button class="layer"><b>资料</b><em>41</em></button>
+        <button class="layer"><b>手工记录</b><em>27</em></button>
+        <p class="small-note">来源只用于筛选；注入时不看来源，只看层级与置信。</p>
+      </div>
+
+      <div class="block">
+        <div class="block-title">其它</div>
+        <button class="layer"><b>已归档</b><em>18</em></button>
+        <button class="layer"><b>回查历史</b><em>›</em></button>
+      </div>
+    </aside>
+
+    <!-- 中：当前层条目 -->
+    <main class="col">
+      <section class="main">
+        <div class="layer-head">
+          <div style="min-width:0">
+            <h2 id="layer-title">结论 <em>L4 · 12 条</em><span class="tag p0">注入优先</span></h2>
+            <p id="layer-desc">只放目录、结论与入口。写进这里的条目每次 run 都会注入，所以宁少不多。</p>
+          </div>
+          <span class="spacer"></span>
+          <button class="btn tiny" id="new-entry">＋ 新条目</button>
+        </div>
+
+        <div class="entries" id="entries">
+          <div class="entry">
+            <div class="entry-head">
+              <h3>发布流程以「回滚可执行」为第一原则</h3>
+              <div class="menu">
+                <button aria-label="条目操作" data-menu>⋯</button>
+                <div class="menu-pop" hidden>
+                  <button data-ev>查看来源与引用</button>
+                  <button>编辑</button>
+                  <button>降级到「项目」</button>
+                  <button class="danger">标为过期</button>
+                </div>
+              </div>
+            </div>
+            <p>判断一个发布方案，先问回滚路径是否演练过；没有回滚路径的方案不进评审。</p>
+            <div class="meta">
+              <span class="chip">引用 3</span>
+              <span class="chip">来源 2</span>
+              <span class="time">更新 2 天前</span>
+            </div>
+            <div class="evidence" hidden>
+              <q>「最坏情况是什么？谁来回滚？答不上来就先别做。」</q>
+              <span class="em">会话 · run 8f21 · 2026-11-04</span>
+              <q>「回滚脚本在预发环境演练一次并留记录。」</q>
+              <span class="em">资料 · 2026 平台发布流程 v3.pdf · p18</span>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="entry-head">
+              <h3>项目入口：平台发布流程重构</h3>
+              <div class="menu">
+                <button aria-label="条目操作" data-menu>⋯</button>
+                <div class="menu-pop" hidden>
+                  <button data-ev>查看来源与引用</button>
+                  <button>编辑</button>
+                  <button>降级到「项目」</button>
+                  <button class="danger">标为过期</button>
+                </div>
+              </div>
+            </div>
+            <p>对应 4 份资料、7 个页面；决策人是李雯，评审节奏是双周。</p>
+            <div class="meta">
+              <span class="chip">引用 7</span>
+              <span class="chip">来源 4</span>
+              <span class="time">更新 5 小时前</span>
+            </div>
+            <div class="evidence" hidden>
+              <q>「这季度把平台发布流程做稳，比多做两个需求重要。」</q>
+              <span class="em">会话 · run 7c02 · 2026-11-12</span>
+            </div>
+          </div>
+
+          <div class="entry">
+            <div class="entry-head">
+              <h3>上下文：这个仓默认用 main + worktree</h3>
+              <div class="menu">
+                <button aria-label="条目操作" data-menu>⋯</button>
+                <div class="menu-pop" hidden>
+                  <button data-ev>查看来源与引用</button>
+                  <button>编辑</button>
+                  <button>降级到「项目」</button>
+                  <button class="danger">标为过期</button>
+                </div>
+              </div>
+            </div>
+            <p>主分支 main；任务一律开 worktree，不在主目录直接改；合并走 PR。</p>
+            <div class="meta">
+              <span class="chip">引用 2</span>
+              <span class="chip">来源 1</span>
+              <span class="time">更新 9 天前</span>
+            </div>
+            <div class="evidence" hidden>
+              <q>「别在主目录直接改，开 worktree。」</q>
+              <span class="em">会话 · run 6a10 · 2026-11-06</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="empty" id="entries-empty" style="display:none">
+          <p class="small-note" id="empty-text">这一层还是空的。</p>
+        </div>
+
+        <p class="small-note">条目只由 Dream 建议或人工写入；接受 Dream 建议会直接落到对应层级，并在下方留一条变更记录。</p>
+      </section>
+    </main>
+
+    <!-- 右：复核台置顶 + 注入 + 回查 -->
+    <aside class="col side">
+      <div class="block" id="review">
+        <div class="block-title">复核 <em id="review-count">8</em></div>
+        <div class="tabs">
+          <button class="on" data-tab="notes">未验证观察 <em>5</em></button>
+          <button data-tab="dream">Dream 建议 <em>3</em></button>
+        </div>
+
+        <div id="tab-notes" style="display:flex;flex-direction:column;gap:7px">
+          <div class="qitem">
+            <div class="qh">观察 · <span class="tag">来自会话</span></div>
+            <q>「这个月先把发布流程跑顺，别加新需求。」</q>
+            <div class="qf"><span class="src">run 7c02 · 11-12 · 未验证</span>
+              <button class="btn tiny">拒绝</button><button class="btn tiny ok">验证</button></div>
+          </div>
+          <div class="qitem">
+            <div class="qh">观察 · <span class="tag">来自资料</span></div>
+            <q>「灰度比例默认 5%，每次提升不超过 10 个百分点。」</q>
+            <div class="qf"><span class="src">发布流程 v3 · p18 · 未验证</span>
+              <button class="btn tiny">拒绝</button><button class="btn tiny ok">验证</button></div>
+          </div>
+          <div class="batch"><span>同类 3 条：都来自同一份资料</span><span class="spacer"></span>
+            <button class="link" data-batch>全部验证</button></div>
+        </div>
+
+        <div id="tab-dream" style="display:none;flex-direction:column;gap:7px">
+          <div class="qitem">
+            <div class="qh"><span class="tag warn">fix</span> 修复失效引用</div>
+            <q>「平台发布流程重构」引用的 1 个页面已被删除。</q>
+            <div class="qf"><span class="src">影响 1 条 L4 · 只产建议</span>
+              <button class="btn tiny">拒绝</button><button class="btn tiny ok">接受</button></div>
+          </div>
+          <div class="qitem">
+            <div class="qh"><span class="tag">promote</span> 晋升观察</div>
+            <q>「发布流程以回滚可执行为第一原则」在 4 个 run 里重复出现。</q>
+            <div class="qf"><span class="src">建议写入 L4 · 已有 4 处来源</span>
+              <button class="btn tiny">拒绝</button><button class="btn tiny ok">接受</button></div>
+          </div>
+          <div class="qitem">
+            <div class="qh"><span class="tag warn">prune</span> 剪枝</div>
+            <q>L3 体积超过上限 12%，最早 3 条已无引用。</q>
+            <div class="qf"><span class="src">建议归档 3 条 · 可撤销</span>
+              <button class="btn tiny">拒绝</button><button class="btn tiny ok">接受</button></div>
+          </div>
+        </div>
+
+        <p class="small-note">Dream 只产建议，不直接改写已复核条目；拒绝后同类不再打扰。</p>
+      </div>
+
+      <div class="block">
+        <div class="block-title">注入预览 <em>2.4k / 6k</em><span class="spacer"></span>
+          <button class="link">复制</button></div>
+        <div class="budget"><span class="track"><i style="width:40%"></i></span><em>40%</em></div>
+        <div class="inj">
+          <button class="inj-item"><span class="k">L4</span><span class="t">发布流程以「回滚可执行」为第一原则</span><span class="k">入选</span></button>
+          <div class="inj-reason-row">L4 全部注入（12 条，共 1.1k 字）</div>
+          <button class="inj-item"><span class="k">L4</span><span class="t">项目入口：平台发布流程重构</span><span class="k">入选</span></button>
+          <button class="inj-item"><span class="k">L3</span><span class="t">当前任务在 worktree，主目录只读</span><span class="k">入选</span></button>
+          <button class="inj-item cut" data-cut><span class="k">L2</span><span class="t">偏好：先看结论页，不读长文档</span><span class="k">被裁</span></button>
+          <div class="inj-reason-row" data-cutreason>预算不足：L2 按最近使用排序，这条排在第 9 位，超出 6k 预算被省略。缩小范围或提高预算即可带上。</div>
+          <button class="inj-item cut" data-cut><span class="k">L2</span><span class="t">历史项目：旧版发布流程</span><span class="k">被裁</span></button>
+          <div class="inj-reason-row" data-cutreason>已 90 天未引用，Dream 建议归档。</div>
+        </div>
+        <p class="small-note">点任意一条看入选 / 被裁原因。预算不足时按「L4 → L3 → L2」做减法，并显式写「已省略 N 条」。</p>
+      </div>
+
+      <div class="block">
+        <div class="block-title">回查</div>
+        <input type="search" placeholder="搜会话 / run / 事件" aria-label="回查" />
+        <div class="hits">
+          <div class="hit"><div class="hh">run<em>11-12</em></div><p>灰度比例默认 5%，每次提升不超过 10 个百分点。</p></div>
+          <div class="hit"><div class="hh">会话<em>11-04</em></div><p>最坏情况是什么？谁来回滚？答不上来就先别做。</p></div>
+        </div>
+        <p class="small-note">回查只读 L1 原文，不改动任何条目。</p>
+      </div>
+    </aside>
+  </div>
+
+  <p class="proto-note">
+    <b>原型说明：</b>对照旧版的四处改动 —— ① 层级改成语义名（结论 / 项目 / 事实 / 原始），L 编号退到右侧；
+    ② 复核队列从正文底部提到右栏顶部，和「人物」页用同一个复核模式（观察 / Dream 建议两个 tab）；
+    ③ 主 CTA 从「运行 Dream」改成「复核 N」，Dream 降为次级；④ 注入预览从只读文本变成可点击清单，逐条标出入选 / 被裁与原因。
+  </p>
+</div>
+
+<script>
+document.getElementById('theme').addEventListener('click', () => {
+  const r = document.documentElement;
+  r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark';
+});
+
+// 层级切换
+const LAYERS = {
+  L4: { title: '结论', num: 'L4 · 12 条', count: '12 条', desc: '只放目录、结论与入口。写进这里的条目每次 run 都会注入，所以宁少不多。' },
+  L3: { title: '项目', num: 'L3 · 34 条', count: '34 条', desc: '进行中的事与它们的边界：目标、负责人、当前状态。' },
+  L2: { title: '事实', num: 'L2 · 120 条', count: '120 条', desc: '稳定的、可复用的判断与偏好；按最近使用排序，预算不足时先被裁。' },
+  L1: { title: '原始', num: 'L1 · 2.4k 条', count: '2.4k 条', desc: '会话与 run 原文，只用于回查，不参与注入。' },
+};
+const entries = document.getElementById('entries');
+const empty = document.getElementById('entries-empty');
+document.querySelectorAll('.layer[data-layer]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.layer[data-layer]').forEach((b) => b.classList.remove('on'));
+    btn.classList.add('on');
+    const info = LAYERS[btn.dataset.layer];
+    document.getElementById('layer-title').innerHTML = `${info.title} <em>${info.num}</em>` + (btn.dataset.layer === 'L4' ? '<span class="tag p0">注入优先</span>' : '');
+    document.getElementById('layer-desc').textContent = info.desc;
+    const keep = btn.dataset.layer === 'L4';
+    entries.style.display = keep ? '' : 'none';
+    empty.style.display = keep ? 'none' : '';
+    document.getElementById('empty-text').textContent = `${info.title}层共 ${info.count}，行式布局和「结论」层一致（标题 / 摘要 / 引用与来源 / ⋯）。原型只填了 L4 的示例条目。`;
+  });
+});
+
+// 条目菜单
+document.querySelectorAll('[data-menu]').forEach((btn) => {
+  btn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const pop = btn.nextElementSibling;
+    document.querySelectorAll('.menu-pop').forEach((p) => { if (p !== pop) p.hidden = true; });
+    pop.hidden = !pop.hidden;
+  });
+});
+document.addEventListener('click', () => document.querySelectorAll('.menu-pop').forEach((p) => { p.hidden = true; }));
+
+// 展开来源与引用
+document.querySelectorAll('[data-ev]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const entry = btn.closest('.entry');
+    const ev = entry?.querySelector('.evidence');
+    if (!ev) return;
+    ev.hidden = !ev.hidden;
+    btn.textContent = ev.hidden ? '查看来源与引用' : '收起来源与引用';
+  });
+});
+
+// 复核 tab
+document.querySelectorAll('.tabs button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabs button').forEach((b) => b.classList.remove('on'));
+    btn.classList.add('on');
+    document.getElementById('tab-notes').style.display = btn.dataset.tab === 'notes' ? 'flex' : 'none';
+    document.getElementById('tab-dream').style.display = btn.dataset.tab === 'dream' ? 'flex' : 'none';
+  });
+});
+
+// 复核计数
+const nums = ['review-count', 'stat-review', 'cta-num'].map((id) => document.getElementById(id));
+function dropReview(delta) {
+  nums.forEach((el) => { el.textContent = String(Math.max(0, Number(el.textContent) + delta)); });
+  if (Number(nums[0].textContent) === 0) {
+    document.getElementById('review').innerHTML =
+      '<div class="block-title">复核 <em>0</em></div><p class="small-note">队列已清空。下次运行 Dream 或导入后才会再出现。</p>';
+  }
+}
+document.querySelectorAll('#tab-notes .qitem, #tab-dream .qitem').forEach((item) => {
+  item.querySelectorAll('.btn').forEach((btn) => {
+    btn.addEventListener('click', () => { item.remove(); dropReview(-1); });
+  });
+});
+document.querySelector('[data-batch]')?.addEventListener('click', (ev) => {
+  ev.target.closest('.batch').remove();
+  dropReview(-3);
+});
+
+// 注入条目展开原因
+document.querySelectorAll('.inj-item').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    btn.classList.toggle('open');
+    const next = btn.nextElementSibling;
+    if (next?.classList.contains('inj-reason-row')) next.classList.toggle('show');
+  });
+});
+
+// 复核 CTA 滚动到队列
+document.getElementById('cta-review').addEventListener('click', () => {
+  document.getElementById('review').scrollIntoView({ block: 'start' });
+});
+</script>
+</body>
+</html>
