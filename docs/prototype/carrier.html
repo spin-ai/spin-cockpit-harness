@@ -1,0 +1,1527 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-motion="calm">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>航母 · 电磁弹射起飞 · 协作场景原型</title>
+<!--
+  航母 Stage Pack（电磁弹射）· 2.5D 写实 · 参考福建舰（003）
+  ────────────────────────────────────────────────────────────
+  为什么是航母：
+  1. 流水线把所有任务画成同一条传送带，既不表达并发，也不表达「回收只有一条道」。
+  2. 航母是「多弹射位 + 单着舰道」：多个 worker 并行（弹射位），
+     review / approval 必须排队（着舰道 + 拦阻索）。
+  3. 弹射起飞有明确的状态机：排队 → 对位 → 通电 → 弹射 → 起飞 → 拦阻 / 复飞 → 复位，
+     全部映射现有 run 状态，不新增字段。
+  4. 造型走 2.5D 写实：深灰甲板 + 浅灰舰体 + 钢蓝海面，保留可见的舷侧和舰岛体积；
+     甲板布局参考福建舰：舰艏 2 条 + 斜角甲板 1 条 EMALS，双升降机，三道拦阻索。
+  全部颜色 / 圆角 / 字号取自 src/design-system.css token。
+  可直接打开；右上 ◐ 切亮暗；?mode=config、?detail=1、?theme=dark、?select=zhou、?seq=3、?view=gallery。
+  作战室见 warroom.html。
+-->
+<style>
+:root{
+  --font-sans:"Geist Variable","Geist",-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:"Geist Mono Variable","Geist Mono","SF Mono",SFMono-Regular,ui-monospace,Menlo,Consolas,monospace;
+  --radius:10px;--radius-sm:6px;--radius-lg:14px;--radius-control:8px;
+  --shadow-1:0 1px 2px rgba(10,10,10,.045);
+  --shadow-float:0 18px 46px rgba(0,0,0,.22),0 2px 8px rgba(0,0,0,.10);
+}
+:root[data-theme="light"]{
+  --page-canvas:#fafafa;--surface:#ffffff;--surface-2:#f7f7f7;--surface-hover:#f5f5f5;--surface-selected:#ededed;
+  --border:#e5e5e5;--border-strong:#d4d4d4;--input:#e5e5e5;--sidebar:#fafafa;
+  --fg:#0a0a0a;--fg-2:#3f3f3f;--muted:#5c5c5c;--faint:#767676;
+  --brand:#171717;--brand-soft:#f2f2f2;--brand-line:#dedede;
+  --green:#3f9a68;--green-soft:#edf8f2;--green-line:#d5eedf;
+  --amber:#a97a2f;--amber-soft:#fdf8ee;--amber-line:#f2e3c4;
+  --red:#cf5f5d;--red-soft:#fdf2f2;--red-line:#f4d7d7;
+  --purple:#7d67d1;--purple-soft:#f4f2fd;--purple-line:#e3ddf8;
+  --teal:#3f8f86;--indigo:#5b6cc0;--slate:#6b7280;--orange:#b46a3c;
+  /* 福建舰（003）写实 2.5D：钢蓝海面 + 深灰甲板 + 浅灰舰体 */
+  --sea:#205176;--sea-2:#1a4568;--sea-3:#143b5b;--foam:rgba(244,250,253,.94);
+  --deck:#5f676b;--deck-2:#545c60;--deck-3:#4a5256;
+  --lane:#565e62;--lane-2:#4d5559;
+  --rail:#2f3539;
+  --hull:#4a565b;--hull-2:#3e494e;--hull-3:#333d42;--hull-red:#7c3a30;--hull-line:#6e797d;
+  --lane-side:#454d51;--cat-base:#444c50;--cat-top:#596166;--cat-side:#3a4246;
+  --island-top:#b4bbbe;--island-front:#9ba4a7;--island-side:#858e92;
+  --outline:rgba(238,243,245,.34);--outline-soft:rgba(238,243,245,.16);
+  --deck-ink:rgba(240,238,230,.82);--deck-ink-2:rgba(240,238,230,.46);
+  --deck-line:rgba(255,255,255,.12);--mark:rgba(240,238,230,.82);
+  --yellow:#d9b45c;
+  --ink-line:rgba(20,26,30,.55);
+  --glass:color-mix(in srgb,var(--surface) 82%,transparent);
+  --shadow-soft:0 10px 26px rgba(18,30,38,.16);
+}
+:root[data-theme="dark"]{
+  --page-canvas:#0a0a0a;--surface:#171717;--surface-2:#1c1c1c;--surface-hover:#262626;--surface-selected:#2e2e2e;
+  --border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.14);--input:rgba(255,255,255,.16);--sidebar:#111111;
+  --fg:#f0f0f0;--fg-2:#d4d4d4;--muted:#b4b4b4;--faint:#8f8f8f;
+  --brand:#e5e5e5;--brand-soft:#262626;--brand-line:#3a3a3a;
+  --green:#5fb884;--green-soft:rgba(95,184,132,.12);--green-line:rgba(95,184,132,.28);
+  --amber:#c9a25c;--amber-soft:rgba(201,162,92,.12);--amber-line:rgba(201,162,92,.26);
+  --red:#d97a78;--red-soft:rgba(217,122,120,.12);--red-line:rgba(217,122,120,.26);
+  --purple:#9c8ae0;--purple-soft:rgba(156,138,224,.12);--purple-line:rgba(156,138,224,.26);
+  --teal:#6fbab1;--indigo:#8e9ce0;--slate:#9aa3af;--orange:#d08a5a;
+  /* 夜航：海面几乎黑，甲板仍然能看清标线 */
+  --sea:#06131e;--sea-2:#0a1c2a;--sea-3:#0e2434;--foam:rgba(235,246,250,.18);
+  --deck:#4b5357;--deck-2:#41494d;--deck-3:#373f43;
+  --lane:#444c50;--lane-2:#3b4347;
+  --rail:#262c30;
+  --hull:#3f4a4f;--hull-2:#354045;--hull-3:#2b353a;--hull-red:#5e2c25;--hull-line:#5c676b;
+  --lane-side:#333b3f;--cat-base:#333b3f;--cat-top:#495155;--cat-side:#2b3337;
+  --island-top:#6d767a;--island-front:#5b6468;--island-side:#4b5458;
+  --outline:rgba(255,255,255,.24);--outline-soft:rgba(255,255,255,.10);
+  --deck-ink:rgba(255,255,255,.80);--deck-ink-2:rgba(255,255,255,.46);
+  --deck-line:rgba(255,255,255,.10);--mark:rgba(255,255,255,.78);
+  --yellow:#d3ac63;
+  --ink-line:rgba(255,255,255,.26);
+  --glass:color-mix(in srgb,var(--surface) 78%,transparent);
+  --shadow-1:0 1px 2px rgba(0,0,0,.22);
+  --shadow-soft:0 10px 28px rgba(0,0,0,.46);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--page-canvas);color:var(--fg);font:13px/1.55 var(--font-sans);-webkit-font-smoothing:antialiased;overflow:hidden}
+::selection{background:color-mix(in srgb,var(--fg) 14%,transparent);color:inherit}
+button,input,select{font-family:inherit;color:inherit}
+.mono{font-family:var(--mono)}
+.faint{color:var(--faint)}
+.muted{color:var(--muted)}
+.spacer{flex:1}
+.tag{display:inline-flex;align-items:center;height:19px;padding:0 6px;border-radius:5px;background:var(--surface-hover);color:var(--fg-2);font-size:10.5px;letter-spacing:.02em;white-space:nowrap}
+.tag.live{background:var(--green-soft);color:var(--green)}
+.tag.ok{background:var(--green-soft);color:var(--green)}
+.tag.warn{background:var(--amber-soft);color:var(--amber)}
+.tag.bad{background:var(--red-soft);color:var(--red)}
+
+/* ── App shell ─────────────────────────────────────────────── */
+.app{height:100%;display:grid;grid-template-columns:64px minmax(0,1fr)}
+.rail{background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:10px 0 8px;gap:2px;min-height:0}
+.rail-brand{width:34px;height:34px;border:1px solid var(--border);border-radius:9px;background:var(--surface);display:grid;place-items:center;color:var(--fg);margin-bottom:8px;font:600 13px var(--mono);box-shadow:var(--shadow-1)}
+.rail-item{position:relative;width:52px;height:47px;border:0;border-radius:8px;background:transparent;color:var(--muted);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:10.5px;line-height:1.2;cursor:pointer;transition:background .12s,color .12s}
+.rail-item svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.rail-item span{transform:scale(.96);white-space:nowrap}
+.rail-item:hover{background:var(--surface-hover);color:var(--fg-2)}
+.rail-item.on{background:var(--brand-soft);color:var(--fg)}
+.rail-item.on::before{content:"";position:absolute;left:-6px;top:11px;bottom:11px;width:2px;border-radius:2px;background:var(--fg)}
+.rail-bottom{margin-top:auto;display:flex;flex-direction:column;gap:2px}
+.main{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--page-canvas)}
+
+/* ── Page header / controls / tabs ─────────────────────────── */
+.page-head{flex:none;display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding:16px 22px 10px}
+.page-title{min-width:0;display:flex;flex-direction:column;gap:2px}
+.kicker{font-size:10px;line-height:1.4;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.page-title h1{margin:0;font-size:22px;line-height:1.15;font-weight:600;letter-spacing:-.03em}
+.page-sub{margin:1px 0 0;font-size:12.5px;line-height:1.5;color:var(--muted);max-width:760px}
+.page-actions{display:flex;align-items:center;gap:6px;flex:none}
+.btn{height:30px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--surface);color:var(--fg-2);font-size:12px;display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;cursor:pointer;transition:background .12s,border-color .12s,color .12s;text-decoration:none}
+.btn:hover{background:var(--surface-hover);border-color:var(--border-strong);color:var(--fg)}
+.btn.primary{background:var(--fg);border-color:var(--fg);color:var(--surface);box-shadow:var(--shadow-1)}
+.btn.primary:hover{background:color-mix(in srgb,var(--fg) 92%,var(--surface));color:var(--surface)}
+.btn.tiny{height:26px;padding:0 8px;font-size:11px}
+.icon-btn{width:28px;height:28px;border:0;border-radius:6px;background:transparent;color:var(--muted);display:grid;place-items:center;font-size:13px;cursor:pointer;flex:none}
+.icon-btn:hover{background:var(--surface-hover);color:var(--fg)}
+button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px solid color-mix(in srgb,var(--fg) 30%,transparent);outline-offset:2px}
+select{height:28px;border:1px solid transparent;border-radius:var(--radius-sm);background:transparent;color:var(--muted);font-size:11.5px;padding:0 7px}
+select:hover{border-color:var(--border);background:var(--surface)}
+.tabs{flex:none;display:flex;align-items:center;gap:2px;padding:0 22px;border-bottom:1px solid var(--border);min-height:37px;overflow:auto}
+.tab{height:36px;padding:0 10px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);font-size:12.5px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;margin-bottom:-1px;text-decoration:none;white-space:nowrap}
+.tab:hover{color:var(--fg)}
+.tab.on{color:var(--fg);border-bottom-color:var(--fg)}
+.tab .live-dot{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+.tab-sep{width:1px;height:16px;background:var(--border);margin:0 6px;flex:none}
+.tab-hint{font-size:10.5px;color:var(--faint);margin-left:2px;white-space:nowrap}
+.view{flex:1;min-height:0;display:none}
+.view.on{display:flex}
+.view.live{flex-direction:column;gap:8px;padding:10px 16px 12px;min-height:0}
+.view.gallery{display:none;overflow:auto;padding:16px 22px 36px}
+.view.gallery.on{display:block}
+
+/* ── Toolbar ───────────────────────────────────────────────── */
+.scene-toolbar{flex:none;height:40px;display:flex;align-items:center;gap:10px;min-width:0}
+.scene-id{display:flex;align-items:center;gap:8px;min-width:0}
+.scene-mark{width:30px;height:30px;border-radius:8px;border:1px solid var(--border);background:var(--surface);display:grid;place-items:center;font-size:12px;font-weight:600;color:var(--fg-2);flex:none;box-shadow:var(--shadow-1)}
+.scene-id>div{display:flex;flex-direction:column;gap:0;min-width:0}
+.scene-id b{font-size:13.5px;font-weight:600;line-height:1.25;display:flex;align-items:center;gap:6px}
+.scene-id span{font-size:11.5px;color:var(--muted);line-height:1.35}
+.scene-stats{display:flex;align-items:center;gap:10px;padding-left:12px;border-left:1px solid var(--border);min-width:0}
+.scene-stats span{font-size:11.5px;color:var(--muted);display:inline-flex;align-items:baseline;gap:3px;white-space:nowrap}
+.scene-stats b{font:600 12.5px var(--mono);color:var(--fg);font-variant-numeric:tabular-nums}
+.scene-stats .run b{color:var(--green)}
+.scene-stats .wait b{color:var(--amber)}
+.scene-stats .review b{color:var(--purple)}
+.scene-stats .fail b{color:var(--red)}
+.seg{display:flex;background:var(--surface-hover);border:1px solid var(--border);border-radius:6px;padding:1px;flex:none}
+.seg button{height:24px;border:0;background:transparent;color:var(--muted);font-size:11px;padding:0 8px;border-radius:5px;cursor:pointer}
+.seg button.on{background:var(--surface);color:var(--fg);box-shadow:0 0 0 1px var(--border)}
+
+/* ── Stage (2.5D · Fujian / CV-18 · zoom fit) ──────────── */
+.live-body{position:relative;flex:1;min-height:0}
+.stage-wrap{height:100%;min-width:0;min-height:0;display:flex;flex-direction:column;gap:6px}
+.stage{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:var(--sea);isolation:isolate;box-shadow:var(--shadow-1)}
+.canvas{position:relative;flex:none;width:1180px;height:560px;background:var(--sea);zoom:1}
+.sea{position:absolute;inset:0;background:linear-gradient(180deg,var(--sea),var(--sea-2) 62%,var(--sea-3))}
+.sea::after{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 30%,color-mix(in srgb,var(--foam) 18%,transparent) 52%,transparent 70%);opacity:.5}
+.deck{position:absolute;inset:0;overflow:visible}
+
+/* hull / deck materials */
+.deck-stop-1{stop-color:color-mix(in srgb,var(--deck) 92%,var(--surface) 8%)}
+.deck-stop-2{stop-color:color-mix(in srgb,var(--deck) 80%,var(--deck-2) 20%)}
+.deck-stop-3{stop-color:color-mix(in srgb,var(--deck-2) 86%,var(--deck-3) 14%)}
+.hull-stop-1{stop-color:color-mix(in srgb,var(--hull) 92%,var(--surface) 8%)}
+.hull-stop-2{stop-color:color-mix(in srgb,var(--hull) 80%,var(--hull-2) 20%)}
+.island-stop-1{stop-color:color-mix(in srgb,var(--island-top) 94%,var(--surface) 6%)}
+.island-stop-2{stop-color:color-mix(in srgb,var(--island-front) 90%,var(--surface) 10%)}
+.water-shadow{fill:rgba(3,12,18,.40);filter:blur(10px)}
+:root[data-theme="dark"] .water-shadow{fill:rgba(0,0,0,.55)}
+.deck-face{fill:url(#deckGrad);stroke:var(--ink-line);stroke-width:1.2;stroke-linejoin:round;filter:drop-shadow(0 18px 22px rgba(6,18,26,.32))}
+:root[data-theme="dark"] .deck-face{filter:drop-shadow(0 18px 22px rgba(0,0,0,.6))}
+.deck-tie{fill:url(#tieDown);opacity:.30}
+.deck-sheen{fill:url(#deckSheen);opacity:.5;pointer-events:none}
+.island-shadow{fill:rgba(4,12,18,.38);filter:blur(7px)}
+:root[data-theme="dark"] .island-shadow{fill:rgba(0,0,0,.55)}
+.sea-ripple{stroke:var(--foam);stroke-width:1.6;fill:none;stroke-linecap:round;opacity:.28}
+.bow-foam{stroke:var(--foam);stroke-width:3.2;fill:none;stroke-linecap:round;opacity:.55}
+.railing{stroke:var(--outline);stroke-width:.9;stroke-dasharray:2 3;fill:none;opacity:.7}
+.deck-grain{opacity:.10}
+.hull-seam{stroke:rgba(10,16,20,.20);stroke-width:.8;fill:none}
+.draft-mark{stroke:var(--hull-line);stroke-width:.8;fill:none;opacity:.55}
+.anchor{stroke:var(--hull-3);stroke-width:2;fill:none;stroke-linecap:round}
+.boat-bay{fill:color-mix(in srgb,var(--hull-3) 82%,var(--rail) 18%);stroke:var(--ink-line);stroke-width:1}
+.hull-foam{stroke:var(--foam);stroke-width:2.6;fill:none;stroke-linecap:round;opacity:.55}
+.hull-waterfoam{stroke:var(--foam);fill:none;stroke-linecap:round}
+.hull-grime path{stroke:rgba(92,58,42,.30);stroke-width:2.2;fill:none;stroke-linecap:round;filter:url(#blur2)}
+.hull-stain{fill:rgba(12,20,24,.28);filter:url(#blur2)}
+.elevator-shadow{fill:rgba(3,10,16,.45);filter:url(#blur2)}
+.aesa-grid path{stroke:rgba(180,210,220,.30);stroke-width:.5;fill:none}
+.island-light{fill:var(--amber);opacity:.8}
+.foam-bubbles circle{fill:var(--foam);opacity:.5}
+.deck-edge-hi{stroke:rgba(255,255,255,.20);stroke-width:1.6;fill:none;stroke-linecap:round}
+.island-hi{stroke:rgba(255,255,255,.28);stroke-width:1.2;fill:none;stroke-linecap:round}
+.island-shade{fill:rgba(4,12,18,.20)}
+.deck-highlight{fill:rgba(255,255,255,.10);filter:url(#blur6)}
+.a-glare{stroke:rgba(255,255,255,.65);stroke-width:.8;fill:none;stroke-linecap:round}
+.reflection{opacity:.22}
+.whitecaps path{stroke:var(--foam);stroke-width:2.2;fill:none;stroke-linecap:round;opacity:.45}
+.foam-patches path,.foam-patches circle{fill:var(--foam);opacity:.35;filter:url(#blur2)}
+.bow-swell{opacity:.45}
+.wake-churn{opacity:.55}
+.caustics{opacity:.8}
+.sea-swells path{stroke:rgba(255,255,255,.16);fill:none;stroke-linecap:round}
+.deck-wet path{fill:rgba(255,255,255,.05);filter:url(#blur2)}
+.catwalk-grate{stroke:rgba(255,255,255,.22);stroke-width:3;stroke-dasharray:2 2;fill:none;opacity:.5}
+.safety-net{stroke:rgba(10,18,24,.35);stroke-width:1.2;stroke-dasharray:3 3;fill:none;opacity:.6}
+.hull-algae{fill:rgba(32,52,44,.28);filter:url(#blur2)}
+.hull-plates path{stroke:rgba(10,18,24,.22);stroke-width:.8;fill:none}
+.deck-wear{pointer-events:none}
+.hull-red{fill:var(--hull-red);opacity:.78}
+.stain{fill:rgba(6,12,16,.24);filter:blur(3px)}
+.grade{position:absolute;inset:0;pointer-events:none;z-index:9;background:linear-gradient(135deg,rgba(255,238,206,.10),transparent 42%,rgba(8,24,36,.16));mix-blend-mode:soft-light}
+.vignette{position:absolute;inset:0;pointer-events:none;z-index:9;background:radial-gradient(120% 90% at 50% 46%,transparent 48%,rgba(3,10,16,.34) 100%)}
+.escort{opacity:.92}
+.escort-hull{fill:color-mix(in srgb,var(--hull) 76%,var(--sea-3) 24%);stroke:var(--ink-line);stroke-width:1;stroke-linejoin:round}
+.escort-super{fill:color-mix(in srgb,var(--hull) 88%,var(--surface) 12%);stroke:var(--ink-line);stroke-width:.8;stroke-linejoin:round}
+.escort-dark{fill:var(--hull-3);stroke:var(--ink-line);stroke-width:.7}
+.escort-wake{stroke:var(--foam);fill:none;stroke-linecap:round;opacity:.6}
+.escort-wake-2{stroke:var(--foam);fill:none;stroke-linecap:round;opacity:.35}
+.liferaft{fill:var(--surface);stroke:var(--ink-line);stroke-width:.7}
+.ciws-mount{fill:var(--hull-3);stroke:var(--ink-line);stroke-width:.8}
+.deck-seam{stroke:var(--deck-line);stroke-width:1;fill:none}
+.catwalk{fill:none;stroke:var(--outline);stroke-width:1.4;stroke-dasharray:3 5;stroke-linecap:round;opacity:.7}
+.bow-mark{fill:var(--deck-ink);font:700 44px var(--mono);letter-spacing:.08em;opacity:.9}
+.stern-name{fill:var(--deck-ink);font:600 10px var(--mono);letter-spacing:.36em;opacity:.55}
+.painted{fill:var(--deck-ink);font:600 11px var(--mono);letter-spacing:.2em}
+.painted.small{font-size:9px;letter-spacing:.16em;fill:var(--deck-ink-2)}
+.painted.yellow{fill:var(--yellow);letter-spacing:.18em}
+.deck-label{position:absolute;transform:translate(-50%,-50%);z-index:5;font-size:10.5px;font-weight:600;letter-spacing:.16em;color:var(--deck-ink-2);pointer-events:none;white-space:nowrap;text-transform:uppercase}
+.deck-label.cat{color:var(--yellow);letter-spacing:.14em}
+.deck-label.elev{color:var(--deck-ink-2)}
+
+/* hull side / waterline */
+.hull-side{fill:url(#hullGrad);stroke:var(--ink-line);stroke-width:1.2;stroke-linejoin:round}
+.hull-side-2{fill:url(#hullGrad2);stroke:var(--ink-line);stroke-width:1.2;stroke-linejoin:round}
+.hull-topline{stroke:var(--hull-line);stroke-width:2.2;fill:none;opacity:.55}
+.waterline{fill:color-mix(in srgb,var(--hull-3) 72%,var(--sea-3) 28%);opacity:.9}
+.waterline-2{fill:color-mix(in srgb,var(--hull-3) 88%,var(--surface) 12%);opacity:.45}
+.hull-hangar{fill:color-mix(in srgb,var(--hull-3) 80%,var(--rail) 20%);stroke:var(--ink-line);stroke-width:1.2}
+.porthole{fill:color-mix(in srgb,var(--surface) 30%,var(--sea-3) 70%);stroke:var(--ink-line);stroke-width:.8;opacity:.85}
+.sponson{fill:var(--hull-2);stroke:var(--ink-line);stroke-width:1.2;stroke-linejoin:round}
+.ciws{fill:var(--hull-3);stroke:var(--ink-line);stroke-width:1}
+
+/* angled landing area (all three wires + centerline) */
+.lane{fill:var(--lane);stroke:var(--ink-line);stroke-width:1.6;stroke-linejoin:round}
+.lane-edge{stroke:var(--mark);stroke-width:1.8;fill:none;stroke-linecap:round;opacity:.85}
+.lane-dash{stroke:var(--mark);stroke-width:1.6;stroke-dasharray:10 10;stroke-linecap:round;opacity:.7;fill:none}
+.wire{stroke:color-mix(in srgb,var(--surface) 58%,var(--hull-3) 42%);stroke-width:2.6;stroke-linecap:round;filter:drop-shadow(0 1px 1px rgba(0,0,0,.3))}
+.wire-hook{fill:var(--hull-2);stroke:var(--ink-line);stroke-width:1}
+.stage.has-review .wire{stroke:var(--purple);filter:drop-shadow(0 0 4px color-mix(in srgb,var(--purple) 55%,transparent))}
+.wire.hit{stroke:var(--purple);stroke-width:3.2;animation:wireHit .9s ease-out}
+.tire{stroke:rgba(12,16,18,.34);stroke-width:5;stroke-linecap:round;fill:none;opacity:.7}
+
+/* catapult tracks */
+.cat-base{fill:var(--cat-base);stroke:var(--ink-line);stroke-width:1.4;stroke-linejoin:round}
+.cat-top{fill:var(--cat-top)}
+.cat-side{fill:var(--cat-side);stroke:var(--ink-line);stroke-width:1;stroke-linejoin:round}
+.cat-coil{stroke:color-mix(in srgb,var(--surface) 80%,var(--deck-ink) 20%);stroke-width:1.4;stroke-dasharray:3 5;stroke-linecap:round;opacity:.75;fill:none}
+.cat-edge{stroke:var(--yellow);stroke-width:1.2;stroke-dasharray:5 5;fill:none;opacity:.65}
+.cat-glow{fill:color-mix(in srgb,var(--green) 82%,var(--surface) 18%);opacity:0;filter:drop-shadow(0 0 8px color-mix(in srgb,var(--green) 55%,transparent))}
+.stage.launching .cat-glow{opacity:.5;animation:glowPulse 1.1s ease-in-out infinite}
+.shuttle{fill:color-mix(in srgb,var(--hull-3) 60%,var(--surface) 40%);stroke:var(--ink-line);stroke-width:1.2;stroke-linejoin:round}
+.bolt{fill:var(--yellow);stroke:var(--ink-line);stroke-width:.8;stroke-linejoin:round;opacity:.9}
+.jbd{fill:var(--deck-2);stroke:var(--ink-line);stroke-width:1.4;stroke-linejoin:round}
+.jbd.raised{fill:url(#hazard)}
+.jbd-side{fill:var(--deck-3);stroke:var(--ink-line);stroke-width:1}
+
+/* island / PriFly */
+.island-top{fill:url(#islandGrad);stroke:var(--ink-line);stroke-width:1.1;stroke-linejoin:round}
+.island-front{fill:var(--island-front);stroke:var(--ink-line);stroke-width:1.1;stroke-linejoin:round}
+.island-side{fill:var(--island-side);stroke:var(--ink-line);stroke-width:1.1;stroke-linejoin:round}
+.island-window{fill:color-mix(in srgb,var(--rail) 74%,var(--sea-3) 26%);stroke:var(--ink-line);stroke-width:.9;stroke-linejoin:round}
+.island-panel{fill:color-mix(in srgb,var(--rail) 82%,var(--sea-3) 18%);stroke:var(--ink-line);stroke-width:.9;stroke-linejoin:round}
+.island-mast{stroke:var(--ink-line);stroke-width:2;stroke-linecap:round;fill:none}
+.island-radar{fill:var(--island-top);stroke:var(--ink-line);stroke-width:1.4}
+.island-radar-dot{fill:var(--green)}
+.island-flag{fill:var(--red);stroke:var(--ink-line);stroke-width:.9}
+.island-number{fill:var(--deck-ink);font:700 20px var(--mono);letter-spacing:.06em}
+.island-ring{fill:none;stroke:var(--red);stroke-width:1.8;opacity:.85}
+.island-detail{stroke:var(--ink-line);stroke-width:.8;fill:none;opacity:.45}
+
+/* elevators / parking / deck props */
+.elevator{fill:color-mix(in srgb,var(--deck-2) 88%,var(--deck-3) 12%);stroke:var(--yellow);stroke-width:1.4;stroke-dasharray:7 5;stroke-linejoin:round}
+.elevator-line{stroke:var(--deck-ink-2);stroke-width:1;stroke-dasharray:4 5;fill:none;opacity:.6}
+.park-slot{fill:color-mix(in srgb,var(--surface) 4%,transparent);stroke:var(--deck-ink-2);stroke-width:1.1;stroke-dasharray:5 5;stroke-linejoin:round}
+.lso-top{fill:var(--deck-2);stroke:var(--ink-line);stroke-width:1.5;stroke-linejoin:round}
+.lso-side{fill:var(--hull-2);stroke:var(--ink-line);stroke-width:1.2}
+.gangway{stroke:var(--outline);stroke-width:1.2;stroke-dasharray:3 4;stroke-linecap:round}
+.waveoff{stroke:var(--red);stroke-width:1.8;stroke-dasharray:5 6;fill:none;stroke-linecap:round;opacity:.85}
+.waves{stroke:var(--foam);stroke-width:3.2;stroke-linecap:round;fill:none;opacity:.55}
+.wake{stroke:var(--foam);stroke-width:3.4;stroke-linecap:round;fill:none;opacity:.45}
+.wind-line{stroke:var(--foam);stroke-width:2.6;stroke-linecap:round;fill:none;opacity:.7}
+.tug-top{fill:var(--hull-2);stroke:var(--ink-line);stroke-width:1.2;stroke-linejoin:round}
+.tug-side{fill:var(--hull-3);stroke:var(--ink-line);stroke-width:1.1;stroke-linejoin:round}
+.tug-cabin{fill:var(--island-top);stroke:var(--ink-line);stroke-width:1}
+.tug-mast{stroke:var(--ink-line);stroke-width:1.4;stroke-linecap:round}
+.tow-tractor{fill:var(--yellow);stroke:var(--ink-line);stroke-width:1.1;stroke-linejoin:round}
+
+/* config zones */
+.zone-box{opacity:0;fill:color-mix(in srgb,var(--indigo) 6%,transparent);stroke:var(--indigo);stroke-width:1.4;stroke-dasharray:5 5;transition:opacity .12s}
+.stage.config .zone-box{opacity:1}
+
+/* aircraft (2.5D realistic silhouettes) */
+.plane{position:absolute;transform:translate(-50%,-50%);z-index:7;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px}
+.plane .jet{width:54px;height:60px;position:relative;transition:transform .45s ease;filter:drop-shadow(0 8px 6px rgba(8,20,26,.28))}
+:root[data-theme="dark"] .plane .jet{filter:drop-shadow(0 8px 6px rgba(0,0,0,.55))}
+.plane-shadow{position:absolute;left:50%;top:52px;width:44px;height:14px;transform:translateX(-50%);border-radius:50%;background:rgba(6,16,22,.28);filter:blur(2px);z-index:0}
+:root[data-theme="dark"] .plane-shadow{background:rgba(0,0,0,.6)}
+.plane .jet svg{width:100%;height:100%;display:block;overflow:visible}
+.a-body{fill:url(#jetGrad);stroke:rgba(18,24,28,.55);stroke-width:.7;stroke-linejoin:round}
+.a-wing{fill:color-mix(in srgb,var(--hull) 46%,var(--surface) 54%);stroke:rgba(18,24,28,.5);stroke-width:.6;stroke-linejoin:round}
+.a-wing-top{fill:color-mix(in srgb,var(--hull) 30%,var(--surface) 70%);stroke:rgba(18,24,28,.35);stroke-width:.5;stroke-linejoin:round}
+.a-highlight{fill:rgba(255,255,255,.16)}
+.a-panel{fill:none;stroke:rgba(18,24,28,.28);stroke-width:.5;stroke-linecap:round}
+.a-canopy{fill:color-mix(in srgb,var(--rail) 72%,var(--sea-3) 28%);stroke:rgba(10,16,20,.7);stroke-width:.6}
+.a-glass{fill:color-mix(in srgb,var(--indigo) 34%,var(--surface) 66%);opacity:.8}
+.a-tail{fill:color-mix(in srgb,var(--hull) 38%,var(--surface) 62%);stroke:rgba(18,24,28,.5);stroke-width:.5}
+.a-nozzle{fill:color-mix(in srgb,var(--rail) 78%,var(--surface) 22%);stroke:rgba(18,24,28,.6);stroke-width:.4}
+.a-missile{fill:color-mix(in srgb,var(--surface) 72%,var(--slate) 28%);stroke:rgba(18,24,28,.45);stroke-width:.4}
+.a-mark{fill:#c0392b;stroke:#e6c34a;stroke-width:.4}
+.jet-star{fill:var(--yellow);opacity:.9}
+.plane .plane-tag{position:relative;z-index:2;font-size:10.5px;line-height:1.2;color:var(--fg-2);background:color-mix(in srgb,var(--surface) 94%,transparent);border:1px solid var(--border);border-radius:99px;padding:2px 7px;box-shadow:var(--shadow-1);white-space:nowrap;display:inline-flex;align-items:center;gap:4px;margin-top:-2px}
+.plane .plane-tag i{width:5px;height:5px;border-radius:50%;background:var(--faint);flex:none}
+.plane.run .plane-tag i{background:var(--green)}.plane.wait .plane-tag i{background:var(--amber)}
+.plane.review .plane-tag i{background:var(--purple)}.plane.fail .plane-tag i{background:var(--red)}.plane.idle .plane-tag i{background:var(--faint)}
+.plane .plane-tag b{font-weight:600;color:var(--fg-2)}
+.plane .plane-tag em{font:9.5px var(--mono);font-style:normal;color:var(--faint);margin-left:3px;letter-spacing:.02em}
+.plane:hover .plane-tag{border-color:var(--border-strong)}
+.plane.sel .plane-tag{border-color:var(--fg);color:var(--fg)}
+.plane.airborne .jet{opacity:.35}
+.plane.airborne .plane-shadow{opacity:.3}
+.plane.wave .jet{transform:rotate(8deg)}
+.plane .puff{position:absolute;left:50%;bottom:16px;width:44px;height:26px;transform:translateX(-50%);opacity:0;z-index:0}
+.plane .puff i{position:absolute;bottom:0;width:14px;height:14px;border-radius:50%;background:color-mix(in srgb,var(--surface) 88%,var(--sea-3) 12%);border:1px solid var(--border);box-shadow:0 2px 0 rgba(6,18,26,.08);opacity:.7}
+.plane .puff i:nth-child(1){left:0;animation:puff 1.4s ease-out infinite}
+.plane .puff i:nth-child(2){left:15px;bottom:6px;width:17px;height:17px;animation:puff 1.4s .3s ease-out infinite}
+.plane .puff i:nth-child(3){left:30px;animation:puff 1.4s .6s ease-out infinite}
+.stage.launching .plane.launching .puff{opacity:1}
+.plane .jet-trail{position:absolute;right:46%;top:52%;width:48px;height:26px;transform:translateY(-50%);opacity:0;z-index:0}
+.plane .jet-trail i{position:absolute;right:0;height:2px;border-radius:2px;background:color-mix(in srgb,var(--surface) 55%,var(--sea-3) 45%)}
+.plane .jet-trail i:nth-child(1){top:4px;width:32px}
+.plane .jet-trail i:nth-child(2){top:12px;width:46px}
+.plane .jet-trail i:nth-child(3){top:20px;width:26px}
+.stage.launching .plane.launching .jet-trail{opacity:.75;animation:trailFade 1s ease-in-out infinite}
+
+/* deck crew (colored jerseys, no cartoon faces) */
+.crew{position:absolute;transform:translate(-50%,-50%);z-index:8;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px}
+.crew .crew-art{width:18px;height:28px;display:block;filter:drop-shadow(0 3px 2px rgba(6,16,22,.28))}
+:root[data-theme="dark"] .crew .crew-art{filter:drop-shadow(0 3px 2px rgba(0,0,0,.55))}
+.crew-shadow{fill:rgba(6,16,22,.34)}
+.crew-helmet{fill:var(--accent);stroke:var(--ink-line);stroke-width:.8}
+.crew-vest{fill:var(--accent);stroke:var(--ink-line);stroke-width:.8;stroke-linejoin:round}
+.crew-legs{fill:color-mix(in srgb,var(--rail) 62%,var(--surface) 38%);stroke:var(--ink-line);stroke-width:.7;stroke-linejoin:round}
+.crew-skin{fill:color-mix(in srgb,var(--surface) 70%,var(--orange) 30%);stroke:var(--ink-line);stroke-width:.6}
+.crew-reflect{stroke:rgba(255,255,255,.55);stroke-width:.8;fill:none;stroke-linecap:round}
+.crew.white .crew-vest{fill:color-mix(in srgb,var(--surface) 88%,var(--slate) 12%)}
+.crew.white .crew-helmet{fill:var(--surface)}
+.crew .crew-name{font-size:10px;line-height:1.2;color:var(--fg-2);background:color-mix(in srgb,var(--surface) 92%,transparent);border:1px solid var(--border);border-radius:99px;padding:1px 6px;white-space:nowrap;box-shadow:var(--shadow-1);display:inline-flex;align-items:baseline;gap:3px}
+.crew .crew-name b{font-weight:600;color:var(--fg-2)}
+.crew .crew-name span{font-size:9.5px;color:var(--muted)}
+.crew.sel .crew-name{border-color:var(--fg);color:var(--fg)}
+.crew.lead .crew-art{width:22px;height:32px}
+
+/* hud */
+.hud{position:absolute;left:20px;top:18px;width:216px;border:1px solid color-mix(in srgb,var(--fg) 10%,transparent);border-radius:var(--radius-lg);background:var(--glass);backdrop-filter:blur(14px) saturate(140%);box-shadow:var(--shadow-soft);padding:10px 12px;display:flex;flex-direction:column;gap:6px;z-index:10;cursor:pointer;transition:border-color .14s,box-shadow .14s}
+.hud::before{content:"";position:absolute;inset:0;border-radius:inherit;box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 30%,transparent);pointer-events:none}
+.hud:hover{border-color:color-mix(in srgb,var(--fg) 24%,transparent)}
+.hud.right{left:auto;right:20px;width:206px}
+.hud-head{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;letter-spacing:.01em}
+.hud-head i{width:4px;height:4px;border-radius:50%;background:var(--green);box-shadow:0 0 0 2px color-mix(in srgb,var(--green) 18%,transparent);flex:none}
+.hud-head em{font:10px var(--mono);font-style:normal;color:var(--faint);margin-left:auto;letter-spacing:.04em}
+.hud-row{display:flex;align-items:baseline;gap:6px;font-size:11px;color:var(--muted)}
+.hud-row b{font:600 11.5px var(--mono);color:var(--fg-2);margin-left:auto;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.hud-row.green b{color:var(--green)}.hud-row.amber b{color:var(--amber)}.hud-row.red b{color:var(--red)}.hud-row.purple b{color:var(--purple)}
+.hud-note{font-size:10.5px;line-height:1.5;color:var(--faint);border-top:1px solid color-mix(in srgb,var(--fg) 8%,transparent);padding-top:6px;margin-top:2px}
+
+/* sequence bar / legend */
+.deck-bar{flex:none;display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:12px;background:var(--surface);padding:7px 11px;box-shadow:var(--shadow-1);min-height:40px}
+.deck-bar .bar-label{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:700;flex:none}
+.seq{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-width:0}
+.seq-step{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:99px;border:1px solid var(--border);background:var(--surface);font-size:10.5px;color:var(--muted);white-space:nowrap;cursor:pointer}
+.seq-step b{font:700 10px var(--mono);color:var(--faint);width:15px;height:15px;border-radius:50%;border:1px solid var(--border);display:grid;place-items:center;background:var(--surface-hover)}
+.seq-step.on{border-color:var(--fg);color:var(--fg);background:var(--brand-soft)}
+.seq-step.on b{background:var(--fg);border-color:var(--fg);color:var(--surface)}
+.seq-step.done{border-color:var(--green-line);background:var(--green-soft);color:var(--green)}
+.seq-step.done b{border-color:var(--green-line);background:var(--green);color:var(--surface)}
+.seq-arrow{color:var(--faint);font-size:10px}
+.seq-log{font:10.5px var(--mono);color:var(--muted);margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:280px}
+.seq-log b{color:var(--fg-2);font-weight:600}
+.legend{flex:none;display:flex;align-items:center;gap:14px;padding:0 4px;font-size:11px;color:var(--muted);min-height:18px;flex-wrap:wrap}
+.legend span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.legend .line{width:16px;height:0;border-top:1px dashed var(--border-strong)}
+.legend .line.actual{border-top-color:var(--green);opacity:.7}
+.legend .dot{width:5px;height:5px;border-radius:50%;background:var(--faint)}
+.legend .dot.run{background:var(--green)}.legend .dot.wait{background:var(--amber)}.legend .dot.review{background:var(--purple)}.legend .dot.fail{background:var(--red)}
+.legend-note{margin-left:auto;color:var(--faint)}
+
+/* inspector / gallery / toast / modal */
+.inspector{position:absolute;right:8px;top:0;bottom:0;width:302px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-float);z-index:30;display:flex;flex-direction:column;opacity:0;transform:translateX(10px);pointer-events:none;transition:opacity .16s,transform .16s}
+.inspector.open{opacity:1;transform:none;pointer-events:auto}
+.insp-head{flex:none;display:flex;align-items:flex-start;gap:8px;padding:12px 12px 10px;border-bottom:1px solid var(--border)}
+.insp-head>div{min-width:0;flex:1;display:flex;flex-direction:column;gap:1px}
+.insp-head b{font-size:13px;font-weight:600;line-height:1.3;display:flex;align-items:center;gap:6px}
+.insp-head span{font-size:11px;color:var(--muted);line-height:1.4}
+.insp-scroll{flex:1;min-height:0;overflow:auto;padding:10px 12px 16px;display:flex;flex-direction:column;gap:12px}
+.insp-sec{display:flex;flex-direction:column;gap:5px}
+.insp-sec>h4{margin:0;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:700}
+.insp-row{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);min-width:0}
+.insp-row b{font-weight:500;color:var(--fg-2);margin-left:auto;text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.insp-note{font-size:12px;line-height:1.55;color:var(--muted);padding:8px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface-2)}
+.insp-actions{display:flex;gap:6px;flex-wrap:wrap}
+.insp-actions .btn{flex:1}
+.insp-list{display:flex;flex-direction:column;gap:4px}
+.insp-item{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);min-width:0;padding:4px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface)}
+.insp-item i{width:5px;height:5px;border-radius:50%;background:var(--faint);flex:none}
+.insp-item.run i{background:var(--green)}.insp-item.wait i{background:var(--amber)}.insp-item.review i{background:var(--purple)}.insp-item.fail i{background:var(--red)}
+.insp-item b{font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg-2)}
+.insp-item span{font:10px var(--mono);color:var(--faint);flex:none}
+.hint-bar{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:20;display:none;align-items:center;gap:8px;padding:7px 13px;border:1px solid var(--border);border-radius:99px;background:var(--surface);box-shadow:var(--shadow-soft);font-size:11px;color:var(--muted);white-space:nowrap}
+.hint-bar b{color:var(--fg);font-weight:600}
+.stage.config .hint-bar{display:flex}
+
+.gal-summary{display:flex;align-items:center;gap:14px;font-size:11.5px;color:var(--muted);margin-bottom:12px;flex-wrap:wrap}
+.gal-summary b{font:600 12.5px var(--mono);color:var(--fg)}
+.gal-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.gal-card{border:1px solid var(--border);border-radius:12px;background:var(--surface);overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow-1)}
+.gal-card.on{border-color:var(--border-strong);box-shadow:0 0 0 1px var(--border) inset}
+.gal-thumb{position:relative;height:150px;background:var(--surface-2);border-bottom:1px solid var(--border);overflow:hidden}
+.gal-thumb svg{width:100%;height:100%;display:block}
+.gal-label{position:absolute;left:8px;top:8px;font:600 9px var(--mono);letter-spacing:.06em;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 5px;z-index:2}
+.gal-live{position:absolute;right:8px;top:8px;display:inline-flex;align-items:center;gap:4px;font-size:9.5px;color:var(--green);background:var(--green-soft);border:1px solid var(--green-line);border-radius:99px;padding:1px 6px;z-index:2}
+.gal-live i{width:4px;height:4px;border-radius:50%;background:var(--green)}
+.gal-body{padding:10px 11px;display:flex;flex-direction:column;gap:6px;flex:1}
+.gal-body h3{margin:0;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}
+.gal-body p{margin:0;font-size:11px;line-height:1.5;color:var(--muted)}
+.gal-cast{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--muted);margin-top:auto}
+.gal-avatars{display:flex}
+.gal-avatar{width:18px;height:18px;border-radius:50%;border:1px solid var(--surface);background:var(--surface-hover);display:grid;place-items:center;font-size:9px;color:var(--fg-2);margin-right:-5px}
+.gal-foot{display:flex;align-items:center;gap:6px;padding:8px 11px;border-top:1px solid var(--border)}
+.gal-foot .btn{flex:1}
+
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(8px);z-index:90;background:var(--fg);color:var(--page-canvas);border-radius:8px;padding:8px 13px;font-size:11.5px;box-shadow:var(--shadow-float);opacity:0;pointer-events:none;transition:opacity .16s,transform .16s;max-width:70vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.modal-mask{position:fixed;inset:0;z-index:80;background:rgba(10,10,10,.34);display:none;align-items:center;justify-content:center;padding:24px}
+.modal-mask.on{display:flex}
+.modal{width:520px;max-width:100%;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:var(--shadow-float);padding:16px;display:flex;flex-direction:column;gap:12px}
+.modal-head{display:flex;align-items:flex-start;gap:10px}
+.modal-head>div{flex:1;min-width:0}
+.modal-head h3{margin:0;font-size:15px;font-weight:600}
+.modal-head p{margin:2px 0 0;font-size:11.5px;color:var(--muted);line-height:1.5}
+.modal-field{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--muted)}
+.modal-field input{height:30px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);padding:0 8px;font-size:12px}
+.modal-templates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.modal-template{text-align:left;border:1px solid var(--border);border-radius:9px;background:var(--surface);padding:8px 10px;display:flex;flex-direction:column;gap:2px;cursor:pointer}
+.modal-template b{font-size:12px;font-weight:600}
+.modal-template span{font-size:10.5px;color:var(--muted);word-break:keep-all}
+.modal-template.on{border-color:var(--fg);box-shadow:0 0 0 1px var(--fg) inset}
+.modal-note{font-size:11px;color:var(--muted);line-height:1.5;padding:8px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface-2)}
+.modal-foot{display:flex;align-items:center;justify-content:flex-end;gap:6px}
+
+.hazard-bg{fill:var(--deck-2)}
+.hazard-stripe{fill:color-mix(in srgb,var(--red) 62%,var(--surface) 38%)}
+@keyframes glowPulse{0%,100%{opacity:.32}50%{opacity:.66}}
+@keyframes wireHit{0%{stroke-width:5}100%{stroke-width:4}}
+@keyframes puff{0%{transform:translateY(0) scale(.7);opacity:.8}100%{transform:translateY(-14px) scale(1.15);opacity:0}}
+@keyframes trailFade{0%,100%{opacity:.45}50%{opacity:.9}}
+@keyframes planeBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+@keyframes crewSway{0%,100%{transform:rotate(-1.5deg)}50%{transform:rotate(1.5deg)}}
+.stage.launching .plane.launching .jet{animation:planeBob .5s ease-in-out infinite alternate}
+.crew .crew-fig{animation:crewSway 3.4s ease-in-out infinite}
+body[data-motion="off"] .stage *{animation:none!important}
+@media (prefers-reduced-motion:reduce){.stage *{animation:none!important}}
+@media (max-width:1180px){.scene-stats span:nth-child(n+4){display:none}.gal-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:1240px){.app{grid-template-columns:56px minmax(0,1fr)}.rail-item{width:46px}.scene-stats{display:none}}
+@media (max-width:720px){.inspector{left:8px;right:8px;width:auto}.page-head{padding:12px 14px 8px;align-items:flex-start;flex-direction:column;gap:8px}.page-actions{width:100%;justify-content:flex-end}.tabs{padding:0 14px}.view.live{padding:8px 10px 12px}.view.gallery{padding:12px 14px 30px}.gal-grid{grid-template-columns:1fr}.legend{display:none}.deck-bar{flex-wrap:wrap}.seq-log{display:none}}
+</style>
+</head>
+<body data-motion="calm">
+<div class="app">
+  <nav class="rail" aria-label="主导航">
+    <div class="rail-brand" title="Cockpit Harness">C</div>
+    <button class="rail-item" title="工作区"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M3 10h6M15 8h3M15 12h3"/></svg><span>工作区</span></button>
+    <button class="rail-item on" title="场景" aria-current="page"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11M15 9v11"/></svg><span>场景</span></button>
+    <button class="rail-item" title="项目"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 11h18"/></svg><span>项目</span></button>
+    <button class="rail-item" title="统计"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>统计</span></button>
+    <button class="rail-item" title="Git"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="9" r="2.4"/><path d="M6 8.4v7.2M8.3 6h4.3a3 3 0 0 1 3 3v.2"/></svg><span>Git</span></button>
+    <button class="rail-item" title="知识库"><svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M8 7h7M8 11h5"/></svg><span>知识库</span></button>
+    <button class="rail-item" title="记忆"><svg viewBox="0 0 24 24"><path d="M12 3v18M5 7v10M19 7v10M8.5 5v14M15.5 5v14"/></svg><span>记忆</span></button>
+    <button class="rail-item" title="人物"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4"/><path d="M5 20a7 7 0 0 1 14 0"/></svg><span>人物</span></button>
+    <div class="rail-bottom">
+      <button class="rail-item" title="说明"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.4 2.3c-.7.3-.9.9-.9 1.7M12 17h.01"/></svg><span>说明</span></button>
+      <button class="rail-item" title="设置"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>设置</span></button>
+    </div>
+  </nav>
+
+  <main class="main">
+    <header class="page-head">
+      <div class="page-title">
+        <span class="kicker">SCENE · STAGE PACK</span>
+        <h1>航母 · 电磁弹射起飞</h1>
+        <p class="page-sub">按参考照片的斜视方向做 2.5D：舰艏两条 EMALS + 斜角甲板一条，单道着舰、三道拦阻索。把「排队 / 对位 / 弹射 / 起飞 / 拦阻 / 复飞」映射上去。</p>
+      </div>
+      <div class="page-actions">
+        <button class="btn" id="openNew">新建场景</button>
+        <button class="btn" id="replayBtn">演一遍弹射</button>
+        <button class="btn primary" data-toast="派活：复用工作区的「派活」弹层（原型）">派活</button>
+        <button class="icon-btn" id="themeBtn" title="切换亮 / 暗" aria-label="切换亮 / 暗">◐</button>
+      </div>
+    </header>
+
+    <nav class="tabs" aria-label="场景视图">
+      <button class="tab on" data-view="live">实况 <span class="live-dot"></span></button>
+      <button class="tab" data-view="gallery">场景库</button>
+      <span class="tab-sep"></span>
+      <a class="tab" href="coordination-scene.html">办公室舞台</a>
+      <a class="tab" href="warroom.html">作战室舞台</a>
+      <span class="tab-hint">同一套 SceneModel，换舞台不换状态机</span>
+    </nav>
+
+    <!-- ── 实况 ─────────────────────────────────────────────── -->
+    <section class="view live on" data-view="live" aria-label="航母实况">
+      <div class="scene-toolbar">
+        <div class="scene-id">
+          <span class="scene-mark">弹</span>
+          <div>
+            <b>弹射值班 <span class="tag live">实时</span> <span class="tag">航母</span></b>
+            <span>@research · 7 位 Agent · 3 个弹射位 · 2 部升降机 · 1 条着舰道</span>
+          </div>
+        </div>
+        <div class="scene-stats">
+          <span><b>7</b>人</span>
+          <span class="run"><b>2</b>运行</span>
+          <span class="wait"><b>1</b>待确认</span>
+          <span class="review"><b>1</b>待验收</span>
+          <span class="fail"><b>1</b>中止</span>
+        </div>
+        <span class="spacer"></span>
+        <select id="motionSelect" aria-label="动效">
+          <option value="calm">动效 · 克制</option>
+          <option value="full">动效 · 完整</option>
+          <option value="off">动效 · 关闭</option>
+        </select>
+        <div class="seg" id="modeSeg" role="group" aria-label="实况或配置">
+          <button class="on" data-mode="live">实况</button>
+          <button data-mode="config">配置</button>
+        </div>
+        <button class="btn tiny" id="detailToggle" aria-expanded="false">详情</button>
+        <button class="icon-btn" title="更多" data-toast="更多：复制场景 / 导出甲板快照 / 全屏（原型）">⋯</button>
+      </div>
+
+      <div class="live-body">
+        <div class="stage-wrap">
+          <div class="stage" id="stage">
+            <div class="canvas" id="canvas">
+              <div class="sea"></div>
+              <svg class="deck" viewBox="0 0 1180 560" aria-hidden="true">
+                <defs>
+                  <linearGradient id="deckGrad" x1="0" y1="0" x2="0.3" y2="1">
+                    <stop offset="0" class="deck-stop-1"/>
+                    <stop offset="0.55" class="deck-stop-2"/>
+                    <stop offset="1" class="deck-stop-3"/>
+                  </linearGradient>
+                  <linearGradient id="hullGrad" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0" class="hull-stop-1"/>
+                    <stop offset="1" class="hull-stop-2"/>
+                  </linearGradient>
+                  <linearGradient id="hullGrad2" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" class="hull-stop-2"/>
+                    <stop offset="1" class="hull-stop-1"/>
+                  </linearGradient>
+                  <linearGradient id="islandGrad" x1="0" y1="0" x2="0.5" y2="1">
+                    <stop offset="0" class="island-stop-1"/>
+                    <stop offset="1" class="island-stop-2"/>
+                  </linearGradient>
+                  <linearGradient id="deckSheen" x1="0" y1="0" x2="0.4" y2="1">
+                    <stop offset="0" stop-color="rgba(255,255,255,.18)"/>
+                    <stop offset="0.6" stop-color="rgba(255,255,255,.04)"/>
+                    <stop offset="1" stop-color="rgba(255,255,255,0)"/>
+                  </linearGradient>
+                  <radialGradient id="seaGlint" cx="0.28" cy="0.18" r="0.8">
+                    <stop offset="0" stop-color="rgba(255,255,255,.24)"/>
+                    <stop offset="0.6" stop-color="rgba(255,255,255,.06)"/>
+                    <stop offset="1" stop-color="rgba(255,255,255,0)"/>
+                  </radialGradient>
+                  <linearGradient id="jetGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#b3bbbf"/>
+                    <stop offset="0.6" stop-color="#98a2a6"/>
+                    <stop offset="1" stop-color="#7d878b"/>
+                  </linearGradient>
+                  <pattern id="tieDown" width="24" height="24" patternUnits="userSpaceOnUse">
+                    <circle cx="5" cy="5" r=".9" fill="rgba(0,0,0,.45)"/>
+                    <circle cx="17" cy="17" r=".8" fill="rgba(0,0,0,.35)"/>
+                  </pattern>
+                  <pattern id="grain" width="6" height="6" patternUnits="userSpaceOnUse">
+                    <circle cx="1.2" cy="1.4" r=".5" fill="rgba(0,0,0,.6)"/>
+                    <circle cx="4.4" cy="4.1" r=".4" fill="rgba(255,255,255,.14)"/>
+                  </pattern>
+                  <radialGradient id="seaDepth" cx="0.5" cy="0.42" r="0.78">
+                    <stop offset="0" stop-color="var(--sea)" stop-opacity="0"/>
+                    <stop offset="1" stop-color="var(--sea-3)" stop-opacity=".6"/>
+                  </radialGradient>
+                  <pattern id="wear" width="44" height="44" patternUnits="userSpaceOnUse">
+                    <path d="M4 8 l13 3" stroke="rgba(0,0,0,.26)" stroke-width="1.4" stroke-linecap="round"/>
+                    <path d="M24 30 l11 -2" stroke="rgba(255,255,255,.10)" stroke-width="1" stroke-linecap="round"/>
+                    <path d="M10 36 l7 1" stroke="rgba(0,0,0,.18)" stroke-width="1.2" stroke-linecap="round"/>
+                  </pattern>
+                  <pattern id="waveFine" width="96" height="46" patternUnits="userSpaceOnUse">
+                    <path d="M6 12 q10 -6 20 0 t20 0 t20 0" stroke="rgba(255,255,255,.22)" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+                    <path d="M20 34 q9 -5 18 0 t18 0" stroke="rgba(4,16,26,.20)" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+                  </pattern>
+                  <pattern id="waveChop" width="54" height="30" patternUnits="userSpaceOnUse">
+                    <path d="M3 9 q9 -5 18 0 t18 0" stroke="rgba(255,255,255,.30)" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+                    <path d="M12 24 q7 -4 14 0" stroke="rgba(255,255,255,.16)" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+                  </pattern>
+                  <filter id="grainF" x="-10%" y="-10%" width="120%" height="120%">
+                    <feTurbulence type="fractalNoise" baseFrequency=".85" numOctaves="2" stitchTiles="stitch"/>
+                    <feColorMatrix type="saturate" values="0"/>
+                    <feComponentTransfer><feFuncA type="table" tableValues="0 .16"/></feComponentTransfer>
+                  </filter>
+                  <filter id="blur6"><feGaussianBlur stdDeviation="6"/></filter>
+                  <filter id="blur2"><feGaussianBlur stdDeviation="2"/></filter>
+                  <clipPath id="deckClip">
+                    <path d="M 600 20 L 638 58 L 676 200 L 684 556 L 516 556 L 524 200 L 562 58 Z"/>
+                  </clipPath>
+                  <pattern id="hazard" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                    <rect width="10" height="10" class="hazard-bg"/>
+                    <rect width="5" height="10" class="hazard-stripe"/>
+                  </pattern>
+                </defs>
+
+                <!-- sea -->
+                <rect width="1180" height="560" fill="url(#seaGlint)"/>
+                <rect width="1180" height="560" class="sea-noise" filter="url(#grainF)" opacity=".12"/>
+                <rect width="1180" height="560" fill="url(#waveFine)" opacity=".16"/>
+                <rect width="1220" height="620" x="-20" y="-30" fill="url(#waveChop)" opacity=".10" transform="rotate(7 590 280)"/>
+                <rect width="1180" height="560" fill="url(#seaDepth)" opacity=".6"/>
+                <g class="sea-swells">
+                  <path d="M 40 172 q 80 -16 160 0 t 160 0" stroke-width="4"/>
+                  <path d="M 226 244 q 70 14 140 0" stroke-width="3"/>
+                  <path d="M 930 208 q 70 -14 140 0" stroke-width="3.4"/>
+                  <path d="M 986 344 q 60 12 120 0" stroke-width="2.6"/>
+                  <path d="M 56 418 q 80 -16 160 0 t 160 0" stroke-width="3.6"/>
+                  <path d="M 962 474 q 76 14 152 0" stroke-width="3"/>
+                  <path d="M 160 512 q 60 12 120 0" stroke-width="2.4"/>
+                  <path d="M 860 128 q 54 -12 108 0" stroke-width="2.2"/>
+                  <path d="M 300 108 q 50 10 100 0" stroke-width="2"/>
+                  <path d="M 1040 246 q 54 10 108 0" stroke-width="2"/>
+                </g>
+                <g class="caustics">
+                  <ellipse cx="250" cy="132" rx="22" ry="2" fill="rgba(255,255,255,.30)" filter="url(#blur2)"/>
+                  <ellipse cx="326" cy="160" rx="14" ry="1.6" fill="rgba(255,255,255,.26)" filter="url(#blur2)"/>
+                  <ellipse cx="196" cy="232" rx="18" ry="1.8" fill="rgba(255,255,255,.22)" filter="url(#blur2)"/>
+                  <ellipse cx="300" cy="268" rx="12" ry="1.4" fill="rgba(255,255,255,.20)" filter="url(#blur2)"/>
+                  <ellipse cx="150" cy="330" rx="20" ry="2" fill="rgba(255,255,255,.18)" filter="url(#blur2)"/>
+                  <ellipse cx="1010" cy="300" rx="20" ry="2" fill="rgba(255,255,255,.18)" filter="url(#blur2)"/>
+                  <ellipse cx="960" cy="440" rx="16" ry="1.6" fill="rgba(255,255,255,.16)" filter="url(#blur2)"/>
+                  <ellipse cx="1060" cy="520" rx="22" ry="2" fill="rgba(255,255,255,.14)" filter="url(#blur2)"/>
+                </g>
+                <g class="sea-glitter" opacity=".65">
+                  <ellipse cx="300" cy="120" rx="120" ry="14" fill="rgba(255,255,255,.10)" filter="url(#blur6)"/>
+                  <ellipse cx="360" cy="170" rx="60" ry="6" fill="rgba(255,255,255,.10)" filter="url(#blur2)"/>
+                  <ellipse cx="940" cy="360" rx="90" ry="8" fill="rgba(255,255,255,.07)" filter="url(#blur6)"/>
+                  <circle cx="270" cy="156" r="1.6" fill="rgba(255,255,255,.55)"/>
+                  <circle cx="330" cy="140" r="1.2" fill="rgba(255,255,255,.5)"/>
+                  <circle cx="402" cy="166" r="1.4" fill="rgba(255,255,255,.45)"/>
+                  <circle cx="960" cy="372" r="1.3" fill="rgba(255,255,255,.4)"/>
+                </g>
+                <g class="waves">
+                  <path d="M40 112 q16 -8 32 0 t32 0"/>
+                  <path d="M1046 138 q16 -8 32 0 t32 0"/>
+                  <path d="M34 330 q14 -7 28 0 t28 0"/>
+                  <path d="M1030 356 q14 -7 28 0 t28 0"/>
+                  <path d="M86 220 q12 -6 24 0 t24 0"/>
+                  <path d="M1082 462 q12 -6 24 0 t24 0"/>
+                  <path d="M74 424 q12 -6 24 0 t24 0"/>
+                  <path d="M1010 88 q12 -6 24 0 t24 0"/>
+                </g>
+                <g class="sea-ripple">
+                  <path d="M 24 168 q26 -8 52 0 t52 0"/>
+                  <path d="M 980 196 q22 -7 44 0 t44 0"/>
+                  <path d="M 34 276 q30 -8 60 0 t60 0"/>
+                  <path d="M 1040 306 q24 -7 48 0 t48 0"/>
+                  <path d="M 56 372 q22 -6 44 0 t44 0"/>
+                  <path d="M 972 428 q26 -8 52 0 t52 0"/>
+                  <path d="M 24 466 q18 -6 36 0 t36 0"/>
+                  <path d="M 1032 498 q20 -6 40 0 t40 0"/>
+                </g>
+                <g class="wake">
+                  <path d="M 720 520 q30 16 60 0 t60 0"/>
+                  <path d="M 760 536 q26 12 52 0 t52 0"/>
+                  <path d="M 660 540 q22 10 44 0 t44 0"/>
+                  <path d="M 806 500 q20 10 40 0 t40 0"/>
+                </g>
+
+                <!-- ship: local coords, bow up; rotate to a 2.5D diagonal -->
+                <g transform="rotate(28 600 232)">
+                  <!-- water shadow -->
+                  <path class="water-shadow" d="M 600 30 L 650 70 L 690 210 L 700 570 L 510 570 L 518 210 L 558 70 Z"/>
+                  <!-- hull side / stern -->
+                  <path class="hull-side-2" d="M 516 556 L 684 556 L 708 582 L 494 582 Z"/>
+                  <path class="hull-side" d="M 676 200 L 684 556 L 706 576 L 698 200 Z"/>
+                  <path class="hull-topline" d="M 676 208 L 682 556"/>
+                  <path class="waterline" d="M 500 566 L 702 566 L 702 576 L 500 576 Z"/>
+                  <path class="waterline-2" d="M 500 558 L 700 558 L 700 564 L 500 564 Z"/>
+                  <path class="hull-red" d="M 500 574 L 702 574 L 702 582 L 500 582 Z"/>
+                  <path class="hull-red" d="M 686 542 L 700 546 L 704 580 L 692 580 Z"/>
+                  <path class="hull-hangar" d="M 684 390 L 700 392 L 700 430 L 684 428 Z"/>
+                  <path class="boat-bay" d="M 682 336 L 698 338 L 698 352 L 682 350 Z"/>
+                  <path class="anchor" d="M 678 146 q 8 10 2 22 l -8 4 M 672 166 q -10 0 -12 10 M 672 166 q 10 0 12 10"/>
+                  <g class="hull-seam">
+                    <path d="M 678 190 L 690 320"/>
+                    <path d="M 680 230 L 694 380"/>
+                    <path d="M 682 300 L 696 450"/>
+                  </g>
+                  <g class="draft-mark">
+                    <path d="M 694 430 v 10 M 698 430 v 6 M 702 430 v 10"/>
+                    <path d="M 692 462 v 10 M 696 462 v 6 M 700 462 v 10"/>
+                    <path d="M 690 494 v 10 M 694 494 v 6 M 698 494 v 10"/>
+                  </g>
+                  <path class="hull-waterfoam" d="M 500 570 Q 600 578 700 570" stroke-width="3" opacity=".45"/>
+                  <path class="hull-waterfoam" d="M 688 520 q 8 26 4 52" stroke-width="2.5" opacity=".35"/>
+                  <g class="porthole">
+                    <circle cx="682" cy="246" r="2"/>
+                    <circle cx="684" cy="286" r="2"/>
+                    <circle cx="686" cy="326" r="2"/>
+                    <circle cx="688" cy="458" r="2"/>
+                    <circle cx="688" cy="500" r="2"/>
+                    <circle cx="560" cy="566" r="1.7"/>
+                    <circle cx="610" cy="566" r="1.7"/>
+                    <circle cx="660" cy="566" r="1.7"/>
+                  </g>
+
+                  <g class="hull-grime">
+                    <path d="M 680 356 q 4 26 1 54"/>
+                    <path d="M 686 402 q 3 22 1 44"/>
+                    <path d="M 682 474 q 3 18 1 34"/>
+                    <path d="M 676 226 q 3 18 1 30"/>
+                  </g>
+                  <path class="hull-stain" d="M 500 566 q 60 4 120 2 t 82 -2 l 0 8 q -50 4 -100 2 t -102 -2 Z"/>
+                  <path class="hull-algae" d="M 500 560 q 60 6 120 4 t 82 -2 l 0 6 q -50 4 -100 2 t -102 -2 Z"/>
+                  <g class="hull-plates">
+                    <path d="M 684 230 v 36 M 690 250 v 30 M 686 300 v 40 M 694 340 v 36 M 688 400 v 42 M 696 440 v 36"/>
+                    <path d="M 680 330 h 24 M 682 390 h 26 M 684 450 h 26"/>
+                  </g>
+
+                  <!-- flight deck -->
+                  <path class="deck-face" d="M 600 20 L 638 58 L 676 200 L 684 556 L 516 556 L 524 200 L 562 58 Z"/>
+                  <path class="deck-tie" d="M 600 20 L 638 58 L 676 200 L 684 556 L 516 556 L 524 200 L 562 58 Z"/>
+                  <rect class="deck-grain" width="900" height="700" x="300" y="0" fill="url(#grain)" clip-path="url(#deckClip)"/>
+                  <rect class="deck-noise" width="900" height="700" x="300" y="0" filter="url(#grainF)" clip-path="url(#deckClip)" opacity=".35"/>
+                  <g clip-path="url(#deckClip)">
+                    <path d="M 600 20 L 638 58 L 676 200 L 684 556 L 516 556 L 524 200 L 562 58 Z" fill="none" stroke="rgba(0,0,0,.55)" stroke-width="18" filter="url(#blur6)" opacity=".35"/>
+                  </g>
+                  <path class="deck-sheen" d="M 600 20 L 638 58 L 676 200 L 560 260 L 500 190 Z"/>
+                  <path class="deck-highlight" d="M 600 30 L 562 68 L 526 200 L 518 540 L 544 540 L 552 202 L 584 82 Z"/>
+                  <path class="deck-edge-hi" d="M 600 20 L 638 58 L 676 200 L 684 556"/>
+                  <path class="catwalk" d="M 600 34 L 632 66 L 668 204 L 676 548 L 524 548 L 532 204 L 568 66 Z"/>
+                  <path class="catwalk-grate" d="M 600 34 L 632 66 L 668 204 L 676 548 L 524 548 L 532 204 L 568 66 Z"/>
+                  <rect class="deck-wear" width="900" height="700" x="300" y="0" fill="url(#wear)" clip-path="url(#deckClip)" opacity=".5"/>
+                  <g class="deck-wet" clip-path="url(#deckClip)">
+                    <path d="M 560 300 q 40 -14 72 2 t 52 0 l 0 26 q -40 8 -80 -2 t -44 -4 Z"/>
+                    <path d="M 600 400 q 34 -10 62 2 t 44 0 l 0 18 q -34 6 -68 -2 t -38 -2 Z"/>
+                    <path d="M 524 500 q 30 -8 54 2 t 40 0 l 0 14 q -30 6 -58 -2 t -36 -2 Z"/>
+                  </g>
+                  <path class="safety-net" d="M 600 30 L 640 66 L 678 202 L 686 550 M 600 30 L 560 66 L 522 202 L 514 550"/>
+                  <g class="deck-seam">
+                    <path d="M 532 220 L 540 548"/>
+                    <path d="M 668 220 L 662 548"/>
+                    <path d="M 600 120 L 600 540"/>
+                    <path d="M 540 400 L 668 400"/>
+                  </g>
+                  <text class="bow-mark" x="602" y="208" transform="rotate(-6 602 208)">18</text>
+
+                  <!-- angled landing area -->
+                  <path class="lane" d="M 470 540 L 522 556 L 616 264 L 564 248 Z"/>
+                  <path class="lane-edge" d="M 470 540 L 564 248"/>
+                  <path class="lane-edge" d="M 522 556 L 616 264"/>
+                  <path class="lane-dash" d="M 496 548 L 590 256"/>
+                  <g class="wires">
+                    <line class="wire" x1="496" y1="498" x2="530" y2="510"/>
+                    <circle class="wire-hook" cx="496" cy="498" r="2.8"/>
+                    <circle class="wire-hook" cx="530" cy="510" r="2.8"/>
+                    <line class="wire" x1="508" y1="464" x2="542" y2="476"/>
+                    <circle class="wire-hook" cx="508" cy="464" r="2.8"/>
+                    <circle class="wire-hook" cx="542" cy="476" r="2.8"/>
+                    <line class="wire" x1="520" y1="430" x2="554" y2="442"/>
+                    <circle class="wire-hook" cx="520" cy="430" r="2.8"/>
+                    <circle class="wire-hook" cx="554" cy="442" r="2.8"/>
+                  </g>
+                  <path class="tire" d="M 486 520 L 566 286"/>
+                  <path class="tire" d="M 500 534 L 592 280"/>
+                  <path class="tire" d="M 474 506 L 552 286"/>
+                  <path class="stain" d="M 552 318 q 26 16 50 8 t 52 10 l -2 24 q -28 12 -54 2 t -48 4 Z"/>
+                  <path class="stain" d="M 570 380 q 24 12 46 6 t 44 8 l -2 18 q -24 10 -48 2 t -42 4 Z"/>
+                  <text class="painted small" x="486" y="522" transform="rotate(-72 486 522)">3 · 2 · 1 WIRE</text>
+
+                  <!-- waist catapult (CAT 3) -->
+                  <path class="cat-base" d="M 504 470 L 588 278 L 602 286 L 518 480 Z"/>
+                  <path class="cat-top" d="M 508 468 L 586 282 L 594 286 L 516 474 Z"/>
+                  <path class="cat-coil" d="M 512 468 L 592 282"/>
+                  <path class="cat-edge" d="M 506 470 L 590 280"/>
+                  <path class="cat-edge" d="M 518 480 L 602 288"/>
+                  <path class="jbd raised" d="M 496 462 L 516 454 L 524 470 L 504 478 Z"/>
+                  <path class="jbd-side" d="M 504 478 L 508 476 L 500 460 L 496 462 Z"/>
+                  <text class="painted yellow" x="532" y="452" transform="rotate(-70 532 452)">CAT 3</text>
+
+                  <!-- bow catapults -->
+                  <g>
+                    <path class="cat-base" d="M 566 344 L 580 346 L 590 118 L 576 116 Z"/>
+                    <path class="cat-top" d="M 570 342 L 578 343 L 586 120 L 578 119 Z"/>
+                    <path class="cat-coil" d="M 574 342 L 584 117"/>
+                    <path class="cat-edge" d="M 567 344 L 577 117"/>
+                    <path class="cat-glow" d="M 570 340 L 578 341 L 586 119 L 578 118 Z"/>
+                    <path class="shuttle" d="M 568 318 L 580 319 L 581 308 L 569 307 Z"/>
+                    <path class="jbd raised" d="M 558 332 L 588 336 L 584 314 L 554 310 Z"/>
+                    <path class="jbd-side" d="M 588 336 L 592 334 L 588 312 L 584 314 Z"/>
+                    <text class="painted yellow" x="556" y="364" transform="rotate(-4 556 364)">CAT 1</text>
+                  </g>
+                  <g>
+                    <path class="cat-base" d="M 606 344 L 620 346 L 630 118 L 616 116 Z"/>
+                    <path class="cat-top" d="M 610 342 L 618 343 L 626 120 L 618 119 Z"/>
+                    <path class="cat-coil" d="M 614 342 L 624 117"/>
+                    <path class="cat-edge" d="M 607 344 L 617 117"/>
+                    <path class="cat-glow" d="M 610 340 L 618 341 L 626 119 L 618 118 Z"/>
+                    <path class="shuttle" d="M 608 318 L 620 319 L 621 308 L 609 307 Z"/>
+                    <path class="jbd raised" d="M 598 332 L 628 336 L 624 314 L 594 310 Z"/>
+                    <path class="jbd-side" d="M 628 336 L 632 334 L 628 312 L 624 314 Z"/>
+                    <text class="painted yellow" x="596" y="364" transform="rotate(-4 596 364)">CAT 2</text>
+                  </g>
+                  <text class="painted small" x="568" y="152" transform="rotate(-80 568 152)">EMALS</text>
+                  <text class="painted small" x="608" y="152" transform="rotate(-80 608 152)">EMALS</text>
+
+                  <!-- island (starboard, amidships) -->
+                  <path class="island-shadow" d="M 646 222 L 706 238 L 714 326 L 650 338 Z"/>
+                  <g>
+                    <path class="island-side" d="M 662 240 L 700 230 L 700 300 L 662 310 Z"/>
+                    <path class="island-shade" d="M 662 240 L 700 230 L 700 300 L 662 310 Z"/>
+                    <path class="island-front" d="M 648 214 L 662 240 L 662 310 L 648 284 Z"/>
+                    <path class="island-top" d="M 648 214 L 686 206 L 700 230 L 662 240 Z"/>
+                    <path class="island-hi" d="M 648 214 L 686 206 L 700 230"/>
+                    <path class="island-window" d="M 651 222 L 660 240 L 660 250 L 651 232 Z"/>
+                    <path class="island-window" d="M 651 242 L 660 258 L 660 268 L 651 252 Z"/>
+                    <path class="island-window" d="M 666 240 L 696 234 L 696 246 L 666 252 Z"/>
+                    <path class="island-window" d="M 666 254 L 692 248 L 692 260 L 666 266 Z"/>
+                    <circle class="island-light" cx="670" cy="256" r="1"/>
+                    <circle class="island-light" cx="676" cy="254" r="1"/>
+                    <circle class="island-light" cx="682" cy="252" r="1"/>
+                    <path class="island-panel" d="M 666 272 L 688 266 L 688 278 L 666 284 Z"/>
+                    <path class="island-side" d="M 664 236 L 682 232 L 688 240 L 670 244 Z" opacity=".95"/>
+                    <path class="island-front" d="M 664 236 L 670 244 L 670 262 L 664 254 Z" opacity=".95"/>
+                    <path class="island-window" d="M 666 240 L 680 244 L 680 250 L 666 246 Z"/>
+                    <line class="island-mast" x1="674" y1="236" x2="674" y2="176"/>
+                    <path class="island-panel" d="M 666 184 h16 v24 h-16 Z"/>
+                    <path class="island-panel" d="M 684 180 h8 v20 h-8 Z"/>
+                    <g class="aesa-grid">
+                      <path d="M 669 184 v 24 M 672 184 v 24 M 675 184 v 24 M 678 184 v 24"/>
+                      <path d="M 686 180 v 20 M 688 180 v 20"/>
+                    </g>
+                    <path class="island-mast" d="M 666 190 h-7 M 682 190 h8 M 674 176 v-6"/>
+                    <rect class="island-radar" x="660" y="166" width="28" height="9" rx="3"/>
+                    <ellipse class="island-radar" cx="674" cy="162" rx="11" ry="5"/>
+                    <line class="island-mast" x1="674" y1="162" x2="674" y2="146"/>
+                    <circle class="island-radar-dot" cx="674" cy="144" r="1.8"/>
+                    <path class="island-flag" d="M 674 150 l 20 4 -20 4 Z"/>
+                    <path class="jet-star" d="M 679 152 l .8 1.6 1.8 .2 -1.3 1.3 .3 1.8 -1.6 -.9 -1.6 .9 .3 -1.8 -1.3 -1.3 1.8 -.2 Z" transform="scale(.7) translate(292 66)"/>
+                    <path class="island-mast" d="M 700 230 v-12"/>
+                    <circle class="island-radar" cx="700" cy="216" r="3.4"/>
+                    <text class="island-number" x="650" y="292">18</text>
+                    <circle class="island-ring" cx="657" cy="284" r="3.4"/>
+                    <path class="railing" d="M 648 214 L 686 206 L 700 230"/>
+                    <path class="railing" d="M 662 240 L 700 230"/>
+                    <rect class="liferaft" x="698" y="246" width="4" height="10" rx="2"/>
+                    <rect class="liferaft" x="698" y="260" width="4" height="10" rx="2"/>
+                    <path class="ciws-mount" d="M 650 272 l 7 -4 4 5 -7 4 Z"/>
+                  </g>
+
+                  <!-- elevators -->
+                  <path class="elevator-shadow" d="M 684 246 L 716 246 L 716 312 L 684 312 Z"/>
+                  <path class="elevator" d="M 686 250 L 714 250 L 714 310 L 686 310 Z"/>
+                  <path class="elevator-line" d="M 690 258 L 710 258"/>
+                  <text class="painted small" x="690" y="272">ELEV 1</text>
+                  <path class="elevator-shadow" d="M 684 376 L 716 376 L 716 452 L 684 452 Z"/>
+                  <path class="elevator" d="M 686 380 L 714 380 L 714 450 L 686 450 Z"/>
+                  <path class="elevator-line" d="M 690 388 L 710 388"/>
+                  <text class="painted small" x="690" y="402">ELEV 2</text>
+
+                  <!-- parking / lift / tractor -->
+                  <path class="park-slot" d="M 540 440 L 586 440 L 586 486 L 540 486 Z"/>
+                  <path class="park-slot" d="M 596 440 L 642 440 L 642 486 L 596 486 Z"/>
+                  <g class="tow-tractor">
+                    <path d="M 518 470 h 16 a 3 3 0 0 1 3 3 v 7 h -22 v -7 a 3 3 0 0 1 3 -3 Z"/>
+                    <circle cx="523" cy="482" r="2.6" fill="var(--rail)"/>
+                    <circle cx="535" cy="482" r="2.6" fill="var(--rail)"/>
+                  </g>
+
+                  <g transform="translate(612 312) scale(.9)">
+                    <ellipse class="crew-shadow" cx="10" cy="28" rx="6" ry="2"/>
+                    <path class="crew-legs" d="M6.8 18 h2.6 l-.3 9 H6.2 Z M10.8 18 h2.6 l.4 9 h-2.6 Z"/>
+                    <path class="crew-vest" d="M4.8 13.2 q5.2 -3.2 10.4 0 l-1 6.2 H5.8 Z" style="--accent:var(--green)"/>
+                    <circle class="crew-skin" cx="10" cy="7.6" r="3.1"/>
+                    <path class="crew-helmet" d="M6.5 7.2 a3.5 3.5 0 0 1 7 0 l-1.2 1 a2.4 2.4 0 0 0 -4.6 0 Z" style="--accent:var(--green)"/>
+                  </g>
+                  <g transform="translate(560 430) scale(.9)">
+                    <ellipse class="crew-shadow" cx="10" cy="28" rx="6" ry="2"/>
+                    <path class="crew-legs" d="M6.8 18 h2.6 l-.3 9 H6.2 Z M10.8 18 h2.6 l.4 9 h-2.6 Z"/>
+                    <path class="crew-vest" d="M4.8 13.2 q5.2 -3.2 10.4 0 l-1 6.2 H5.8 Z" style="--accent:var(--purple)"/>
+                    <circle class="crew-skin" cx="10" cy="7.6" r="3.1"/>
+                    <path class="crew-helmet" d="M6.5 7.2 a3.5 3.5 0 0 1 7 0 l-1.2 1 a2.4 2.4 0 0 0 -4.6 0 Z" style="--accent:var(--purple)"/>
+                  </g>
+                  <g transform="translate(640 368) scale(.9)">
+                    <ellipse class="crew-shadow" cx="10" cy="28" rx="6" ry="2"/>
+                    <path class="crew-legs" d="M6.8 18 h2.6 l-.3 9 H6.2 Z M10.8 18 h2.6 l.4 9 h-2.6 Z"/>
+                    <path class="crew-vest" d="M4.8 13.2 q5.2 -3.2 10.4 0 l-1 6.2 H5.8 Z" style="--accent:var(--amber)"/>
+                    <circle class="crew-skin" cx="10" cy="7.6" r="3.1"/>
+                    <path class="crew-helmet" d="M6.5 7.2 a3.5 3.5 0 0 1 7 0 l-1.2 1 a2.4 2.4 0 0 0 -4.6 0 Z" style="--accent:var(--amber)"/>
+                  </g>
+
+                  <!-- parked aircraft with folded wings (decorative) -->
+                  <g transform="translate(556 466)">
+                    <path class="a-body" d="M0 -16 C2 -15 3 -10 3 -6 L3 17 L-3 17 L-3 -6 C-3 -10 -2 -15 0 -16 Z"/>
+                    <path class="a-wing" d="M-3 0 L-11 2 L-11 15 L-3 10 Z"/>
+                    <path class="a-wing" d="M3 0 L11 2 L11 15 L3 10 Z"/>
+                    <path class="a-tail" d="M-2 12 L-5 21 L-1 20 Z"/>
+                    <path class="a-tail" d="M2 12 L5 21 L1 20 Z"/>
+                    <ellipse class="a-canopy" cx="0" cy="-10" rx="2" ry="5"/>
+                  </g>
+                  <g transform="translate(606 502)">
+                    <path class="a-body" d="M0 -16 C2 -15 3 -10 3 -6 L3 17 L-3 17 L-3 -6 C-3 -10 -2 -15 0 -16 Z"/>
+                    <path class="a-wing" d="M-3 0 L-11 2 L-11 15 L-3 10 Z"/>
+                    <path class="a-wing" d="M3 0 L11 2 L11 15 L3 10 Z"/>
+                    <path class="a-tail" d="M-2 12 L-5 21 L-1 20 Z"/>
+                    <path class="a-tail" d="M2 12 L5 21 L1 20 Z"/>
+                    <ellipse class="a-canopy" cx="0" cy="-10" rx="2" ry="5"/>
+                  </g>
+
+                  <!-- LSO platform (port aft) -->
+                  <path class="gangway" d="M 470 508 L 540 524"/>
+                  <path class="lso-side" d="M 438 500 L 470 494 L 488 510 L 488 520 L 456 526 L 438 512 Z"/>
+                  <path class="lso-top" d="M 438 500 L 470 494 L 488 510 L 456 516 Z"/>
+                  <path class="island-flag" d="M 444 500 L 444 488 L 454 492 Z"/>
+
+                  <!-- wave off -->
+                  <path class="waveoff" d="M 596 360 C 620 330 640 300 650 268"/>
+
+                  <!-- config zones -->
+                  <path class="zone-box" d="M 552 104 L 640 104 L 644 360 L 552 360 Z"/>
+                  <path class="zone-box" d="M 460 432 L 530 562 L 624 270 L 556 246 Z"/>
+                  <path class="zone-box" d="M 640 196 L 720 196 L 724 330 L 640 330 Z"/>
+                  <path class="zone-box" d="M 528 430 L 650 430 L 650 496 L 528 496 Z"/>
+                  <path class="zone-box" d="M 680 240 L 724 240 L 724 462 L 680 462 Z"/>
+                </g>
+
+                <!-- little tug (screen coords) -->
+                <g transform="translate(66 500)">
+                  <path class="tug-side" d="M0 22 q18 -8 36 0 l-4 8 H4 Z"/>
+                  <path class="tug-top" d="M0 10 q18 -12 36 0 l-5 12 H5 Z"/>
+                  <path class="tug-cabin" d="M9 -2 h16 a5 5 0 0 1 5 5 v 7 H9 Z"/>
+                  <line class="tug-mast" x1="17" y1="10" x2="17" y2="-8"/>
+                  <path class="island-flag" d="M17 -8 h12 l-4 5 h-8z"/>
+                </g>
+                <!-- carrier wake / bow foam (screen coords) -->
+                <g class="carrier-wake" transform="translate(0,-18)">
+                  <path d="M 456 520 q -54 24 -108 32 t -108 10" stroke-width="5" opacity=".65"/>
+                  <path d="M 440 532 q -58 22 -116 28 t -116 8" stroke-width="3.4" opacity=".44"/>
+                  <path d="M 474 508 q -48 26 -96 36 t -96 12" stroke-width="2.6" opacity=".3"/>
+                  <path d="M 420 544 q -40 10 -80 12" stroke-width="3" opacity=".28"/>
+                </g>
+                <g class="bow-swell" filter="url(#blur6)" transform="translate(0,-18)">
+                  <path d="M 690 62 q 34 26 66 22" stroke="rgba(255,255,255,.30)" stroke-width="8" fill="none"/>
+                  <path d="M 706 44 q 34 28 72 26" stroke="rgba(4,18,28,.22)" stroke-width="11" fill="none"/>
+                </g>
+                <g class="wake-churn" filter="url(#blur6)" transform="translate(0,-18)">
+                  <ellipse cx="384" cy="522" rx="96" ry="24" fill="rgba(255,255,255,.22)"/>
+                  <ellipse cx="300" cy="540" rx="110" ry="18" fill="rgba(255,255,255,.14)"/>
+                  <path d="M 430 520 q -80 24 -160 30 t -150 12" stroke="rgba(255,255,255,.35)" stroke-width="10" fill="none"/>
+                </g>
+                <g class="foam-patches" transform="translate(0,-18)">
+                  <path d="M 400 540 q -30 8 -60 2 t -60 0 l 0 8 q 30 6 60 2 t 60 -2 Z"/>
+                  <path d="M 700 58 q -22 14 -44 12 l 0 6 q 24 2 46 -10 Z"/>
+                  <path d="M 300 520 q -24 6 -48 2 l 0 6 q 24 4 48 -2 Z"/>
+                  <circle cx="360" cy="540" r="2.4"/><circle cx="310" cy="546" r="1.8"/><circle cx="260" cy="542" r="2.2"/><circle cx="220" cy="548" r="1.5"/>
+                </g>
+                <g class="reflection" filter="url(#blur6)" transform="translate(0,-18)">
+                  <path d="M 460 528 q -52 18 -104 22" stroke="#8a4a3c" stroke-width="7" fill="none"/>
+                  <path d="M 470 540 q -62 16 -124 18" stroke="#9aa6ab" stroke-width="4" fill="none"/>
+                </g>
+                <g class="whitecaps" transform="translate(0,-18)">
+                  <path d="M 560 300 q 14 -8 28 0"/>
+                  <path d="M 940 300 q 12 -7 24 0"/>
+                  <path d="M 960 420 q 12 -7 24 0"/>
+                  <path d="M 1010 500 q 14 -8 28 0"/>
+                  <path d="M 560 470 q 10 -6 20 0"/>
+                </g>
+
+                <!-- task group escorts (screen coords, decorative) -->
+                <g class="escort" transform="translate(262 356) rotate(-18) scale(.52)">
+                  <path class="escort-wake" d="M -6 40 q -6 16 -16 26" stroke-width="1.6"/>
+                  <path class="escort-wake-2" d="M 6 40 q 6 16 16 26" stroke-width="1.6"/>
+                  <path class="escort-hull" d="M0 -58 L8 -44 L10 40 L-10 40 L-8 -44 Z"/>
+                  <path class="escort-super" d="M-6 -38 h12 v14 h-12 Z"/>
+                  <path class="escort-dark" d="M-6 -18 h12 v10 h-12 Z"/>
+                  <path class="escort-super" d="M-9 -4 h18 v16 h-18 Z"/>
+                  <line class="escort-dark" x1="0" y1="-4" x2="0" y2="-22"/>
+                  <path class="escort-dark" d="M-4 16 h8 v8 h-8 Z"/>
+                  <circle class="escort-dark" cx="0" cy="30" r="5" fill="none" stroke-width="1"/>
+                </g>
+                <g class="escort" transform="translate(392 138) rotate(-18) scale(.5)">
+                  <path class="escort-wake" d="M -8 52 q -7 18 -18 30" stroke-width="1.6"/>
+                  <path class="escort-wake-2" d="M 8 52 q 7 18 18 30" stroke-width="1.6"/>
+                  <path class="escort-hull" d="M0 -66 L12 -50 L12 50 L-12 50 L-12 -50 Z"/>
+                  <path class="escort-super" d="M-10 -10 h20 v30 h-20 Z"/>
+                  <path class="escort-super" d="M-6 -34 h12 v16 h-12 Z"/>
+                  <path class="escort-dark" d="M-10 28 h20 v16 h-20 Z"/>
+                  <line class="escort-dark" x1="-22" y1="14" x2="22" y2="14" stroke-width="1.6"/>
+                  <line class="escort-dark" x1="0" y1="-34" x2="0" y2="-48"/>
+                </g>
+
+                <rect width="1180" height="560" filter="url(#grainF)" opacity=".055"/>
+                <!-- wind -->
+                <g transform="translate(1012,96)">
+                  <path class="wind-line" d="M0 24 q14 -10 28 0 t28 0"/>
+                  <path class="wind-line" d="M12 40 q12 -8 24 0 t24 0"/>
+                  <text class="painted small" x="76" y="26">WOD 25kt</text>
+                </g>
+              </svg>
+              <div class="grade"></div>
+              <div class="vignette"></div>
+
+
+              <div class="hud" data-focus="deck">
+                <div class="hud-head"><i></i>甲板态势<em>21:14</em></div>
+                <div class="hud-row">甲板风<b>25 kt</b></div>
+                <div class="hud-row">侧风<b>4 kt</b></div>
+                <div class="hud-row green">弹射能量<b>106 MJ</b></div>
+                <div class="hud-row">峰值电流<b>6.2 kA</b></div>
+                <div class="hud-row amber">循环<b>45 s</b></div>
+                <div class="hud-row purple">本波次<b>3 / 12</b></div>
+                <div class="hud-note">参数来自 run 记录与场景 prefs，舞台只读。</div>
+              </div>
+
+              <div class="hud right" data-focus="lso">
+                <div class="hud-head">LSO · 着舰<em>通道 1</em></div>
+                <div class="hud-row">拦阻索<b>3 道</b></div>
+                <div class="hud-row green">下滑道<b>OK</b></div>
+                <div class="hud-row">速度<b>142 kt</b></div>
+                <div class="hud-row purple">待回收<b>1 架</b></div>
+                <div class="hud-note">串行闸门 · 一次只放一架。</div>
+              </div>
+
+              <div class="planes" id="planes"></div>
+              <div class="crews" id="crews"></div>
+              <div class="hint-bar" id="hintBar"></div>
+            </div>
+          </div>
+          <div class="deck-bar" aria-label="弹射序列">
+            <span class="bar-label">弹射序列</span>
+            <div class="seq" id="seq"></div>
+            <span class="seq-log" id="seqLog">选择一架飞机或点「演一遍弹射」</span>
+          </div>
+          <div class="legend">
+            <span><i class="line actual"></i>真实委派</span>
+            <span><i class="line"></i>期望拓扑</span>
+            <span><i class="dot run"></i>运行</span>
+            <span><i class="dot wait"></i>待确认</span>
+            <span><i class="dot review"></i>待验收</span>
+            <span><i class="dot fail"></i>中止 / 复飞</span>
+            <span class="legend-note">弹射位 = 并发 worker；着舰道 = 串行 review / approval</span>
+          </div>
+        </div>
+
+        <aside class="inspector" id="inspector" aria-label="选中对象详情"></aside>
+      </div>
+    </section>
+
+    <!-- ── 场景库 ───────────────────────────────────────────── -->
+    <section class="view gallery" data-view="gallery" aria-label="场景库">
+      <div class="gal-summary">
+        <span><b>2</b> 个协作场景</span>
+        <span><b>7</b> 位 Agent</span>
+        <span><b>3</b> 个弹射位</span>
+        <span><b>3</b> 种舞台</span>
+        <span class="muted">办公室已上线 · 作战室 / 航母为舞台原型</span>
+      </div>
+      <div class="gal-grid">
+        <article class="gal-card">
+          <div class="gal-thumb">
+            <span class="gal-label">OFFICE · LIVE</span>
+            <svg viewBox="0 0 320 152" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+              <rect width="320" height="152" fill="var(--surface-2)"/>
+              <rect width="320" height="58" fill="var(--surface-hover)"/>
+              <rect y="57" width="320" height="1" fill="var(--border)"/>
+              <rect x="16" y="78" width="74" height="24" rx="6" fill="var(--surface)" stroke="var(--border)"/>
+              <rect x="22" y="68" width="24" height="14" rx="4" fill="#181818"/>
+              <rect x="58" y="64" width="14" height="21" rx="7" fill="var(--fg-2)"/>
+              <rect x="112" y="88" width="42" height="11" rx="5" fill="var(--surface)" stroke="var(--border)"/>
+              <rect x="138" y="73" width="11" height="18" rx="5.5" fill="var(--fg-2)"/>
+              <rect x="168" y="88" width="42" height="11" rx="5" fill="var(--surface)" stroke="var(--border)"/>
+              <rect x="194" y="73" width="11" height="18" rx="5.5" fill="var(--fg-2)"/>
+              <rect x="226" y="18" width="40" height="30" rx="6" fill="var(--surface)" stroke="var(--border)"/>
+            </svg>
+          </div>
+          <div class="gal-body">
+            <h3>研发小队 <span class="tag live">当前</span></h3>
+            <p>工位、审批、验收、机房、茶歇与会议角，全部按真实运行状态呈现。</p>
+            <div class="gal-cast"><span class="gal-avatars"><span class="gal-avatar">岚</span><span class="gal-avatar">林</span><span class="gal-avatar">周</span><span class="gal-avatar">+4</span></span>7 位 · 3 运行</div>
+          </div>
+          <div class="gal-foot"><a class="btn" href="coordination-scene.html">打开原型</a><button class="icon-btn" data-toast="办公室舞台已上线">⋯</button></div>
+        </article>
+
+        <article class="gal-card on">
+          <div class="gal-thumb">
+            <span class="gal-label">CARRIER · LIVE</span>
+            <span class="gal-live"><i></i>本页</span>
+            <svg viewBox="0 0 320 152" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+              <rect width="320" height="152" fill="var(--sea)"/>
+              <g transform="translate(160 78) rotate(28) translate(-160 -78)">
+                <path d="M 160 8 L 182 30 L 196 82 L 200 136 L 120 136 L 124 82 L 138 30 Z" fill="var(--deck)" stroke="var(--ink-line)" stroke-width="1.4" stroke-linejoin="round"/>
+                <path d="M 182 30 L 196 82 L 200 136 L 204 142 L 116 142 L 120 136 Z" fill="var(--hull-2)" stroke="var(--ink-line)" stroke-width="1" opacity=".9"/>
+                <path d="M 116 130 L 128 136 L 184 62 L 176 50 Z" fill="var(--lane)" stroke="var(--ink-line)" stroke-width="1" stroke-linejoin="round"/>
+                <path d="M 132 130 L 180 64" stroke="var(--mark)" stroke-width="1" stroke-dasharray="3 3"/>
+                <path d="M 150 104 L 154 44" stroke="var(--cat-top)" stroke-width="5" stroke-linecap="round"/>
+                <path d="M 168 104 L 172 44" stroke="var(--cat-top)" stroke-width="5" stroke-linecap="round"/>
+                <path d="M 130 112 L 176 70" stroke="var(--cat-base)" stroke-width="4" stroke-linecap="round"/>
+                <path d="M 176 52 L 196 56 L 202 82 L 184 86 Z" fill="var(--island-top)" stroke="var(--ink-line)" stroke-width="1.1" stroke-linejoin="round"/>
+                <rect x="182" y="62" width="12" height="5" rx="1" fill="var(--island-window)"/>
+                <line x1="188" y1="52" x2="188" y2="38" stroke="var(--ink-line)" stroke-width="1.4"/>
+                <text x="144" y="64" fill="var(--deck-ink)" font-family="var(--mono)" font-size="12" font-weight="700" transform="rotate(-10 144 64)">18</text>
+              </g>
+            </svg>
+          </div>
+          <div class="gal-body">
+            <h3>弹射值班 <span class="tag">航母</span></h3>
+            <p>多个 worker 并行弹射，review / approval 走单条着舰道；中止就是复飞。</p>
+            <div class="gal-cast"><span class="gal-avatars"><span class="gal-avatar">岚</span><span class="gal-avatar">林</span><span class="gal-avatar">周</span><span class="gal-avatar">+3</span></span>7 位 · 2 运行</div>
+          </div>
+          <div class="gal-foot"><button class="btn primary" data-view-go="live">进入实况</button><button class="icon-btn" data-toast="甲板 · 弹射位 · 拦阻索 · LSO">⋯</button></div>
+        </article>
+
+        <article class="gal-card">
+          <div class="gal-thumb">
+            <span class="gal-label">WAR ROOM · TEMPLATE</span>
+            <svg viewBox="0 0 320 152" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+              <rect width="320" height="152" fill="var(--surface-2)"/>
+              <rect width="320" height="58" fill="var(--surface-hover)"/>
+              <rect x="100" y="12" width="120" height="40" rx="6" fill="#181818"/>
+              <rect x="110" y="20" width="42" height="2" rx="1" fill="rgba(255,255,255,.5)"/>
+              <rect x="110" y="26" width="84" height="1.5" rx=".75" fill="rgba(255,255,255,.2)"/>
+              <ellipse cx="160" cy="96" rx="102" ry="24" fill="var(--surface)" stroke="var(--border)"/>
+              <rect x="116" y="88" width="24" height="12" rx="4" fill="#181818"/>
+              <rect x="180" y="88" width="24" height="12" rx="4" fill="#181818"/>
+              <rect x="92" y="62" width="15" height="24" rx="7.5" fill="var(--fg-2)"/>
+              <rect x="140" y="58" width="15" height="24" rx="7.5" fill="var(--fg-2)"/>
+              <rect x="188" y="58" width="15" height="24" rx="7.5" fill="var(--fg-2)"/>
+              <rect x="268" y="72" width="34" height="34" rx="6" fill="var(--surface)" stroke="var(--border-strong)"/>
+              <circle cx="278" cy="82" r="2.5" fill="var(--red)"/><circle cx="294" cy="82" r="2.5" fill="var(--faint)"/>
+            </svg>
+          </div>
+          <div class="gal-body">
+            <h3>发布值班 <span class="tag">作战室</span></h3>
+            <p>长桌、主屏和 GO / NO-GO 闸门；适合发布窗口的值班阵容。</p>
+            <div class="gal-cast"><span class="gal-avatars"><span class="gal-avatar">岚</span><span class="gal-avatar">周</span><span class="gal-avatar">北</span><span class="gal-avatar">+3</span></span>7 位 · 3 运行</div>
+          </div>
+          <div class="gal-foot"><a class="btn" href="warroom.html">打开原型</a><button class="icon-btn" data-toast="作战室舞台：长桌 · 主屏 · 闸门">⋯</button></div>
+        </article>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="modal-mask" id="newMask">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="新建协作场景">
+    <div class="modal-head">
+      <div>
+        <h3>新建协作场景</h3>
+        <p>先选舞台模板，再配阵容与编排。创建后先进入实况。</p>
+      </div>
+      <button class="icon-btn" id="newClose" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-field">
+      <span>场景名称</span>
+      <input id="newName" value="弹射值班" />
+    </div>
+    <div class="modal-field">
+      <span>舞台模板</span>
+      <div class="modal-templates">
+        <button class="modal-template" data-tpl="office"><b>办公室</b><span>工位 · 白板 · 审批 · 茶歇 · 会议</span></button>
+        <button class="modal-template" data-tpl="warroom"><b>作战室</b><span>长桌 · 主屏 · 发布闸门 · 复盘墙</span></button>
+        <button class="modal-template on" data-tpl="carrier"><b>航母 · 电磁弹射</b><span>甲板 · 弹射位 · 拦阻索</span></button>
+      </div>
+    </div>
+    <div class="modal-note">舞台只决定空间与动作，调度仍走现有 Mission / Delegation。流水线模板已下线，改为航母 · 电磁弹射。</div>
+    <div class="modal-foot">
+      <span class="spacer"></span>
+      <button class="btn" id="newCancel">取消</button>
+      <button class="btn primary" id="newCreate">创建场景</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+  const params = new URLSearchParams(location.search);
+  const stage = $("#stage");
+  const canvas = $("#canvas");
+  const inspector = $("#inspector");
+  const state = {
+    mode: params.get("mode") === "config" ? "config" : "live",
+    detail: params.get("detail") === "1",
+    selected: params.get("select") || null,
+    seq: Number(params.get("seq") || -1),
+  };
+  if (params.get("theme") === "dark") document.documentElement.dataset.theme = "dark";
+
+  const STEPS = ["待命", "对位", "通电", "弹射", "起飞", "拦阻", "复位"];
+
+  // 甲板在本地坐标里画（舰艏朝上），整组旋转 +28° 形成参考照片的斜视 2.5D；HUD/标签保持水平。
+  const SHIP = { cx: 600, cy: 232, rot: 28 };
+  const toScreen = (x, y) => {
+    const r = (SHIP.rot * Math.PI) / 180;
+    const dx = x - SHIP.cx, dy = y - SHIP.cy;
+    return { x: SHIP.cx + dx * Math.cos(r) - dy * Math.sin(r), y: SHIP.cy + dx * Math.sin(r) + dy * Math.cos(r) };
+  };
+  const screenRot = (r) => SHIP.rot + r;
+
+  const PLANES = [
+    { id: "lin", name: "林", role: "看板 · CAT 1", kind: "j35", tone: "run", status: "运行中 · 已对位", state: "已对位", task: "T-014 登录页校验", x: 574, y: 265, rot: 0, sub: "T-014", tagX: -56, tagY: 4, accent: "var(--teal)" },
+    { id: "zhou", name: "周", role: "回滚 · CAT 2", kind: "j15", tone: "run", status: "运行中 · 弹射中", state: "弹射中", task: "T-015 工作台空态", x: 614, y: 265, rot: 0, sub: "T-015", tagX: 18, tagY: 30, accent: "var(--indigo)", launching: true },
+    { id: "an", name: "安", role: "回归 · CAT 3（斜角甲板）", kind: "j35", tone: "fail", status: "中止 · 复飞", state: "复飞", task: "T-011 npm test 退出码 1", x: 548, y: 400, rot: 17, sub: "T-011", accent: "var(--orange)", wave: true },
+    { id: "qiao", name: "乔", role: "验收 · 着舰道", kind: "j15", tone: "review", status: "待验收 · 拦阻", state: "已拦阻", task: "T-009 工作台空态验收", x: 520, y: 480, rot: 17, sub: "T-009", tagX: 28, tagY: -14, accent: "var(--purple)" },
+    { id: "bei", name: "北", role: "迁移 · 2 号升降机", kind: "j35", tone: "wait", status: "待确认", state: "等放行", task: "T-013 数据迁移 · 等审批", x: 650, y: 470, rot: 0, sub: "T-013", accent: "var(--amber)" },
+    { id: "man", name: "小满", role: "待命 · 2 号升降机", kind: "j15", tone: "idle", status: "待命", state: "待命", task: "等待下一波次", x: 700, y: 282, rot: 0, sub: "—", accent: "var(--slate)", dim: true, tagX: 46, tagY: 26 },
+  ];
+  const CREWS = [
+    { id: "lan", name: "岚", chip: "弹射官", role: "值班指挥 / 弹射官", tone: "run", status: "运行中", task: "主持本波次弹射", x: 592, y: 350, accent: "var(--amber)", tagX: -62, tagY: 4, lead: true, detail: "弹射官决定谁上 1 / 2 / 3 号弹射位；对应场景里的 lead。" },
+    { id: "safety", name: "安全官", chip: "甲板安全", role: "甲板安全", tone: "wait", status: "关注", task: "盯 JBD 与甲板风", x: 632, y: 340, accent: "var(--red)", tagX: 62, tagY: 10, detail: "安全官是升级闸门：甲板风或 JBD 异常时叫停。" },
+    { id: "pri-fly", name: "塔台", chip: "PRI-FLY", role: "空域 / 着舰排序", tone: "run", status: "在线", task: "排序 1 架待回收", x: 674, y: 282, accent: "var(--indigo)", tagX: 96, tagY: -34, detail: "塔台负责着舰排序；同一时刻只放一架进近。" },
+    { id: "lso", name: "LSO", chip: "着舰", role: "着舰指挥官", tone: "review", status: "待验收", task: "3 道拦阻 · 下滑道 OK", x: 492, y: 500, accent: "var(--purple)", white: true, tagX: -24, tagY: 16, detail: "LSO 对应 reviewer：只看产物与下滑道，不参与写代码。" },
+  ];
+
+  const jetSVG = (kind) => `
+    <svg viewBox="-36 -40 72 80" aria-hidden="true">
+      ${kind === "j15" ? `
+      <path class="a-wing" d="M-4 -19 L-20 -9 L-18 -3 L-4 -10 Z"/>
+      <path class="a-wing" d="M4 -19 L20 -9 L18 -3 L4 -10 Z"/>
+      <path class="a-panel" d="M-16 -8 L-8 -6 M16 -8 L8 -6"/>` : ""}
+      <path class="a-wing" d="M-4 -8 L-32 12 L-30 19 L-6 10 Z"/>
+      <path class="a-wing" d="M4 -8 L32 12 L30 19 L6 10 Z"/>
+      <path class="a-wing-top" d="M-6 -6 L-28 12 L-27 16 L-6 9 Z"/>
+      <path class="a-wing-top" d="M6 -6 L28 12 L27 16 L6 9 Z"/>
+      <path class="a-tail" d="M-5 12 L-10 32 L-4 33 L-2 17 Z"/>
+      <path class="a-tail" d="M5 12 L10 32 L4 33 L2 17 Z"/>
+      <path class="a-body" d="M0 -36 C2.8 -34 4.2 -27 4.4 -20 L5 -10 L8 -7 L32 10 L32 15 L8 9 L8 15 L19 26 L19 30 L8 26 L6 33 L0 36 L-6 33 L-8 26 L-19 30 L-19 26 L-8 15 L-8 9 L-32 15 L-32 10 L-8 -7 L-5 -10 L-4.4 -20 C-4.2 -27 -2.8 -34 0 -36 Z"/>
+      <path class="a-highlight" d="M0 -33 C2 -31 3 -25 3.2 -19 L3.4 -8 L-3.4 -8 L-3.2 -19 C-3 -25 -2 -31 0 -33 Z"/>
+      <path class="a-panel" d="M-7 -5 L-27 9 M7 -5 L27 9 M-5 4 L5 4 M-4 15 L4 15"/>
+      <ellipse class="a-canopy" cx="0" cy="-22" rx="3.4" ry="7"/>
+      <ellipse class="a-glass" cx="-0.6" cy="-24" rx="1.4" ry="3"/>
+      <circle class="a-nozzle" cx="-2.2" cy="34" r="1.9"/>
+      <circle class="a-nozzle" cx="2.2" cy="34" r="1.9"/>
+      ${kind === "j15" ? `
+      <path class="a-missile" d="M-31 10 l0 9 1.4 2 1.4 -2 0 -9 Z"/>
+      <path class="a-missile" d="M31 10 l0 9 -1.4 2 -1.4 -2 0 -9 Z"/>` : ""}
+      <path class="a-mark" d="M-15 9 l1.6 3.2 3.4 .5 -2.5 2.5 .7 3.4 -3.2 -1.7 -3.2 1.7 .7 -3.4 -2.5 -2.5 3.4 -.5 Z"/>
+      <path class="a-mark" d="M 15 9 l1.6 3.2 3.4 .5 -2.5 2.5 .7 3.4 -3.2 -1.7 -3.2 1.7 .7 -3.4 -2.5 -2.5 3.4 -.5 Z"/>
+      <path class="a-glare" d="M -2.2 -24.4 q 1.4 -1.2 2.8 -.4"/>
+    </svg>`;
+
+  const crewSVG = () => `
+    <svg class="crew-art" viewBox="0 0 20 30" aria-hidden="true">
+      <ellipse class="crew-shadow" cx="10" cy="28" rx="6" ry="2"/>
+      <path class="crew-legs" d="M6.8 18 h2.6 l-.3 9 H6.2 Z M10.8 18 h2.6 l.4 9 h-2.6 Z"/>
+      <path class="crew-vest" d="M4.8 13.2 q5.2 -3.2 10.4 0 l-1 6.2 H5.8 Z"/>
+      <path class="crew-reflect" d="M6.2 15.4 h7.6"/>
+      <path class="crew-legs" d="M6.4 15.6 l-2 4.6 1.2 .8 1.8 -4 Z M13.6 15.6 l2 4.6 -1.2 .8 -1.8 -4 Z"/>
+      <circle class="crew-skin" cx="10" cy="7.6" r="3.1"/>
+      <path class="crew-helmet" d="M6.5 7.2 a3.5 3.5 0 0 1 7 0 l-1.2 1 a2.4 2.4 0 0 0 -4.6 0 Z"/>
+    </svg>`;
+
+  function renderPlanes() {
+    $("#planes").innerHTML = PLANES.map((p) => {
+      const at = toScreen(p.x, p.y);
+      return `
+      <div class="plane ${p.tone} ${p.launching ? "launching" : ""} ${p.wave ? "wave" : ""} ${p.dim ? "airborne" : ""}" data-id="${p.id}" style="left:${at.x}px;top:${at.y}px;--accent:${p.accent}" tabindex="0" role="button" aria-label="${p.name} · ${p.task}" title="${p.task}">
+        ${p.launching ? '<span class="puff"><i></i><i></i><i></i></span><span class="jet-trail"><i></i><i></i><i></i></span>' : ""}
+        <span class="plane-shadow"></span>
+        <div class="jet" style="transform:rotate(${screenRot(p.rot)}deg)">${jetSVG(p.kind)}</div>
+        <span class="plane-tag" style="transform:translate(${p.tagX || 0}px, ${p.tagY || 0}px)"><i></i><b>${p.name}</b>${p.state}${p.sub ? `<em>${p.sub}</em>` : ""}</span>
+      </div>`;
+    }).join("");
+    $$("#planes .plane").forEach((el) => {
+      el.addEventListener("click", () => select(el.dataset.id));
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(el.dataset.id); } });
+    });
+  }
+  function renderCrews() {
+    $("#crews").innerHTML = CREWS.map((c) => {
+      const at = toScreen(c.x, c.y);
+      return `
+      <div class="crew ${c.lead ? "lead" : ""} ${c.white ? "white" : ""}" data-id="${c.id}" style="left:${at.x}px;top:${at.y}px;--accent:${c.accent || "var(--surface)"}" tabindex="0" role="button" aria-label="${c.name}">
+        ${crewSVG()}
+        <span class="crew-name" style="transform:translate(${c.tagX || 0}px, ${c.tagY || 0}px)"><b>${c.name}</b><span>${c.chip}</span></span>
+      </div>`;
+    }).join("");
+    $$("#crews .crew").forEach((el) => {
+      el.addEventListener("click", () => select(el.dataset.id));
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(el.dataset.id); } });
+    });
+  }
+
+  function renderSeq() {
+    $("#seq").innerHTML = STEPS.map((s, i) => `<button class="seq-step ${state.seq === i ? "on" : ""} ${state.seq > i ? "done" : ""}" data-step="${i}"><b>${i + 1}</b>${s}</button>`).join('<span class="seq-arrow">›</span>');
+    $$("#seq .seq-step").forEach((b) => b.addEventListener("click", () => setSeq(Number(b.dataset.step))));
+    $("#seqLog").innerHTML = state.seq < 0
+      ? "选择一架飞机或点「演一遍弹射」"
+      : `<b>${STEPS[state.seq]}</b> · ${SEQ_LOG[state.seq]}`;
+    stage.dataset.seq = state.seq;
+  }
+  const SEQ_LOG = [
+    "北在待命位排队；林、周已上弹射位",
+    "林完成对位，JBD 升起，甲板清空",
+    "EMALS 通电，弹射能量 106 MJ",
+    "周 · CAT 2 开始行程，2.4 秒到舰首",
+    "周离舰，进入空中；CAT 2 复位",
+    "乔沿着舰道下滑，3 道拦阻成功",
+    "拦阻索复位，弹射位与着舰道都空出来",
+  ];
+
+  function setSeq(i) {
+    state.seq = Math.max(-1, Math.min(STEPS.length - 1, i));
+    stage.classList.toggle("launching", state.seq >= 2 && state.seq <= 3);
+    stage.classList.toggle("has-review", state.seq >= 5);
+    const el = $(`#planes .plane[data-id="zhou"] .jet`);
+    if (el) {
+      const from = toScreen(614, 265);
+      const to = toScreen(614, 145);
+      const t = state.seq >= 4 ? 1 : state.seq === 3 ? 0.6 : 0;
+      el.style.transform = `translate(${(to.x - from.x) * t}px, ${(to.y - from.y) * t}px) rotate(${SHIP.rot}deg)`;
+      $(`#planes .plane[data-id="zhou"]`).classList.toggle("airborne", state.seq >= 4);
+    }
+    $$(".wire").forEach((w) => w.classList.toggle("hit", state.seq === 5));
+    renderSeq();
+  }
+
+  let replayTimer = 0;
+  function replay() {
+    clearInterval(replayTimer);
+    let i = 0;
+    setSeq(0);
+    replayTimer = setInterval(() => {
+      i += 1;
+      if (i >= STEPS.length) { clearInterval(replayTimer); setSeq(STEPS.length - 1); return; }
+      setSeq(i);
+    }, 1200);
+  }
+  $("#replayBtn").addEventListener("click", replay);
+
+  const FOCUS = {
+    deck: { title: "甲板态势", sub: "本波次 · 只读", kicker: "DECK", rows: [["甲板风", "25 kt"], ["侧风", "4 kt"], ["弹射能量", "106 MJ"], ["循环", "45 s"]], note: "甲板参数来自 run 记录和场景 prefs；改参数不改调度。", actions: ["打开 run 记录"] },
+    lso: { title: "LSO · 着舰", sub: "串行闸门 · 通道 1", kicker: "RECOVERY", rows: [["拦阻索", "3 道"], ["下滑道", "OK"], ["进近速度", "142 kt"], ["待回收", "1 架"]], note: "着舰道是串行闸门：review / approval 必须排队，弹射位可以并行。", actions: ["打开验收队列", "放行下一架"] },
+  };
+
+  function planeInspector(p) {
+    const tone = p.tone === "wait" ? "warn" : p.tone === "fail" ? "bad" : p.tone === "review" ? "" : "ok";
+    return `
+      <div class="insp-head">
+        <div><b>${p.name} <span class="tag ${tone}">${p.status}</span></b><span>${p.role} · 甲板值班</span></div>
+        <button class="icon-btn" data-close-insp aria-label="收起">✕</button>
+      </div>
+      <div class="insp-scroll">
+        <div class="insp-sec">
+          <h4>此刻</h4>
+          <div class="insp-row">任务<b>${p.task}</b></div>
+          <div class="insp-row">弹射位<b>${p.role.includes("CAT") ? p.role.split("·")[1].trim() : "—"}</b></div>
+          <div class="insp-row">状态<b>${p.status}</b></div>
+        </div>
+        <div class="insp-sec">
+          <h4>舞台映射</h4>
+          <div class="insp-note">弹射位是并发位：${p.name} 的运行不占着舰道；只有 review / approval 才排进着舰道。中止不走「取消」，而是复飞后重新排队。</div>
+        </div>
+        <div class="insp-sec">
+          <h4>最近一次变化</h4>
+          <div class="insp-list">
+            <div class="insp-item ${p.tone}"><i></i><b>${p.task}</b><span>1m</span></div>
+            <div class="insp-item"><i></i><b>${p.name} · ${p.role}</b><span>8m</span></div>
+          </div>
+        </div>
+        <div class="insp-actions">
+          <button class="btn tiny" data-toast="打开 ${p.name} 的任务线程（原型）">打开任务</button>
+          <button class="btn tiny" data-toast="把 ${p.name} 换到另一个弹射位（原型）">换弹射位</button>
+        </div>
+      </div>`;
+  }
+  function crewInspector(c) {
+    return `
+      <div class="insp-head">
+        <div><b>${c.name} <span class="tag ${c.tone === "wait" ? "warn" : c.tone === "review" ? "" : "ok"}">${c.status}</span></b><span>${c.role}</span></div>
+        <button class="icon-btn" data-close-insp aria-label="收起">✕</button>
+      </div>
+      <div class="insp-scroll">
+        <div class="insp-sec"><h4>此刻</h4><div class="insp-row">职责<b>${c.task}</b></div></div>
+        <div class="insp-sec"><h4>说明</h4><div class="insp-note">${c.detail}</div></div>
+        <div class="insp-actions"><button class="btn tiny" data-toast="打开 ${c.name} 的角色卡（原型）">打开角色</button></div>
+      </div>`;
+  }
+  function focusInspector(key) {
+    const f = FOCUS[key];
+    if (!f) return "";
+    return `
+      <div class="insp-head">
+        <div><b>${f.title}</b><span>${f.sub}</span></div>
+        <button class="icon-btn" data-close-insp aria-label="收起">✕</button>
+      </div>
+      <div class="insp-scroll">
+        <div class="insp-sec"><h4>${f.kicker}</h4>${f.rows.map(([k, v]) => `<div class="insp-row">${k}<b>${v}</b></div>`).join("")}</div>
+        <div class="insp-sec"><h4>说明</h4><div class="insp-note">${f.note}</div></div>
+        <div class="insp-actions">${f.actions.map((a) => `<button class="btn tiny" data-toast="${a}（原型）">${a}</button>`).join("")}</div>
+      </div>`;
+  }
+  function select(id) {
+    state.selected = id;
+    const plane = PLANES.find((p) => p.id === id);
+    const crew = CREWS.find((c) => c.id === id);
+    inspector.innerHTML = plane ? planeInspector(plane) : crew ? crewInspector(crew) : focusInspector(id);
+    inspector.classList.add("open");
+    $("#detailToggle").setAttribute("aria-expanded", "true");
+    $$("#planes .plane").forEach((el) => el.classList.toggle("sel", el.dataset.id === id));
+    $$("#crews .crew").forEach((el) => el.classList.toggle("sel", el.dataset.id === id));
+    inspector.querySelectorAll("[data-close-insp]").forEach((b) => b.addEventListener("click", () => closeInspector()));
+    inspector.querySelectorAll("[data-toast]").forEach((b) => b.addEventListener("click", () => toast(b.dataset.toast)));
+  }
+  function closeInspector() {
+    inspector.classList.remove("open");
+    $("#detailToggle").setAttribute("aria-expanded", "false");
+    state.selected = null;
+    $$("#planes .plane").forEach((el) => el.classList.remove("sel"));
+    $$("#crews .crew").forEach((el) => el.classList.remove("sel"));
+  }
+  $$("[data-focus]").forEach((el) => {
+    el.addEventListener("click", () => select(el.dataset.focus));
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(el.dataset.focus); } });
+  });
+
+  function setMode(mode) {
+    state.mode = mode;
+    stage.classList.toggle("config", mode === "config");
+    $$("#modeSeg button").forEach((b) => b.classList.toggle("on", b.dataset.mode === mode));
+    if (mode === "config") $("#hintBar").innerHTML = "<b>配置模式</b> · 拖拽 Agent 到弹射位 / 着舰道；点弹射位改并发上限";
+  }
+  $$("#modeSeg button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+  $("#themeBtn").addEventListener("click", () => {
+    document.documentElement.dataset.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  });
+  $("#motionSelect").addEventListener("change", (e) => { document.body.dataset.motion = e.target.value; });
+  $("#detailToggle").addEventListener("click", () => {
+    if (inspector.classList.contains("open")) closeInspector();
+    else select(state.selected || "lan");
+  });
+
+  function setView(view) {
+    $$(".view").forEach((v) => v.classList.toggle("on", v.dataset.view === view));
+    $$(".tabs .tab[data-view]").forEach((t) => t.classList.toggle("on", t.dataset.view === view));
+    if (view === "live") requestAnimationFrame(fit);
+  }
+  $$(".tabs .tab[data-view]").forEach((t) => t.addEventListener("click", () => setView(t.dataset.view)));
+  $$("[data-view-go]").forEach((b) => b.addEventListener("click", () => setView(b.dataset.viewGo)));
+
+  function fit() {
+    const box = stage.getBoundingClientRect();
+    const k = Math.min(box.width / 1180, box.height / 560);
+    canvas.style.zoom = k;
+  }
+  new ResizeObserver(fit).observe(stage);
+  window.addEventListener("resize", fit);
+
+  let toastTimer = 0;
+  function toast(message) {
+    const el = $("#toast");
+    el.textContent = message;
+    el.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("on"), 2200);
+  }
+  $$("[data-toast]").forEach((b) => b.addEventListener("click", () => toast(b.dataset.toast)));
+
+  const mask = $("#newMask");
+  const closeNew = () => mask.classList.remove("on");
+  $("#openNew").addEventListener("click", () => mask.classList.add("on"));
+  $("#newClose").addEventListener("click", closeNew);
+  $("#newCancel").addEventListener("click", closeNew);
+  mask.addEventListener("mousedown", (e) => { if (e.target === mask) closeNew(); });
+  $$(".modal-template").forEach((b) => b.addEventListener("click", () => {
+    $$(".modal-template").forEach((x) => x.classList.toggle("on", x === b));
+  }));
+  $("#newCreate").addEventListener("click", () => {
+    const tpl = $(".modal-template.on")?.dataset.tpl;
+    closeNew();
+    if (tpl === "warroom") { location.href = "warroom.html"; return; }
+    toast(tpl === "carrier" ? "已创建航母场景（原型）" : "办公室舞台已上线，作战室 / 航母为舞台原型");
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { closeInspector(); closeNew(); }
+  });
+
+  renderPlanes();
+  renderCrews();
+  setMode(state.mode);
+  setSeq(state.seq);
+  if (params.get("view") === "gallery") setView("gallery");
+  if (state.detail) select(state.selected || "lan");
+  fit();
+})();
+</script>
+</body>
+</html>

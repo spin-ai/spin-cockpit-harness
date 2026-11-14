@@ -1,0 +1,1885 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-motion="calm">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>协作场景 · 办公室舞台 · 原型</title>
+<!--
+  协作场景（Coordination Scene）原型
+  ────────────────────────────────────────────────────────────
+  设计要点：
+  1. 「场景」不是一张配置表：它是多 Agent 协作的拟人化舞台。
+  2. 办公室只是 Stage Pack 的一种；作战室 / 航母以后共用同一套 SceneModel。
+  3. 实线 = 真实 delegation；虚线 = 场景配置的期望拓扑，两者分开画。
+  4. 角色动作只读现有 run / approval / review 状态，不伪造任务。
+  5. 配置模式与实况共用同一舞台，避免「预览一个样、上线一个样」。
+  全部颜色 / 圆角 / 字号取自 src/design-system.css token。
+  可直接打开；右上 ◐ 切亮暗；?view=gallery / profile / live，?mode=config，?theme=dark。
+-->
+<style>
+:root{
+  --font-sans:"Geist Variable","Geist",-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:"Geist Mono Variable","Geist Mono","SF Mono",SFMono-Regular,ui-monospace,Menlo,Consolas,monospace;
+  --radius:10px;--radius-sm:6px;--radius-lg:14px;--radius-control:8px;
+  --shadow-1:0 1px 2px rgba(10,10,10,.045);
+  --shadow-float:0 18px 46px rgba(0,0,0,.22),0 2px 8px rgba(0,0,0,.10);
+}
+:root[data-theme="light"]{
+  --page-canvas:#fafafa;--surface:#ffffff;--surface-2:#f7f7f7;--surface-hover:#f5f5f5;--surface-selected:#ededed;
+  --border:#e5e5e5;--border-strong:#d4d4d4;--input:#e5e5e5;
+  --fg:#0a0a0a;--fg-2:#3f3f3f;--muted:#5c5c5c;--faint:#767676;
+  --brand:#171717;--brand-soft:#f2f2f2;--brand-line:#dedede;
+  --green:#3f9a68;--green-soft:#edf8f2;--green-line:#d5eedf;
+  --amber:#a97a2f;--amber-soft:#fdf8ee;--amber-line:#f2e3c4;
+  --red:#cf5f5d;--red-soft:#fdf2f2;--red-line:#f4d7d7;
+  --purple:#7d67d1;--purple-soft:#f4f2fd;--purple-line:#e3ddf8;
+  --teal:#3f8f86;--teal-soft:rgba(63,143,134,.10);
+  --indigo:#5b6cc0;--indigo-soft:rgba(91,108,192,.10);
+  --slate:#6b7280;--slate-soft:rgba(107,114,128,.10);
+  --orange:#b46a3c;--orange-soft:rgba(180,106,60,.10);
+  --floor:#f6f6f5;--wall:#eeeeed;--floor-line:rgba(10,10,10,.035);
+  --actor-body:color-mix(in srgb,var(--fg) 88%,var(--surface));--actor-visor:color-mix(in srgb,var(--surface) 90%,var(--fg) 6%);--term-bg:#181818;--term-fg:#d7d7d7;
+  --shadow-actor:0 8px 16px rgba(15,23,42,.08);
+}
+:root[data-theme="dark"]{
+  --page-canvas:#0a0a0a;--surface:#171717;--surface-2:#1c1c1c;--surface-hover:#262626;--surface-selected:#2e2e2e;
+  --border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.14);--input:rgba(255,255,255,.16);
+  --fg:#f0f0f0;--fg-2:#d4d4d4;--muted:#b4b4b4;--faint:#8f8f8f;
+  --brand:#e5e5e5;--brand-soft:#262626;--brand-line:#3a3a3a;
+  --green:#5fb884;--green-soft:rgba(95,184,132,.12);--green-line:rgba(95,184,132,.28);
+  --amber:#c9a25c;--amber-soft:rgba(201,162,92,.12);--amber-line:rgba(201,162,92,.26);
+  --red:#d97a78;--red-soft:rgba(217,122,120,.12);--red-line:rgba(217,122,120,.26);
+  --purple:#9c8ae0;--purple-soft:rgba(156,138,224,.12);--purple-line:rgba(156,138,224,.26);
+  --teal:#6fbab1;--teal-soft:rgba(111,186,177,.12);
+  --indigo:#8e9ce0;--indigo-soft:rgba(142,156,224,.12);
+  --slate:#9aa3af;--slate-soft:rgba(154,163,175,.12);
+  --orange:#d08a5a;--orange-soft:rgba(208,138,90,.12);
+  --floor:#131313;--wall:#101010;--floor-line:rgba(255,255,255,.045);
+  --actor-body:color-mix(in srgb,var(--fg) 78%,var(--surface));--actor-visor:color-mix(in srgb,var(--term-bg) 86%,var(--fg) 10%);--term-bg:#0c0c0c;--term-fg:#c9c9c9;
+  --shadow-1:0 1px 2px rgba(0,0,0,.22);
+  --shadow-float:0 18px 46px rgba(0,0,0,.52),0 2px 8px rgba(0,0,0,.28);
+  --shadow-actor:0 8px 16px rgba(0,0,0,.34);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--page-canvas);color:var(--fg);font:13px/1.55 var(--font-sans);-webkit-font-smoothing:antialiased;overflow:hidden}
+::selection{background:color-mix(in srgb,var(--fg) 14%,transparent);color:inherit}
+button,input,select,textarea{font-family:inherit}
+button{color:inherit}
+.mono{font-family:var(--mono)}
+.tiny{font-size:10.5px;line-height:1.45}
+.faint{color:var(--faint)}
+.muted{color:var(--muted)}
+.spacer{flex:1}
+.row{display:flex;align-items:center;gap:6px;min-width:0}
+.row.between{justify-content:space-between}
+.wrap{flex-wrap:wrap}
+.ellipsis{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── App shell ─────────────────────────────────────────────── */
+.app{height:100%;display:grid;grid-template-columns:64px minmax(0,1fr)}
+.rail{background:var(--sidebar,#fafafa);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:10px 0 8px;gap:2px;min-height:0}
+.rail-brand{width:34px;height:34px;border:1px solid var(--border);border-radius:9px;background:var(--surface);display:grid;place-items:center;color:var(--fg);margin-bottom:8px;font:600 13px var(--mono);box-shadow:var(--shadow-1)}
+.rail-item{position:relative;width:52px;height:47px;border:0;border-radius:8px;background:transparent;color:var(--muted);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:10.5px;line-height:1.2;cursor:pointer;transition:background .12s,color .12s}
+.rail-item svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.rail-item span{transform:scale(.96);white-space:nowrap}
+.rail-item:hover{background:var(--surface-hover);color:var(--fg-2)}
+.rail-item.on{background:var(--brand-soft);color:var(--fg)}
+.rail-item.on::before{content:"";position:absolute;left:-6px;top:11px;bottom:11px;width:2px;border-radius:2px;background:var(--fg)}
+.rail-bottom{margin-top:auto;display:flex;flex-direction:column;gap:2px}
+.main{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--page-canvas)}
+
+/* ── Page header ───────────────────────────────────────────── */
+.page-head{flex:none;display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding:16px 22px 10px}
+.page-title{min-width:0;display:flex;flex-direction:column;gap:2px}
+.kicker{font-size:10px;line-height:1.4;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.page-title h1{margin:0;font-size:22px;line-height:1.15;font-weight:600;letter-spacing:-.03em}
+.page-sub{margin:1px 0 0;font-size:12.5px;line-height:1.5;color:var(--muted);max-width:720px}
+.page-actions{display:flex;align-items:center;gap:6px;flex:none}
+.action-group{display:none;align-items:center;gap:6px}
+.action-group.on{display:flex}
+
+/* ── Controls ──────────────────────────────────────────────── */
+.btn{height:30px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--surface);color:var(--fg-2);font-size:12px;display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;cursor:pointer;transition:background .12s,border-color .12s,color .12s}
+.btn:hover{background:var(--surface-hover);border-color:var(--border-strong);color:var(--fg)}
+.btn.primary{background:var(--fg);border-color:var(--fg);color:var(--surface);box-shadow:var(--shadow-1)}
+.btn.primary:hover{background:color-mix(in srgb,var(--fg) 92%,var(--surface));border-color:var(--fg);color:var(--surface)}
+.btn.tiny{height:26px;padding:0 8px;font-size:11px}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.btn.ghost:hover{background:var(--surface-hover);color:var(--fg)}
+.icon-btn{width:28px;height:28px;border:0;border-radius:6px;background:transparent;color:var(--muted);display:grid;place-items:center;font-size:13px;cursor:pointer;flex:none}
+.icon-btn:hover{background:var(--surface-hover);color:var(--fg)}
+.icon-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:2px solid color-mix(in srgb,var(--fg) 30%,transparent);outline-offset:2px}
+select,input[type=text]{height:28px;border:1px solid var(--input);border-radius:var(--radius-sm);background:var(--surface);color:var(--fg-2);font-size:11.5px;padding:0 7px;min-width:0}
+.mini-select{height:27px;font-size:11.5px;color:var(--muted);background:transparent;border-color:transparent}
+.mini-select:hover{border-color:var(--border);background:var(--surface)}
+
+/* ── Tabs ──────────────────────────────────────────────────── */
+.tabs{flex:none;display:flex;align-items:center;gap:2px;padding:0 22px;border-bottom:1px solid var(--border);min-height:37px}
+.tab{height:36px;padding:0 10px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);font-size:12.5px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;margin-bottom:-1px}
+.tab:hover{color:var(--fg)}
+.tab.on{color:var(--fg);border-bottom-color:var(--fg)}
+.tab .live-dot{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+
+/* ── Views ─────────────────────────────────────────────────── */
+.view{flex:1;min-height:0;display:none}
+.view.on{display:flex}
+.view.live{flex-direction:column;gap:8px;padding:10px 16px 12px;overflow:auto}
+.view.gallery,.view.profile{display:none;overflow:auto;padding:16px 22px 36px}
+.view.gallery.on,.view.profile.on{display:block}
+
+/* ── Scene toolbar ─────────────────────────────────────────── */
+.scene-toolbar{flex:none;height:40px;display:flex;align-items:center;gap:10px;min-width:0}
+.scene-id{display:flex;align-items:center;gap:8px;min-width:0}
+.scene-mark{width:30px;height:30px;border-radius:8px;border:1px solid var(--border);background:var(--surface);display:grid;place-items:center;font-size:12px;font-weight:600;color:var(--fg-2);flex:none;box-shadow:var(--shadow-1)}
+.scene-id>div{display:flex;flex-direction:column;gap:0;min-width:0}
+.scene-id b{font-size:13.5px;font-weight:600;line-height:1.25}
+.scene-id span{font-size:11.5px;color:var(--muted);line-height:1.35}
+.tag{display:inline-flex;align-items:center;height:19px;padding:0 6px;border-radius:5px;background:var(--surface-hover);color:var(--fg-2);font-size:10.5px;letter-spacing:.02em;white-space:nowrap}
+.tag.live{background:var(--green-soft);color:var(--green)}
+.tag.ok{background:var(--green-soft);color:var(--green)}
+.tag.warn{background:var(--amber-soft);color:var(--amber)}
+.tag.bad{background:var(--red-soft);color:var(--red)}
+.scene-stats{display:flex;align-items:center;gap:10px;padding-left:12px;border-left:1px solid var(--border);min-width:0}
+.scene-stats span{font-size:11.5px;color:var(--muted);display:inline-flex;align-items:baseline;gap:3px;white-space:nowrap}
+.scene-stats b{font:600 12.5px var(--mono);color:var(--fg);font-variant-numeric:tabular-nums}
+.scene-stats .run b{color:var(--green)}
+.scene-stats .wait b{color:var(--amber)}
+.scene-stats .review b{color:var(--purple)}
+.scene-stats .fail b{color:var(--red)}
+.seg{display:flex;background:var(--surface-hover);border:1px solid var(--border);border-radius:6px;padding:1px;flex:none}
+.seg button{height:24px;border:0;background:transparent;color:var(--muted);font-size:11px;padding:0 8px;border-radius:5px;cursor:pointer}
+.seg button.on{background:var(--surface);color:var(--fg);box-shadow:0 0 0 1px var(--border)}
+
+/* ── Live body ─────────────────────────────────────────────── */
+.live-body{position:relative;flex:1;min-height:0;display:block}
+.stage-wrap{height:100%;min-width:0;min-height:0;display:flex;flex-direction:column;gap:5px}
+.stage{
+  --floor-warm:color-mix(in srgb,var(--page-canvas) 90%,var(--slate) 9%);
+  --wall-warm:color-mix(in srgb,var(--surface) 96%,var(--slate) 4%);
+  --rug-warm:color-mix(in srgb,var(--surface) 84%,var(--slate) 10%);
+  --desk-top:color-mix(in srgb,var(--surface) 97%,var(--slate) 3%);
+  --desk-front:color-mix(in srgb,var(--surface-2) 44%,var(--slate) 56%);
+  --sofa:color-mix(in srgb,var(--surface-2) 64%,var(--slate) 36%);
+  --plant:color-mix(in srgb,var(--green) 62%,var(--fg) 38%);
+  --shadow-soft:0 10px 24px rgba(35,30,24,.08);
+  --shadow-desk:0 8px 16px rgba(35,30,24,.10);
+  position:relative;flex:1;min-height:600px;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:repeating-linear-gradient(90deg,transparent 0 124px,color-mix(in srgb,var(--slate) 5%,transparent) 124px 125px),var(--floor-warm);isolation:isolate;box-shadow:inset 0 0 90px rgba(35,30,24,.06),var(--shadow-1)
+}
+:root[data-theme="dark"] .stage{--shadow-soft:0 10px 24px rgba(0,0,0,.38);--shadow-desk:0 8px 16px rgba(0,0,0,.42)}
+:root[data-theme="dark"] .stage{box-shadow:inset 0 0 90px rgba(0,0,0,.35),var(--shadow-1);--floor-warm:color-mix(in srgb,var(--page-canvas) 94%,var(--slate) 6%);--wall-warm:color-mix(in srgb,var(--surface) 82%,var(--slate) 18%);--desk-top:color-mix(in srgb,var(--surface-2) 84%,var(--slate) 16%);--desk-front:color-mix(in srgb,var(--surface-2) 66%,var(--slate) 34%);--sofa:color-mix(in srgb,var(--surface-2) 68%,var(--slate) 32%);--rug-warm:color-mix(in srgb,var(--surface) 84%,var(--slate) 16%)}
+.stage::before{content:"";position:absolute;left:0;right:0;top:0;height:150px;background:linear-gradient(180deg,var(--wall-warm),color-mix(in srgb,var(--wall-warm) 78%,var(--floor-warm)));border-bottom:2px solid color-mix(in srgb,var(--border-strong) 82%,var(--fg) 18%);box-shadow:0 8px 18px rgba(35,30,24,.06);z-index:0}
+.stage::after{content:"";position:absolute;left:0;right:0;top:150px;bottom:0;background:radial-gradient(70% 60% at 50% 0%,color-mix(in srgb,var(--surface) 50%,transparent),transparent 72%);z-index:0;pointer-events:none}
+.sunbeam{position:absolute;right:11%;top:146px;width:250px;height:240px;background:linear-gradient(180deg,color-mix(in srgb,var(--amber) 10%,transparent),transparent 82%);clip-path:polygon(22% 0,78% 0,100% 100%,0 100%);transform:skewX(-7deg);z-index:0;pointer-events:none;opacity:.7}
+
+/* wall */
+.clock{position:absolute;left:50%;top:22px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:1px;z-index:2;min-width:64px;padding:5px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);box-shadow:var(--shadow-soft)}
+.clock b{font:600 13px var(--mono);color:var(--fg-2);letter-spacing:.05em;font-variant-numeric:tabular-nums}
+.clock span{font-size:8.5px;letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
+.window{box-shadow:0 12px 22px rgba(35,30,24,.09),var(--shadow-soft);position:absolute;right:17%;top:18px;width:186px;height:108px;border:1px solid var(--border);border-radius:7px;background:var(--surface);box-shadow:var(--shadow-soft);z-index:1}
+.window .win-view{position:absolute;inset:4px;width:calc(100% - 8px);height:calc(100% - 8px);border-radius:3px;display:block;overflow:hidden}
+.window .mullion{position:absolute;background:var(--surface);z-index:2}
+.window .mullion.v{left:50%;top:4px;bottom:4px;width:3px;transform:translateX(-50%)}
+.window .mullion.h{left:4px;right:4px;top:50%;height:3px;transform:translateY(-50%)}
+.window .sill{position:absolute;left:-7px;right:-7px;bottom:-8px;height:8px;border:1px solid var(--border);border-radius:2px;background:var(--surface);box-shadow:0 3px 6px rgba(0,0,0,.07);z-index:3}
+.window .win-plant{position:absolute;right:13px;bottom:11px;width:26px;height:34px;z-index:3}
+.window .win-plant i{position:absolute;bottom:8px;left:3px;width:8px;height:18px;border-radius:60% 0 60% 60%;background:var(--plant);opacity:.85;transform:rotate(-18deg)}
+.window .win-plant i:nth-child(2){left:11px;bottom:6px;transform:rotate(20deg)}
+.window .win-plant span{position:absolute;left:6px;bottom:0;width:12px;height:8px;border:1px solid var(--border);border-radius:0 0 3px 3px;background:var(--surface-2)}
+.console{position:absolute;right:17%;top:150px;width:186px;height:56px;z-index:2;filter:drop-shadow(0 6px 10px rgba(25,22,18,.07))}
+.console-top{position:absolute;left:0;right:0;top:0;height:9px;border:1px solid var(--border);border-radius:3px;background:linear-gradient(180deg,var(--desk-top),color-mix(in srgb,var(--desk-top) 86%,var(--surface-2)))}
+.console-body{position:absolute;left:4px;right:4px;top:8px;bottom:0;border:1px solid var(--border);border-top:0;border-radius:0 0 4px 4px;background:color-mix(in srgb,var(--desk-front) 86%,var(--surface))}
+.console-body::before,.console-body::after{content:"";position:absolute;top:10px;bottom:8px;width:1px;background:color-mix(in srgb,var(--border) 80%,transparent)}
+.console-body::before{left:34%}.console-body::after{right:34%}
+.console-book{position:absolute;bottom:9px;width:9px;border:1px solid var(--border);border-radius:1px 1px 2px 2px;background:var(--surface)}
+.console-book.b1{left:18px;height:19px;background:color-mix(in srgb,var(--slate) 22%,var(--surface))}
+.console-book.b2{left:29px;height:15px;background:color-mix(in srgb,var(--amber) 20%,var(--surface))}
+.console-book.b3{left:40px;height:21px;background:color-mix(in srgb,var(--indigo) 16%,var(--surface))}
+.console-plant{position:absolute;right:22px;bottom:9px;width:26px;height:32px}
+.console-plant i{position:absolute;bottom:7px;left:3px;width:8px;height:17px;border-radius:60% 0 60% 60%;background:var(--plant);opacity:.85;transform:rotate(-18deg)}
+.console-plant i:nth-child(2){left:11px;bottom:5px;transform:rotate(20deg)}
+.console-plant span{position:absolute;left:6px;bottom:0;width:12px;height:7px;border:1px solid var(--border);border-radius:0 0 3px 3px;background:var(--surface-2)}
+.station::before{content:"";position:absolute;left:20px;right:20px;bottom:18px;height:16px;border-radius:50%;background:rgba(35,30,24,.12);filter:blur(10px);z-index:0;pointer-events:none}
+:root[data-theme="dark"] .console{position:absolute;right:17%;top:150px;width:186px;height:56px;z-index:2;filter:drop-shadow(0 6px 10px rgba(25,22,18,.07))}
+.console-top{position:absolute;left:0;right:0;top:0;height:9px;border:1px solid var(--border);border-radius:3px;background:linear-gradient(180deg,var(--desk-top),color-mix(in srgb,var(--desk-top) 86%,var(--surface-2)))}
+.console-body{position:absolute;left:4px;right:4px;top:8px;bottom:0;border:1px solid var(--border);border-top:0;border-radius:0 0 4px 4px;background:color-mix(in srgb,var(--desk-front) 86%,var(--surface))}
+.console-body::before,.console-body::after{content:"";position:absolute;top:10px;bottom:8px;width:1px;background:color-mix(in srgb,var(--border) 80%,transparent)}
+.console-body::before{left:34%}.console-body::after{right:34%}
+.console-book{position:absolute;bottom:9px;width:9px;border:1px solid var(--border);border-radius:1px 1px 2px 2px;background:var(--surface)}
+.console-book.b1{left:18px;height:19px;background:color-mix(in srgb,var(--slate) 22%,var(--surface))}
+.console-book.b2{left:29px;height:15px;background:color-mix(in srgb,var(--amber) 20%,var(--surface))}
+.console-book.b3{left:40px;height:21px;background:color-mix(in srgb,var(--indigo) 16%,var(--surface))}
+.console-plant{position:absolute;right:22px;bottom:9px;width:26px;height:32px}
+.console-plant i{position:absolute;bottom:7px;left:3px;width:8px;height:17px;border-radius:60% 0 60% 60%;background:var(--plant);opacity:.85;transform:rotate(-18deg)}
+.console-plant i:nth-child(2){left:11px;bottom:5px;transform:rotate(20deg)}
+.console-plant span{position:absolute;left:6px;bottom:0;width:12px;height:7px;border:1px solid var(--border);border-radius:0 0 3px 3px;background:var(--surface-2)}
+.station::before{background:rgba(0,0,0,.3)}
+/* whiteboard */
+.whiteboard{box-shadow:0 14px 26px rgba(35,30,24,.10),var(--shadow-soft);position:absolute;left:3.5%;top:4%;width:254px;height:156px;border:6px solid color-mix(in srgb,var(--surface) 84%,var(--slate) 10%);border-radius:9px;background:color-mix(in srgb,var(--surface) 96%,var(--slate) 3%);box-shadow:var(--shadow-soft);z-index:3;padding:8px 9px 7px;display:flex;flex-direction:column;gap:5px;cursor:pointer;transition:box-shadow .14s,transform .14s}
+.whiteboard:hover{box-shadow:var(--shadow-float);transform:translateY(-1px)}
+.whiteboard::before{content:"";position:absolute;left:9px;right:9px;bottom:4px;height:3px;border-radius:2px;background:var(--border)}
+.wb-head{display:flex;align-items:center;justify-content:space-between;gap:6px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.wb-head b{font-size:12.5px;font-weight:600;letter-spacing:-.01em}
+.wb-head em{font:600 10px var(--mono);font-style:normal;color:var(--muted)}
+.wb-progress{height:3px;border-radius:2px;background:var(--surface-2);overflow:hidden;margin:1px 0 2px}
+.wb-progress i{display:block;height:100%;width:50%;border-radius:2px;background:var(--amber)}
+.wb-note{position:absolute;width:19px;height:16px;border-radius:2px;box-shadow:0 2px 3px rgba(0,0,0,.07);transform:rotate(-4deg);z-index:2}
+.wb-note.n1{right:12px;bottom:10px;background:color-mix(in srgb,var(--amber) 32%,var(--surface))}
+.wb-note.n2{right:35px;bottom:12px;background:color-mix(in srgb,var(--purple) 24%,var(--surface));transform:rotate(4deg)}
+.wb-step{display:flex;align-items:center;gap:6px;font-size:11.5px;line-height:1.35;color:var(--muted);min-width:0}
+.wb-step i{width:15px;height:15px;border:1px solid var(--border-strong);border-radius:50%;display:grid;place-items:center;font:600 8.5px var(--mono);font-style:normal;color:var(--muted);flex:none}
+.wb-step b{font-weight:500;color:var(--fg);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wb-step span{font:10px var(--mono);color:var(--muted);flex:none}
+.wb-step.done i{background:var(--green-soft);border-color:var(--green-line);color:var(--green)}
+.wb-step.doing i{background:var(--amber-soft);border-color:var(--amber-line);color:var(--amber)}
+.wb-step.doing b{color:var(--fg)}
+
+/* props */
+.prop{position:absolute;z-index:3}
+.approval{left:34%;top:5%;width:100px;height:78px;background:transparent;border:0;box-shadow:none;padding:0;cursor:pointer;transition:transform .14s}
+.approval:hover{transform:translateY(-1px)}
+.approval::before{content:"";position:absolute;left:0;right:0;bottom:0;height:54px;border-radius:0 0 7px 7px;background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 84%,var(--slate) 8%),color-mix(in srgb,var(--surface-2) 86%,var(--slate) 10%));box-shadow:var(--shadow-soft)}
+.approval-head{position:relative;z-index:2;display:flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;color:var(--fg-2);padding:0 1px}
+.lamp{width:5px;height:5px;border-radius:50%;background:var(--faint);flex:none;position:relative;z-index:2}
+.lamp.amber{background:var(--amber);box-shadow:0 0 0 3px var(--amber-soft);animation:pulse 2.4s ease-in-out infinite}
+.tray-slot{position:absolute;left:8px;right:8px;top:30px;height:2px;border-radius:2px;background:var(--border-strong);z-index:2}
+.tray-paper{position:absolute;left:8px;right:8px;top:34px;display:flex;align-items:center;gap:4px;font-size:10px;color:var(--muted);line-height:1.2;padding:4px 5px;border:1px solid var(--border);border-radius:2px;background:var(--surface);box-shadow:0 3px 5px rgba(0,0,0,.06);z-index:2}
+.tray-paper i{width:6px;height:8px;border:1px solid var(--amber);border-radius:1px;flex:none}
+.tray-count{position:absolute;right:-4px;top:0;min-width:16px;height:16px;padding:0 4px;border-radius:99px;background:var(--amber);color:#fff;font:600 9px/16px var(--mono);text-align:center;z-index:3}
+.shelf{right:1.5%;top:27%;width:120px;height:190px;border:0;border-radius:8px;filter:drop-shadow(0 14px 18px rgba(35,30,24,.10));background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 90%,var(--slate) 8%),color-mix(in srgb,var(--surface-2) 92%,var(--slate) 6%));padding:9px;box-shadow:var(--shadow-soft);display:flex;flex-direction:column;gap:6px}
+.shelf::before{content:"";position:absolute;left:9px;right:9px;bottom:58px;height:1px;background:var(--border-strong);z-index:1}
+.shelf::after{content:"";position:absolute;left:9px;right:9px;top:96px;height:1px;background:var(--border-strong);z-index:1}
+.shelf-head{display:flex;align-items:center;justify-content:space-between;font-size:10.5px;font-weight:600;color:var(--fg-2);padding-bottom:5px;border-bottom:1px solid var(--border);position:relative;z-index:2}
+.shelf-head em{font:600 10px var(--mono);font-style:normal;color:var(--purple)}
+.shelf-paper{display:flex;align-items:flex-start;gap:4px;font-size:10px;line-height:1.35;color:var(--muted);border:1px solid var(--border);border-radius:3px;background:var(--surface);padding:4px;min-height:30px;box-shadow:0 2px 4px rgba(0,0,0,.04);position:relative;z-index:2}
+.shelf-paper i{width:6px;height:8px;border:1px solid var(--purple);border-radius:1px;flex:none;margin-top:1px}
+.shelf-paper.dim{opacity:.45}
+.shelf-paper.dim i{border-color:var(--border-strong)}
+.shelf-books{position:relative;z-index:2;display:flex;align-items:flex-end;gap:3px;height:28px;margin-top:auto}
+.shelf-books i{width:7px;height:18px;border:1px solid var(--border);border-radius:1px 1px 2px 2px;background:var(--surface)}
+.shelf-books i:nth-child(1){height:22px;background:color-mix(in srgb,var(--slate) 24%,var(--surface))}
+.shelf-books i:nth-child(2){height:16px;background:color-mix(in srgb,var(--amber) 22%,var(--surface))}
+.shelf-books i:nth-child(3){height:20px;background:color-mix(in srgb,var(--indigo) 18%,var(--surface))}
+.shelf-books i:nth-child(4){height:13px;background:color-mix(in srgb,var(--green) 18%,var(--surface))}
+.shelf-plant{position:absolute;right:10px;bottom:60px;width:20px;height:26px;z-index:3}
+.shelf-plant i{position:absolute;bottom:5px;left:3px;width:7px;height:14px;border-radius:60% 0 60% 60%;background:var(--plant);opacity:.85}
+.shelf-plant i:nth-child(2){left:10px;bottom:7px;transform:rotate(22deg)}
+.shelf-plant span{position:absolute;left:5px;bottom:0;width:11px;height:7px;border-radius:0 0 3px 3px;background:var(--surface-2);border:1px solid var(--border)}
+.rack{right:1.5%;bottom:4%;width:120px;height:156px;filter:drop-shadow(0 14px 18px rgba(35,30,24,.13));border:1px solid var(--border-strong);border-radius:8px;background:linear-gradient(180deg,color-mix(in srgb,var(--term-bg) 88%,var(--slate) 12%),color-mix(in srgb,var(--term-bg) 96%,var(--slate) 4%));padding:8px;box-shadow:var(--shadow-soft);display:flex;flex-direction:column;gap:6px}
+.rack-head{font-size:10.5px;font-weight:600;color:rgba(255,255,255,.82);padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,.1);display:flex;align-items:center;justify-content:space-between}
+.rack-head span{font:9px var(--mono);color:rgba(255,255,255,.55)}
+.server{flex:1;border:1px solid rgba(255,255,255,.12);border-radius:4px;background:color-mix(in srgb,var(--term-bg) 72%,var(--surface-2) 28%);display:flex;align-items:center;gap:4px;padding:0 7px;min-height:0;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+.server .led{width:4px;height:4px;border-radius:50%;background:var(--green);animation:blink 2.1s steps(2,end) infinite}
+.server .led:nth-child(2){animation-delay:.7s;background:var(--amber)}
+.server .slit{height:1px;flex:1;background:rgba(255,255,255,.14);margin-left:4px}
+.server .fan{width:10px;height:10px;border-radius:50%;border:1px solid rgba(255,255,255,.16);position:relative;flex:none}
+.server .fan::after{content:"";position:absolute;inset:2px;border-radius:50%;border-top:1px solid rgba(255,255,255,.28);border-right:1px solid rgba(255,255,255,.1)}
+
+/* lounge — furniture on the floor, no outer card */
+.lounge{position:absolute;left:3%;bottom:3%;width:214px;height:166px;z-index:3}
+.lounge-rug{position:absolute;left:0;right:0;bottom:0;height:150px;border-radius:50% 50% 18px 18px;background:radial-gradient(ellipse at 50% 60%,color-mix(in srgb,var(--rug-warm) 82%,transparent),color-mix(in srgb,var(--rug-warm) 30%,transparent) 70%);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--surface) 50%,transparent)}
+.sofa{position:absolute;left:8px;top:12px;width:150px;height:56px;z-index:2;filter:drop-shadow(0 6px 10px rgba(0,0,0,.08))}
+.sofa::before{content:"";position:absolute;left:0;right:0;top:0;height:34px;border:1px solid var(--border);border-radius:9px 9px 4px 4px;background:linear-gradient(180deg,var(--sofa),color-mix(in srgb,var(--sofa) 82%,var(--surface)))}
+.sofa::after{content:"";position:absolute;left:3px;right:3px;top:28px;height:24px;border:1px solid var(--border);border-radius:4px 4px 8px 8px;background:color-mix(in srgb,var(--sofa) 78%,var(--surface))}
+.sofa i{position:absolute;top:6px;width:40px;height:22px;border-radius:5px;background:color-mix(in srgb,var(--sofa) 62%,var(--surface));border:1px solid var(--border);z-index:1}
+.sofa .arm{position:absolute;top:20px;width:13px;height:32px;border:1px solid var(--border);border-radius:6px;background:var(--sofa);z-index:3}
+.sofa .arm.l{left:-6px}
+.sofa .arm.r{right:-6px}
+.sofa .throw{position:absolute;right:13px;top:27px;width:28px;height:18px;border:1px solid var(--amber-line);border-radius:3px 3px 6px 6px;background:color-mix(in srgb,var(--amber) 28%,var(--surface));transform:rotate(-4deg);z-index:4;opacity:.8}
+.coffee-table .book{position:absolute;left:27px;bottom:3px;width:18px;height:4px;border:1px solid var(--border);border-radius:1px;background:color-mix(in srgb,var(--indigo) 26%,var(--surface));transform:rotate(-7deg)}
+.sofa i:nth-child(1){left:7px}
+.sofa i:nth-child(2){left:52px}
+.sofa i:nth-child(3){left:97px}
+.coffee-table{position:absolute;left:52px;bottom:14px;width:74px;height:32px;border:1px solid var(--border);border-radius:50%;background:var(--desk-top);box-shadow:var(--shadow-soft);z-index:2}
+.coffee-table::after{content:"";position:absolute;left:50%;bottom:-8px;width:12px;height:8px;border:1px solid var(--border);border-top:0;border-radius:0 0 4px 4px;transform:translateX(-50%);background:var(--surface-2)}
+.coffee-table i{position:absolute;top:-4px;width:8px;height:6px;border:1px solid var(--border-strong);border-radius:1px 1px 3px 3px;background:var(--surface)}
+.coffee-table i:first-child{left:18px}
+.coffee-table i:last-child{right:18px}
+.floor-lamp{position:absolute;left:0;bottom:18px;width:30px;height:104px;z-index:3}
+.floor-lamp::before{content:"";position:absolute;left:50%;bottom:0;width:24px;height:2px;border-radius:2px;background:var(--border-strong);transform:translateX(-50%)}
+.floor-lamp::after{content:"";position:absolute;left:50%;bottom:2px;width:1px;height:62px;background:var(--border-strong);transform:translateX(-50%)}
+.floor-lamp span{position:absolute;left:50%;top:0;width:32px;height:24px;transform:translateX(-50%);border:1px solid var(--border);border-radius:7px 7px 3px 3px;background:color-mix(in srgb,var(--amber) 26%,var(--surface));box-shadow:0 0 24px color-mix(in srgb,var(--amber) 24%,transparent)}
+.coffee-machine{position:absolute;right:4px;top:12px;width:40px;height:52px;border:1px solid var(--border);border-radius:5px;background:var(--surface);box-shadow:var(--shadow-soft);z-index:2}
+.coffee-machine::before{content:"";position:absolute;left:7px;top:8px;width:26px;height:13px;border:1px solid var(--border);border-radius:2px;background:var(--term-bg)}
+.coffee-machine::after{content:"";position:absolute;left:11px;top:28px;width:18px;height:5px;border-radius:2px;background:var(--border-strong)}
+.steam{position:absolute;left:14px;top:-6px;width:12px;height:10px;z-index:3}
+.steam i{position:absolute;bottom:0;width:1px;height:7px;background:var(--faint);border-radius:2px;animation:steam 2.8s ease-in-out infinite;opacity:0}
+.steam i:first-child{left:2px;animation-delay:.2s}
+.steam i:nth-child(2){left:7px;animation-delay:1.1s}
+.lounge-plant{position:absolute;right:2px;bottom:10px;width:34px;height:50px;z-index:2}
+.lounge-plant i{position:absolute;bottom:10px;left:3px;width:12px;height:27px;border-radius:60% 0 60% 60%;background:var(--plant);opacity:.9;transform:rotate(-18deg)}
+.lounge-plant i:nth-child(2){left:14px;bottom:7px;transform:rotate(20deg)}
+.lounge-plant span{position:absolute;left:9px;bottom:0;width:15px;height:9px;border:1px solid var(--border);border-radius:0 0 3px 3px;background:var(--surface-2)}
+.lounge-label{position:absolute;right:0;bottom:0;padding:2px 6px;border:1px solid var(--border);border-radius:99px;background:var(--surface);font-size:10px;font-weight:500;color:var(--muted);box-shadow:var(--shadow-1);white-space:nowrap;z-index:3;display:inline-flex;align-items:center;gap:4px}
+.stage.has-idle .lounge-label{color:var(--green);border-color:var(--green-line);background:var(--green-soft)}
+.stage.has-idle .lounge-label::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--green)}
+
+.meeting{position:absolute;left:80.5%;top:30%;width:110px;height:132px;z-index:3;display:none}
+@media (min-width:1400px){.meeting{display:block}}
+.meeting-rug{position:absolute;left:-6px;right:-6px;bottom:18px;height:78px;border-radius:50%;background:color-mix(in srgb,var(--surface) 58%,var(--slate) 8%);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--border) 60%,transparent)}
+.meeting-table{position:absolute;left:12px;top:34px;width:86px;height:34px;border:1px solid var(--border);border-radius:50%;background:var(--desk-top);box-shadow:var(--shadow-soft)}
+.meeting-table::after{content:"";position:absolute;left:50%;top:7px;bottom:7px;width:1px;background:var(--border)}
+.meeting-table i{position:absolute;left:50%;top:-10px;transform:translateX(-50%);width:22px;height:14px;border:1px solid var(--border-strong);border-radius:2px;background:var(--term-bg);box-shadow:0 2px 5px rgba(0,0,0,.12)}
+.meeting-table i::after{content:"";position:absolute;left:4px;right:4px;top:4px;height:1px;background:rgba(255,255,255,.28);box-shadow:0 3px 0 rgba(255,255,255,.16)}
+.meeting-seat{position:absolute;width:20px;height:24px;border:1px solid var(--border);border-radius:8px 8px 4px 4px;background:color-mix(in srgb,var(--surface-2) 70%,var(--slate) 30%);box-shadow:0 2px 4px rgba(0,0,0,.06)}
+.meeting-seat.s1{left:0;top:52px}
+.meeting-seat.s2{right:0;top:52px}
+.meeting-seat.s3{left:50%;bottom:20px;transform:translateX(-50%);width:30px;height:14px;border-radius:8px 8px 3px 3px}
+.meeting-plant{position:absolute;right:2px;top:20px;width:20px;height:28px}
+.meeting-plant i{position:absolute;left:4px;bottom:6px;width:8px;height:16px;border-radius:60% 0 60% 60%;background:var(--plant);opacity:.85;transform:rotate(-18deg)}
+.meeting-plant i:nth-child(2){left:11px;bottom:4px;transform:rotate(20deg)}
+.meeting-plant span{position:absolute;left:5px;bottom:0;width:10px;height:6px;border:1px solid var(--border);border-radius:0 0 3px 3px;background:var(--surface-2)}
+.meeting-label{position:absolute;left:50%;bottom:0;transform:translateX(-50%);font-size:10px;font-weight:500;color:var(--muted);white-space:nowrap}
+.meeting-lamp{position:absolute;right:10px;top:8px;width:5px;height:5px;border-radius:50%;background:var(--amber);opacity:.35;box-shadow:0 0 0 3px var(--amber-soft);transition:opacity .12s}
+.stage.has-planning .meeting-lamp{opacity:1;animation:pulse 2.4s ease-in-out infinite}
+.stage.has-planning .meeting-table i{box-shadow:0 0 0 1px var(--amber-line),0 2px 5px rgba(0,0,0,.12)}
+/* plants */
+.plant{position:absolute;z-index:2;width:44px;height:64px}
+.plant .pot{position:absolute;bottom:0;left:11px;width:22px;height:17px;border:1px solid var(--border);border-radius:3px 3px 6px 6px;background:var(--surface-2)}
+.plant i{position:absolute;border:1px solid color-mix(in srgb,var(--plant) 60%,var(--border));background:var(--plant);border-radius:60% 0 60% 60%;width:16px;height:26px;opacity:.85}
+.plant i:nth-child(1){left:12px;top:2px;transform:rotate(-26deg)}
+.plant i:nth-child(2){left:22px;top:6px;transform:rotate(18deg)}
+.plant i:nth-child(3){left:17px;top:16px;width:11px;height:18px;transform:rotate(0)}
+.plant.p1{right:22%;bottom:6%;transform:scale(.9)}
+.plant.p2{left:26%;bottom:5%;transform:scale(.78)}
+.plant.p3{left:47%;bottom:1%;transform:scale(1.06)}
+.plant.p4{left:63%;bottom:0%;transform:scale(.86)}
+
+/* links */
+.links{position:absolute;inset:0;z-index:1;pointer-events:none;overflow:visible}
+.link{fill:none;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.link.expected{stroke:color-mix(in srgb,var(--border-strong) 80%,transparent);stroke-width:1;stroke-dasharray:3 6;opacity:0}
+.link.actual{stroke:var(--green);stroke-width:1.3;stroke-dasharray:4 7;opacity:.62;animation:flow 1.8s linear infinite}
+.stage.config .link.expected{opacity:.7}
+.stage.has-waiting .approval{box-shadow:0 0 0 1px var(--amber-line),var(--shadow-soft)}
+.stage.has-review .shelf{box-shadow:0 0 0 1px var(--purple-line),var(--shadow-soft)}
+.stage.has-review .shelf-head::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--purple);display:inline-block;margin-right:4px}
+.stage.has-idle .floor-lamp span{box-shadow:0 0 30px color-mix(in srgb,var(--amber) 32%,transparent)}
+.stage.config .link.actual{opacity:.15;animation:none}
+
+/* stations */
+.stations{position:absolute;inset:0;z-index:3}
+.station{position:absolute;width:180px;height:216px;border:0;padding:0;background:transparent;text-align:center;cursor:pointer;color:inherit;z-index:3;border-radius:14px;transition:background .14s,box-shadow .14s}
+.station.lead{width:220px;height:230px}
+.monitor{position:absolute;left:14px;top:26px;width:76px;height:52px;border:1px solid color-mix(in srgb,var(--border-strong) 75%,transparent);border-radius:5px;background:var(--term-bg);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 6px 12px rgba(0,0,0,.14);z-index:2}
+.monitor-bar{display:flex;align-items:center;gap:3px;height:14px;padding:0 4px;background:rgba(255,255,255,.05);border-bottom:1px solid rgba(255,255,255,.07);font:600 9px var(--mono);color:rgba(255,255,255,.82);white-space:nowrap;overflow:hidden}
+.monitor-bar .led{width:3px;height:3px;border-radius:50%;background:var(--faint);flex:none}
+.monitor-screen{flex:1;display:flex;flex-direction:column;gap:2px;padding:4px 5px;justify-content:center}
+.monitor-screen i{display:block;height:2px;border-radius:2px;background:rgba(255,255,255,.16)}
+.monitor-stand{position:absolute;left:50%;bottom:-28px;width:1px;height:28px;background:var(--border-strong);transform:translateX(-50%)}
+.monitor-stand::after{content:"";position:absolute;left:50%;bottom:-2px;width:14px;height:2px;border-radius:2px;background:var(--border-strong);transform:translateX(-50%)}
+.monitor.run{box-shadow:0 0 0 1px var(--green-line),0 6px 12px rgba(0,0,0,.14)}
+.monitor.run .led{background:var(--green);animation:blink 1.8s steps(2,end) infinite}
+.monitor.run .monitor-screen i{background:rgba(95,184,132,.38)}
+.monitor.wait{box-shadow:0 0 0 1px var(--amber-line),0 6px 12px rgba(0,0,0,.14)}
+.monitor.wait .led{background:var(--amber)}
+.monitor.wait .monitor-screen i{background:rgba(201,162,92,.34)}
+.monitor.fail{box-shadow:0 0 0 1px var(--red-line),0 6px 12px rgba(0,0,0,.14)}
+.monitor.fail .led{background:var(--red);animation:blink 1.2s steps(2,end) infinite}
+.monitor.fail .monitor-screen i{background:rgba(217,122,120,.34)}
+.monitor.review .led{background:var(--purple)}
+.monitor.review .monitor-screen i{background:rgba(156,138,224,.30)}
+.monitor.idle .monitor-screen i{opacity:.4}
+.station.lead .monitor{left:18px;top:28px;width:96px;height:62px}
+.station.lead .monitor-bar{height:14px;font-size:7px}
+.chair{position:absolute;left:104px;top:60px;width:64px;height:68px;border:1px solid var(--border);border-radius:16px 16px 9px 9px;background:color-mix(in srgb,var(--slate) 52%,var(--surface-2));z-index:3;box-shadow:inset 0 2px 0 color-mix(in srgb,var(--accent) 55%,transparent),0 4px 8px rgba(0,0,0,.04)}
+.station.lead .chair{left:146px;top:72px;width:68px;height:72px}
+.actor-wrap{position:absolute;left:110px;top:34px;width:64px;height:88px;z-index:4;display:flex;justify-content:center}
+.station.lead .actor-wrap{left:150px;top:44px;width:68px;height:92px}
+.robot{width:64px;height:88px;display:block;filter:drop-shadow(0 6px 6px rgba(0,0,0,.10))}
+.station.lead .robot{width:68px;height:92px}
+.r-shadow{fill:rgba(0,0,0,.10)}
+.r-antenna{stroke:var(--border-strong);stroke-width:1.1}
+.r-tip{fill:var(--accent)}
+.r-body{fill:var(--actor-body);stroke:var(--border-strong);stroke-width:1.1}
+.r-gloss{fill:color-mix(in srgb,var(--surface) 70%,transparent);opacity:.6}
+.r-visor{fill:var(--actor-visor);stroke:var(--border-strong);stroke-width:.7}
+.r-eye{fill:var(--accent)}
+.r-happy{fill:none;stroke:var(--accent);stroke-width:1.7;stroke-linecap:round}
+.r-char{fill:var(--accent);font:700 11px var(--mono)}
+.r-scarf{fill:var(--accent);opacity:.92}
+.r-arm{fill:var(--actor-body);stroke:var(--border-strong);stroke-width:1}
+.r-badge{fill:var(--accent)}
+.r-paper{fill:var(--surface);stroke:var(--purple);stroke-width:1}
+.desk{position:absolute;left:0;top:106px;width:180px;height:66px;z-index:2;filter:drop-shadow(0 6px 10px rgba(0,0,0,.07))}
+.station.lead .desk{width:220px;top:114px;height:72px}
+.desk-top{position:absolute;left:0;right:0;top:0;height:13px;border:1px solid var(--border);border-radius:5px 5px 2px 2px;background:linear-gradient(180deg,var(--desk-top),color-mix(in srgb,var(--desk-top) 88%,var(--surface-2)))}
+.desk-front{position:absolute;left:3px;right:3px;top:12px;height:12px;border:1px solid var(--border);border-top:0;border-radius:0 0 4px 4px;background:linear-gradient(180deg,var(--desk-front),color-mix(in srgb,var(--desk-front) 90%,var(--floor-warm)))}
+.desk-front::before{content:"";position:absolute;left:8px;right:8px;top:8px;height:1px;background:color-mix(in srgb,var(--border) 75%,transparent)}
+.desk-front::after{content:"";position:absolute;right:10px;top:14px;width:8px;height:2px;border-radius:2px;background:var(--border)}
+.desk::before,.desk::after{content:"";position:absolute;bottom:0;width:2px;height:42px;background:var(--border)}
+.desk-mat{position:absolute;left:18px;top:98px;width:68px;height:14px;border:1px solid color-mix(in srgb,var(--accent) 20%,var(--border));border-radius:4px;background:color-mix(in srgb,var(--accent) 11%,var(--surface));z-index:4;opacity:.9}
+.pedestal{position:absolute;left:9px;top:24px;width:28px;height:40px;border:1px solid var(--border);border-radius:0 0 4px 4px;background:color-mix(in srgb,var(--desk-front) 82%,var(--surface));z-index:2}
+.pedestal::before{content:"";position:absolute;left:5px;right:5px;top:11px;height:1px;background:var(--border)}
+.desk::before{left:10px}
+.desk::after{right:10px}
+.keyboard{position:absolute;left:30px;top:99px;width:42px;height:6px;border:1px solid var(--border);border-radius:2px;background:var(--surface-2);z-index:4;opacity:.9}
+.papers{position:absolute;left:98px;top:98px;width:20px;height:8px;border:1px solid var(--border);border-radius:1px;background:var(--surface);z-index:4;transform:rotate(-4deg);box-shadow:2px 2px 0 var(--surface-2)}
+.mug{position:absolute;left:80px;top:97px;width:8px;height:9px;border:1px solid var(--border-strong);border-radius:1px 1px 3px 3px;background:var(--surface);z-index:4}
+.desk-lamp{position:absolute;left:118px;top:84px;width:24px;height:26px;z-index:4}
+.desk-lamp::before{content:"";position:absolute;left:50%;bottom:0;width:16px;height:2px;border-radius:2px;background:var(--border-strong);transform:translateX(-50%)}
+.desk-lamp::after{content:"";position:absolute;left:50%;bottom:2px;width:1px;height:13px;background:var(--border-strong);transform:translateX(-50%)}
+.desk-lamp span{position:absolute;left:50%;top:0;width:20px;height:11px;transform:translateX(-50%);border:1px solid var(--border);border-radius:5px 5px 2px 2px;background:color-mix(in srgb,var(--amber) 24%,var(--surface));box-shadow:0 0 16px color-mix(in srgb,var(--amber) 20%,transparent)}
+.nameplate{position:absolute;left:50%;top:176px;transform:translateX(-50%);display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border:1px solid var(--border);border-radius:99px;background:var(--surface);box-shadow:var(--shadow-1);white-space:nowrap;max-width:130px;z-index:5;transition:background .12s,border-color .12s}
+.station.lead .nameplate{top:192px;max-width:130px}
+.nameplate b{font-size:11.5px;font-weight:600;color:var(--fg)}
+.nameplate em{font-size:10px;font-style:normal;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+.nameplate .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);flex:none}
+.bubble{position:absolute;left:50%;top:-10px;transform:translateX(-50%);z-index:6;height:23px;padding:0 8px;border-radius:99px;display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:500;white-space:nowrap;border:1px solid var(--border);background:var(--surface);box-shadow:var(--shadow-soft)}
+.bubble b{font:700 11px var(--mono)}
+.bubble.wait{color:var(--amber);border-color:var(--amber-line);background:var(--amber-soft)}
+.bubble.fail{color:var(--red);border-color:var(--red-line);background:var(--red-soft)}
+.bubble.review{color:var(--purple);border-color:var(--purple-line);background:var(--purple-soft)}
+.away-tag{position:absolute;left:50%;top:50px;transform:translateX(-50%);z-index:2;display:flex;flex-direction:column;align-items:center;gap:1px;font-size:10px;line-height:1.3;color:var(--muted);white-space:nowrap;text-align:center}
+.away-tag b{font-size:10.5px;font-weight:600;color:var(--fg-2)}
+.station.away .monitor,.station.away .chair{opacity:.5}
+.station.away .desk{opacity:.78}
+.seat-chip{display:none;position:absolute;right:0;top:2px;z-index:6;height:19px;padding:0 7px;border-radius:99px;border:1px solid var(--border-strong);background:var(--surface);font:600 9.5px var(--mono);color:var(--fg-2);white-space:nowrap}
+.station.empty{width:100px;height:180px}
+.empty-desk{position:absolute;left:0;top:32px;width:100px;height:106px}
+.empty-top{position:absolute;left:0;right:0;top:30px;height:10px;border:1px solid var(--border);border-radius:3px;background:color-mix(in srgb,var(--surface) 80%,var(--amber) 6%)}
+.empty-front{position:absolute;left:3px;right:3px;top:39px;height:9px;border:1px solid var(--border);border-top:0;border-radius:0 0 3px 3px;background:color-mix(in srgb,var(--surface-2) 84%,var(--slate) 12%)}
+.empty-leg{position:absolute;top:48px;width:2px;height:28px;background:var(--border)}
+.empty-leg.l{left:9px}.empty-leg.r{right:9px}
+.empty-chair{position:absolute;left:50%;top:48px;transform:translateX(-50%);width:38px;height:42px;border:1px dashed var(--border-strong);border-radius:8px 8px 5px 5px;background:color-mix(in srgb,var(--surface) 45%,transparent)}
+.empty-plus{position:absolute;left:50%;top:4px;transform:translateX(-50%);font:500 15px var(--mono);color:var(--faint)}
+.station.empty .nameplate{top:150px;max-width:110px}
+.station.empty .nameplate em{font-size:8px}
+.stage.config .station.empty .empty-chair{border-color:var(--fg-2);background:var(--surface)}
+.stage.config .station.empty .empty-plus{color:var(--fg-2)}
+.station.empty .nameplate{top:150px;max-width:110px}
+.station.empty .nameplate em{font-size:8px}
+.stage.config .station{background:color-mix(in srgb,var(--surface) 42%,transparent);box-shadow:inset 0 0 0 1px var(--border)}
+.stage.config .station:hover{background:var(--surface-hover);box-shadow:inset 0 0 0 1px var(--border-strong)}
+.stage.config .station.selected{background:color-mix(in srgb,var(--surface) 58%,transparent);box-shadow:inset 0 0 0 1px var(--border-strong)}
+.stage.config .seat-chip{display:inline-flex}
+.station.empty .seat-chip{display:none}
+.stage.config .station.empty{background:transparent;box-shadow:none}
+.stage.config .hint-bar{opacity:1;transform:translate(-50%,0)}
+.hint-bar{position:absolute;left:50%;bottom:10px;transform:translate(-50%,8px);z-index:20;display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border:1px solid var(--border);border-radius:99px;background:var(--surface);box-shadow:var(--shadow-soft);font-size:10.5px;color:var(--muted);opacity:0;transition:opacity .16s,transform .16s;pointer-events:none;white-space:nowrap}
+.hint-bar b{color:var(--fg-2);font-weight:600}
+
+/* standalone actors */
+.standalones{position:absolute;inset:0;z-index:4;pointer-events:none}
+.standalone{position:absolute;transform:translate(-50%,-100%);display:flex;flex-direction:column;align-items:center;gap:1px;width:96px;pointer-events:auto;padding:0;border:0;background:transparent;cursor:pointer;color:inherit}
+.standalone .robot{width:56px;height:78px}
+.standalone .nameplate{position:static;transform:none;max-width:100px}
+.standalone.selected .nameplate{border-color:var(--fg-2)}
+
+/* ── Legend ────────────────────────────────────────────────── */
+.legend{flex:none;height:27px;display:flex;align-items:center;gap:12px;padding:0 2px;font-size:11px;color:var(--muted);min-width:0;overflow:hidden}
+.legend span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.legend .line{width:16px;height:0;border-top:1px solid var(--border-strong)}
+.legend .line.actual{border-top:1.5px dashed var(--green)}
+.legend .line.expected{border-top:1px dashed var(--border-strong)}
+.legend .dot{width:5px;height:5px;border-radius:50%}
+.legend .dot.run{background:var(--green)}.legend .dot.wait{background:var(--amber)}.legend .dot.review{background:var(--purple)}.legend .dot.fail{background:var(--red)}
+.legend-note{margin-left:auto;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+
+/* ── Inspector ─────────────────────────────────────────────── */
+.inspector{position:absolute;right:8px;top:0;bottom:33px;width:340px;z-index:30;min-height:0;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--shadow-float);display:none;flex-direction:column;overflow:hidden}
+.live-body.inspector-open .inspector{display:flex}
+body.config-mode .inspector{bottom:0}
+#detailToggle[hidden]{display:none}
+.inspector-scroll{flex:1;min-height:0;overflow:auto;padding:12px 13px 6px}
+.insp-head{display:flex;align-items:flex-start;gap:9px;min-width:0;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.insp-avatar{width:34px;height:34px;border-radius:9px;border:1px solid var(--border);background:var(--surface-2);display:grid;place-items:center;flex:none;position:relative;overflow:hidden}
+.insp-avatar .robot{width:22px;height:30px;filter:none}
+.insp-avatar::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--accent,var(--slate))}
+.insp-title{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.insp-title b{font-size:14px;font-weight:600;line-height:1.3}
+.insp-title span{font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.insp-status{display:flex;align-items:center;gap:6px;padding:9px 0 10px;border-bottom:1px solid var(--border)}
+.pill{display:inline-flex;align-items:center;gap:4px;height:21px;padding:0 7px;border-radius:5px;font-size:10.5px;font-weight:500;white-space:nowrap}
+.pill.run{color:var(--green);background:var(--green-soft)}
+.pill.wait{color:var(--amber);background:var(--amber-soft)}
+.pill.fail{color:var(--red);background:var(--red-soft)}
+.pill.review{color:var(--purple);background:var(--purple-soft)}
+.pill.idle{color:var(--muted);background:var(--surface-hover)}
+.pill.lead{color:var(--fg-2);background:var(--surface-hover)}
+.insp-block{padding:9px 0;border-bottom:1px solid var(--border)}
+.insp-block:last-child{border-bottom:0}
+.block-label{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.block-label .spacer{flex:1}
+.task-title{font-size:13px;font-weight:600;line-height:1.45;color:var(--fg);display:flex;align-items:baseline;gap:5px}
+.task-title .mono{font-size:10.5px;color:var(--muted);font-weight:500;flex:none}
+.task-desc{margin:3px 0 0;font-size:12.5px;line-height:1.6;color:var(--fg-2)}
+.meta-row{display:flex;align-items:center;gap:5px;margin-top:6px;font-size:11px;color:var(--muted);min-width:0}
+.meta-row .mono{font-size:10px;color:var(--muted)}
+.term-preview{margin-top:7px;border:1px solid var(--border);border-radius:6px;background:var(--term-bg);overflow:hidden}
+.term-head{display:flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-bottom:1px solid rgba(255,255,255,.09);font:10px var(--mono);color:rgba(255,255,255,.45);background:rgba(255,255,255,.03)}
+.term-head .led{width:4px;height:4px;border-radius:50%;background:var(--green)}
+.term-preview pre{margin:0;padding:7px 8px;font:11px/1.6 var(--mono);color:var(--term-fg);white-space:pre-wrap;overflow:hidden;max-height:74px}
+.term-preview pre i{font-style:normal;color:var(--green)}
+.term-preview pre em{font-style:normal;color:var(--amber)}
+.rel{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);padding:2px 0;min-width:0}
+.rel .line{width:14px;border-top:1px solid var(--border-strong);flex:none}
+.rel .line.actual{border-top:2px dashed var(--green)}
+.rel .line.expected{border-top:1px dashed var(--border-strong)}
+.rel b{color:var(--fg-2);font-weight:500}
+.plan-list{display:flex;flex-direction:column;gap:2px}
+.plan-row{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);min-width:0;padding:2px 0}
+.plan-row i{width:13px;height:13px;border:1px solid var(--border-strong);border-radius:50%;display:grid;place-items:center;font:600 7.5px var(--mono);font-style:normal;color:var(--faint);flex:none}
+.plan-row b{font-weight:500;color:var(--fg-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plan-row span{font:10px var(--mono);color:var(--muted);flex:none}
+.plan-row.done i{background:var(--green-soft);border-color:var(--green-line);color:var(--green)}
+.plan-row.doing i{background:var(--amber-soft);border-color:var(--amber-line);color:var(--amber)}
+.error-box{border:1px solid var(--red-line);background:var(--red-soft);border-radius:6px;padding:8px;font:11px/1.6 var(--mono);color:var(--red);overflow-wrap:anywhere}
+.approval-box{border:1px solid var(--amber-line);background:var(--amber-soft);border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:5px}
+.approval-box b{font-size:12px;font-weight:600;color:var(--fg-2)}
+.approval-box code{font:10.5px/1.55 var(--mono);color:var(--amber);white-space:pre-wrap;overflow-wrap:anywhere}
+.artifact{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted);padding:2px 0}
+.artifact i{width:9px;height:11px;border:1px solid var(--border-strong);border-radius:1px;flex:none}
+.insp-actions{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:10px 0 4px}
+.insp-actions .btn{height:29px;font-size:12px}
+.insp-note{margin:5px 0 0;font-size:10.5px;line-height:1.55;color:var(--muted)}
+.insp-foot{flex:none;display:flex;align-items:center;gap:6px;padding:8px 13px 10px;border-top:1px solid var(--border);background:var(--surface)}
+.insp-foot .btn{height:30px;font-size:12px}
+
+/* config inspector */
+.cfg-field{display:flex;flex-direction:column;gap:4px;margin:6px 0 2px}
+.cfg-field>span{font-size:10.5px;letter-spacing:.05em;color:var(--muted);font-weight:600}
+.cfg-field input{width:100%}
+.cast-list{display:flex;flex-direction:column;gap:1px}
+.cast-row{display:flex;align-items:center;gap:6px;padding:3px;border-radius:5px;min-width:0}
+.cast-row:hover{background:var(--surface-hover)}
+.cast-row.on{background:var(--brand-soft)}
+.cast-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none}
+.cast-name{flex:1;min-width:0;font-size:12px;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cast-row select{height:23px;font-size:10.5px;padding:0 2px;border-color:transparent;background:transparent;color:var(--fg-2)}
+.cast-row select:hover{border-color:var(--border);background:var(--surface)}
+.cast-role{width:60px;flex:none}
+.cast-seat{width:76px;flex:none}
+.switch{width:24px;height:14px;border:1px solid var(--border-strong);border-radius:99px;background:var(--surface-hover);position:relative;cursor:pointer;flex:none;padding:0;transition:background .12s,border-color .12s}
+.switch i{position:absolute;left:2px;top:2px;width:8px;height:8px;border-radius:50%;background:var(--faint);transition:transform .12s,background .12s}
+.switch.on{background:var(--fg);border-color:var(--fg)}
+.switch.on i{transform:translateX(10px);background:var(--surface)}
+.toggle-row{display:flex;align-items:flex-start;gap:7px;padding:4px 0;font-size:11px}
+.toggle-row>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.toggle-row b{font-weight:600;color:var(--fg-2);font-size:12px}
+.toggle-row span{font-size:10px;line-height:1.45;color:var(--muted)}
+.mini-link{border:0;background:transparent;color:var(--muted);font-size:10.5px;padding:0;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.mini-link:hover{color:var(--fg)}
+.cfg-note{border:1px solid var(--border);border-radius:6px;padding:7px 8px;font-size:11.5px;line-height:1.55;color:var(--muted);background:var(--surface-2)}
+.cfg-note b{color:var(--fg-2);font-weight:500}
+
+/* ── Gallery ───────────────────────────────────────────────── */
+.gallery-summary{display:flex;align-items:center;gap:16px;padding:0 1px 14px;color:var(--muted);font-size:12px;flex-wrap:wrap}
+.gallery-summary b{font:600 12.5px var(--mono);color:var(--fg);font-variant-numeric:tabular-nums}
+.gallery-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:start}
+.scene-card{border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-1);overflow:hidden;display:flex;flex-direction:column;min-width:0;transition:border-color .12s,box-shadow .12s}
+.scene-card:hover{border-color:var(--border-strong);box-shadow:0 4px 14px rgba(0,0,0,.06)}
+.scene-card.active{box-shadow:0 0 0 1px var(--border-strong),var(--shadow-1)}
+.scene-thumb{--desk-top:color-mix(in srgb,var(--surface) 97%,var(--slate) 3%);--actor-body:color-mix(in srgb,var(--fg) 88%,var(--surface));--actor-visor:color-mix(in srgb,var(--surface) 90%,var(--fg) 6%);height:152px;position:relative;background:var(--floor);border-bottom:1px solid var(--border);overflow:hidden}
+.scene-cover{position:absolute;inset:0;width:100%;height:100%;display:block}
+.cv-floor{fill:color-mix(in srgb,var(--page-canvas) 90%,var(--slate) 9%)}
+.cv-wall{fill:color-mix(in srgb,var(--surface) 96%,var(--slate) 4%)}
+.cv-rug{fill:color-mix(in srgb,var(--surface) 84%,var(--slate) 10%)}
+.cv-line{fill:var(--border)}
+.cv-line-strong{fill:var(--border-strong)}
+.cv-surface{fill:var(--surface)}
+.cv-desk{fill:var(--desk-top);stroke:var(--border);stroke-width:.7}
+.cv-screen{fill:var(--term-bg)}
+.cv-actor{fill:var(--actor-body);stroke:var(--border-strong);stroke-width:.7}
+.cv-visor{fill:var(--actor-visor);stroke:var(--border-strong);stroke-width:.45}
+.cv-plant{fill:color-mix(in srgb,var(--green) 62%,var(--fg) 38%);opacity:.85}
+.cv-pot{fill:var(--surface-2);stroke:var(--border);stroke-width:.7}
+.cv-shadow{filter:drop-shadow(0 3px 3px rgba(20,20,20,.10))}
+.scene-thumb .mini-label{position:absolute;left:11px;top:9px;font:600 8.5px var(--mono);letter-spacing:.14em;color:var(--faint);text-transform:uppercase;z-index:2}
+.scene-thumb .mini-live{position:absolute;right:10px;top:9px;display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 7px;border-radius:99px;background:var(--surface);border:1px solid var(--border);font-size:9.5px;color:var(--muted);z-index:2}
+.scene-thumb .mini-live i{width:4px;height:4px;border-radius:50%;background:var(--green)}
+/* new scene card */
+.new-scene-card{border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-1);padding:13px;display:flex;flex-direction:column;gap:6px;min-height:100%;}
+.new-scene-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding-bottom:7px;border-bottom:1px solid var(--border)}
+.new-scene-head b{font-size:13px;font-weight:600}
+.new-scene-head span{font-size:10.5px;color:var(--muted)}
+.template-choice{display:flex;align-items:center;gap:9px;width:100%;padding:8px 7px;border:1px solid transparent;border-radius:8px;background:transparent;text-align:left;cursor:pointer;color:inherit}
+.template-choice:hover{background:var(--surface-hover);border-color:var(--border)}
+.tpl-icon{width:40px;height:31px;border:1px solid var(--border);border-radius:5px;background:var(--floor);position:relative;flex:none;overflow:hidden}
+.tpl-icon::before{content:"";position:absolute;left:5px;right:5px;top:9px;height:5px;border:1px solid var(--border);border-radius:1px;background:var(--surface);box-shadow:10px 0 0 -1px var(--surface),10px 0 0 0 var(--border),20px 0 0 -1px var(--surface),20px 0 0 0 var(--border)}
+.tpl-icon::after{content:"";position:absolute;left:5px;right:5px;bottom:7px;height:1px;background:var(--border)}
+.tpl-icon.warroom::before{left:8px;right:8px;top:13px;height:8px;border-radius:50%;box-shadow:none}
+.tpl-icon.warroom::after{left:14px;right:14px;bottom:8px;height:5px;border:1px solid var(--border-strong);border-radius:50%;background:transparent}
+.tpl-icon.carrier::before{left:7px;right:7px;top:7px;height:17px;border:1px solid var(--border-strong);border-radius:4px 4px 2px 2px;background:transparent;box-shadow:none;clip-path:polygon(36% 0,64% 0,100% 26%,100% 100%,0 100%,0 26%)}
+.tpl-icon.carrier::after{left:8px;right:8px;top:16px;height:1px;background:repeating-linear-gradient(90deg,var(--border-strong) 0 2px,transparent 2px 5px);transform:rotate(-11deg)}
+.template-choice .tpl-copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.template-choice .tpl-copy b{font-size:12px;font-weight:600;color:var(--fg-2)}
+.template-choice .tpl-copy span{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.template-choice .tag{flex:none}
+.new-scene-card .btn{width:100%;margin-top:auto}
+.new-scene-note{font-size:10px;line-height:1.5;color:var(--muted);padding-top:2px}
+.scene-card-body{padding:12px 13px 10px;display:flex;flex-direction:column;gap:7px;min-width:0}
+.scene-card-title{display:flex;align-items:center;gap:6px;min-width:0}
+.scene-card-title h3{margin:0;font-size:14px;font-weight:600;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scene-card-title .tag{flex:none}
+.scene-desc{margin:0;font-size:12.5px;line-height:1.55;color:var(--fg-2);min-height:38px}
+.cast-row-mini{display:flex;align-items:center;gap:5px;min-width:0}
+.avatars{display:flex;align-items:center;padding-left:2px}
+.avatar-mini{width:22px;height:22px;border-radius:50%;border:2px solid var(--surface);background:var(--surface-2);color:var(--fg-2);font:600 9px var(--mono);display:grid;place-items:center;margin-left:-6px;position:relative}
+.avatar-mini:first-child{margin-left:0}
+.avatar-mini::after{content:"";position:absolute;left:3px;right:3px;bottom:0;height:2px;background:var(--accent,var(--slate));border-radius:2px}
+.avatar-more{width:22px;height:22px;border-radius:50%;border:2px solid var(--surface);background:var(--surface-hover);color:var(--muted);font:600 9px var(--mono);display:grid;place-items:center;margin-left:-6px;position:relative}
+.cast-label{font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-stats{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:10.5px;color:var(--muted);padding-top:1px}
+.card-stats span{display:inline-flex;align-items:center;gap:3px;white-space:nowrap}
+.card-stats i{width:4px;height:4px;border-radius:50%;background:var(--faint)}
+.card-stats i.run{background:var(--green)}.card-stats i.wait{background:var(--amber)}.card-stats i.review{background:var(--purple)}.card-stats i.fail{background:var(--red)}
+.scene-card-foot{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:8px 13px;border-top:1px solid var(--border);margin-top:auto}
+.scene-card-foot .btn{height:27px;font-size:11px}
+.insp-block .event-list{display:flex;flex-direction:column;gap:2px}
+.event-row{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--muted);min-width:0;padding:1px 0}
+.event-row .mono{font-size:9.5px;color:var(--muted);flex:none}
+.event-row i{width:4px;height:4px;border-radius:50%;background:var(--faint);flex:none}
+.event-row i.ok{background:var(--green)}
+.event-row i.warn{background:var(--amber)}
+.event-row i.bad{background:var(--red)}
+.event-row span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.template-strip{margin-top:18px;padding-top:14px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
+.strip-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.strip-head b{font-size:12px;font-weight:600;color:var(--fg-2)}
+.strip-head span{font-size:10.5px;color:var(--muted)}
+.template-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.template-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);min-width:0}
+.template-icon{width:38px;height:30px;border:1px solid var(--border);border-radius:5px;background:var(--floor);position:relative;flex:none;overflow:hidden}
+.template-icon::before{content:"";position:absolute;left:5px;right:5px;top:5px;height:1px;background:var(--border)}
+.template-icon::after{content:"";position:absolute;left:7px;top:11px;width:10px;height:6px;border:1px solid var(--border-strong);border-radius:1px;box-shadow:14px 0 0 -1px var(--surface),14px 0 0 0 var(--border-strong)}
+.template-item>div{min-width:0;display:flex;flex-direction:column;gap:1px}
+.template-item b{font-size:11.5px;font-weight:600;color:var(--fg-2)}
+.template-item span{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.template-item .tag{margin-left:auto;flex:none}
+
+/* ── Execution profile ─────────────────────────────────────── */
+.profile-grid{display:grid;grid-template-columns:220px minmax(0,1fr) 280px;gap:16px;align-items:start}
+.project-list{border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:8px;box-shadow:var(--shadow-1)}
+.project-list .block-label{padding:2px 4px 6px;margin:0;border-bottom:1px solid var(--border);margin-bottom:4px}
+.project-item{display:flex;align-items:center;gap:7px;width:100%;padding:7px;border:0;border-radius:6px;background:transparent;color:var(--fg-2);font-size:12px;text-align:left;cursor:pointer}
+.project-item:hover{background:var(--surface-hover)}
+.project-item.on{background:var(--brand-soft);color:var(--fg);box-shadow:inset 2px 0 0 var(--fg)}
+.project-mark{width:22px;height:22px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);display:grid;place-items:center;font:600 8.5px var(--mono);color:var(--fg-2);flex:none}
+.project-item>div{min-width:0;display:flex;flex-direction:column;gap:0}
+.project-item b{font-size:12px;font-weight:600}
+.project-item span{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.profile-editor{border:1px solid var(--border);border-radius:10px;background:var(--surface);box-shadow:var(--shadow-1);overflow:hidden;min-width:0}
+.editor-head{padding:12px 14px 10px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.editor-head b{font-size:13.5px;font-weight:600}
+.editor-head p{margin:2px 0 0;font-size:12px;line-height:1.5;color:var(--muted)}
+.editor-head .tag{flex:none}
+.profile-editor textarea{display:block;width:100%;height:258px;resize:vertical;border:0;border-bottom:1px solid var(--border);background:var(--term-bg);color:var(--term-fg);padding:12px 14px;font:12px/1.7 var(--mono);outline:none}
+.editor-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 14px}
+.editor-foot span{font-size:9.5px;color:var(--faint)}
+.profile-side{display:flex;flex-direction:column;gap:12px}
+.side-block{border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:12px;box-shadow:var(--shadow-1)}
+.side-block .block-label{margin-bottom:7px}
+.side-block p{margin:0 0 6px;font-size:12.5px;line-height:1.6;color:var(--fg-2)}
+.side-block p:last-child{margin-bottom:0}
+.side-callout{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:9px;display:flex;flex-direction:column;gap:4px;font-size:11px;line-height:1.5;color:var(--muted)}
+.side-callout b{color:var(--fg-2);font-weight:600;font-size:11.5px}
+.side-callout code{font:10.5px var(--mono);color:var(--fg-2);background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:1px 4px;align-self:flex-start}
+
+/* ── Modal / toast ─────────────────────────────────────────── */
+.modal-mask{position:fixed;inset:0;z-index:80;background:rgba(9,9,11,.34);display:none;place-items:center;padding:24px}
+.modal-mask.on{display:grid}
+.modal{width:min(480px,calc(100vw - 40px));max-height:calc(100vh - 60px);overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-float);padding:16px;display:flex;flex-direction:column;gap:11px}
+.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.modal-head h3{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}
+.modal-head p{margin:2px 0 0;font-size:12px;color:var(--muted);line-height:1.55}
+.modal-field{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--muted)}
+.modal-field input,.modal-field textarea{width:100%;border:1px solid var(--input);border-radius:6px;background:var(--surface);color:var(--fg);padding:8px;font-size:12.5px;outline:none}
+.modal-field textarea{min-height:84px;resize:vertical;line-height:1.55}
+.modal-cast{display:flex;flex-wrap:wrap;gap:4px}
+.modal-cast span{display:inline-flex;align-items:center;gap:4px;height:23px;padding:0 7px;border:1px solid var(--border);border-radius:99px;background:var(--surface-2);font-size:10.5px;color:var(--fg-2)}
+.modal-cast i{width:5px;height:5px;border-radius:50%;background:var(--accent,var(--slate))}
+.modal-templates{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.modal-template{border:1px solid var(--border);border-radius:7px;background:var(--surface);padding:8px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:2px}
+.modal-template:hover{background:var(--surface-hover)}
+.modal-template.on{border-color:var(--fg-2);box-shadow:0 0 0 1px var(--border-strong)}
+.modal-template b{font-size:11.5px;font-weight:600}
+.modal-template span{font-size:9.5px;color:var(--muted);line-height:1.45}
+.modal-note{font-size:10.5px;line-height:1.55;color:var(--muted);border-top:1px solid var(--border);padding-top:8px}
+.modal-foot{display:flex;align-items:center;justify-content:flex-end;gap:6px}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(8px);z-index:90;background:var(--fg);color:var(--page-canvas);border-radius:8px;padding:8px 13px;font-size:11.5px;box-shadow:var(--shadow-float);opacity:0;pointer-events:none;transition:opacity .16s,transform .16s;max-width:70vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ── Motion ────────────────────────────────────────────────── */
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:.25}}
+@keyframes flow{to{stroke-dashoffset:-20}}
+@keyframes steam{0%{transform:translateY(2px);opacity:0}30%{opacity:.55}100%{transform:translateY(-9px);opacity:0}}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-1.5px)}}
+@keyframes type{from{transform:translateY(0)}to{transform:translateY(-2px)}}
+@keyframes sway{0%,100%{transform:rotate(-1deg)}50%{transform:rotate(1deg)}}
+@keyframes walkBob{from{transform:translateY(0) rotate(-1.5deg)}to{transform:translateY(-3px) rotate(1.5deg)}}
+.standalone.walking{z-index:20}
+.standalone.walking .robot{animation:walkBob .32s ease-in-out infinite alternate}
+.pose-working .robot{animation:bob 2.6s ease-in-out infinite}
+.pose-working .r-arm.r{animation:type .52s ease-in-out infinite alternate;transform-origin:43px 39px}
+.pose-waiting .robot{animation:sway 3.2s ease-in-out infinite}
+.pose-failed .robot{transform:rotate(-7deg) translateY(2px)}
+.pose-review .robot{animation:bob 3.6s ease-in-out infinite}
+.pose-lead .robot{animation:bob 4.2s ease-in-out infinite}
+.pose-lead .r-tip{animation:pulse 2.8s ease-in-out infinite}
+body[data-motion="off"] .stage *{animation:none!important}
+body[data-motion="off"] .steam{display:none}
+body[data-motion="calm"] .steam{opacity:.6}
+body[data-motion="calm"] .link.actual{animation:none;opacity:.55}
+body[data-motion="calm"] .pose-working .r-arm.r{animation:none}
+body[data-motion="calm"] .pose-working .robot,body[data-motion="calm"] .pose-waiting .robot,body[data-motion="calm"] .pose-review .robot,body[data-motion="calm"] .pose-lead .robot{animation:none}
+body[data-motion="calm"] .lamp.amber,body[data-motion="calm"] .monitor .led{animation:none}
+@media (prefers-reduced-motion:reduce){.stage *{animation:none!important}.steam{display:none}}
+
+/* ── Responsive ────────────────────────────────────────────── */
+@media (max-width:1180px){
+  .live-body{grid-template-columns:minmax(0,1fr) 288px}
+  .scene-stats span:nth-child(n+4){display:none}
+  .gallery-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:1340px){
+  .pinboard{display:none}
+}
+@media (max-width:1240px){
+  .app{grid-template-columns:56px minmax(0,1fr)}
+  .rail-item{width:46px}
+  .view.live{overflow:auto}
+  .profile-grid{grid-template-columns:1fr}
+  .project-list{display:none}
+  .template-row{grid-template-columns:1fr}
+  .scene-stats{display:none}
+}
+@media (min-width:1400px){
+  .approval{left:calc(36.5% + 40px)}
+  .station[data-agent="bei"] .actor-wrap{display:none}
+  .station[data-agent="bei"] .nameplate{display:none}
+  .standalone.wide-only{display:flex}
+}
+@media (max-width:1399px){
+  .standalone.wide-only{display:none}
+}
+@media (max-width:940px){
+  .stage-wrap{overflow-x:auto;overflow-y:hidden}
+  .stage{min-width:960px}
+}
+@media (max-width:720px){
+  .inspector{left:8px;right:8px;width:auto}
+  .page-head{padding:12px 14px 8px;align-items:flex-start;flex-direction:column;gap:8px}
+  .page-actions{width:100%;justify-content:flex-end}
+  .tabs{padding:0 14px;overflow:auto}
+  .view.live{padding:8px 10px 12px}
+  .gallery-grid{grid-template-columns:1fr}
+  .view.gallery,.view.profile{padding:12px 14px 30px}
+  .stage{min-height:560px}
+  .legend{display:none}
+}
+</style>
+</head>
+<body data-motion="calm">
+<div class="app">
+  <nav class="rail" aria-label="主导航">
+    <div class="rail-brand" title="Cockpit Harness">C</div>
+    <button class="rail-item" title="工作区">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M3 10h6M15 8h3M15 12h3"/></svg><span>工作区</span>
+    </button>
+    <button class="rail-item on" title="场景" aria-current="page">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11M15 9v11"/></svg><span>场景</span>
+    </button>
+    <button class="rail-item" title="项目">
+      <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 11h18"/></svg><span>项目</span>
+    </button>
+    <button class="rail-item" title="统计">
+      <svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>统计</span>
+    </button>
+    <button class="rail-item" title="主机">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/></svg><span>主机</span>
+    </button>
+    <button class="rail-item" title="Git">
+      <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="9" r="2.4"/><path d="M6 8.4v7.2M8.3 6h4.3a3 3 0 0 1 3 3v.2"/></svg><span>Git</span>
+    </button>
+    <button class="rail-item" title="知识库">
+      <svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M8 7h7M8 11h5"/></svg><span>知识库</span>
+    </button>
+    <button class="rail-item" title="记忆">
+      <svg viewBox="0 0 24 24"><path d="M12 3v18M5 7v10M19 7v10M8.5 5v14M15.5 5v14"/></svg><span>记忆</span>
+    </button>
+    <button class="rail-item" title="人物">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4"/><path d="M5 20a7 7 0 0 1 14 0"/></svg><span>人物</span>
+    </button>
+    <div class="rail-bottom">
+      <button class="rail-item" title="说明">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.4 2.3c-.7.3-.9.9-.9 1.7M12 17h.01"/></svg><span>说明</span>
+      </button>
+      <button class="rail-item" title="设置">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>设置</span>
+      </button>
+    </div>
+  </nav>
+
+  <main class="main">
+    <header class="page-head">
+      <div class="page-title">
+        <span class="kicker">SCENE</span>
+        <h1>场景</h1>
+        <p class="page-sub" id="pageSub">多 Agent 协作的拟人化配置。办公室只是其中一种舞台。</p>
+      </div>
+      <div class="page-actions">
+        <div class="action-group on" data-actions="gallery">
+          <button class="btn primary" data-open="new-scene">新建场景</button>
+        </div>
+        <div class="action-group" data-actions="live">
+          <button class="btn" data-toast="已打开「研发小队」的场景配置">场景设置</button>
+          <button class="btn primary" data-open="compose">派活</button>
+        </div>
+        <div class="action-group" data-actions="profile">
+          <button class="btn" data-toast="已切换到上一个版本（原型）">历史版本</button>
+        </div>
+        <button class="icon-btn" id="themeBtn" title="切换亮 / 暗" aria-label="切换亮 / 暗">◐</button>
+      </div>
+    </header>
+
+    <nav class="tabs" aria-label="场景视图">
+      <button class="tab" data-view="gallery">场景库</button>
+      <button class="tab on" data-view="live">实况 <span class="live-dot"></span></button>
+      <button class="tab" data-view="profile">执行配置</button>
+    </nav>
+
+    <!-- ── 场景库 ───────────────────────────────────────────── -->
+    <section class="view gallery" data-view="gallery" aria-label="场景库">
+      <div class="gallery-summary">
+        <span><b>2</b> 个协作场景</span>
+        <span><b>7</b> 位 Agent</span>
+        <span><b>2</b> 运行中</span>
+        <span><b>1</b> 待确认</span>
+        <span><b>1</b> 待验收</span>
+        <span class="muted">舞台模板 3 种 · 办公室已上线</span>
+      </div>
+      <div class="gallery-grid">
+        <article class="scene-card active">
+          <div class="scene-thumb">
+            <span class="mini-label">OFFICE · LIVE</span>
+            <span class="mini-live"><i></i>实时</span>
+            <svg class="scene-cover" viewBox="0 0 320 152" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+              <rect width="320" height="152" class="cv-floor"/>
+              <rect width="320" height="58" class="cv-wall"/>
+              <rect y="57" width="320" height="1" class="cv-line"/>
+              <ellipse cx="178" cy="120" rx="124" ry="34" class="cv-rug"/>
+              <g class="cv-shadow">
+                <rect x="16" y="12" width="70" height="40" rx="3" class="cv-surface"/>
+                <rect x="22" y="20" width="34" height="2" rx="1" class="cv-line-strong"/>
+                <rect x="22" y="26" width="52" height="1.5" rx=".75" class="cv-line"/>
+                <rect x="22" y="31" width="44" height="1.5" rx=".75" class="cv-line"/>
+                <rect x="22" y="36" width="50" height="1.5" rx=".75" class="cv-line"/>
+              </g>
+              <g class="cv-shadow">
+                <rect x="16" y="78" width="74" height="24" rx="3" class="cv-desk"/>
+                <rect x="22" y="68" width="24" height="14" rx="2" class="cv-screen"/>
+                <rect x="26" y="72" width="12" height="1.4" rx=".7" class="cv-line-strong"/>
+                <rect x="26" y="76" width="15" height="1.2" rx=".6" class="cv-line"/>
+                <rect x="58" y="64" width="14" height="21" rx="7" class="cv-actor"/>
+                <rect x="61" y="69" width="8" height="5" rx="2.5" class="cv-visor"/>
+                <circle cx="65" cy="71.5" r="1.2" style="fill:var(--slate)"/>
+                <rect x="57" y="80" width="16" height="3" rx="1.5" style="fill:var(--slate)"/>
+                <rect x="32" y="76" width="5" height="4" rx="1" class="cv-surface"/>
+              </g>
+              <g class="cv-shadow">
+                <rect x="112" y="88" width="42" height="11" rx="2" class="cv-desk"/>
+                <rect x="116" y="76" width="17" height="12" rx="1.5" class="cv-screen"/>
+                <rect x="119" y="79" width="8" height="1.2" rx=".6" class="cv-line-strong"/>
+                <rect x="119" y="82" width="10" height="1" rx=".5" class="cv-line"/>
+                <rect x="138" y="73" width="11" height="18" rx="5.5" class="cv-actor"/>
+                <rect x="141" y="77" width="6" height="4" rx="2" class="cv-visor"/>
+                <circle cx="144" cy="79" r="1" style="fill:var(--teal)"/>
+                <rect x="137" y="87" width="13" height="2.5" rx="1.25" style="fill:var(--teal)"/>
+                <circle cx="132" cy="71" r="1.6" style="fill:var(--green)"/>
+              </g>
+              <g class="cv-shadow">
+                <rect x="168" y="88" width="42" height="11" rx="2" class="cv-desk"/>
+                <rect x="172" y="76" width="17" height="12" rx="1.5" class="cv-screen"/>
+                <rect x="175" y="79" width="8" height="1.2" rx=".6" class="cv-line-strong"/>
+                <rect x="175" y="82" width="11" height="1" rx=".5" class="cv-line"/>
+                <rect x="194" y="73" width="11" height="18" rx="5.5" class="cv-actor"/>
+                <rect x="197" y="77" width="6" height="4" rx="2" class="cv-visor"/>
+                <circle cx="200" cy="79" r="1" style="fill:var(--indigo)"/>
+                <rect x="193" y="87" width="13" height="2.5" rx="1.25" style="fill:var(--indigo)"/>
+                <circle cx="188" cy="71" r="1.6" style="fill:var(--green)"/>
+              </g>
+              <g class="cv-shadow">
+                <rect x="224" y="88" width="42" height="11" rx="2" class="cv-desk"/>
+                <rect x="228" y="76" width="17" height="12" rx="1.5" class="cv-screen"/>
+                <rect x="231" y="79" width="8" height="1.2" rx=".6" class="cv-line-strong"/>
+                <rect x="231" y="82" width="10" height="1" rx=".5" class="cv-line"/>
+                <rect x="250" y="73" width="11" height="18" rx="5.5" class="cv-actor"/>
+                <rect x="253" y="77" width="6" height="4" rx="2" class="cv-visor"/>
+                <circle cx="256" cy="79" r="1" style="fill:var(--amber)"/>
+                <rect x="249" y="87" width="13" height="2.5" rx="1.25" style="fill:var(--amber)"/>
+                <circle cx="244" cy="71" r="1.6" style="fill:var(--amber)"/>
+              </g>
+              <g class="cv-shadow">
+                <rect x="226" y="18" width="40" height="30" rx="2" class="cv-surface"/>
+                <circle cx="240" cy="30" r="6" style="fill:var(--amber);opacity:.32"/>
+                <rect x="249" y="26" width="11" height="2" rx="1" class="cv-line-strong"/>
+                <rect x="234" y="40" width="24" height="1.4" rx=".7" class="cv-line"/>
+              </g>
+              <g class="cv-shadow">
+                <rect x="286" y="76" width="8" height="22" rx="4" class="cv-actor"/>
+                <rect x="288" y="80" width="4" height="4" rx="2" class="cv-visor"/>
+                <circle cx="290" cy="82" r=".8" style="fill:var(--orange)"/>
+                <rect x="285" y="90" width="10" height="2" rx="1" style="fill:var(--orange)"/>
+              </g>
+              <g>
+                <rect x="288" y="104" width="12" height="12" rx="2" class="cv-pot"/>
+                <ellipse cx="294" cy="102" rx="8" ry="11" class="cv-plant"/>
+                <ellipse cx="300" cy="105" rx="5" ry="8" class="cv-plant" transform="rotate(22 300 105)"/>
+              </g>
+            </svg>
+          </div>
+          <div class="scene-card-body">
+            <div class="scene-card-title"><h3>研发小队</h3><span class="tag live">当前</span><span class="tag">办公室</span></div>
+            <p class="scene-desc">阿岚带 6 位 Agent，负责当前仓库的日常开发、评审与验收。</p>
+            <div class="cast-row-mini">
+              <div class="avatars">
+                <span class="avatar-mini" style="--accent:var(--slate)">岚</span>
+                <span class="avatar-mini" style="--accent:var(--teal)">林</span>
+                <span class="avatar-mini" style="--accent:var(--indigo)">周</span>
+                <span class="avatar-mini" style="--accent:var(--amber)">北</span>
+                <span class="avatar-mini" style="--accent:var(--purple)">乔</span>
+                <span class="avatar-more">+2</span>
+              </div>
+              <span class="cast-label">7 位 · 1 个空位</span>
+            </div>
+            <div class="card-stats">
+              <span><i class="run"></i>2 运行</span><span><i class="wait"></i>1 待确认</span><span><i class="review"></i>1 待验收</span><span><i class="fail"></i>1 失败</span>
+            </div>
+          </div>
+          <div class="scene-card-foot">
+            <button class="btn primary" data-enter="research">进入实况</button>
+            <button class="icon-btn" title="更多" data-toast="场景操作：复制 / 导出 / 删除（原型）">⋯</button>
+          </div>
+        </article>
+
+        <article class="scene-card">
+          <div class="scene-thumb">
+            <span class="mini-label">WAR ROOM · DRAFT</span>
+            <svg class="scene-cover" viewBox="0 0 320 152" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+              <rect width="320" height="152" class="cv-floor"/>
+              <rect width="320" height="58" class="cv-wall"/>
+              <rect y="57" width="320" height="1" class="cv-line"/>
+              <ellipse cx="160" cy="122" rx="132" ry="30" class="cv-rug"/>
+              <g class="cv-shadow">
+                <rect x="102" y="12" width="116" height="40" rx="3" class="cv-screen"/>
+                <rect x="112" y="20" width="40" height="2" rx="1" class="cv-line-strong"/>
+                <rect x="112" y="26" width="82" height="1.5" rx=".75" class="cv-line"/>
+                <rect x="112" y="31" width="64" height="1.5" rx=".75" class="cv-line"/>
+                <rect x="112" y="36" width="74" height="1.5" rx=".75" class="cv-line"/>
+                <circle cx="206" cy="44" r="2" style="fill:var(--red)"/>
+              </g>
+              <g class="cv-shadow">
+                <ellipse cx="160" cy="94" rx="102" ry="24" class="cv-surface"/>
+                <ellipse cx="160" cy="92" rx="94" ry="19" style="fill:color-mix(in srgb,var(--surface) 86%,var(--amber) 4%)"/>
+                <rect x="116" y="86" width="24" height="12" rx="2" class="cv-screen"/>
+                <rect x="120" y="89" width="10" height="1.2" class="cv-line-strong"/>
+                <rect x="120" y="92" width="14" height="1" class="cv-line"/>
+                <rect x="180" y="86" width="24" height="12" rx="2" class="cv-screen"/>
+                <rect x="184" y="89" width="10" height="1.2" class="cv-line-strong"/>
+                <rect x="184" y="92" width="14" height="1" class="cv-line"/>
+              </g>
+              <g class="cv-shadow">
+                <rect x="92" y="62" width="15" height="24" rx="7.5" class="cv-actor"/>
+                <rect x="96" y="67" width="7" height="5" rx="2.5" class="cv-visor"/>
+                <circle cx="100" cy="69.5" r="1.1" style="fill:var(--teal)"/>
+                <rect x="91" y="80" width="17" height="3" rx="1.5" style="fill:var(--teal)"/>
+              </g>
+              <g class="cv-shadow">
+                <rect x="140" y="58" width="15" height="24" rx="7.5" class="cv-actor"/>
+                <rect x="144" y="63" width="7" height="5" rx="2.5" class="cv-visor"/>
+                <circle cx="148" cy="65.5" r="1.1" style="fill:var(--indigo)"/>
+                <rect x="139" y="76" width="17" height="3" rx="1.5" style="fill:var(--indigo)"/>
+              </g>
+              <g class="cv-shadow">
+                <rect x="188" y="58" width="15" height="24" rx="7.5" class="cv-actor"/>
+                <rect x="192" y="63" width="7" height="5" rx="2.5" class="cv-visor"/>
+                <circle cx="196" cy="65.5" r="1.1" style="fill:var(--amber)"/>
+                <rect x="187" y="76" width="17" height="3" rx="1.5" style="fill:var(--amber)"/>
+              </g>
+              <g class="cv-shadow">
+                <rect x="228" y="62" width="15" height="24" rx="7.5" class="cv-actor"/>
+                <rect x="232" y="67" width="7" height="5" rx="2.5" class="cv-visor"/>
+                <circle cx="236" cy="69.5" r="1.1" style="fill:var(--purple)"/>
+                <rect x="227" y="80" width="17" height="3" rx="1.5" style="fill:var(--purple)"/>
+              </g>
+              <g>
+                <rect x="280" y="104" width="12" height="12" rx="2" class="cv-pot"/>
+                <ellipse cx="286" cy="102" rx="8" ry="11" class="cv-plant"/>
+              </g>
+            </svg>
+          </div>
+          <div class="scene-card-body">
+            <div class="scene-card-title"><h3>发布值班</h3><span class="tag">作战室</span><span class="tag">草稿</span></div>
+            <p class="scene-desc">发布窗口的值班阵容：一人看板、一人回滚、一人对外同步。</p>
+            <div class="cast-row-mini">
+              <div class="avatars">
+                <span class="avatar-mini" style="--accent:var(--slate)">岚</span>
+                <span class="avatar-mini" style="--accent:var(--indigo)">周</span>
+                <span class="avatar-mini" style="--accent:var(--amber)">北</span>
+              </div>
+              <span class="cast-label">4 位 · 未启动</span>
+            </div>
+            <div class="card-stats"><span><i></i>0 运行</span><span><i></i>0 待确认</span><span class="faint">作战室舞台原型</span></div>
+          </div>
+          <div class="scene-card-foot">
+            <button class="btn" data-toast="作战室舞台见 docs/prototype/warroom.html；办公室实况已上线">进入实况</button>
+            <button class="icon-btn" title="更多" data-toast="场景操作（原型）">⋯</button>
+          </div>
+        </article>
+
+        <article class="new-scene-card">
+          <div class="new-scene-head"><b>新建协作场景</b><span>从模板开始</span></div>
+          <button class="template-choice" data-open="new-scene">
+            <span class="tpl-icon"></span>
+            <span class="tpl-copy"><b>办公室</b><span>工位 · 白板 · 审批 · 茶歇 · 会议</span></span>
+            <span class="tag ok">默认</span>
+          </button>
+          <button class="template-choice" data-open="new-scene">
+            <span class="tpl-icon warroom"></span>
+            <span class="tpl-copy"><b>作战室</b><span>长桌 · 主屏 · 发布闸门 · 复盘墙</span></span>
+            <span class="tag">原型</span>
+          </button>
+          <button class="template-choice" data-open="new-scene">
+            <span class="tpl-icon carrier"></span>
+            <span class="tpl-copy"><b>航母 · 电磁弹射</b><span>甲板 · 弹射位 · 拦阻索</span></span>
+            <span class="tag">原型</span>
+          </button>
+          <button class="btn primary" data-open="new-scene">从模板新建</button>
+          <p class="new-scene-note">舞台只决定空间与动作，调度仍走现有 Mission / Delegation。</p>
+        </article>
+      </div>
+
+      <div class="template-strip">
+        <div class="strip-head"><b>舞台模板</b><span>同一套 SceneModel，换舞台不换状态机</span></div>
+        <div class="template-row">
+          <div class="template-item"><span class="template-icon"></span><div><b>办公室</b><span>工位 · 白板 · 审批 · 茶歇 · 会议</span></div><span class="tag ok">默认</span></div>
+          <div class="template-item"><span class="template-icon"></span><div><b>作战室</b><span>长桌 · 主屏 · 发布闸门 · 复盘墙</span></div><span class="tag">原型</span></div>
+          <div class="template-item"><span class="template-icon"></span><div><b>航母 · 电磁弹射</b><span>甲板 · 弹射位 · 拦阻索</span></div><span class="tag">原型</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 实况 ─────────────────────────────────────────────── -->
+    <section class="view live on" data-view="live" aria-label="场景实况">
+      <div class="scene-toolbar">
+        <div class="scene-id">
+          <span class="scene-mark">研</span>
+          <div><b>研发小队 <span class="tag live">实时</span></b><span>办公室 · @research · 7 位 Agent</span></div>
+        </div>
+        <div class="scene-stats">
+          <span><b>7</b>人</span>
+          <span class="run"><b>2</b>运行</span>
+          <span class="wait"><b>1</b>待确认</span>
+          <span class="review"><b>1</b>待验收</span>
+          <span class="fail"><b>1</b>失败</span>
+        </div>
+        <span class="spacer"></span>
+        <select class="mini-select" id="motionSelect" aria-label="动效">
+          <option value="calm">动效 · 克制</option>
+          <option value="full">动效 · 完整</option>
+          <option value="off">动效 · 关闭</option>
+        </select>
+        <div class="seg" id="modeSeg" role="group" aria-label="实况或配置">
+          <button class="on" data-mode="live">实况</button>
+          <button data-mode="config">配置</button>
+        </div>
+        <button class="btn tiny" id="detailToggle" data-toggle-detail aria-expanded="false" title="点击 Agent 或这里打开详情">详情</button>
+        <button class="icon-btn" title="更多" data-toast="更多：复制场景 / 导出快照 / 全屏氛围（原型）">⋯</button>
+      </div>
+
+      <div class="live-body">
+        <div class="stage-wrap">
+          <div class="stage" id="stage">
+            <div class="sunbeam"></div>
+            <div class="hint-bar"><b>配置模式</b><span>点击座位分配 Agent；右侧调整角色与编排</span></div>
+
+            <div class="clock"><b>14:32</b><span>FRI · LOCAL</span></div>
+            <div class="pinboard"><i></i><i></i><i></i></div>
+            <div class="console"><span class="console-top"></span><span class="console-body"></span><i class="console-book b1"></i><i class="console-book b2"></i><i class="console-book b3"></i><span class="console-plant"><i></i><i></i><span></span></span></div>
+            <div class="window">
+              <svg class="win-view" viewBox="0 0 180 100" preserveAspectRatio="none" aria-hidden="true">
+                <defs><linearGradient id="winSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="color-mix(in srgb,var(--indigo) 38%,var(--surface))"/><stop offset="1" stop-color="color-mix(in srgb,var(--amber) 16%,var(--surface))"/></linearGradient></defs>
+                <rect width="180" height="100" fill="url(#winSky)"/>
+                <circle cx="136" cy="27" r="13" fill="var(--amber)" opacity=".32"/>
+                <path d="M0 78h20v22H0zM26 66h16v34H26zM48 74h24v26H48zM80 58h14v42H80zM100 70h22v30h-22zM128 62h18v38h-18zM152 76h28v24h-28z" fill="color-mix(in srgb,var(--slate) 34%,var(--surface))" opacity=".62"/>
+                <rect y="94" width="180" height="6" fill="color-mix(in srgb,var(--slate) 18%,var(--surface))"/>
+              </svg>
+              <span class="mullion v"></span><span class="mullion h"></span>
+              <span class="sill"></span>
+            </div>
+
+            <svg class="links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              <path class="link expected" d="M13,44 C20,44 27,43 35,42"/>
+              <path class="link expected" d="M13,44 C24,44 36,34 54,42"/>
+              <path class="link expected" d="M13,45 C32,45 50,30 73,42"/>
+              <path class="link expected" d="M13,46 C22,58 28,70 43,72"/>
+              <path class="link expected" d="M13,47 C30,60 44,68 62,72"/>
+              <path class="link actual" d="M13,44 C20,44 27,43 35,42"/>
+              <path class="link actual" d="M13,44 C24,44 36,34 54,42"/>
+            </svg>
+
+            <div class="whiteboard" data-agent="lan" title="打开 Mission 计划">
+              <div class="wb-head"><b>M-03 发布 v0.3</b><em>2 / 4</em></div>
+              <div class="wb-progress"><i></i></div>
+              <div class="wb-step done"><i>✓</i><b>登录页校验</b><span>T-014</span></div>
+              <div class="wb-step doing"><i>◐</i><b>工作台空态</b><span>T-015</span></div>
+              <div class="wb-step"><i>○</i><b>发布检查</b><span>—</span></div>
+              <div class="wb-step"><i>○</i><b>回归验收</b><span>—</span></div>
+              <span class="wb-note n1"></span><span class="wb-note n2"></span>
+            </div>
+
+            <div class="prop approval" data-agent="bei" title="审批台">
+              <div class="approval-head"><span class="lamp amber"></span>审批台</div>
+              <div class="tray-slot"></div>
+              <div class="tray-paper"><i></i>北 · 数据迁移</div>
+              <div class="tray-count">1</div>
+            </div>
+
+            <div class="prop shelf" data-agent="qiao" title="验收架">
+              <div class="shelf-head">验收架 <em>1</em></div>
+              <div class="shelf-paper"><i></i>工作台空态 · 3 files</div>
+              <div class="shelf-paper dim"><i></i>登录页 · 已验收</div>
+              <div class="shelf-books"><i></i><i></i><i></i><i></i></div>
+              <div class="shelf-plant"><i></i><i></i><span></span></div>
+            </div>
+
+            <div class="prop rack" title="机房">
+              <div class="rack-head">机房 <span>2 term</span></div>
+              <div class="server"><span class="led"></span><span class="led"></span><span class="slit"></span><span class="fan"></span></div>
+              <div class="server"><span class="led"></span><span class="led"></span><span class="slit"></span><span class="fan"></span></div>
+            </div>
+
+            <div class="lounge" title="休息角">
+              <div class="lounge-rug"></div>
+              <div class="sofa"><i></i><i></i><i></i><span class="arm l"></span><span class="arm r"></span><span class="throw"></span></div>
+              <div class="coffee-table"><i></i><i></i><span class="book"></span></div>
+              <div class="floor-lamp"><span></span></div>
+              <div class="coffee-machine"><span class="steam"><i></i><i></i></span></div>
+              <div class="lounge-plant"><i></i><i></i><span></span></div>
+              <span class="lounge-label">茶歇 · 休息</span>
+            </div>
+
+            <div class="plant p1"><i></i><i></i><i></i><span class="pot"></span></div>
+            <div class="plant p2"><i></i><i></i><i></i><span class="pot"></span></div>
+            <div class="plant p3"><i></i><i></i><i></i><span class="pot"></span></div>
+            <div class="plant p4"><i></i><i></i><i></i><span class="pot"></span></div>
+
+            <div class="meeting" title="会议 / 协作角：Mission 计划评审与 handoff 时使用">
+              <div class="meeting-rug"></div>
+              <div class="meeting-table"><i></i><span class="meeting-lamp"></span></div>
+              <span class="meeting-seat s1"></span><span class="meeting-seat s2"></span><span class="meeting-seat s3"></span>
+              <span class="meeting-plant"><i></i><span></span></span>
+              <span class="meeting-label">会议 / 协作</span>
+            </div>
+
+            <div class="stations" id="stations"></div>
+            <div class="standalones" id="standalones"></div>
+          </div>
+          <div class="legend">
+            <span><i class="line actual"></i>真实委派</span>
+            <span><i class="line expected"></i>期望拓扑</span>
+            <span><i class="dot run"></i>运行</span>
+            <span><i class="dot wait"></i>待确认</span>
+            <span><i class="dot review"></i>待验收</span>
+            <span><i class="dot fail"></i>失败</span>
+            <span class="legend-note">状态来自 runs / delegations / terminals，舞台只负责呈现</span>
+          </div>
+        </div>
+
+        <aside class="inspector" id="inspector" aria-label="选中对象详情"></aside>
+      </div>
+    </section>
+
+    <!-- ── 执行配置 ─────────────────────────────────────────── -->
+    <section class="view profile" data-view="profile" aria-label="执行配置">
+      <div class="profile-grid">
+        <aside class="project-list">
+          <div class="block-label">项目 <span class="spacer"></span><span class="mono" style="font-size:9px">3</span></div>
+          <button class="project-item on"><span class="project-mark">R</span><div><b>research</b><span>~/work/research</span></div></button>
+          <button class="project-item"><span class="project-mark">S</span><div><b>spin-cockpit</b><span>~/work/cockpit</span></div></button>
+          <button class="project-item"><span class="project-mark">W</span><div><b>website</b><span>~/work/site</span></div></button>
+        </aside>
+
+        <section class="profile-editor">
+          <div class="editor-head">
+            <div>
+              <b>执行配置 · research</b>
+              <p>每个项目一份。决定单个任务怎么跑，不参与办公室舞台的呈现。</p>
+            </div>
+            <span class="tag ok">已配置</span>
+          </div>
+          <textarea spellcheck="false">worktree: auto
+runtime: acp
+agent: alan
+concurrency: 2
+acceptance: npm run build && npm run typecheck
+notes: 改动超过 3 个文件时，先让评审 Agent 看一眼。</textarea>
+          <div class="editor-foot">
+            <span>下一次派活生效 · 上次保存 2 小时前</span>
+            <div class="row"><button class="btn tiny" data-toast="已重新生成建议（原型）">AI 建议</button><button class="btn tiny primary" data-toast="执行配置已保存">保存</button></div>
+          </div>
+        </section>
+
+        <aside class="profile-side">
+          <div class="side-block">
+            <div class="block-label">它和协作场景的关系</div>
+            <p><b style="color:var(--fg-2)">执行配置</b>是低颗粒度的机器策略：worktree、runtime、并发、验收命令。</p>
+            <p><b style="color:var(--fg-2)">协作场景</b>是高层的人力与舞台配置：谁和谁、坐哪、怎么协作、怎么呈现。</p>
+            <div class="side-callout"><b>场景引用它，不复制它</b><span>研发小队 · 办公室 → 默认执行配置 <code>research#acp</code></span></div>
+          </div>
+          <div class="side-block">
+            <div class="block-label">当前引用</div>
+            <div class="rel"><i class="line actual"></i><span>研发小队 · 办公室</span></div>
+            <div class="rel"><i class="line expected"></i><span>发布值班 · 作战室（草稿）</span></div>
+            <p style="margin-top:7px">修改这里不会改变已有 run；下一次从场景派活时生效。</p>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ── Modal ─────────────────────────────────────────────────── -->
+<div class="modal-mask" id="modalMask" role="presentation">
+  <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"></div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+
+  const ACCENT = {
+    slate: "var(--slate)", teal: "var(--teal)", indigo: "var(--indigo)",
+    amber: "var(--amber)", purple: "var(--purple)", orange: "var(--orange)", red: "var(--red)",
+  };
+
+  const AGENTS = {
+    lan: {
+      id: "lan", name: "阿岚", role: "lead", roleLabel: "主 Agent", accent: "slate",
+      status: "规划中", tone: "lead", zone: "lead", seat: "lead-desk",
+      key: "M-03", task: "M-03 发布 v0.3", title: "拆解并分派发布任务",
+      elapsed: "12:40", host: "local · dsh", since: "12 分钟前",
+      screen: [62, 46, 70],
+      summary: "4 个步骤，2 个已派发；等待 1 个审批、1 个验收。",
+      terminal: ["plan 4 steps", "delegate T-014 → 林", "delegate T-015 → 周"],
+      links: ["真实委派 · 阿岚 → 林", "真实委派 · 阿岚 → 周", "期望拓扑 · 阿岚 → 北"],
+      primary: "查看 Mission", action: "打开 Mission 计划",
+      plan: [["done", "登录页校验", "T-014"], ["doing", "工作台空态", "T-015"], ["todo", "发布检查", ""], ["todo", "回归验收", ""]],
+      events: [["14:31", "delegate T-014 → 林", "ok"], ["14:30", "delegate T-015 → 周", "ok"], ["14:28", "plan 4 steps", ""]],
+    },
+    lin: {
+      id: "lin", name: "林", role: "worker", roleLabel: "前端 · worker", accent: "teal",
+      status: "运行中", tone: "run", zone: "desk", seat: "desk-01",
+      key: "T-014", task: "T-014 登录页表单校验", title: "补登录页的表单校验与错误提示",
+      elapsed: "04:12", host: "local · dsh", since: "4 分钟前",
+      screen: [58, 76, 42],
+      summary: "ACP 会话运行中，正在改 src/auth/Login.tsx 的校验逻辑。",
+      terminal: ["$ dsh --profile acp", "▸ read src/auth/Login.tsx", "▸ edit 3 files"],
+      links: ["真实委派 · 阿岚 → 林", "期望拓扑 · 阿岚 → 林"],
+      events: [["14:31", "read src/auth/Login.tsx", ""], ["14:30", "edit 3 files", ""], ["14:29", "run npm test", "warn"]],
+      primary: "打开任务", action: "打开任务",
+    },
+    zhou: {
+      id: "zhou", name: "周", role: "worker", roleLabel: "前端 · worker", accent: "indigo",
+      status: "运行中", tone: "run", zone: "desk", seat: "desk-02",
+      key: "T-015", task: "T-015 工作台空态", title: "给工作台补空态与引导",
+      elapsed: "07:05", host: "local · dsh", since: "7 分钟前",
+      screen: [66, 40, 80],
+      summary: "正在生成空态组件，已改 2 个文件。",
+      terminal: ["▸ read src/pages/Home.tsx", "▸ write EmptyState.tsx", "▸ run npm run typecheck"],
+      links: ["真实委派 · 阿岚 → 周", "期望拓扑 · 阿岚 → 周"],
+      events: [["14:32", "write EmptyState.tsx", ""], ["14:31", "run npm run typecheck", "warn"], ["14:29", "read src/pages/Home.tsx", ""]],
+      primary: "打开任务", action: "打开任务",
+    },
+    bei: {
+      id: "bei", name: "北", role: "worker", roleLabel: "后端 · worker", accent: "amber",
+      status: "等待确认", tone: "wait", zone: "desk", seat: "desk-03",
+      key: "T-013", task: "T-013 数据迁移脚本", title: "执行 ALTER TABLE 前需要人工确认",
+      elapsed: "等待 06:31", host: "local · dsh", since: "6 分钟前",
+      screen: [44, 62, 50],
+      summary: "写操作等待审批；不确认不会执行。",
+      terminal: ["approval waiting", "ALTER TABLE agents", "+ ADD COLUMN role", "waiting…"],
+      links: ["真实委派 · 阿岚 → 北", "期望拓扑 · 阿岚 → 北"],
+      events: [["14:29", "approval requested", "warn"], ["14:28", "ALTER TABLE agents", ""], ["14:27", "waiting for input", ""]],
+      primary: "去审批", action: "打开审批",
+      approval: "run 请求执行写操作：ALTER TABLE agents ADD COLUMN role TEXT;\n影响 1 张表，预计 0.2s。",
+    },
+    an: {
+      id: "an", name: "安", role: "worker", roleLabel: "测试 · worker", accent: "orange",
+      status: "失败", tone: "fail", zone: "desk", seat: "desk-04",
+      key: "T-011", task: "T-011 回归套件", title: "回归测试失败，3 个用例未通过",
+      elapsed: "02:18", host: "local · dsh", since: "2 分钟前",
+      screen: [38, 52, 60],
+      summary: "npm test 退出码 1；建议先看失败用例再重试。",
+      terminal: ["$ npm test", "✕ 3 tests failed", "exit code 1"],
+      links: ["真实委派 · 阿岚 → 安", "期望拓扑 · 阿岚 → 安"],
+      events: [["14:18", "npm test failed", "bad"], ["14:17", "run 3 specs", ""], ["14:16", "checkout worktree", ""]],
+      primary: "重试", action: "重试 run",
+      error: "npm test 退出码 1 · 3 个用例失败\n· login.spec.ts > validates email\n· form.spec.ts > shows error\n· home.spec.ts > empty state",
+    },
+    qiao: {
+      id: "qiao", name: "乔", role: "reviewer", roleLabel: "评审 · reviewer", accent: "purple",
+      status: "待验收", tone: "review", zone: "review", seat: "desk-05",
+      key: "T-009", task: "T-009 工作台空态", title: "产物已生成，等待人工验收",
+      elapsed: "等待 18:20", host: "local · dsh", since: "18 分钟前",
+      screen: [40, 58, 46],
+      summary: "build 通过；3 个文件改动，等待你确认。",
+      terminal: ["artifacts 3 files", "build ✓", "waiting for review"],
+      links: ["真实委派 · 阿岚 → 乔", "期望拓扑 · 阿岚 → 乔"],
+      events: [["14:12", "artifacts 3 files", "ok"], ["14:11", "build ✓", "ok"], ["14:10", "waiting for review", "warn"]],
+      primary: "验收", action: "打开验收",
+      artifacts: ["src/pages/Home.tsx", "src/components/EmptyState.tsx", "src/styles.css"],
+    },
+    man: {
+      id: "man", name: "小满", role: "worker", roleLabel: "候选 · standby", accent: "orange",
+      status: "空闲", tone: "idle", zone: "lounge", seat: "standby",
+      key: "—", task: "没有进行中的 run", title: "待命，等待派活",
+      elapsed: "空闲 21m", host: "local · dsh", since: "21 分钟前",
+      screen: [30, 30, 30],
+      summary: "在休息角待命；不会主动领取任务。",
+      terminal: ["no active run", "standby"],
+      links: ["期望拓扑 · 阿岚 → 小满"],
+      events: [["14:10", "standby", ""], ["14:09", "no active run", ""]],
+      primary: "派活", action: "打开派活",
+    },
+    empty: {
+      id: "empty", name: "空位", role: "empty", roleLabel: "desk-06 · 未分配", accent: "slate",
+      status: "空位", tone: "idle", zone: "empty", seat: "desk-06",
+      task: "desk-06 还没有 Agent", title: "分配一个 Agent 到 desk-06",
+      summary: "点击「配置」后可以为这个座位分配 Agent。",
+      primary: "配置座位", action: "打开座位配置",
+      links: [],
+    },
+  };
+
+  const STATIONS = [
+    { id: "lin", left: "26.5%", top: "26%" },
+    { id: "zhou", left: "46.5%", top: "26%" },
+    { id: "bei", left: "66.5%", top: "26%" },
+    { id: "an", left: "34%", top: "60%" },
+    { id: "qiao", left: "54.5%", top: "60%" },
+    { id: "empty", left: "73.5%", top: "60%", empty: true },
+    { id: "lan", left: "3%", top: "30%", lead: true },
+  ];
+
+  const STANDALONE = {
+    bei: { left: "39.5%", top: "30%", wide: true },
+    qiao: { left: "91.5%", top: "61%" },
+    man: { left: "15%", top: "84%" },
+  };
+
+  const CAST = [
+    { id: "lan", role: "lead", seat: "lead-desk" },
+    { id: "lin", role: "worker", seat: "desk-01" },
+    { id: "zhou", role: "worker", seat: "desk-02" },
+    { id: "bei", role: "worker", seat: "desk-03" },
+    { id: "an", role: "worker", seat: "desk-04" },
+    { id: "qiao", role: "reviewer", seat: "desk-05" },
+    { id: "man", role: "worker", seat: "standby" },
+  ];
+
+  const state = {
+    view: "live",
+    mode: "live",
+    selected: "lin",
+    theme: "light",
+    motion: "calm",
+    detailOpen: false,
+    scene: "research",
+    cfgTab: "cast",
+  };
+  const walked = new Set();
+  let noWalk = false;
+
+  function robotSVG(agent, withPaper = false) {
+    const accent = ACCENT[agent.accent] || ACCENT.slate;
+    let eye = `<circle class="r-eye" cx="26" cy="32" r="2.8"/>`;
+    if (agent.tone === "wait") eye = `<text class="r-char" x="26" y="36" text-anchor="middle" style="fill:var(--amber)">?</text>`;
+    if (agent.tone === "fail") eye = `<text class="r-char" x="26" y="36" text-anchor="middle" style="fill:var(--red)">×</text>`;
+    if (agent.tone === "run") eye = `<path class="r-happy" d="M21.4 32.2c1.4-2.1 2.9-2.1 4.3 0M29.1 32.2c1.4-2.1 2.9-2.1 4.3 0"/>`;
+    return `<svg class="robot" viewBox="0 0 52 72" aria-hidden="true" style="--accent:${accent}">
+      <ellipse class="r-shadow" cx="26" cy="68" rx="14" ry="3"/>
+      <line class="r-antenna" x1="26" y1="15" x2="26" y2="7"/>
+      <circle class="r-tip" cx="26" cy="6" r="2.4"/>
+      <rect class="r-body" x="10" y="14" width="32" height="46" rx="16"/>
+      <ellipse class="r-gloss" cx="18" cy="25" rx="3.4" ry="7" transform="rotate(-18 18 25)"/>
+      <rect class="r-visor" x="15" y="23" width="22" height="16" rx="8"/>
+      ${eye}
+      <path class="r-scarf" d="M12 47h28v5c0 4-3 7-7 7h-3l-4 5-4-5h-3c-4 0-7-3-7-7z"/>
+      <rect class="r-arm l" x="5" y="37" width="7" height="14" rx="3.5"/>
+      <rect class="r-arm r" x="40" y="37" width="7" height="14" rx="3.5"/>
+      <circle class="r-badge" cx="35" cy="54" r="2"/>
+      ${withPaper || agent.tone === "review" ? '<rect class="r-paper" x="37" y="49" width="12" height="15" rx="1.5"/>' : ""}
+    </svg>`;
+  }
+
+  function monitorHTML(agent) {
+    const lines = (agent.screen || [58, 42, 66]).map((w) => `<i style="width:${w}%"></i>`).join("");
+    const tone = agent.tone === "lead" ? "run" : agent.tone;
+    return `<span class="monitor ${tone}">
+      <span class="monitor-bar"><i class="led"></i><em>${agent.key || "idle"}</em></span>
+      <span class="monitor-screen">${lines}</span>
+      <span class="monitor-stand"></span>
+    </span>`;
+  }
+
+  function nameplateHTML(agent) {
+    return `<span class="nameplate" style="--accent:${ACCENT[agent.accent]}"><span class="dot"></span><b>${agent.name}</b><em>${agent.status}</em></span>`;
+  }
+
+  function stationHTML(slot) {
+    const agent = AGENTS[slot.id];
+    if (!agent) return "";
+    if (slot.empty) {
+      return `<button class="station empty" data-agent="empty" style="--accent:${ACCENT.slate};left:${slot.left};top:${slot.top}" aria-label="空位 desk-06，点击配置">
+        <span class="empty-desk">
+          <span class="empty-top"></span><span class="empty-front"></span>
+          <span class="empty-leg l"></span><span class="empty-leg r"></span>
+          <span class="empty-chair"></span><span class="empty-plus">+</span>
+        </span>
+        <span class="nameplate" style="--accent:${ACCENT.slate}"><span class="dot"></span><b>空位</b><em>未分配</em></span>
+        <span class="seat-chip">desk-06</span>
+      </button>`;
+    }
+    const away = agent.zone !== "desk" && agent.zone !== "lead" && agent.zone !== "empty";
+    const poseClass = `pose-${agent.tone === "lead" ? "lead" : agent.tone === "run" ? "working" : agent.tone === "wait" ? "waiting" : agent.tone === "fail" ? "failed" : agent.tone === "review" ? "review" : "idle"}`;
+    const bubble = agent.tone === "wait"
+      ? '<span class="bubble wait"><b>?</b>等待确认</span>'
+      : agent.tone === "fail"
+        ? '<span class="bubble fail"><b>!</b>运行失败</span>'
+        : agent.tone === "review"
+          ? '<span class="bubble review">待验收</span>'
+          : "";
+    return `<button class="station ${slot.lead ? "lead" : ""} ${away ? "away" : ""} ${state.selected === agent.id ? "selected" : ""}" data-agent="${agent.id}" style="--accent:${ACCENT[agent.accent]};left:${slot.left};top:${slot.top}" aria-label="${agent.name}，${agent.status}">
+      ${bubble}
+      ${monitorHTML(agent)}
+      <span class="chair"></span>
+      ${away ? `<span class="away-tag"><b>${agent.status}</b><span>已离座</span></span>` : `<span class="actor-wrap ${poseClass}">${robotSVG(agent)}</span>`}
+      <span class="desk">
+        <span class="desk-top"></span>
+        <span class="desk-front"></span>
+        <span class="desk-mat"></span>
+        <span class="pedestal"></span>
+        <span class="keyboard"></span>
+        <span class="papers"></span>
+        <span class="mug"></span>
+      </span>
+      ${nameplateHTML(agent)}
+      <span class="seat-chip">${agent.seat}</span>
+    </button>`;
+  }
+
+  function standaloneHTML(id) {
+    const agent = AGENTS[id];
+    const pos = STANDALONE[id];
+    if (!agent || !pos) return "";
+    const poseClass = `pose-${agent.tone === "run" ? "working" : agent.tone === "wait" ? "waiting" : agent.tone === "fail" ? "failed" : agent.tone === "review" ? "review" : "idle"}`;
+    const left = id === "qiao" && window.innerWidth < 1400 ? "87%" : pos.left;
+    return `<button class="standalone ${poseClass} ${pos.wide ? "wide-only" : ""} ${state.selected === id ? "selected" : ""}" data-agent="${id}" style="left:${left};top:${pos.top}" aria-label="${agent.name}，${agent.status}">
+      ${robotSVG(agent)}
+      ${nameplateHTML(agent)}
+    </button>`;
+  }
+
+  function walkActors() {
+    if (noWalk || state.motion === "off" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const wide = window.innerWidth >= 1400;
+    const duration = state.motion === "full" ? 1500 : 950;
+    const go = (id, frames) => {
+      if (walked.has(id)) return;
+      const el = document.querySelector(`.standalone[data-agent="${id}"]`);
+      if (!el || getComputedStyle(el).display === "none") return;
+      walked.add(id);
+      el.classList.add("walking");
+      const anim = el.animate(frames, { duration, easing: "cubic-bezier(.4,0,.2,1)" });
+      anim.onfinish = () => el.classList.remove("walking");
+      anim.oncancel = () => el.classList.remove("walking");
+    };
+    go("qiao", [
+      { left: "calc(54.5% + 90px)", top: "calc(60% + 122px)" },
+      { left: "74%", top: "78%", offset: 0.55 },
+      { left: wide ? "91.5%" : "87%", top: "61%" }
+    ]);
+    go("man", [
+      { left: "calc(73.5% + 50px)", top: "calc(60% + 122px)" },
+      { left: "50%", top: "82%", offset: 0.5 },
+      { left: "15%", top: "84%" }
+    ]);
+    if (wide) {
+      go("bei", [
+        { left: "calc(66.5% + 90px)", top: "calc(26% + 122px)" },
+        { left: "52%", top: "44%", offset: 0.55 },
+        { left: "39.5%", top: "30%" }
+      ]);
+    }
+  }
+
+  function renderStations() {
+    $("#stations").innerHTML = STATIONS.map(stationHTML).join("");
+    $("#standalones").innerHTML = Object.keys(STANDALONE).map(standaloneHTML).join("");
+    walkActors();
+  }
+
+  function statusPill(agent) {
+    const cls = agent.tone === "lead" ? "lead" : agent.tone;
+    return `<span class="pill ${cls}">${agent.status}</span>`;
+  }
+
+  function agentInspector(agent) {
+    if (!agent) return "";
+    if (agent.id === "empty") {
+      return `<div class="inspector-scroll">
+        <div class="insp-head">
+          <div class="insp-avatar" style="--accent:${ACCENT.slate}">${robotSVG(AGENTS.empty)}</div>
+          <div class="insp-title"><b>空位 · desk-06</b><span>未分配 Agent</span></div>
+          <button class="icon-btn" title="更多" data-toast="更多操作（原型）">⋯</button>
+          <button class="icon-btn" title="收起详情" data-close-detail aria-label="收起详情">✕</button>
+        </div>
+        <div class="insp-block">
+          <div class="block-label">这个座位</div>
+          <div class="task-title">还没有 Agent</div>
+          <p class="task-desc">desk-06 是场景里的第 6 个工位。分配后，Agent 的 run 会直接投影到这里。</p>
+        </div>
+        <div class="insp-block">
+          <div class="block-label">可分配的 Agent</div>
+          <div class="rel"><i class="line expected"></i><span>小满 · 待命 21m</span></div>
+          <div class="rel"><i class="line expected"></i><span>从项目里添加新 Agent</span></div>
+        </div>
+        <div class="insp-actions"><button class="btn primary" data-mode="config">打开座位配置</button><button class="btn" data-toast="已从项目里选择 Agent（原型）">从项目选择</button></div>
+        <p class="insp-note">空位只影响舞台呈现；不会影响现有调度。</p>
+      </div>`;
+    }
+    let body = "";
+    if (agent.id === "lan") {
+      body = `<div class="insp-block">
+        <div class="block-label">当前 Mission <span class="spacer"></span><span class="tiny faint mono">2 / 4</span></div>
+        <div class="task-title"><span class="mono">${agent.key}</span>${agent.task.replace(agent.key + " ", "")}</div>
+        <p class="task-desc">${agent.summary}</p>
+        <div class="plan-list" style="margin-top:6px">
+          ${agent.plan.map(([s, t, k]) => `<div class="plan-row ${s}"><i>${s === "done" ? "✓" : s === "doing" ? "◐" : "○"}</i><b>${t}</b><span>${k || "—"}</span></div>`).join("")}
+        </div>
+      </div>`;
+    } else if (agent.tone === "wait") {
+      body = `<div class="insp-block">
+        <div class="block-label">当前工作</div>
+        <div class="task-title"><span class="mono">${agent.key}</span>${agent.task.replace(agent.key + " ", "")}</div>
+        <p class="task-desc">${agent.summary}</p>
+        <div class="approval-box" style="margin-top:7px"><b>等待你确认的写操作</b><code>${agent.approval}</code></div>
+      </div>`;
+    } else if (agent.tone === "fail") {
+      body = `<div class="insp-block">
+        <div class="block-label">当前工作</div>
+        <div class="task-title"><span class="mono">${agent.key}</span>${agent.task.replace(agent.key + " ", "")}</div>
+        <p class="task-desc">${agent.summary}</p>
+        <div class="error-box" style="margin-top:7px">${agent.error}</div>
+      </div>`;
+    } else if (agent.tone === "review") {
+      body = `<div class="insp-block">
+        <div class="block-label">待验收</div>
+        <div class="task-title"><span class="mono">${agent.key}</span>${agent.task.replace(agent.key + " ", "")}</div>
+        <p class="task-desc">${agent.summary}</p>
+        <div style="margin-top:6px">${agent.artifacts.map((a) => `<div class="artifact"><i></i><span class="mono">${a}</span></div>`).join("")}</div>
+      </div>`;
+    } else {
+      body = `<div class="insp-block">
+        <div class="block-label">当前工作</div>
+        <div class="task-title"><span class="mono">${agent.key}</span>${agent.task.replace(agent.key + " ", "")}</div>
+        <p class="task-desc">${agent.summary}</p>
+        <div class="term-preview">
+          <div class="term-head"><span class="led"></span>terminal · run</div>
+          <pre>${agent.terminal.map((l, i) => i === 0 ? `<i>${l}</i>` : l.includes("exit") || l.includes("✕") ? `<em>${l}</em>` : l).join("\n")}</pre>
+        </div>
+      </div>`;
+    }
+    return `<div class="inspector-scroll">
+      <div class="insp-head">
+        <div class="insp-avatar" style="--accent:${ACCENT[agent.accent]}">${robotSVG(agent)}</div>
+        <div class="insp-title"><b>${agent.name}</b><span>${agent.roleLabel} · ${agent.seat}</span></div>
+        <button class="icon-btn" title="更多" data-toast="更多：复制角色卡 / 查看历史 / 移出场景（原型）">⋯</button>
+        <button class="icon-btn" title="收起详情" data-close-detail aria-label="收起详情">✕</button>
+      </div>
+      <div class="insp-status">
+        ${statusPill(agent)}
+        <span class="mono tiny" style="color:var(--muted)">${agent.elapsed}</span>
+        <span class="spacer"></span>
+        <span class="tiny faint">${agent.host}</span>
+      </div>
+      ${body}
+      <div class="insp-block">
+        <div class="block-label">关系 <span class="spacer"></span><span class="tiny faint">真实 / 期望</span></div>
+        ${agent.links.length ? agent.links.map((l, i) => `<div class="rel"><i class="line ${i === 0 ? "actual" : "expected"}"></i><span>${l}</span></div>`).join("") : '<p class="task-desc">还没有配置关系。</p>'}
+      </div>
+      ${agent.events && agent.events.length ? `<div class="insp-block">
+        <div class="block-label">最近事件 <span class="spacer"></span><span class="tiny faint">events</span></div>
+        <div class="event-list">${agent.events.map(([t, x, c]) => `<div class="event-row"><span class="mono">${t}</span><i class="${c}"></i><span>${x}</span></div>`).join("")}</div>
+      </div>` : ""}
+      <div class="insp-actions">
+        <button class="btn primary" data-toast="${agent.action}（原型）">${agent.primary}</button>
+        <button class="btn" data-toast="打开会话（原型）">会话</button>
+        <button class="btn" data-toast="打开终端（原型）">终端</button>
+      </div>
+      <p class="insp-note">状态来自 runs / delegations / terminals；场景不伪造任务，也不改变调度。</p>
+    </div>`;
+  }
+
+  function castRow(a, cfg) {
+    const agent = AGENTS[a.id];
+    const on = state.selected === a.id;
+    return `<div class="cast-row ${on ? "on" : ""}" data-cast="${a.id}">
+      <span class="cast-dot" style="--accent:${ACCENT[agent.accent]}"></span>
+      <span class="cast-name">${agent.name} <span class="faint" style="font-size:9px">${agent.roleLabel.split(" · ")[0]}</span></span>
+      <select class="cast-role" aria-label="${agent.name} 的角色">
+        <option ${a.role === "lead" ? "selected" : ""}>lead</option>
+        <option ${a.role === "worker" ? "selected" : ""}>worker</option>
+        <option ${a.role === "reviewer" ? "selected" : ""}>reviewer</option>
+      </select>
+      <select class="cast-seat" aria-label="${agent.name} 的座位">
+        <option ${a.seat === "lead-desk" ? "selected" : ""}>lead-desk</option>
+        <option ${a.seat === "desk-01" ? "selected" : ""}>desk-01</option>
+        <option ${a.seat === "desk-02" ? "selected" : ""}>desk-02</option>
+        <option ${a.seat === "desk-03" ? "selected" : ""}>desk-03</option>
+        <option ${a.seat === "desk-04" ? "selected" : ""}>desk-04</option>
+        <option ${a.seat === "desk-05" ? "selected" : ""}>desk-05</option>
+        <option ${a.seat === "standby" ? "selected" : ""}>standby</option>
+      </select>
+    </div>`;
+  }
+
+  function switchHTML(id, on) {
+    return `<button class="switch ${on ? "on" : ""}" data-switch="${id}" role="switch" aria-checked="${on}" aria-label="${id}"><i></i></button>`;
+  }
+
+  function configInspector() {
+    return `<div class="inspector-scroll">
+      <div class="insp-head">
+        <div class="insp-title"><b>场景配置</b><span>研发小队 · 办公室</span></div>
+        <span class="tag">7 / 8</span>
+        <button class="icon-btn" title="关闭配置" data-mode="live">✕</button>
+      </div>
+      <div class="cfg-field"><span>场景名称</span><input type="text" value="研发小队" aria-label="场景名称"></div>
+      <div class="cfg-field"><span>舞台模板</span><select aria-label="舞台模板"><option>办公室 · Office</option><option>作战室 · War Room</option><option>航母 · 电磁弹射</option></select></div>
+      <div class="insp-block">
+        <div class="block-label">阵容 <span class="spacer"></span><button class="mini-link" data-toast="已按项目 Agent 自动生成阵容（原型）">自动阵容</button><span class="tiny faint">7 人 + 1 空位</span></div>
+        <div class="cast-list">${CAST.map((a) => castRow(a, state)).join("")}</div>
+      </div>
+      <div class="insp-block">
+        <div class="block-label">编排</div>
+        <div class="toggle-row"><div><b>评审门</b><span>完成后进入待验收，不自动确认</span></div>${switchHTML("reviewGate", true)}</div>
+        <div class="toggle-row"><div><b>失败升级给 lead</b><span>失败后由主 Agent 决定重试或换人</span></div>${switchHTML("escalate", true)}</div>
+        <div class="toggle-row"><div><b>角色提示注入</b><span>开启后写入 instructions，并记录审计</span></div>${switchHTML("inject", false)}</div>
+      </div>
+      <div class="insp-block">
+        <div class="block-label">呈现</div>
+        <div class="toggle-row"><div><b>显示期望拓扑</b><span>虚线只表达配置，不代表真实委派</span></div>${switchHTML("showLinks", true)}</div>
+        <div class="toggle-row"><div><b>显示姓名牌</b><span>关掉后只保留状态灯，适合氛围模式</span></div>${switchHTML("showLabels", true)}</div>
+      </div>
+      <div class="cfg-note"><b>边界：</b>场景配置只提供默认值与呈现；真正的执行仍走现有 Mission / Delegation / Scheduler。开启角色提示注入前，请确认它会改变 Agent 行为。</div>
+    </div>
+    <div class="insp-foot"><button class="btn tiny" data-mode="live">取消</button><span class="spacer"></span><button class="btn tiny primary" data-toast="场景配置已保存；下一次从场景派活时生效">保存配置</button></div>`;
+  }
+
+  function renderInspector() {
+    $("#inspector").innerHTML = state.mode === "config" ? configInspector() : agentInspector(AGENTS[state.selected]);
+  }
+
+  function renderAll() {
+    renderStations();
+    renderInspector();
+    document.body.dataset.motion = state.motion;
+    $("#motionSelect").value = state.motion;
+    const stage = $("#stage");
+    const all = Object.values(AGENTS);
+    stage.classList.toggle("has-waiting", all.some((a) => a.tone === "wait"));
+    stage.classList.toggle("has-review", all.some((a) => a.tone === "review"));
+    stage.classList.toggle("has-idle", all.some((a) => a.tone === "idle"));
+    stage.classList.toggle("has-failed", all.some((a) => a.tone === "fail"));
+    stage.classList.toggle("has-planning", all.some((a) => a.id === "lan" && a.tone === "lead"));
+  }
+
+  function setTheme(theme) {
+    state.theme = theme;
+    document.documentElement.dataset.theme = theme;
+    $("#themeBtn").textContent = theme === "dark" ? "☀" : "◐";
+  }
+
+  function switchView(view) {
+    state.view = view;
+    $$(".view").forEach((el) => el.classList.toggle("on", el.dataset.view === view));
+    $$(".tab").forEach((el) => el.classList.toggle("on", el.dataset.view === view));
+    $$(".action-group").forEach((el) => el.classList.toggle("on", el.dataset.actions === view));
+    const sub = $("#pageSub");
+    if (view === "gallery") sub.textContent = "多 Agent 协作的拟人化配置。办公室只是其中一种舞台。";
+    if (view === "live") sub.textContent = "研发小队 · 办公室舞台。所有动作来自真实 run / delegation 状态。";
+    if (view === "profile") sub.textContent = "执行配置只决定单个任务怎么跑；协作场景决定多 Agent 如何协作与呈现。";
+  }
+
+  function setDetail(open) {
+    state.detailOpen = Boolean(open);
+    const body = $(".live-body");
+    if (body) body.classList.toggle("inspector-open", state.detailOpen);
+    const btn = $("#detailToggle");
+    if (btn) {
+      btn.textContent = state.detailOpen ? "收起详情" : "详情";
+      btn.setAttribute("aria-expanded", String(state.detailOpen));
+    }
+    if (state.detailOpen) renderInspector();
+  }
+
+  function setMode(mode) {
+    state.mode = mode;
+    document.body.classList.toggle("config-mode", mode === "config");
+    $("#stage").classList.toggle("config", mode === "config");
+    $$("#modeSeg button").forEach((b) => b.classList.toggle("on", b.dataset.mode === mode));
+    const btn = $("#detailToggle");
+    if (btn) btn.hidden = mode === "config";
+    if (mode === "config") setDetail(true);
+    else setDetail(false);
+  }
+
+  function selectAgent(id) {
+    if (!AGENTS[id]) return;
+    state.selected = id;
+    renderStations();
+    if (state.mode === "config") {
+      $$(".cast-row").forEach((row) => row.classList.toggle("on", row.dataset.cast === id));
+    }
+    setDetail(true);
+    renderInspector();
+  }
+
+  function toast(message) {
+    const el = $("#toast");
+    el.textContent = message;
+    el.classList.add("on");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.classList.remove("on"), 2400);
+  }
+
+  function openModal(kind) {
+    const mask = $("#modalMask");
+    const modal = $("#modal");
+    if (kind === "compose") {
+      modal.innerHTML = `<div class="modal-head"><div><h3 id="modalTitle">派活 · 研发小队</h3><p>用场景阵容与编排作为默认值；仍然走现有 Mission、审批与调度。</p></div><button class="icon-btn" data-close>✕</button></div>
+        <div class="modal-field"><span>目标</span><textarea placeholder="例如：把登录页的错误提示改成逐字段校验，并补一条回归用例。"></textarea></div>
+        <div class="modal-field"><span>阵容</span><div class="modal-cast">${CAST.map((c) => `<span style="--accent:${ACCENT[AGENTS[c.id].accent]}"><i></i>${AGENTS[c.id].name}</span>`).join("")}</div></div>
+        <div class="modal-note">评审门已开启；失败会先升级给阿岚。创建后先生成计划，批准后才开始执行。</div>
+        <div class="modal-foot"><button class="btn" data-close>取消</button><button class="btn primary" data-submit="compose">创建 Mission</button></div>`;
+    } else {
+      modal.innerHTML = `<div class="modal-head"><div><h3 id="modalTitle">新建协作场景</h3><p>先选舞台模板，再配阵容与编排。之后可以在同一个舞台里切换实况 / 配置。</p></div><button class="icon-btn" data-close>✕</button></div>
+        <div class="modal-field"><span>场景名称</span><input type="text" value="新协作场景" aria-label="场景名称"></div>
+        <div class="modal-field"><span>舞台模板</span><div class="modal-templates">
+          <button class="modal-template on" data-template="office"><b>办公室</b><span>工位 · 白板 · 验收架</span></button>
+          <button class="modal-template" data-template="warroom"><b>作战室</b><span>长桌 · 大屏 · 值班席</span></button>
+          <button class="modal-template" data-template="carrier"><b>航母 · 电磁弹射</b><span>甲板 · 弹射位</span></button>
+        </div></div>
+        <div class="modal-note">办公室已上线；作战室与航母共用同一套 SceneModel，会在后续提供。</div>
+        <div class="modal-foot"><button class="btn" data-close>取消</button><button class="btn primary" data-submit="new-scene">创建场景</button></div>`;
+    }
+    mask.classList.add("on");
+    setTimeout(() => modal.querySelector("textarea,input")?.focus(), 30);
+  }
+
+  function closeModal() { $("#modalMask").classList.remove("on"); }
+
+  // ── events ──────────────────────────────────────────────────
+  document.addEventListener("click", (e) => {
+    const viewBtn = e.target.closest("[data-view]");
+    if (viewBtn && viewBtn.classList.contains("tab")) { switchView(viewBtn.dataset.view); return; }
+
+    const enter = e.target.closest("[data-enter]");
+    if (enter) { setMode("live"); switchView("live"); toast("已进入「研发小队」办公室舞台"); return; }
+
+    const modeBtn = e.target.closest("[data-mode]");
+    if (modeBtn) { setMode(modeBtn.dataset.mode); return; }
+
+    if (e.target.closest("[data-toggle-detail]")) { setDetail(!state.detailOpen); return; }
+    if (e.target.closest("[data-close-detail]")) { setDetail(false); return; }
+
+    const station = e.target.closest("[data-agent]");
+    if (station) {
+      const id = station.dataset.agent;
+      if (id) { selectAgent(id); return; }
+    }
+
+    const castRowEl = e.target.closest("[data-cast]");
+    if (castRowEl) { selectAgent(castRowEl.dataset.cast); return; }
+
+    const timer = e.target.closest("[data-toast]");
+    if (timer) { toast(timer.dataset.toast); return; }
+
+    const open = e.target.closest("[data-open]");
+    if (open) { openModal(open.dataset.open); return; }
+
+    if (e.target.closest("[data-close]")) { closeModal(); return; }
+    if (e.target === $("#modalMask")) { closeModal(); return; }
+
+    const submit = e.target.closest("[data-submit]");
+    if (submit) {
+      closeModal();
+      toast(submit.dataset.submit === "compose" ? "已创建 Mission 草稿 · 待你批准计划" : "已创建场景 · 办公室舞台");
+      return;
+    }
+
+    const template = e.target.closest("[data-template]");
+    if (template) {
+      $$(".modal-template").forEach((el) => el.classList.toggle("on", el === template));
+      return;
+    }
+
+    const sw = e.target.closest("[data-switch]");
+    if (sw) {
+      const on = !sw.classList.contains("on");
+      sw.classList.toggle("on", on);
+      sw.setAttribute("aria-checked", String(on));
+      if (sw.dataset.switch === "inject" && on) toast("角色提示注入已开启；这会改变 Agent 行为，需要审计");
+      return;
+    }
+  });
+
+  $("#themeBtn").addEventListener("click", () => setTheme(state.theme === "dark" ? "light" : "dark"));
+  $("#motionSelect").addEventListener("change", (e) => {
+    state.motion = e.target.value;
+    document.body.dataset.motion = state.motion;
+    toast(`动效已切换为「${e.target.selectedOptions[0].textContent.replace("动效 · ", "")}」`);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if ($("#modalMask").classList.contains("on")) closeModal();
+      else setDetail(false);
+    }
+    const tag = (e.target && e.target.tagName) || "";
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(tag)) return;
+    if (e.key === "1" && !e.metaKey && !e.ctrlKey) switchView("gallery");
+    if (e.key === "2" && !e.metaKey && !e.ctrlKey) switchView("live");
+    if (e.key === "3" && !e.metaKey && !e.ctrlKey) switchView("profile");
+  });
+
+  // ── query params for screenshots ────────────────────────────
+  const params = new URLSearchParams(location.search);
+  if (params.get("theme") === "dark") setTheme("dark");
+  noWalk = params.get("nowalk") === "1";
+  const initialSelect = params.get("select");
+  if (initialSelect && AGENTS[initialSelect]) state.selected = initialSelect;
+  renderAll();
+  if (params.get("view")) switchView(params.get("view"));
+  if (params.get("mode") === "config") setMode("config");
+  if (params.get("detail") === "1" && state.mode !== "config") setDetail(true);
+  if (params.get("view") === "gallery" || params.get("view") === "profile") {
+    // 保持 query view 与 tab 一致
+    switchView(params.get("view"));
+  }
+  if (params.get("open") === "compose" || params.get("open") === "new-scene") {
+    openModal(params.get("open"));
+  }
+})();
+</script>
+</body>
+</html>

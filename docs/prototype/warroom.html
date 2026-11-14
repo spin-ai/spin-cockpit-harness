@@ -1,0 +1,1292 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-motion="calm">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>作战室舞台 · 协作场景原型</title>
+<!--
+  作战室（War Room）Stage Pack 原型
+  ────────────────────────────────────────────────────────────
+  为什么做这一页：
+  1. 发布窗口的值班协作不是「工位 + 白板」：它围绕一张长桌、一块主屏和一个 GO / NO-GO 闸门。
+  2. 和办公室共用同一套 SceneModel：zone / pose / tone / seat 都不新增字段，
+     只是把「工位区 / 白板 / 审批台 / 验收架 / 茶歇」换成「长桌 / 主屏 / 发布闸门 / 复盘墙 / 通讯亭」。
+  3. 实线 = 真实 delegation；虚线 = 本次值班的期望拓扑，两者分开画。
+  4. 配置模式和实况共用同一个舞台，避免「预览一个样、上线一个样」。
+  5. 舞台按「指挥中心」搭：视频墙（地球 + Mission 步骤 + 指标）、操作台（显示器 /
+     LED 灯带 / 键盘 / 纸笔）、深色抛光地面与墙面灯缝。
+  颜色 / 圆角 / 字号取自 src/design-system.css token；舞台额外定义一组场景 token
+  （--room-* / --panel-* / --glow），其中青色只表示「系统光 / 屏幕光」，
+  不参与 run 状态语义（状态仍用绿 / 琥珀 / 紫 / 红）。
+  可直接打开；右上 ◐ 切亮暗；?view=gallery、?mode=config、?detail=1、?theme=dark、?select=bei。
+  航母舞台见 carrier.html。
+-->
+<style>
+:root{
+  --font-sans:"Geist Variable","Geist",-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:"Geist Mono Variable","Geist Mono","SF Mono",SFMono-Regular,ui-monospace,Menlo,Consolas,monospace;
+  --radius:10px;--radius-sm:6px;--radius-lg:14px;--radius-control:8px;
+  --shadow-1:0 1px 2px rgba(10,10,10,.045);
+  --shadow-float:0 18px 46px rgba(0,0,0,.22),0 2px 8px rgba(0,0,0,.10);
+}
+:root[data-theme="light"]{
+  --page-canvas:#fafafa;--surface:#ffffff;--surface-2:#f7f7f7;--surface-hover:#f5f5f5;--surface-selected:#ededed;
+  --border:#e5e5e5;--border-strong:#d4d4d4;--input:#e5e5e5;--sidebar:#fafafa;
+  --fg:#0a0a0a;--fg-2:#3f3f3f;--muted:#5c5c5c;--faint:#767676;
+  --brand:#171717;--brand-soft:#f2f2f2;--brand-line:#dedede;
+  --green:#3f9a68;--green-soft:#edf8f2;--green-line:#d5eedf;
+  --amber:#a97a2f;--amber-soft:#fdf8ee;--amber-line:#f2e3c4;
+  --red:#cf5f5d;--red-soft:#fdf2f2;--red-line:#f4d7d7;
+  --purple:#7d67d1;--purple-soft:#f4f2fd;--purple-line:#e3ddf8;
+  --teal:#3f8f86;--indigo:#5b6cc0;--slate:#6b7280;--orange:#b46a3c;
+  --floor:#f4f4f3;--wall:#ececea;--floor-line:rgba(10,10,10,.035);
+  --desk-top:#fbfbfa;--desk-front:#e6e6e3;--table:#f7f7f5;
+  --screen-bg:#181818;--screen-line:rgba(255,255,255,.16);
+  --actor-body:color-mix(in srgb,var(--fg) 88%,var(--surface));--actor-visor:color-mix(in srgb,var(--surface) 90%,var(--fg) 6%);
+  --room-ceil:#e7edf2;--room-ceil-2:#cdd7df;
+  --room-wall:#e6ecf1;--room-wall-2:#ccd6de;
+  --room-floor:#232c36;--room-floor-2:#0f141a;
+  --room-seam:rgba(255,255,255,.95);
+  --glow:#3fb6d8;--glow-soft:rgba(63,182,216,.16);--glow-line:rgba(120,215,240,.55);
+  --panel:#0b1014;--panel-2:#070a0d;--panel-line:rgba(130,205,230,.22);
+  --panel-ink:#dbe8ee;--panel-ink-2:rgba(219,232,238,.66);--panel-ink-3:rgba(219,232,238,.42);
+  --shadow-soft:0 8px 20px rgba(35,30,24,.08);
+  --e1:0 1px 2px rgba(35,30,24,.05);
+  --e2:0 6px 16px rgba(35,30,24,.08);
+  --e3:0 18px 36px rgba(35,30,24,.12);
+}
+:root[data-theme="dark"]{
+  --page-canvas:#0a0a0a;--surface:#171717;--surface-2:#1c1c1c;--surface-hover:#262626;--surface-selected:#2e2e2e;
+  --border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.14);--input:rgba(255,255,255,.16);--sidebar:#111111;
+  --fg:#f0f0f0;--fg-2:#d4d4d4;--muted:#b4b4b4;--faint:#8f8f8f;
+  --brand:#e5e5e5;--brand-soft:#262626;--brand-line:#3a3a3a;
+  --green:#5fb884;--green-soft:rgba(95,184,132,.12);--green-line:rgba(95,184,132,.28);
+  --amber:#c9a25c;--amber-soft:rgba(201,162,92,.12);--amber-line:rgba(201,162,92,.26);
+  --red:#d97a78;--red-soft:rgba(217,122,120,.12);--red-line:rgba(217,122,120,.26);
+  --purple:#9c8ae0;--purple-soft:rgba(156,138,224,.12);--purple-line:rgba(156,138,224,.26);
+  --teal:#6fbab1;--indigo:#8e9ce0;--slate:#9aa3af;--orange:#d08a5a;
+  --floor:#131313;--wall:#202020;--floor-line:rgba(255,255,255,.06);
+  --desk-top:#1d1d1d;--desk-front:#2a2a2a;--table:#1f1f1f;
+  --screen-bg:#0c0c0c;--screen-line:rgba(255,255,255,.14);
+  --actor-body:color-mix(in srgb,var(--fg) 78%,var(--surface));--actor-visor:color-mix(in srgb,var(--screen-bg) 86%,var(--fg) 10%);
+  --shadow-1:0 1px 2px rgba(0,0,0,.22);
+  --room-ceil:#0b0f13;--room-ceil-2:#070a0d;
+  --room-wall:#232a31;--room-wall-2:#161b20;
+  --room-floor:#0c1014;--room-floor-2:#06080a;
+  --room-seam:rgba(255,255,255,.10);
+  --glow:#62c9ea;--glow-soft:rgba(98,201,234,.16);--glow-line:rgba(120,215,240,.48);
+  --panel:#0a0e12;--panel-2:#06090b;--panel-line:rgba(130,205,230,.20);
+  --panel-ink:#d7e5ec;--panel-ink-2:rgba(215,229,236,.64);--panel-ink-3:rgba(215,229,236,.40);
+  --shadow-soft:0 8px 20px rgba(0,0,0,.4);
+  --e1:0 1px 2px rgba(0,0,0,.28);
+  --e2:0 6px 16px rgba(0,0,0,.36);
+  --e3:0 18px 36px rgba(0,0,0,.48);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--page-canvas);color:var(--fg);font:13px/1.55 var(--font-sans);-webkit-font-smoothing:antialiased;overflow:hidden}
+::selection{background:color-mix(in srgb,var(--fg) 14%,transparent);color:inherit}
+button,input,select{font-family:inherit;color:inherit}
+.mono{font-family:var(--mono)}
+.faint{color:var(--faint)}
+.muted{color:var(--muted)}
+.spacer{flex:1}
+.ellipsis{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag{display:inline-flex;align-items:center;height:19px;padding:0 6px;border-radius:5px;background:var(--surface-hover);color:var(--fg-2);font-size:10.5px;letter-spacing:.02em;white-space:nowrap}
+.tag.live{background:var(--green-soft);color:var(--green)}
+.tag.ok{background:var(--green-soft);color:var(--green)}
+.tag.warn{background:var(--amber-soft);color:var(--amber)}
+.tag.bad{background:var(--red-soft);color:var(--red)}
+
+/* ── App shell ─────────────────────────────────────────────── */
+.app{height:100%;display:grid;grid-template-columns:64px minmax(0,1fr)}
+.rail{background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:10px 0 8px;gap:2px;min-height:0}
+.rail-brand{width:34px;height:34px;border:1px solid var(--border);border-radius:9px;background:var(--surface);display:grid;place-items:center;color:var(--fg);margin-bottom:8px;font:600 13px var(--mono);box-shadow:var(--shadow-1)}
+.rail-item{position:relative;width:52px;height:47px;border:0;border-radius:8px;background:transparent;color:var(--muted);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:10.5px;line-height:1.2;cursor:pointer;transition:background .12s,color .12s}
+.rail-item svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.rail-item span{transform:scale(.96);white-space:nowrap}
+.rail-item:hover{background:var(--surface-hover);color:var(--fg-2)}
+.rail-item.on{background:var(--brand-soft);color:var(--fg)}
+.rail-item.on::before{content:"";position:absolute;left:-6px;top:11px;bottom:11px;width:2px;border-radius:2px;background:var(--fg)}
+.rail-bottom{margin-top:auto;display:flex;flex-direction:column;gap:2px}
+.main{min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--page-canvas)}
+
+/* ── Page header ───────────────────────────────────────────── */
+.page-head{flex:none;display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding:16px 22px 10px}
+.page-title{min-width:0;display:flex;flex-direction:column;gap:2px}
+.kicker{font-size:10px;line-height:1.4;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.page-title h1{margin:0;font-size:22px;line-height:1.15;font-weight:600;letter-spacing:-.03em}
+.page-sub{margin:1px 0 0;font-size:12.5px;line-height:1.5;color:var(--muted);max-width:720px}
+.page-actions{display:flex;align-items:center;gap:6px;flex:none}
+
+/* ── Controls ──────────────────────────────────────────────── */
+.btn{height:30px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--surface);color:var(--fg-2);font-size:12px;display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;cursor:pointer;transition:background .12s,border-color .12s,color .12s;text-decoration:none}
+.btn:hover{background:var(--surface-hover);border-color:var(--border-strong);color:var(--fg)}
+.btn.primary{background:var(--fg);border-color:var(--fg);color:var(--surface);box-shadow:var(--shadow-1)}
+.btn.primary:hover{background:color-mix(in srgb,var(--fg) 92%,var(--surface));color:var(--surface)}
+.btn.tiny{height:26px;padding:0 8px;font-size:11px}
+.icon-btn{width:28px;height:28px;border:0;border-radius:6px;background:transparent;color:var(--muted);display:grid;place-items:center;font-size:13px;cursor:pointer;flex:none}
+.icon-btn:hover{background:var(--surface-hover);color:var(--fg)}
+.icon-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px solid color-mix(in srgb,var(--fg) 30%,transparent);outline-offset:2px}
+select{height:28px;border:1px solid transparent;border-radius:var(--radius-sm);background:transparent;color:var(--muted);font-size:11.5px;padding:0 7px}
+select:hover{border-color:var(--border);background:var(--surface)}
+
+/* ── Tabs ──────────────────────────────────────────────────── */
+.tabs{flex:none;display:flex;align-items:center;gap:2px;padding:0 22px;border-bottom:1px solid var(--border);min-height:37px;overflow:auto}
+.tab{height:36px;padding:0 10px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);font-size:12.5px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;margin-bottom:-1px;text-decoration:none;white-space:nowrap}
+.tab:hover{color:var(--fg)}
+.tab.on{color:var(--fg);border-bottom-color:var(--fg)}
+.tab .live-dot{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+.tab-sep{width:1px;height:16px;background:var(--border);margin:0 6px;flex:none}
+.tab-hint{font-size:10.5px;color:var(--faint);margin-left:2px;white-space:nowrap}
+
+/* ── Views ─────────────────────────────────────────────────── */
+.view{flex:1;min-height:0;display:none}
+.view.on{display:flex}
+.view.live{flex-direction:column;gap:8px;padding:10px 16px 12px;min-height:0}
+.view.gallery{display:none;overflow:auto;padding:16px 22px 36px}
+.view.gallery.on{display:block}
+
+/* ── Toolbar ───────────────────────────────────────────────── */
+.scene-toolbar{flex:none;height:40px;display:flex;align-items:center;gap:10px;min-width:0}
+.scene-id{display:flex;align-items:center;gap:8px;min-width:0}
+.scene-mark{width:30px;height:30px;border-radius:8px;border:1px solid var(--border);background:var(--surface);display:grid;place-items:center;font-size:12px;font-weight:600;color:var(--fg-2);flex:none;box-shadow:var(--shadow-1)}
+.scene-id>div{display:flex;flex-direction:column;gap:0;min-width:0}
+.scene-id b{font-size:13.5px;font-weight:600;line-height:1.25;display:flex;align-items:center;gap:6px}
+.scene-id span{font-size:11.5px;color:var(--muted);line-height:1.35}
+.scene-stats{display:flex;align-items:center;gap:10px;padding-left:12px;border-left:1px solid var(--border);min-width:0}
+.scene-stats span{font-size:11.5px;color:var(--muted);display:inline-flex;align-items:baseline;gap:3px;white-space:nowrap}
+.scene-stats b{font:600 12.5px var(--mono);color:var(--fg);font-variant-numeric:tabular-nums}
+.scene-stats .run b{color:var(--green)}
+.scene-stats .wait b{color:var(--amber)}
+.scene-stats .review b{color:var(--purple)}
+.scene-stats .fail b{color:var(--red)}
+.seg{display:flex;background:var(--surface-hover);border:1px solid var(--border);border-radius:6px;padding:1px;flex:none}
+.seg button{height:24px;border:0;background:transparent;color:var(--muted);font-size:11px;padding:0 8px;border-radius:5px;cursor:pointer}
+.seg button.on{background:var(--surface);color:var(--fg);box-shadow:0 0 0 1px var(--border)}
+
+/* ── Live body / stage ─────────────────────────────────────── */
+.live-body{position:relative;flex:1;min-height:0}
+.stage-wrap{height:100%;min-width:0;min-height:0;display:flex;flex-direction:column;gap:8px}
+.stage{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:#070a0d;isolation:isolate;box-shadow:var(--shadow-1)}
+.canvas{position:relative;flex:none;width:1180px;height:640px;background:#070a0d;zoom:1}
+
+/* ── room shell ───────────────────────────────────────────── */
+.room-ceil{position:absolute;left:-320px;right:-320px;top:0;height:52px;background:linear-gradient(180deg,var(--room-ceil),var(--room-ceil-2));border-bottom:1px solid color-mix(in srgb,var(--room-seam) 40%,transparent)}
+.ceil-strip{position:absolute;height:2px;border-radius:2px;background:linear-gradient(90deg,transparent,var(--glow-line),transparent);box-shadow:0 0 16px var(--glow-soft)}
+.ceil-strip.s1{left:150px;top:20px;width:380px}
+.ceil-strip.s2{left:590px;top:26px;width:200px;opacity:.55}
+.ceil-strip.s3{left:860px;top:14px;width:190px;opacity:.4}
+.ceil-cove{position:absolute;left:0;right:0;top:48px;height:2px;background:linear-gradient(90deg,transparent 6%,var(--glow-line) 28%,var(--glow-line) 72%,transparent 94%);box-shadow:0 5px 22px var(--glow-soft)}
+.room-wall{position:absolute;left:-320px;right:-320px;top:52px;height:278px;background:linear-gradient(180deg,var(--room-wall) 0,var(--room-wall) 58%,var(--room-wall-2) 100%);border-bottom:1px solid color-mix(in srgb,var(--room-seam) 30%,transparent);overflow:hidden}
+.room-wall::before{content:"";position:absolute;inset:0;background:linear-gradient(104deg,transparent 0 24%,color-mix(in srgb,var(--room-wall) 60%,#fff 40%) 31%,transparent 42%),linear-gradient(180deg,rgba(10,16,22,.10),transparent 26%);opacity:.7}
+.room-wall::after{content:"";position:absolute;left:0;right:0;bottom:0;height:12px;background:linear-gradient(180deg,#20272f,#0a0d10);box-shadow:0 -1px 0 rgba(160,230,250,.42),0 -8px 30px rgba(120,215,240,.22)}
+.seam{position:absolute;top:0;bottom:12px;width:2px;background:linear-gradient(180deg,rgba(12,18,24,.16),rgba(12,18,24,.05));box-shadow:1px 0 0 rgba(255,255,255,.85),4px 0 26px rgba(90,190,225,.28)}
+.seam.m1{left:196px}.seam.m2{left:392px}.seam.m3{left:788px}.seam.m4{left:984px}
+.room-floor{position:absolute;left:-320px;right:-320px;top:330px;bottom:0;background:linear-gradient(180deg,var(--room-floor),var(--room-floor-2) 72%)}
+.room-floor::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.20),transparent 22%),radial-gradient(70% 46% at 50% 0,color-mix(in srgb,var(--glow) 24%,transparent),transparent 66%)}
+.room-floor::after{content:"";position:absolute;left:0;right:0;top:0;height:120px;background:linear-gradient(180deg,rgba(255,255,255,.10),transparent);pointer-events:none}
+.floor-grid{position:absolute;left:-6%;right:-6%;bottom:0;height:330px;pointer-events:none;opacity:.5;transform:perspective(520px) rotateX(58deg);transform-origin:50% 100%;background:repeating-linear-gradient(90deg,transparent 0 79px,color-mix(in srgb,var(--glow) 20%,transparent) 79px 80px),repeating-linear-gradient(0deg,transparent 0 79px,color-mix(in srgb,var(--glow) 16%,transparent) 79px 80px);mask-image:linear-gradient(180deg,transparent 0,#000 34%,#000 78%,transparent 100%);-webkit-mask-image:linear-gradient(180deg,transparent 0,#000 34%,#000 78%,transparent 100%)}
+.stage.config .floor-grid{opacity:1}
+.glare{position:absolute;border-radius:50%;pointer-events:none;filter:blur(16px)}
+.glare.g1{left:270px;right:270px;top:-26px;height:96px;background:radial-gradient(60% 100% at 50% 0,color-mix(in srgb,var(--glow) 26%,transparent),transparent 70%)}
+.glare.g2{left:300px;right:300px;bottom:-34px;height:110px;background:radial-gradient(60% 100% at 50% 100%,color-mix(in srgb,var(--glow) 16%,transparent),transparent 70%)}
+.glare.g3{left:430px;right:430px;bottom:26px;height:1px;background:linear-gradient(90deg,transparent,var(--glow-line),transparent);opacity:.4;filter:blur(.5px)}
+
+/* ── video wall ───────────────────────────────────────────── */
+.video-wall{position:absolute;left:250px;top:60px;width:700px;height:246px;z-index:3;cursor:pointer}
+.video-wall::before{content:"";position:absolute;inset:-30px;border-radius:20px;background:radial-gradient(56% 64% at 50% 44%,color-mix(in srgb,var(--glow) 26%,transparent),transparent 72%);filter:blur(12px);pointer-events:none}
+.vw-inner{position:relative;height:100%;display:flex;flex-direction:column;border:1px solid rgba(150,225,250,.22);border-radius:7px;background:linear-gradient(180deg,var(--panel),var(--panel-2));box-shadow:0 0 0 5px #11161b,0 0 0 6px rgba(255,255,255,.10),inset 0 1px 0 rgba(255,255,255,.07),0 30px 56px rgba(0,0,0,.55);overflow:hidden}
+.vw-inner::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(78% 60% at 50% 0,rgba(125,215,242,.10),transparent 62%)}
+.vw-inner::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(150,225,248,.05) 0 1px,transparent 1px 3px)}
+.vw-grid{position:absolute;inset:0;pointer-events:none;opacity:.55;background-image:linear-gradient(rgba(140,225,250,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(140,225,250,.05) 1px,transparent 1px);background-size:26px 26px;-webkit-mask-image:radial-gradient(130% 130% at 50% 0,#000 26%,transparent 78%);mask-image:radial-gradient(130% 130% at 50% 0,#000 26%,transparent 78%)}
+.vw-sweep{position:absolute;left:0;right:0;top:0;height:160%;pointer-events:none;background:linear-gradient(180deg,transparent 42%,rgba(150,230,255,.06) 48%,transparent 54%);animation:sweep 9s linear infinite}
+.vw-corner{position:absolute;width:16px;height:16px;border:1px solid color-mix(in srgb,var(--glow) 72%,transparent);pointer-events:none}
+.vw-corner::after{content:"";position:absolute;width:5px;height:5px;border:1px solid color-mix(in srgb,var(--glow) 34%,transparent)}
+.vw-corner.tl{left:5px;top:5px;border-right:0;border-bottom:0}
+.vw-corner.tl::after{left:5px;top:5px;border-right:0;border-bottom:0}
+.vw-corner.tr{right:5px;top:5px;border-left:0;border-bottom:0}
+.vw-corner.tr::after{right:5px;top:5px;border-left:0;border-bottom:0}
+.vw-corner.bl{left:5px;bottom:5px;border-right:0;border-top:0}
+.vw-corner.bl::after{left:5px;bottom:5px;border-right:0;border-top:0}
+.vw-corner.br{right:5px;bottom:5px;border-left:0;border-top:0}
+.vw-corner.br::after{right:5px;bottom:5px;border-left:0;border-top:0}
+.vw-rail{position:absolute;top:34px;bottom:30px;width:7px;pointer-events:none;opacity:.45;background:repeating-linear-gradient(180deg,color-mix(in srgb,var(--glow) 50%,transparent) 0 1px,transparent 1px 8px)}
+.vw-rail.left{left:-11px}
+.vw-rail.right{right:-11px}
+
+.vw-head{flex:none;display:flex;align-items:center;gap:8px;height:28px;padding:0 24px 0 15px;border-bottom:1px solid rgba(140,220,245,.10);color:var(--panel-ink-2)}
+.vw-kicker{font:600 9px var(--mono);letter-spacing:.18em;color:var(--glow)}
+.vw-head b{font-size:12.5px;font-weight:600;color:var(--panel-ink);letter-spacing:.01em}
+.chip{font:600 9.5px var(--mono);letter-spacing:.08em;color:var(--glow);background:color-mix(in srgb,var(--glow) 12%,transparent);border:1px solid color-mix(in srgb,var(--glow) 30%,transparent);border-radius:3px;padding:1px 5px}
+.vw-clock{margin-left:auto;font:600 10.5px var(--mono);color:var(--panel-ink-2);letter-spacing:.04em}
+.vw-clock em{font-style:normal;color:var(--glow);margin-left:5px}
+.vw-tele{flex:none;display:flex;align-items:center;gap:7px;height:18px;padding:0 24px 0 15px;border-bottom:1px solid rgba(140,220,245,.08);font:500 8.5px var(--mono);letter-spacing:.09em;color:var(--panel-ink-3)}
+.vw-tele .sep{opacity:.4}
+.vw-tele .led{width:4px;height:4px;border-radius:50%;background:#5fc89a;box-shadow:0 0 7px rgba(95,200,160,.8);flex:none;animation:pulse 2.6s ease-in-out infinite}
+.vw-tele-right{margin-left:auto;color:var(--panel-ink-3)}
+.vw-body{flex:1;min-height:0;display:grid;grid-template-columns:192px minmax(0,1fr) 178px;gap:12px;padding:7px 15px 4px}
+.vw-col{display:flex;flex-direction:column;gap:4px;min-width:0}
+.vw-col h5{margin:0 0 2px;font:600 8.5px var(--mono);letter-spacing:.16em;color:var(--panel-ink-3);text-transform:uppercase}
+.vw-col h5 em{font-style:normal;color:var(--glow);margin-left:5px}
+.vw-col.right h5{text-align:right}
+.steps{position:relative;display:flex;flex-direction:column;gap:5px;padding-left:2px}
+.steps::before{content:"";position:absolute;left:8px;top:8px;bottom:8px;width:1px;background:linear-gradient(180deg,rgba(95,200,160,.4),rgba(214,175,110,.4),rgba(140,225,250,.10))}
+.ms-step{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--panel-ink-2);min-width:0;line-height:1.5}
+.ms-step i{width:12px;height:12px;border-radius:50%;border:1px solid rgba(140,225,250,.26);display:grid;place-items:center;font:600 7.5px var(--mono);font-style:normal;flex:none;color:rgba(220,240,250,.66);background:#0a0f13}
+.ms-step b{font-weight:500;color:var(--panel-ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ms-step span{font:10px var(--mono);color:var(--panel-ink-3);flex:none}
+.ms-step.done i{background:rgba(95,200,160,.16);border-color:rgba(95,200,160,.5);color:#8fe0bb}
+.ms-step.doing i{background:rgba(214,175,110,.16);border-color:rgba(214,175,110,.55);color:#e6c48e}
+.vw-mini{margin-top:auto;display:flex;align-items:center;gap:6px;border:1px solid rgba(214,175,110,.22);border-radius:3px;padding:4px 6px;background:rgba(214,175,110,.06)}
+.vw-mini span{font:600 8px var(--mono);letter-spacing:.14em;color:#d9b878}
+.vw-mini b{font-size:10px;font-weight:500;color:#e6c48e}
+.vw-globe{position:relative;display:flex;align-items:center;justify-content:center;min-width:0}
+.globe{width:240px;height:156px;display:block;filter:drop-shadow(0 0 28px rgba(95,200,234,.26))}
+.globe-atmo{fill:url(#globeAtmo)}
+.globe-land{fill:rgba(120,220,215,.26);stroke:rgba(180,245,255,.34);stroke-width:.6}
+.globe-clouds{filter:blur(.6px)}
+.globe-clouds path{fill:none;stroke:rgba(225,248,255,.10);stroke-width:4;stroke-linecap:round}
+.globe-clouds path:nth-child(2){stroke-width:3.4;opacity:.8}
+.globe-clouds path:nth-child(3){stroke-width:3;opacity:.65}
+.globe-clouds path:nth-child(4){stroke-width:3;opacity:.55}
+.globe-lights circle{fill:rgba(210,248,255,.85);filter:drop-shadow(0 0 3px rgba(150,235,255,.8))}
+.globe-rim{fill:none;stroke:url(#rimGrad);stroke-width:1.2}
+.globe-spec{fill:url(#specGrad);opacity:.7}
+.globe-ring-outer{fill:none;stroke:rgba(140,225,250,.14);stroke-width:.8;stroke-dasharray:1 4}
+.globe-ring-dash{fill:none;stroke:rgba(140,225,250,.20);stroke-width:.8;stroke-dasharray:14 10}
+.globe-reticle path{fill:none;stroke:rgba(140,225,250,.5);stroke-width:1}
+.globe-ring-inner{fill:none;stroke:rgba(140,225,250,.18);stroke-width:.7;stroke-dasharray:2 7}
+.globe-grid ellipse{fill:none;stroke:rgba(140,225,250,.10);stroke-width:.7}
+.globe-arcs path{fill:none;stroke:rgba(150,235,255,.45);stroke-width:.8;stroke-dasharray:3 6;animation:flow 6s linear infinite}
+.globe-sweep{transform-origin:130px 86px;animation:spin 9s linear infinite}
+.globe-orbit ellipse{fill:none;stroke:rgba(140,225,250,.22);stroke-width:.8;stroke-dasharray:2 9;animation:orbit 18s linear infinite}
+.orbit-sat{fill:rgba(180,240,255,.85);filter:drop-shadow(0 0 4px rgba(150,235,255,.9))}
+.globe-axis line{stroke:rgba(140,225,250,.09);stroke-width:.7;stroke-dasharray:2 6}
+.globe-nodes .node-dot{fill:#bff4ff}
+.globe-nodes .node-pulse{fill:none;stroke:rgba(150,235,255,.55);stroke-width:.8;transform-box:fill-box;transform-origin:center;animation:ping 2.8s ease-out infinite}
+.globe-nodes .node:nth-child(2) .node-pulse{animation-delay:.9s}
+.globe-nodes .node:nth-child(3) .node-pulse{animation-delay:1.8s}
+.globe-base{fill:rgba(140,225,250,.16);filter:blur(2px)}
+.globe-label{font:500 7.5px var(--mono);letter-spacing:.12em;fill:rgba(190,235,250,.42)}
+#globeDay .gd1{stop-color:rgba(150,240,255,.92)}
+#globeDay .gd2{stop-color:rgba(52,158,196,.92)}
+#globeDay .gd3{stop-color:rgba(12,62,84,.96)}
+#globeDay .gd4{stop-color:rgba(4,16,24,.98)}
+#globeAtmo .ga1{stop-color:rgba(125,225,255,0)}
+#globeAtmo .ga2{stop-color:rgba(125,225,255,.38)}
+#globeTerm .gt1{stop-color:rgba(2,8,12,0)}
+#globeTerm .gt2{stop-color:rgba(2,8,12,.32)}
+#globeTerm .gt3{stop-color:rgba(2,8,12,.72)}
+#rimGrad .gr1{stop-color:rgba(200,248,255,.95)}
+#rimGrad .gr2{stop-color:rgba(130,220,248,.5)}
+#rimGrad .gr3{stop-color:rgba(90,175,205,.14)}
+#specGrad .sp1{stop-color:rgba(235,252,255,.55)}
+#specGrad .sp2{stop-color:rgba(235,252,255,0)}
+#sweepGrad .sw1{stop-color:rgba(160,240,255,.24)}
+#sweepGrad .sw2{stop-color:rgba(160,240,255,0)}
+
+.vw-metrics{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.vw-metric{border:1px solid rgba(140,225,250,.13);border-radius:4px;padding:4px 6px;background:rgba(140,225,250,.03)}
+.vw-metric span{display:block;font-size:9.5px;line-height:1.3;color:var(--panel-ink-3)}
+.vw-metric b{font:600 14px var(--mono);color:var(--panel-ink);font-variant-numeric:tabular-nums;line-height:1.25}
+.vw-metric em{font-style:normal;font:9.5px var(--mono);color:var(--panel-ink-3);margin-left:3px}
+.vw-spark{height:22px;margin-top:2px}
+.vw-spark svg{width:100%;height:100%;display:block;overflow:visible}
+.vw-delta{display:flex;align-items:center;justify-content:space-between;font:500 8px var(--mono);letter-spacing:.06em;color:var(--panel-ink-3);margin-top:auto}
+.vw-delta b{color:#8fe0bb;font-weight:600}
+.vw-foot{flex:none;display:flex;align-items:center;gap:9px;height:26px;padding:0 24px 0 15px;border-top:1px solid rgba(140,220,245,.10);font-size:10px;color:var(--panel-ink-3)}
+.vw-foot-k{font:600 8px var(--mono);letter-spacing:.16em;color:var(--glow)}
+.ms-bar{display:flex;gap:4px;width:150px;flex:none}
+.ms-bar i{flex:1;height:3px;border-radius:2px;background:rgba(140,225,250,.12)}
+.ms-bar i.done{background:rgba(95,200,160,.85);box-shadow:0 0 8px rgba(95,200,160,.5)}
+.ms-bar i.doing{background:rgba(214,175,110,.92);box-shadow:0 0 8px rgba(214,175,110,.45)}
+.vw-foot em{margin-left:auto;font-style:normal;color:#dcb87c}
+.vw-foot-ticks{width:56px;height:7px;flex:none;margin-left:2px;background:repeating-linear-gradient(90deg,rgba(140,225,250,.32) 0 1px,transparent 1px 6px);opacity:.45}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes ping{0%{transform:scale(.4);opacity:.9}80%,100%{transform:scale(1.7);opacity:0}}
+
+/* ── wall side displays ───────────────────────────────────── */
+.side-screen{position:absolute;top:108px;width:196px;height:192px;border:1px solid rgba(150,225,250,.20);border-radius:5px;background:linear-gradient(180deg,var(--panel),var(--panel-2));box-shadow:0 0 0 4px #11161b,0 0 0 5px rgba(255,255,255,.08),0 22px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.06);padding:9px 10px;display:flex;flex-direction:column;gap:5px;cursor:pointer;z-index:3;color:var(--panel-ink-2);overflow:hidden}
+.side-screen::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(150,225,248,.04) 0 1px,transparent 1px 3px)}
+.side-screen:hover{border-color:color-mix(in srgb,var(--glow) 45%,transparent)}
+.side-screen.left{left:36px}
+.side-screen.right{right:36px}
+.ss-head{display:flex;align-items:center;gap:6px;font:600 9px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--panel-ink-3);padding-bottom:6px;border-bottom:1px solid rgba(140,225,250,.12)}
+.ss-head b{margin-left:auto;font:600 10px var(--mono);color:var(--glow);letter-spacing:0}
+.ss-row{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--panel-ink-2);min-width:0}
+.ss-row i{width:5px;height:5px;border-radius:50%;background:rgba(140,225,250,.5);flex:none;box-shadow:0 0 6px rgba(140,225,250,.5)}
+.ss-row b{font-weight:500;color:var(--panel-ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ss-row span{font:10px var(--mono);color:var(--panel-ink-3);flex:none}
+.ss-empty{margin-top:auto;font-size:10px;line-height:1.5;color:var(--panel-ink-3)}
+.ss-metrics{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.ss-metric{border:1px solid rgba(140,225,250,.13);border-radius:4px;padding:5px 6px;background:rgba(140,225,250,.03)}
+.ss-metric span{display:block;font-size:10px;color:var(--panel-ink-3);line-height:1.35}
+.ss-metric b{font:600 16px var(--mono);color:var(--panel-ink);font-variant-numeric:tabular-nums;line-height:1.25}
+.ss-metric em{font-style:normal;font-size:10px;color:var(--panel-ink-3);margin-left:3px}
+
+/* ── floor consoles (复盘 / 闸门 / 同步 / 静默) ───────────── */
+.console{position:absolute;width:192px;border:1px solid var(--panel-line);border-radius:8px;background:linear-gradient(180deg,var(--panel),var(--panel-2));box-shadow:0 26px 48px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.06);cursor:pointer;z-index:5;overflow:hidden;padding:11px 12px;display:flex;flex-direction:column;gap:6px;color:var(--panel-ink-2)}
+.console::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,transparent,var(--glow-line),transparent);opacity:.9}
+.console:hover{border-color:color-mix(in srgb,var(--glow) 40%,transparent)}
+.console.left{left:44px}
+.console.right{right:44px}
+.console.tall{top:348px;height:168px}
+.console.short{top:528px;height:78px}
+.console .tag{background:rgba(140,225,250,.10);color:var(--glow)}
+.gate-head,.rw-head,.comms-head,.pantry-head{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:var(--panel-ink)}
+.gate-head span,.comms-head span,.pantry-head em{margin-left:auto;font:600 9px var(--mono);letter-spacing:.06em;color:var(--panel-ink-3);font-style:normal}
+.rw-head em{font:600 10px var(--mono);font-style:normal;color:var(--glow);margin-left:auto}
+.lamps{display:flex;gap:5px}
+.lamp-go,.lamp-nogo{flex:1;border:1px solid rgba(140,225,250,.14);border-radius:4px;padding:5px 6px;display:flex;align-items:center;gap:5px;font:600 9.5px var(--mono);letter-spacing:.06em;color:var(--panel-ink-3)}
+.lamp-go i,.lamp-nogo i{width:6px;height:6px;border-radius:50%;background:rgba(140,225,250,.3);flex:none}
+.lamp-go.on{border-color:rgba(95,200,160,.42);background:rgba(95,200,160,.10);color:#8fe0bb}
+.lamp-go.on i{background:#5fc89a;box-shadow:0 0 10px rgba(95,200,160,.7)}
+.lamp-nogo.on{border-color:rgba(217,122,120,.45);background:rgba(217,122,120,.10);color:#e5918f}
+.lamp-nogo.on i{background:#d97a78;box-shadow:0 0 10px rgba(217,122,120,.7)}
+.gate-check{display:flex;flex-direction:column;gap:4px}
+.gate-row{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--panel-ink-2);min-width:0}
+.gate-row i{width:11px;height:11px;border:1px solid rgba(140,225,250,.22);border-radius:3px;flex:none;display:grid;place-items:center;font:600 8px var(--mono);color:#8fe0bb}
+.gate-row.done i{background:rgba(95,200,160,.12);border-color:rgba(95,200,160,.4)}
+.gate-row.wait i{background:rgba(214,175,110,.12);border-color:rgba(214,175,110,.42);color:#e6c48e}
+.gate-row b{font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gate-foot{margin-top:auto;display:flex;align-items:center;gap:6px;font-size:10px;color:var(--panel-ink-3)}
+.gate-foot .tag{margin-left:auto}
+.rw-note{position:relative;border:1px solid rgba(140,225,250,.12);border-radius:4px;background:rgba(140,225,250,.035);padding:5px 6px;font-size:10.5px;line-height:1.35;color:var(--panel-ink-2);display:flex;align-items:flex-start;gap:4px}
+.rw-note i{width:6px;height:8px;border:1px solid rgba(140,225,250,.5);border-radius:1px;flex:none;margin-top:1px}
+.rw-note.dim{opacity:.55}
+.rw-note.dim i{border-color:rgba(140,225,250,.22)}
+.rw-strip{display:flex;align-items:flex-end;gap:3px;height:22px;margin-top:auto}
+.rw-strip i{width:6px;border-radius:1px 1px 0 0;background:rgba(140,225,250,.18)}
+.rw-strip i:nth-child(1){height:9px}.rw-strip i:nth-child(2){height:14px}.rw-strip i:nth-child(3){height:11px}.rw-strip i:nth-child(4){height:19px;background:rgba(140,225,250,.55);box-shadow:0 0 8px rgba(140,225,250,.4)}.rw-strip i:nth-child(5){height:7px}
+.comms-line{height:4px;border-radius:2px;background:rgba(140,225,250,.18)}
+.comms-line.w1{width:78%}.comms-line.w2{width:56%}
+.comms-foot{display:flex;align-items:center;gap:5px;margin-top:auto;font-size:10px;color:var(--panel-ink-3)}
+.comms-foot i{width:6px;height:6px;border-radius:50%;background:#5fc89a;box-shadow:0 0 8px rgba(95,200,160,.7)}
+.pantry-cups{display:flex;gap:4px;margin-top:2px}
+.pantry-cups i{width:9px;height:11px;border:1px solid rgba(140,225,250,.22);border-radius:1px 1px 3px 3px;background:rgba(140,225,250,.06)}
+.pantry-foot{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--panel-ink-3);margin-top:auto}
+.pantry-foot i{width:5px;height:5px;border-radius:50%;background:#5fc89a}
+
+/* ── console desk ─────────────────────────────────────────── */
+.desk{position:absolute;left:300px;top:372px;width:600px;height:186px;z-index:6;filter:drop-shadow(0 30px 42px rgba(0,0,0,.5))}
+.desk-body{position:absolute;inset:0;border-radius:10px 10px 0 0;background:linear-gradient(180deg,#3a4550,#20272f 46%,#10151a);border:1px solid rgba(140,225,250,.16);border-bottom:0;box-shadow:inset 0 1px 0 rgba(255,255,255,.16),inset 0 -24px 44px rgba(0,0,0,.5)}
+.desk-monitors{position:absolute;left:0;right:0;top:0;height:80px;display:flex;justify-content:center;gap:12px}
+.dm{position:relative;width:150px;height:80px;border:1px solid rgba(140,225,250,.22);border-radius:5px;background:linear-gradient(180deg,#0e161c,#080c0f);box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 10px 24px rgba(0,0,0,.45),0 0 24px rgba(120,215,240,.10);overflow:hidden}
+.dm::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(150,225,248,.05) 0 1px,transparent 1px 3px)}
+.dm svg{width:100%;height:100%;display:block}
+.desk-top{position:absolute;left:0;right:0;top:80px;height:80px;background:radial-gradient(56% 78% at 50% 0,rgba(150,225,250,.16),transparent 66%),linear-gradient(180deg,#46525e,#2a333c 58%,#222a32);clip-path:polygon(3% 0,97% 0,100% 100%,0 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.24)}
+.desk-monitors::after{content:"";position:absolute;left:6%;right:6%;bottom:-14px;height:22px;background:radial-gradient(60% 100% at 50% 0,rgba(140,225,250,.20),transparent 72%);filter:blur(5px);pointer-events:none}
+.desk-top::before{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 6%,rgba(150,225,248,.14) 18%,rgba(150,225,248,.03) 30%,transparent 44%)}
+.desk-top::after{content:"";position:absolute;left:3%;right:3%;top:0;height:1px;background:linear-gradient(90deg,transparent,rgba(190,235,250,.45),transparent)}
+.kb{position:absolute;height:10px;border-radius:2px;background:repeating-linear-gradient(90deg,#3b4650 0 6px,#323c45 6px 7px);box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 2px 4px rgba(0,0,0,.4)}
+.kb.k1{left:88px;top:16px;width:104px}.kb.k2{left:248px;top:16px;width:104px}.kb.k3{left:408px;top:16px;width:104px}
+.desk-paper{position:absolute;left:150px;top:30px;width:98px;height:50px;border-radius:2px;background:linear-gradient(180deg,#e9eef2,#d7dee4);box-shadow:0 4px 8px rgba(0,0,0,.3);padding:4px 6px;color:#2b3238;font-size:8.5px;line-height:1.25}
+.desk-paper b{display:block;font-size:9px;font-weight:600;color:#1d242a}
+.desk-note{position:absolute;left:330px;top:34px;width:58px;height:46px;border-radius:2px;background:linear-gradient(180deg,#f0e4c8,#e6d6b2);transform:rotate(-4deg);box-shadow:0 5px 10px rgba(0,0,0,.34);padding:4px 5px;font-size:8px;color:#8a6a2f}
+.desk-note b{display:block;font-size:8.5px;font-weight:700;color:#7a5a20}
+.desk-mug{position:absolute;left:470px;top:38px;width:12px;height:14px;border-radius:2px 2px 4px 4px;background:linear-gradient(180deg,#3a444d,#222a31);box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 4px 8px rgba(0,0,0,.3)}
+.desk-led{position:absolute;left:0;right:0;top:158px;height:3px;background:linear-gradient(90deg,transparent,var(--glow) 8%,#c9f4ff 50%,var(--glow) 92%,transparent);box-shadow:0 0 18px 2px rgba(140,225,250,.65),0 8px 46px 4px rgba(120,215,240,.38)}
+.desk-apron{position:absolute;left:0;right:0;top:162px;height:24px;background:linear-gradient(180deg,#151b21,#080b0e);border-top:1px solid rgba(160,230,250,.22)}
+.desk-apron::after{content:"";position:absolute;left:8%;right:8%;bottom:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.10),transparent)}
+.desk-reflect{position:absolute;left:318px;right:318px;top:558px;height:46px;z-index:2;pointer-events:none;background:radial-gradient(60% 100% at 50% 0,rgba(120,215,240,.34),transparent 74%);filter:blur(10px)}
+.desk-reflect::after{content:"";position:absolute;left:12%;right:12%;top:0;height:1px;background:rgba(160,230,250,.45);filter:blur(.4px)}
+
+/* ── seats ────────────────────────────────────────────────── */
+.seat{position:absolute;z-index:7;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;min-width:96px;color:#8fd8f0}
+.seat.far{z-index:4;flex-direction:column-reverse}
+.seat.far .chair{display:none}
+.seat.far .robot{margin-top:0}
+.seat.far .seat-card{background:color-mix(in srgb,var(--panel) 86%,transparent)}
+.seat .chair{position:absolute;left:50%;top:8px;width:38px;height:52px;transform:translateX(-50%);z-index:0}
+.seat .chair svg{width:100%;height:100%;display:block;overflow:visible}
+.ch-back{fill:url(#chairGrad);stroke:rgba(255,255,255,.10);stroke-width:1}
+.ch-mesh{fill:none;stroke:rgba(255,255,255,.10);stroke-width:.8}
+.ch-seat{fill:#2b333b;stroke:rgba(255,255,255,.08);stroke-width:1}
+.ch-stem{stroke:#39434c;stroke-width:2.4;stroke-linecap:round}
+.ch-star{stroke:#39434c;stroke-width:1.8;stroke-linecap:round;fill:none}
+.ch-wheel{fill:#0c1014;stroke:rgba(255,255,255,.10);stroke-width:.8}
+.seat .robot{position:relative;z-index:2;width:22px;height:32px;border-radius:9px;background:var(--actor-body);box-shadow:0 8px 16px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.5);margin-top:14px}
+.seat .robot i{position:absolute;left:4px;top:6px;width:14px;height:8px;border-radius:4px;background:var(--actor-visor)}
+.seat .robot i::after{content:"";position:absolute;left:5px;top:3px;width:2px;height:2px;border-radius:50%;background:var(--glow)}
+.seat .robot b{position:absolute;left:0;right:0;bottom:3px;height:3px;border-radius:2px;background:var(--accent)}
+.seat .seat-card{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:1px;padding:2px 8px 3px;border-radius:5px;background:color-mix(in srgb,var(--panel) 82%,transparent);border:1px solid rgba(140,225,250,.14);backdrop-filter:blur(8px);box-shadow:0 10px 22px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.05);white-space:nowrap;transition:border-color .14s,box-shadow .14s}
+.seat .seat-name{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;line-height:1.25;color:var(--panel-ink)}
+.seat .seat-name em{font-style:normal;font-weight:400;font-size:10.5px;color:var(--panel-ink-3)}
+.seat .seat-status{font:10.5px/1.3 var(--mono);color:var(--panel-ink-3);max-width:178px;overflow:hidden;text-overflow:ellipsis}
+.seat .dot{width:5px;height:5px;border-radius:50%;background:var(--faint);flex:none;box-shadow:0 0 0 2px color-mix(in srgb,var(--faint) 14%,transparent)}
+.seat.run .dot{background:var(--green);box-shadow:0 0 8px color-mix(in srgb,var(--green) 60%,transparent)}
+.seat.wait .dot{background:var(--amber);box-shadow:0 0 8px color-mix(in srgb,var(--amber) 60%,transparent)}
+.seat.review .dot{background:var(--purple);box-shadow:0 0 8px color-mix(in srgb,var(--purple) 60%,transparent)}
+.seat.fail .dot{background:var(--red);box-shadow:0 0 8px color-mix(in srgb,var(--red) 60%,transparent)}
+.seat:hover .seat-card{border-color:rgba(140,225,250,.32)}
+.seat.sel .seat-card{border-color:color-mix(in srgb,var(--glow) 62%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--glow) 28%,transparent),0 10px 22px rgba(0,0,0,.45)}
+.seat.head-seat .chair{width:44px;height:56px}
+.seat .seat-bubble{position:absolute;left:50%;bottom:calc(100% + 4px);transform:translateX(-50%);background:var(--panel);border:1px solid rgba(140,225,250,.2);border-radius:5px;padding:3px 8px;font-size:10.5px;color:var(--panel-ink);box-shadow:0 10px 24px rgba(0,0,0,.45);white-space:nowrap;z-index:4}
+.seat.config-empty .chair{opacity:.35}
+.seat.config-empty .robot{display:none}
+.seat .seat-role{display:none}
+.seat.config-empty .seat-role{position:relative;z-index:2;margin-top:12px;font:600 10px var(--mono);color:var(--glow);border:1px dashed color-mix(in srgb,var(--glow) 40%,transparent);border-radius:50%;width:22px;height:22px;display:grid;place-items:center}
+
+/* ── links (HUD topology) ─────────────────────────────────── */
+.links{position:absolute;inset:0;z-index:8;pointer-events:none;overflow:visible}
+.stage.config .links{z-index:9}
+.link{fill:none;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.link.expected{stroke:color-mix(in srgb,var(--glow) 30%,transparent);stroke-width:1;stroke-dasharray:3 7;opacity:0}
+.link.actual{stroke:color-mix(in srgb,var(--glow) 70%,transparent);stroke-width:1.1;stroke-dasharray:4 8;opacity:.34;animation:flow 2.2s linear infinite}
+.stage.config .link.expected{opacity:.7}
+.stage.config .link.actual{opacity:.16;animation:none}
+.stage.has-waiting .console.right{box-shadow:0 0 0 1px rgba(214,175,110,.45),0 26px 48px rgba(0,0,0,.5)}
+.stage.has-review .console.left{box-shadow:0 0 0 1px rgba(125,103,209,.45),0 26px 48px rgba(0,0,0,.5)}
+
+/* ── hint / legend ────────────────────────────────────────── */
+.hint-bar{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:20;display:none;align-items:center;gap:8px;padding:7px 14px;border:1px solid rgba(140,225,250,.22);border-radius:99px;background:color-mix(in srgb,var(--panel) 92%,transparent);backdrop-filter:blur(10px);box-shadow:0 12px 30px rgba(0,0,0,.5);font-size:11px;color:var(--panel-ink-2);white-space:nowrap}
+.hint-bar b{color:var(--panel-ink);font-weight:600}
+.stage.config .hint-bar{display:flex}
+.legend{flex:none;display:flex;align-items:center;gap:14px;padding:0 4px;font-size:11px;color:var(--muted);min-height:18px;flex-wrap:wrap}
+.legend span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.legend .line{width:16px;height:0;border-top:1px dashed var(--border-strong)}
+.legend .line.actual{border-top-color:var(--green);opacity:.7}
+.legend .dot{width:5px;height:5px;border-radius:50%;background:var(--faint)}
+.legend .dot.run{background:var(--green)}.legend .dot.wait{background:var(--amber)}.legend .dot.review{background:var(--purple)}.legend .dot.fail{background:var(--red)}
+.legend-note{margin-left:auto;color:var(--faint)}
+
+.stage{--actor-body:#dfe8ef;--actor-visor:#0b0f13}
+.dm-line{fill:none;stroke:rgba(140,225,250,.6);stroke-width:1.2}
+.dm-bar{fill:rgba(140,225,250,.20)}
+.dm-ring{fill:none;stroke:rgba(140,225,250,.16);stroke-width:2}
+.dm-arc{fill:none;stroke:rgba(140,225,250,.7);stroke-width:2}
+.dm-txt{font:600 6.5px var(--mono);fill:rgba(200,235,250,.45);letter-spacing:.08em}
+.dm-num{font:600 15px var(--mono);fill:rgba(220,240,250,.85)}
+.spark-area{fill:url(#sparkGrad)}
+.spark-line{fill:none;stroke:rgba(140,225,250,.75);stroke-width:1.2}
+#globeGrad .gg1{stop-color:rgba(70,170,200,.40)}
+#globeGrad .gg2{stop-color:rgba(10,40,55,.18)}
+#sparkGrad .sp1{stop-color:rgba(140,225,250,.30)}
+#sparkGrad .sp2{stop-color:rgba(140,225,250,0)}
+#chairGrad .c1{stop-color:#39434c}
+#chairGrad .c2{stop-color:#232a31}
+.console .tag.warn{background:rgba(214,175,110,.14);color:#ddb87e;border:1px solid rgba(214,175,110,.3)}
+@keyframes sweep{0%{transform:translateY(-50%)}100%{transform:translateY(50%)}}
+@keyframes flow{to{stroke-dashoffset:-24}}
+@keyframes orbit{to{stroke-dashoffset:-60}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.lamp-go.on i,.lamp-nogo.on i{animation:pulse 2.4s ease-in-out infinite}
+body[data-motion="off"] .stage *{animation:none!important}
+body[data-motion="off"] .link.actual{opacity:.4}
+@media (prefers-reduced-motion:reduce){.stage *{animation:none!important}}
+
+/* inspector */
+.inspector{position:absolute;right:8px;top:0;bottom:0;width:302px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-float);z-index:30;display:flex;flex-direction:column;opacity:0;transform:translateX(10px);pointer-events:none;transition:opacity .16s,transform .16s}
+.inspector.open{opacity:1;transform:none;pointer-events:auto}
+.insp-head{flex:none;display:flex;align-items:flex-start;gap:8px;padding:12px 12px 10px;border-bottom:1px solid var(--border)}
+.insp-head>div{min-width:0;flex:1;display:flex;flex-direction:column;gap:1px}
+.insp-head b{font-size:13px;font-weight:600;line-height:1.3;display:flex;align-items:center;gap:6px}
+.insp-head span{font-size:11px;color:var(--muted);line-height:1.4}
+.insp-scroll{flex:1;min-height:0;overflow:auto;padding:10px 12px 16px;display:flex;flex-direction:column;gap:12px}
+.insp-sec{display:flex;flex-direction:column;gap:5px}
+.insp-sec>h4{margin:0;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:700}
+.insp-row{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);min-width:0}
+.insp-row b{font-weight:500;color:var(--fg-2);margin-left:auto;text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.insp-note{font-size:12px;line-height:1.55;color:var(--muted);padding:8px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface-2)}
+.insp-actions{display:flex;gap:6px;flex-wrap:wrap}
+.insp-actions .btn{flex:1}
+.insp-list{display:flex;flex-direction:column;gap:4px}
+.insp-item{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);min-width:0;padding:4px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface)}
+.insp-item i{width:5px;height:5px;border-radius:50%;background:var(--faint);flex:none}
+.insp-item.run i{background:var(--green)}.insp-item.wait i{background:var(--amber)}.insp-item.review i{background:var(--purple)}.insp-item.fail i{background:var(--red)}
+.insp-item b{font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg-2)}
+.insp-item span{font:10px var(--mono);color:var(--faint);flex:none}
+
+/* gallery */
+.gal-summary{display:flex;align-items:center;gap:14px;font-size:11.5px;color:var(--muted);margin-bottom:12px;flex-wrap:wrap}
+.gal-summary b{font:600 12.5px var(--mono);color:var(--fg)}
+.gal-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.gal-card{border:1px solid var(--border);border-radius:12px;background:var(--surface);overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow-1)}
+.gal-card.on{border-color:var(--border-strong);box-shadow:0 0 0 1px var(--border) inset}
+.gal-thumb{position:relative;height:132px;background:var(--surface-2);border-bottom:1px solid var(--border);overflow:hidden}
+.gal-thumb svg{width:100%;height:100%;display:block}
+.gal-label{position:absolute;left:8px;top:8px;font:600 9px var(--mono);letter-spacing:.06em;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 5px}
+.gal-live{position:absolute;right:8px;top:8px;display:inline-flex;align-items:center;gap:4px;font-size:9.5px;color:var(--green);background:var(--green-soft);border:1px solid var(--green-line);border-radius:99px;padding:1px 6px}
+.gal-live i{width:4px;height:4px;border-radius:50%;background:var(--green)}
+.gal-body{padding:10px 11px;display:flex;flex-direction:column;gap:6px;flex:1}
+.gal-body h3{margin:0;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}
+.gal-body p{margin:0;font-size:11px;line-height:1.5;color:var(--muted)}
+.gal-cast{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--muted);margin-top:auto}
+.gal-avatars{display:flex;gap:-4px}
+.gal-avatar{width:18px;height:18px;border-radius:50%;border:1px solid var(--surface);background:var(--surface-hover);display:grid;place-items:center;font-size:9px;color:var(--fg-2);margin-right:-5px}
+.gal-foot{display:flex;align-items:center;gap:6px;padding:8px 11px;border-top:1px solid var(--border)}
+.gal-foot .btn{flex:1}
+
+/* toast / modal */
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(8px);z-index:90;background:var(--fg);color:var(--page-canvas);border-radius:8px;padding:8px 13px;font-size:11.5px;box-shadow:var(--shadow-float);opacity:0;pointer-events:none;transition:opacity .16s,transform .16s;max-width:70vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.modal-mask{position:fixed;inset:0;z-index:80;background:rgba(10,10,10,.34);display:none;align-items:center;justify-content:center;padding:24px}
+.modal-mask.on{display:flex}
+.modal{width:520px;max-width:100%;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:var(--shadow-float);padding:16px;display:flex;flex-direction:column;gap:12px}
+.modal-head{display:flex;align-items:flex-start;gap:10px}
+.modal-head>div{flex:1;min-width:0}
+.modal-head h3{margin:0;font-size:15px;font-weight:600}
+.modal-head p{margin:2px 0 0;font-size:11.5px;color:var(--muted);line-height:1.5}
+.modal-field{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--muted)}
+.modal-field input{height:30px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);padding:0 8px;font-size:12px}
+.modal-templates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.modal-template{text-align:left;border:1px solid var(--border);border-radius:9px;background:var(--surface);padding:8px 10px;display:flex;flex-direction:column;gap:2px;cursor:pointer}
+.modal-template b{font-size:12px;font-weight:600}
+.modal-template span{font-size:10.5px;color:var(--muted)}
+.modal-template.on{border-color:var(--fg);box-shadow:0 0 0 1px var(--fg) inset}
+.modal-note{font-size:11px;color:var(--muted);line-height:1.5;padding:8px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface-2)}
+.modal-foot{display:flex;align-items:center;justify-content:flex-end;gap:6px}
+.modal-foot .spacer{flex:1}
+
+@keyframes flow{to{stroke-dashoffset:-20}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.lamp-go.on i,.lamp-nogo.on i{animation:pulse 2.4s ease-in-out infinite}
+body[data-motion="off"] .stage *{animation:none!important}
+body[data-motion="off"] .link.actual{opacity:.4}
+@media (prefers-reduced-motion:reduce){.stage *{animation:none!important}.lamp-go.on i,.lamp-nogo.on i{animation:none}}
+@media (max-width:1180px){.scene-stats span:nth-child(n+4){display:none}.gal-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:1240px){.app{grid-template-columns:56px minmax(0,1fr)}.rail-item{width:46px}.scene-stats{display:none}}
+@media (max-width:720px){.inspector{left:8px;right:8px;width:auto}.page-head{padding:12px 14px 8px;align-items:flex-start;flex-direction:column;gap:8px}.page-actions{width:100%;justify-content:flex-end}.tabs{padding:0 14px}.view.live{padding:8px 10px 12px}.view.gallery{padding:12px 14px 30px}.gal-grid{grid-template-columns:1fr}.legend{display:none}}
+</style>
+</head>
+<body data-motion="calm">
+<div class="app">
+  <nav class="rail" aria-label="主导航">
+    <div class="rail-brand" title="Cockpit Harness">C</div>
+    <button class="rail-item" title="工作区"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M3 10h6M15 8h3M15 12h3"/></svg><span>工作区</span></button>
+    <button class="rail-item on" title="场景" aria-current="page"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11M15 9v11"/></svg><span>场景</span></button>
+    <button class="rail-item" title="项目"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 11h18"/></svg><span>项目</span></button>
+    <button class="rail-item" title="统计"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>统计</span></button>
+    <button class="rail-item" title="Git"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="9" r="2.4"/><path d="M6 8.4v7.2M8.3 6h4.3a3 3 0 0 1 3 3v.2"/></svg><span>Git</span></button>
+    <button class="rail-item" title="知识库"><svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M8 7h7M8 11h5"/></svg><span>知识库</span></button>
+    <button class="rail-item" title="记忆"><svg viewBox="0 0 24 24"><path d="M12 3v18M5 7v10M19 7v10M8.5 5v14M15.5 5v14"/></svg><span>记忆</span></button>
+    <button class="rail-item" title="人物"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4"/><path d="M5 20a7 7 0 0 1 14 0"/></svg><span>人物</span></button>
+    <div class="rail-bottom">
+      <button class="rail-item" title="说明"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.4 2.3c-.7.3-.9.9-.9 1.7M12 17h.01"/></svg><span>说明</span></button>
+      <button class="rail-item" title="设置"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>设置</span></button>
+    </div>
+  </nav>
+
+  <main class="main">
+    <header class="page-head">
+      <div class="page-title">
+        <span class="kicker">SCENE · STAGE PACK</span>
+        <h1>作战室 · 发布值班</h1>
+        <p class="page-sub">长桌、主屏和一个 GO / NO-GO 闸门：同一批 run 和 delegation，换一种更接近发布窗口的空间语言。</p>
+      </div>
+      <div class="page-actions">
+        <button class="btn" id="openNew">新建场景</button>
+        <button class="btn primary" data-toast="派活：这里复用工作区的「派活」弹层（原型）">派活</button>
+        <button class="icon-btn" id="themeBtn" title="切换亮 / 暗" aria-label="切换亮 / 暗">◐</button>
+      </div>
+    </header>
+
+    <nav class="tabs" aria-label="场景视图">
+      <button class="tab on" data-view="live">实况 <span class="live-dot"></span></button>
+      <button class="tab" data-view="gallery">场景库</button>
+      <span class="tab-sep"></span>
+      <a class="tab" href="coordination-scene.html">办公室舞台</a>
+      <a class="tab" href="carrier.html">航母 · 电磁弹射</a>
+      <span class="tab-hint">同一套 SceneModel，换舞台不换状态机</span>
+    </nav>
+
+    <!-- ── 实况 ─────────────────────────────────────────────── -->
+    <section class="view live on" data-view="live" aria-label="作战室实况">
+      <div class="scene-toolbar">
+        <div class="scene-id">
+          <span class="scene-mark">发</span>
+          <div>
+            <b>发布值班 <span class="tag live">实时</span> <span class="tag">作战室</span></b>
+            <span>@research · 7 位 Agent · 长桌 6 席 · 值班 21:00–23:00</span>
+          </div>
+        </div>
+        <div class="scene-stats">
+          <span><b>7</b>人</span>
+          <span class="run"><b>3</b>运行</span>
+          <span class="wait"><b>1</b>待确认</span>
+          <span class="review"><b>1</b>待验收</span>
+          <span class="fail"><b>1</b>失败</span>
+        </div>
+        <span class="spacer"></span>
+        <select id="motionSelect" aria-label="动效">
+          <option value="calm">动效 · 克制</option>
+          <option value="full">动效 · 完整</option>
+          <option value="off">动效 · 关闭</option>
+        </select>
+        <div class="seg" id="modeSeg" role="group" aria-label="实况或配置">
+          <button class="on" data-mode="live">实况</button>
+          <button data-mode="config">配置</button>
+        </div>
+        <button class="btn tiny" id="detailToggle" aria-expanded="false" title="点座位或这里打开详情">详情</button>
+        <button class="icon-btn" title="更多" data-toast="更多：复制场景 / 导出值班快照 / 全屏（原型）">⋯</button>
+      </div>
+
+      <div class="live-body">
+        <div class="stage-wrap">
+          <div class="stage" id="stage">
+            <div class="canvas" id="canvas">
+              <div class="room-ceil">
+                <i class="ceil-strip s1"></i><i class="ceil-strip s2"></i><i class="ceil-strip s3"></i>
+                <div class="ceil-cove"></div>
+              </div>
+              <div class="room-wall">
+                <i class="seam m1"></i><i class="seam m2"></i><i class="seam m3"></i><i class="seam m4"></i>
+              </div>
+              <div class="room-floor">
+                <i class="glare g1"></i>
+                <div class="floor-grid"></div>
+              </div>
+
+              <svg class="links" viewBox="0 0 1180 640" aria-hidden="true">
+                <defs>
+                  <linearGradient id="chairGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop class="c1" offset="0"/><stop class="c2" offset="1"/>
+                  </linearGradient>
+                </defs>
+                <path class="link expected" d="M390 540 C404 468 420 400 450 366"/>
+                <path class="link expected" d="M390 540 C444 470 512 398 600 366"/>
+                <path class="link expected" d="M390 540 C498 476 630 400 750 366"/>
+                <path class="link expected" d="M390 540 C560 556 800 470 944 440"/>
+                <path class="link actual" d="M390 540 C404 468 420 400 450 366"/>
+                <path class="link actual" d="M390 540 C444 470 512 398 600 366"/>
+                <path class="link actual" d="M390 540 C560 556 800 470 944 440"/>
+              </svg>
+
+              <!-- video wall -->
+              <div class="video-wall" data-focus="board" title="打开 Mission 计划">
+                <div class="vw-inner">
+                  <div class="vw-head">
+                    <span class="vw-kicker">MISSION CONTROL</span>
+                    <b>发布 v0.3</b>
+                    <span class="chip">M-03</span>
+                    <span class="vw-clock">21:14 <em>T−42m</em></span>
+                  </div>
+                  <div class="vw-tele">
+                    <i class="led"></i><span>UPLINK 42ms</span><span class="sep">/</span>
+                    <span>GRID 09-A</span><span class="sep">/</span>
+                    <span>NODES 07</span><span class="sep">/</span>
+                    <span>SYNC 0.98</span>
+                    <span class="vw-tele-right">AUTO · 21:00–23:00</span>
+                  </div>
+                  <div class="vw-body">
+                    <div class="vw-col">
+                      <h5>发布步骤 <em>04</em></h5>
+                      <div class="steps">
+                        <div class="ms-step done"><i>✓</i><b>登录页校验</b><span>T-014</span></div>
+                        <div class="ms-step doing"><i>◐</i><b>工作台空态</b><span>T-015</span></div>
+                        <div class="ms-step"><i>○</i><b>发布检查</b><span>T-013</span></div>
+                        <div class="ms-step"><i>○</i><b>回归验收</b><span>T-009</span></div>
+                      </div>
+                      <div class="vw-mini"><span>NEXT</span><b>NO-GO 待确认</b></div>
+                    </div>
+                    <div class="vw-globe">
+                      <svg class="globe" viewBox="0 0 260 172" aria-hidden="true">
+                        <defs>
+                          <radialGradient id="globeDay" cx="34%" cy="26%" r="82%">
+                            <stop class="gd1" offset="0"/><stop class="gd2" offset=".42"/>
+                            <stop class="gd3" offset=".76"/><stop class="gd4" offset="1"/>
+                          </radialGradient>
+                          <radialGradient id="globeAtmo" cx="50%" cy="50%" r="50%">
+                            <stop class="ga1" offset=".84"/><stop class="ga2" offset="1"/>
+                          </radialGradient>
+                          <linearGradient id="globeTerm" x1="0" y1="0" x2="1" y2="1">
+                            <stop class="gt1" offset="0"/><stop class="gt2" offset=".52"/><stop class="gt3" offset="1"/>
+                          </linearGradient>
+                          <linearGradient id="rimGrad" x1="0" y1="0" x2="1" y2="1">
+                            <stop class="gr1" offset="0"/><stop class="gr2" offset=".5"/><stop class="gr3" offset="1"/>
+                          </linearGradient>
+                          <radialGradient id="specGrad" cx="50%" cy="50%" r="50%">
+                            <stop class="sp1" offset="0"/><stop class="sp2" offset="1"/>
+                          </radialGradient>
+                          <radialGradient id="sweepGrad" cx="130" cy="86" r="86" gradientUnits="userSpaceOnUse">
+                            <stop class="sw1" offset="0"/><stop class="sw2" offset="1"/>
+                          </radialGradient>
+                          <clipPath id="globeClip"><circle cx="130" cy="86" r="66"/></clipPath>
+                        </defs>
+
+                        <g class="globe-reticle">
+                          <circle class="globe-ring-outer" cx="130" cy="86" r="82"/>
+                          <circle class="globe-ring-dash" cx="130" cy="86" r="76"/>
+                          <path d="M44 40 h-10 v-10 M216 40 h10 v-10 M44 132 h-10 v10 M216 132 h10 v10"/>
+                        </g>
+
+                        <circle class="globe-atmo" cx="130" cy="86" r="72"/>
+                        <circle cx="130" cy="86" r="66" fill="url(#globeDay)"/>
+
+                        <g clip-path="url(#globeClip)">
+                          <g class="globe-land">
+                            <path d="M104 28 q28 -10 46 6 t8 26 q-4 14 -18 16 l-8 14 q-10 8 -22 2 t-12 -20 q-8 -16 -6 -28 q2 -10 12 -16 Z"/>
+                            <path d="M72 94 q16 -8 30 4 t4 24 q-8 14 -24 12 t-18 -18 q-2 -14 8 -22 Z"/>
+                            <path d="M152 96 q22 -8 36 6 t0 28 q-12 12 -26 4 t-14 -22 q-2 -10 4 -16 Z"/>
+                            <path d="M118 118 q14 -4 20 4 t-2 14 q-8 8 -16 2 t-6 -14 q0 -4 4 -6 Z"/>
+                          </g>
+                          <g class="globe-clouds">
+                            <path d="M58 70 q28 -14 56 -4 t46 -2"/>
+                            <path d="M70 102 q32 -8 58 2 t44 -8"/>
+                            <path d="M96 40 q26 -8 46 4"/>
+                            <path d="M86 134 q28 -6 52 4"/>
+                          </g>
+                          <circle cx="130" cy="86" r="66" fill="url(#globeTerm)"/>
+                          <g class="globe-lights">
+                            <circle cx="172" cy="94" r="1.3"/><circle cx="178" cy="104" r="1"/><circle cx="166" cy="112" r="1.1"/>
+                            <circle cx="184" cy="86" r="1"/><circle cx="158" cy="122" r="1"/><circle cx="190" cy="100" r=".9"/>
+                          </g>
+                          <g class="globe-grid">
+                            <ellipse cx="130" cy="86" rx="66" ry="21"/>
+                            <ellipse cx="130" cy="86" rx="66" ry="42"/>
+                            <ellipse cx="130" cy="86" rx="66" ry="64"/>
+                            <ellipse cx="130" cy="86" rx="21" ry="66"/>
+                            <ellipse cx="130" cy="86" rx="42" ry="66"/>
+                          </g>
+                          <g class="globe-arcs">
+                            <path d="M98 56 Q140 24 166 70"/>
+                            <path d="M104 118 Q142 140 176 102"/>
+                          </g>
+                          <g class="globe-sweep">
+                            <path d="M130 86 L130 20 A66 66 0 0 1 187 56 Z" fill="url(#sweepGrad)"/>
+                          </g>
+                        </g>
+
+                        <circle class="globe-rim" cx="130" cy="86" r="66"/>
+                        <circle class="globe-ring-inner" cx="130" cy="86" r="58"/>
+                        <ellipse class="globe-spec" cx="100" cy="52" rx="26" ry="15" transform="rotate(-30 100 52)"/>
+
+                        <g class="globe-nodes">
+                          <g class="node"><circle class="node-pulse" cx="98" cy="58" r="7"/><circle class="node-dot" cx="98" cy="58" r="2"/></g>
+                          <g class="node"><circle class="node-pulse" cx="158" cy="78" r="6"/><circle class="node-dot" cx="158" cy="78" r="2"/></g>
+                          <g class="node"><circle class="node-pulse" cx="120" cy="118" r="5"/><circle class="node-dot" cx="120" cy="118" r="2"/></g>
+                        </g>
+
+                        <g class="globe-orbit">
+                          <ellipse cx="130" cy="86" rx="96" ry="27" transform="rotate(-20 130 86)"/>
+                          <circle class="orbit-sat" cx="46" cy="106" r="1.8"/>
+                          <circle class="orbit-sat" cx="214" cy="66" r="1.4"/>
+                        </g>
+                        <g class="globe-axis">
+                          <line x1="130" y1="12" x2="130" y2="160"/>
+                          <line x1="56" y1="86" x2="204" y2="86"/>
+                        </g>
+
+                        <ellipse class="globe-base" cx="130" cy="161" rx="44" ry="5"/>
+                        <text class="globe-label" x="10" y="168">LAT 34.2N · LON 118.4E</text>
+                        <text class="globe-label" x="250" y="168" text-anchor="end">ORBITAL · 07</text>
+                      </svg>
+                    </div>
+                    <div class="vw-col right">
+                      <h5>实时指标</h5>
+                      <div class="vw-metrics">
+                        <div class="vw-metric"><span>运行中</span><b>3<em>run</em></b></div>
+                        <div class="vw-metric"><span>待确认</span><b>1<em>项</em></b></div>
+                        <div class="vw-metric"><span>待验收</span><b>1<em>项</em></b></div>
+                        <div class="vw-metric"><span>耗时</span><b>42<em>m</em></b></div>
+                      </div>
+                      <div class="vw-spark">
+                        <svg viewBox="0 0 150 30" aria-hidden="true">
+                          <defs>
+                            <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop class="sp1" offset="0"/><stop class="sp2" offset="1"/>
+                            </linearGradient>
+                          </defs>
+                          <path class="spark-area" d="M0 24 L18 20 L36 22 L54 14 L72 17 L90 10 L108 13 L126 7 L144 9 L150 6 L150 30 L0 30 Z"/>
+                          <path class="spark-line" d="M0 24 L18 20 L36 22 L54 14 L72 17 L90 10 L108 13 L126 7 L144 9 L150 6"/>
+                        </svg>
+                      </div>
+                      <div class="vw-delta"><span>SLA 99.98%</span><b>+0.02</b></div>
+                    </div>
+                  </div>
+                  <div class="vw-foot">
+                    <span class="vw-foot-k">SEQ</span>
+                    <div class="ms-bar"><i class="done"></i><i class="doing"></i><i></i><i></i></div>
+                    <span>4 步 · 2 进行中</span>
+                    <em>下一步：NO-GO 项待确认</em>
+                  </div>
+                  <i class="vw-sweep"></i>
+                  <i class="vw-grid" aria-hidden="true"></i>
+                </div>
+                <span class="vw-rail left" aria-hidden="true"></span><span class="vw-rail right" aria-hidden="true"></span>
+                <i class="vw-corner tl"></i><i class="vw-corner tr"></i><i class="vw-corner bl"></i><i class="vw-corner br"></i>
+              </div>
+
+              <!-- wall side displays -->
+              <div class="side-screen left" data-focus="timeline" title="打开事件流">
+                <div class="ss-head">值班事件 <b>4</b></div>
+                <div class="ss-row"><i></i><b>林 · 登录页校验通过</b><span>1m</span></div>
+                <div class="ss-row"><i></i><b>北 · 等待审批</b><span>2m</span></div>
+                <div class="ss-row"><i></i><b>安 · npm test 失败</b><span>3m</span></div>
+                <div class="ss-row"><i></i><b>乔 · 验收完成</b><span>4m</span></div>
+                <div class="ss-empty">只读 run / approval 事件，不伪造任务</div>
+              </div>
+              <div class="side-screen right" data-focus="metrics" title="打开本次发布指标">
+                <div class="ss-head">发布指标 <b>本次</b></div>
+                <div class="ss-metrics">
+                  <div class="ss-metric"><span>运行中</span><b>3<em>run</em></b></div>
+                  <div class="ss-metric"><span>待确认</span><b>1<em>项</em></b></div>
+                  <div class="ss-metric"><span>失败</span><b>1<em>项</em></b></div>
+                  <div class="ss-metric"><span>耗时</span><b>42<em>m</em></b></div>
+                </div>
+              </div>
+
+              <!-- console desk -->
+              <div class="desk">
+                <div class="desk-body"></div>
+                <div class="desk-monitors">
+                  <div class="dm">
+                    <svg viewBox="0 0 150 80" aria-hidden="true">
+                      <path class="dm-line" d="M10 58 L28 50 L46 54 L64 38 L82 44 L100 30 L118 34 L136 22"/>
+                      <path class="dm-bar" d="M10 66 h12 v6 h-12 Z M30 62 h12 v10 h-12 Z M50 64 h12 v8 h-12 Z"/>
+                      <text class="dm-txt" x="10" y="16">BUILD · T-014</text>
+                      <text class="dm-txt" x="10" y="74">STABLE</text>
+                    </svg>
+                  </div>
+                  <div class="dm">
+                    <svg viewBox="0 0 150 80" aria-hidden="true">
+                      <path class="dm-bar" d="M12 56 h14 v16 h-14 Z M32 44 h14 v28 h-14 Z M52 50 h14 v22 h-14 Z M72 34 h14 v38 h-14 Z M92 40 h14 v32 h-14 Z M112 24 h14 v48 h-14 Z"/>
+                      <text class="dm-txt" x="10" y="16">QUEUE · 6</text>
+                    </svg>
+                  </div>
+                  <div class="dm">
+                    <svg viewBox="0 0 150 80" aria-hidden="true">
+                      <circle class="dm-ring" cx="112" cy="40" r="20"/>
+                      <path class="dm-arc" d="M112 20 a20 20 0 0 1 17 30"/>
+                      <text class="dm-txt" x="10" y="16">RECOVERY</text>
+                      <text class="dm-num" x="10" y="46">72%</text>
+                      <text class="dm-txt" x="10" y="60">WIND 25KT</text>
+                    </svg>
+                  </div>
+                </div>
+                <div class="desk-top">
+                  <i class="kb k1"></i><i class="kb k2"></i><i class="kb k3"></i>
+                  <div class="desk-paper"><b>发布顺序</b>1 登录页 · 2 工作台<br/>3 发布检查 · 4 回归</div>
+                  <div class="desk-note"><b>GO 条件</b>通过 2 / 4</div>
+                  <div class="desk-mug"></div>
+                </div>
+                <div class="desk-led"></div>
+                <div class="desk-apron"></div>
+              </div>
+              <div class="desk-reflect" aria-hidden="true"></div>
+
+              <!-- floor consoles -->
+              <div class="console left tall" data-focus="review" title="打开复盘墙">
+                <div class="rw-head">复盘墙 <em>1</em></div>
+                <div class="rw-note"><i></i>工作台空态 · 3 files</div>
+                <div class="rw-note dim"><i></i>登录页 · 已验收</div>
+                <div class="rw-strip"><i></i><i></i><i></i><i></i><i></i></div>
+              </div>
+              <div class="console left short" data-focus="comms" title="打开对外同步">
+                <div class="comms-head">对外同步<span>草稿</span></div>
+                <div class="comms-line w1"></div>
+                <div class="comms-line w2"></div>
+                <div class="comms-foot"><i></i>发布后 5 分钟发出</div>
+              </div>
+              <div class="console right tall" data-focus="gate" title="打开 GO / NO-GO 闸门">
+                <div class="gate-head">发布闸门 <span>GO / NO-GO</span></div>
+                <div class="lamps">
+                  <span class="lamp-go"><i></i>GO</span>
+                  <span class="lamp-nogo on"><i></i>NO-GO</span>
+                </div>
+                <div class="gate-check">
+                  <div class="gate-row done"><i>✓</i><b>登录页校验</b></div>
+                  <div class="gate-row done"><i>✓</i><b>回归套件</b></div>
+                  <div class="gate-row wait"><i>·</i><b>数据迁移</b></div>
+                  <div class="gate-row"><i></i><b>对外公告草稿</b></div>
+                </div>
+                <div class="gate-foot">北 · 等待审批<span class="tag warn">1</span></div>
+              </div>
+              <div class="console right short" data-focus="pantry" title="打开茶水台">
+                <div class="pantry-head">静默角<em>空闲</em></div>
+                <div class="pantry-cups"><i></i><i></i><i></i><i></i></div>
+                <div class="pantry-foot"><i></i>离开长桌 = 休息 / 等下一轮</div>
+              </div>
+
+              <div class="hint-bar"><b>配置模式</b><span>点座位分配 Agent；点闸门 / 复盘墙改值班编排</span></div>
+              <div class="seats" id="seats"></div>
+            </div>
+          </div>
+          <div class="legend">
+            <span><i class="line actual"></i>真实委派</span>
+            <span><i class="line"></i>期望拓扑</span>
+            <span><i class="dot run"></i>运行</span>
+            <span><i class="dot wait"></i>待确认</span>
+            <span><i class="dot review"></i>待验收</span>
+            <span><i class="dot fail"></i>失败</span>
+            <span class="legend-note">状态来自 runs / delegations / approvals，舞台只负责呈现</span>
+          </div>
+        </div>
+
+        <aside class="inspector" id="inspector" aria-label="选中对象详情"></aside>
+      </div>
+    </section>
+
+    <!-- ── 场景库 ───────────────────────────────────────────── -->
+    <section class="view gallery" data-view="gallery" aria-label="场景库">
+      <div class="gal-summary">
+        <span><b>2</b> 个协作场景</span>
+        <span><b>7</b> 位 Agent</span>
+        <span><b>3</b> 运行中</span>
+        <span><b>3</b> 种舞台</span>
+        <span class="muted">办公室已上线 · 作战室 / 航母为舞台原型</span>
+      </div>
+      <div class="gal-grid">
+        <article class="gal-card">
+          <div class="gal-thumb">
+            <span class="gal-label">OFFICE · LIVE</span>
+            <svg viewBox="0 0 320 152" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+              <rect width="320" height="152" fill="var(--surface-2)"/>
+              <rect width="320" height="58" fill="var(--wall)"/>
+              <rect y="57" width="320" height="1" fill="var(--border)"/>
+              <ellipse cx="178" cy="120" rx="124" ry="34" fill="color-mix(in srgb,var(--surface) 60%,transparent)"/>
+              <rect x="16" y="78" width="74" height="24" rx="3" fill="var(--desk-top)" stroke="var(--border)"/>
+              <rect x="22" y="68" width="24" height="14" rx="2" fill="var(--screen-bg)"/>
+              <rect x="58" y="64" width="14" height="21" rx="7" fill="var(--actor-body)"/>
+              <rect x="112" y="88" width="42" height="11" rx="2" fill="var(--desk-top)" stroke="var(--border)"/>
+              <rect x="138" y="73" width="11" height="18" rx="5.5" fill="var(--actor-body)"/>
+              <rect x="168" y="88" width="42" height="11" rx="2" fill="var(--desk-top)" stroke="var(--border)"/>
+              <rect x="194" y="73" width="11" height="18" rx="5.5" fill="var(--actor-body)"/>
+              <rect x="224" y="88" width="42" height="11" rx="2" fill="var(--desk-top)" stroke="var(--border)"/>
+              <rect x="250" y="73" width="11" height="18" rx="5.5" fill="var(--actor-body)"/>
+            </svg>
+          </div>
+          <div class="gal-body">
+            <h3>研发小队 <span class="tag live">当前</span></h3>
+            <p>工位、审批、验收、机房、茶歇与会议角，全部按真实运行状态呈现。</p>
+            <div class="gal-cast"><span class="gal-avatars"><span class="gal-avatar">岚</span><span class="gal-avatar">林</span><span class="gal-avatar">周</span><span class="gal-avatar">+4</span></span>7 位 · 3 运行</div>
+          </div>
+          <div class="gal-foot"><a class="btn" href="coordination-scene.html">打开原型</a><button class="icon-btn" data-toast="办公室舞台已上线">⋯</button></div>
+        </article>
+
+        <article class="gal-card on">
+          <div class="gal-thumb">
+            <span class="gal-label">WAR ROOM · LIVE</span>
+            <span class="gal-live"><i></i>本页</span>
+            <svg viewBox="0 0 320 152" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+              <rect width="320" height="152" fill="#0b0f13"/>
+              <rect width="320" height="16" fill="#20262d"/>
+              <rect x="0" y="16" width="320" height="96" fill="#2b333c"/>
+              <rect x="0" y="112" width="320" height="40" fill="#141a20"/>
+              <rect x="86" y="26" width="148" height="60" rx="2" fill="#0a0e12" stroke="rgba(120,215,240,.35)"/>
+              <circle cx="160" cy="56" r="20" fill="none" stroke="rgba(120,215,240,.35)"/>
+              <ellipse cx="160" cy="56" rx="20" ry="7" fill="none" stroke="rgba(120,215,240,.22)"/>
+              <ellipse cx="160" cy="56" rx="7" ry="20" fill="none" stroke="rgba(120,215,240,.22)"/>
+              <rect x="94" y="32" width="26" height="2" rx="1" fill="rgba(120,215,240,.35)"/>
+              <rect x="94" y="38" width="18" height="2" rx="1" fill="rgba(255,255,255,.18)"/>
+              <rect x="202" y="32" width="24" height="2" rx="1" fill="rgba(120,215,240,.35)"/>
+              <rect x="96" y="84" width="128" height="2" rx="1" fill="rgba(120,215,240,.18)"/>
+              <rect x="96" y="84" width="52" height="2" rx="1" fill="rgba(120,215,240,.75)"/>
+              <rect x="74" y="96" width="172" height="26" rx="4" fill="#20272f" stroke="rgba(120,215,240,.20)"/>
+              <rect x="88" y="102" width="42" height="12" rx="1.5" fill="#0b1014" stroke="rgba(120,215,240,.25)"/>
+              <rect x="139" y="102" width="42" height="12" rx="1.5" fill="#0b1014" stroke="rgba(120,215,240,.25)"/>
+              <rect x="190" y="102" width="42" height="12" rx="1.5" fill="#0b1014" stroke="rgba(120,215,240,.25)"/>
+              <rect x="82" y="120" width="156" height="2" rx="1" fill="rgba(120,215,240,.8)"/>
+              <circle cx="112" cy="92" r="5" fill="#dfe8ef"/>
+              <circle cx="160" cy="92" r="5" fill="#dfe8ef"/>
+              <circle cx="208" cy="92" r="5" fill="#dfe8ef"/>
+              <rect x="0" y="14" width="320" height="2" fill="rgba(120,215,240,.35)"/>
+            </svg>
+          </div>
+          <div class="gal-body">
+            <h3>发布值班 <span class="tag">作战室</span></h3>
+            <p>发布窗口的值班阵容：主屏看板、回滚席、对外同步，都在同一张长桌上。</p>
+            <div class="gal-cast"><span class="gal-avatars"><span class="gal-avatar">岚</span><span class="gal-avatar">周</span><span class="gal-avatar">北</span><span class="gal-avatar">+3</span></span>7 位 · 3 运行</div>
+          </div>
+          <div class="gal-foot"><button class="btn" data-view-go="live">进入实况</button><button class="icon-btn" data-toast="值班模板：长桌 6 席 + 闸门 + 复盘墙">⋯</button></div>
+        </article>
+
+        <article class="gal-card">
+          <div class="gal-thumb">
+            <span class="gal-label">CARRIER · TEMPLATE</span>
+            <svg viewBox="0 0 320 152" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+              <rect width="320" height="152" fill="color-mix(in srgb,var(--indigo) 8%,var(--floor))"/>
+              <path d="M130 18h60l18 34h76v82H36v-82h76Z" fill="var(--surface-2)" stroke="var(--border-strong)"/>
+              <path d="M150 30v58M182 30v58" stroke="var(--border-strong)" stroke-dasharray="4 4"/>
+              <path d="M50 120 236 54" stroke="var(--border)" stroke-dasharray="5 5"/>
+              <path d="M52 118 232 58" stroke="var(--amber)" stroke-width="2"/>
+              <path d="M240 70h44v46h-44Z" fill="var(--surface)" stroke="var(--border-strong)"/>
+              <rect x="156" y="40" width="8" height="18" rx="3" fill="var(--actor-body)" transform="rotate(0 160 49)"/>
+              <rect x="186" y="78" width="8" height="18" rx="3" fill="var(--actor-body)"/>
+            </svg>
+          </div>
+          <div class="gal-body">
+            <h3>弹射值班 <span class="tag">原型</span></h3>
+            <p>把「排队 → 对位 → 弹射 → 起飞 → 拦阻」映射到甲板和弹射位。</p>
+            <div class="gal-cast"><span class="gal-avatars"><span class="gal-avatar">岚</span><span class="gal-avatar">林</span><span class="gal-avatar">周</span><span class="gal-avatar">+3</span></span>7 位 · 2 待命</div>
+          </div>
+          <div class="gal-foot"><a class="btn" href="carrier.html">打开原型</a><button class="icon-btn" data-toast="航母舞台：甲板 · 弹射位 · 拦阻索">⋯</button></div>
+        </article>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="modal-mask" id="newMask">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="新建协作场景">
+    <div class="modal-head">
+      <div>
+        <h3>新建协作场景</h3>
+        <p>先选舞台模板，再配阵容与编排。创建后先进入实况。</p>
+      </div>
+      <button class="icon-btn" id="newClose" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-field">
+      <span>场景名称</span>
+      <input id="newName" value="发布值班" />
+    </div>
+    <div class="modal-field">
+      <span>舞台模板</span>
+      <div class="modal-templates">
+        <button class="modal-template" data-tpl="office"><b>办公室</b><span>工位 · 白板 · 审批 · 茶歇 · 会议</span></button>
+        <button class="modal-template on" data-tpl="warroom"><b>作战室</b><span>长桌 · 主屏 · 发布闸门 · 复盘墙</span></button>
+        <button class="modal-template" data-tpl="carrier"><b>航母 · 电磁弹射</b><span>甲板 · 弹射位 · 拦阻索</span></button>
+      </div>
+    </div>
+    <div class="modal-note">舞台只决定空间与动作，调度仍走现有 Mission / Delegation。作战室与航母共用同一套 SceneModel。</div>
+    <div class="modal-foot">
+      <span class="spacer"></span>
+      <button class="btn" id="newCancel">取消</button>
+      <button class="btn primary" id="newCreate">创建场景</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+  const params = new URLSearchParams(location.search);
+  const stage = $("#stage");
+  const canvas = $("#canvas");
+  const inspector = $("#inspector");
+  const state = { mode: params.get("mode") === "config" ? "config" : "live", detail: params.get("detail") === "1", selected: params.get("select") || null };
+
+  if (params.get("theme") === "dark") document.documentElement.dataset.theme = "dark";
+
+  /* ── 座位 / 值班位 ─────────────────────────────────────── */
+  const SEATS = [
+    { id: "lan", name: "岚", role: "值班指挥", tone: "lead", status: "主持发布中", short: "主持发布", task: "主持发布 · 盯主屏", x: 390, y: 552, row: "near", accent: "var(--slate)", head: true },
+    { id: "lin", name: "林", role: "看板席", tone: "run", status: "运行中", short: "T-014 运行中", task: "T-014 登录页校验", x: 450, y: 356, row: "far", accent: "var(--teal)" },
+    { id: "zhou", name: "周", role: "回滚席", tone: "run", status: "运行中", short: "T-015 运行中", task: "T-015 工作台空态", x: 600, y: 356, row: "far", accent: "var(--indigo)" },
+    { id: "bei", name: "北", role: "迁移席", tone: "wait", status: "待确认", short: "T-013 待确认", task: "T-013 数据迁移 · 等审批", x: 750, y: 356, row: "far", accent: "var(--amber)" },
+    { id: "an", name: "安", role: "回归席", tone: "fail", status: "失败", short: "T-011 失败", task: "T-011 npm test 退出码 1", x: 520, y: 552, row: "near", accent: "var(--orange)" },
+    { id: "qiao", name: "乔", role: "验收席", tone: "review", status: "待验收", short: "T-009 待验收", task: "T-009 工作台空态验收", x: 650, y: 552, row: "near", accent: "var(--purple)" },
+    { id: "man", name: "小满", role: "对外同步", tone: "idle", status: "待命", short: "待命 · 公告已就绪", task: "公告草稿已就绪", x: 780, y: 552, row: "near", accent: "var(--slate)" },
+  ];
+  const EMPTY = [
+    { id: "empty-1", x: 320, y: 351, row: "far", label: "S7" },
+    { id: "empty-2", x: 870, y: 351, row: "far", label: "S8" },
+  ];
+  const FOCUS = {
+    board: { title: "发布 v0.3", sub: "M-03 · 主屏只读渲染", kicker: "MISSION", rows: [["来源", "mission / plan"], ["步骤", "4 步 · 2 进行中"], ["状态", "运行中"], ["关联", "T-014 / T-015 / T-013 / T-009"]], note: "主屏不自己算进度：宽高与步骤都来自 Mission plan 和 delegation，舞台只做空间映射。", actions: ["打开 Mission 线程", "看板钉住"] },
+    timeline: { title: "值班事件", sub: "最近 15 分钟 · 4 条", kicker: "EVENTS", rows: [["来源", "run.tool / run.finished / approval"], ["范围", "本场景 cast"], ["写入", "只读事件流"]], note: "事件按时间倒序，和动效工作台的时间轴共用同一条数据源；点条目可以回放那一刻。", actions: ["打开事件流", "只看走位"] },
+    metrics: { title: "发布指标", sub: "本次值班 · 实时聚合", kicker: "METRICS", rows: [["运行中", "3 run"], ["待确认", "1 项"], ["待验收", "1 项"], ["失败", "1 项"]], note: "指标从 runs / approvals 聚合，不新增统计表。", actions: ["打开统计", "导出快照"] },
+    gate: { title: "发布闸门", sub: "GO / NO-GO · 4 项检查", kicker: "GATE", rows: [["登录页校验", "通过"], ["回归套件", "通过"], ["数据迁移", "等待审批"], ["对外公告", "草稿"]], note: "闸门是场景编排，不是新的权限系统：它只决定值班时谁必须点头。真实审批仍走 approvals。", actions: ["打开审批", "切换 NO-GO"] },
+    review: { title: "复盘墙", sub: "验收产物 · 1 待验收", kicker: "REVIEW", rows: [["待验收", "工作台空态 · 3 files"], ["已验收", "登录页 · 1 file"], ["门禁", "reviewGate 开"]], note: "验收不走位也不弹窗：它把产物挂在墙上，等值班的人自己看。", actions: ["打开验收", "收起"] },
+    comms: { title: "对外同步", sub: "公告草稿 · 发布后 5 分钟", kicker: "COMMS", rows: [["草稿", "v0.3 发布说明"], ["触发", "发布完成后"], ["状态", "待发出"]], note: "对外同步是可选的舞台位；关掉它只是少一个位置，不影响调度。", actions: ["打开草稿", "关闭此位"] },
+    pantry: { title: "静默角", sub: "离开长桌 = 休息 / 等下一轮", kicker: "IDLE", rows: [["当前", "0 人"], ["规则", "空闲 10 分钟自动走位"], ["动效", "关闭时不走位"]], note: "休息不表示离线：它只是「不在这轮值班里」，状态仍从真实 run 派生。", actions: ["看空闲队列"] },
+  };
+
+  const chairSVG = () => `
+    <span class="chair" aria-hidden="true">
+      <svg viewBox="0 0 40 56">
+        <rect class="ch-back" x="4" y="0" width="32" height="26" rx="7"/>
+        <path class="ch-mesh" d="M9 6 h22 M9 11 h22 M9 16 h22 M9 21 h22"/>
+        <rect class="ch-seat" x="5" y="28" width="30" height="5" rx="2.5"/>
+        <path class="ch-stem" d="M20 32 v7"/>
+        <path class="ch-star" d="M20 42 L11 48 M20 42 L29 48 M20 42 L20 49"/>
+        <circle class="ch-wheel" cx="11" cy="49" r="1.6"/>
+        <circle class="ch-wheel" cx="20" cy="50" r="1.6"/>
+        <circle class="ch-wheel" cx="29" cy="49" r="1.6"/>
+      </svg>
+    </span>`;
+  const seatHTML = (s) => `
+    <div class="seat ${s.tone === "lead" ? "lead" : s.tone} ${s.head ? "head-seat" : ""} ${s.row === "far" ? "far" : ""}" data-id="${s.id}" style="left:${s.x}px;top:${s.y}px;--accent:${s.accent}" tabindex="0" role="button" aria-label="${s.name} · ${s.role}">
+      ${chairSVG()}
+      <span class="robot"><i></i><b></b></span>
+      <span class="seat-card">
+        <span class="seat-name"><span class="dot"></span>${s.name}<em>${s.role}</em></span>
+        <span class="seat-status">${s.short || s.status}</span>
+      </span>
+      ${s.bubble ? `<span class="seat-bubble">${s.bubble}</span>` : ""}
+    </div>`;
+
+  const emptyHTML = (s) => `
+    <div class="seat config-empty ${s.row === "far" ? "far" : ""}" data-id="${s.id}" style="left:${s.x}px;top:${s.y}px" tabindex="0" role="button" aria-label="空位 ${s.label}">
+      ${chairSVG()}
+      <span class="seat-role">+</span>
+      <span class="seat-card">
+        <span class="seat-name"><span class="dot"></span>空位<em>${s.label}</em></span>
+        <span class="seat-status">点击分配</span>
+      </span>
+    </div>`;
+
+  function renderSeats() {
+    $("#seats").innerHTML = SEATS.map(seatHTML).join("") + (state.mode === "config" ? EMPTY.map(emptyHTML).join("") : "");
+    $$("#seats .seat").forEach((el) => {
+      el.addEventListener("click", () => select(el.dataset.id));
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(el.dataset.id); } });
+    });
+    if (state.selected) $$("#seats .seat").forEach((el) => el.classList.toggle("sel", el.dataset.id === state.selected));
+  }
+
+  /* ── Inspector ─────────────────────────────────────────── */
+  function actorInspector(s) {
+    const dots = { run: "run", wait: "wait", review: "review", fail: "fail", lead: "run", idle: "" }[s.tone] || "";
+    return `
+      <div class="insp-head">
+        <div>
+          <b>${s.name} <span class="tag ${s.tone === "wait" ? "warn" : s.tone === "fail" ? "bad" : s.tone === "review" ? "" : "ok"}">${s.status}</span></b>
+          <span>${s.role} · 长桌值班</span>
+        </div>
+        <button class="icon-btn" data-close-insp aria-label="收起">✕</button>
+      </div>
+      <div class="insp-scroll">
+        <div class="insp-sec">
+          <h4>此刻</h4>
+          <div class="insp-row">任务<b>${s.task}</b></div>
+          <div class="insp-row">起因<b>${s.tone === "wait" ? "approval 待确认" : s.tone === "fail" ? "run.failed" : s.tone === "review" ? "run.finished · 待验收" : s.tone === "idle" ? "本轮已交回" : "delegation 委派"}</b></div>
+          <div class="insp-row">位置<b>长桌 ${s.role}</b></div>
+        </div>
+        <div class="insp-sec">
+          <h4>最近一次变化</h4>
+          <div class="insp-list">
+            <div class="insp-item ${dots}"><i></i><b>${s.task}</b><span>1m</span></div>
+            <div class="insp-item"><i></i><b>${s.name} · 进入${s.role}</b><span>12m</span></div>
+          </div>
+        </div>
+        <div class="insp-sec">
+          <h4>舞台映射</h4>
+          <div class="insp-note">和办公室舞台共用 <code>zone / pose / tone / seat</code>：这里只是把「工位 / 审批台 / 验收架」换成长桌上的座位和闸门，不新增状态。</div>
+        </div>
+        <div class="insp-actions">
+          <button class="btn tiny" data-toast="打开 ${s.name} 的任务线程（原型）">打开任务</button>
+          <button class="btn tiny" data-toast="在长桌上换一个座位（原型）">换座位</button>
+        </div>
+      </div>`;
+  }
+  function focusInspector(key) {
+    const f = FOCUS[key];
+    if (!f) return "";
+    return `
+      <div class="insp-head">
+        <div><b>${f.title}</b><span>${f.sub}</span></div>
+        <button class="icon-btn" data-close-insp aria-label="收起">✕</button>
+      </div>
+      <div class="insp-scroll">
+        <div class="insp-sec">
+          <h4>${f.kicker}</h4>
+          ${f.rows.map(([k, v]) => `<div class="insp-row">${k}<b>${v}</b></div>`).join("")}
+        </div>
+        <div class="insp-sec">
+          <h4>说明</h4>
+          <div class="insp-note">${f.note}</div>
+        </div>
+        <div class="insp-actions">${f.actions.map((a) => `<button class="btn tiny" data-toast="${a}（原型）">${a}</button>`).join("")}</div>
+      </div>`;
+  }
+  function select(id) {
+    state.selected = id;
+    const seat = SEATS.find((s) => s.id === id) || EMPTY.find((s) => s.id === id);
+    inspector.innerHTML = seat ? actorInspector(seat) : focusInspector(id);
+    state.detail = true;
+    inspector.classList.add("open");
+    $("#detailToggle").setAttribute("aria-expanded", "true");
+    $$("#seats .seat").forEach((el) => el.classList.toggle("sel", el.dataset.id === id));
+    $$("[data-focus]").forEach((el) => el.classList.toggle("sel", el.dataset.focus === id));
+    inspector.querySelectorAll("[data-close-insp]").forEach((b) => b.addEventListener("click", () => { inspector.classList.remove("open"); $("#detailToggle").setAttribute("aria-expanded", "false"); }));
+    inspector.querySelectorAll("[data-toast]").forEach((b) => b.addEventListener("click", () => toast(b.dataset.toast)));
+  }
+  function closeInspector() {
+    inspector.classList.remove("open");
+    $("#detailToggle").setAttribute("aria-expanded", "false");
+    state.detail = false;
+    state.selected = null;
+    $$("#seats .seat").forEach((el) => el.classList.remove("sel"));
+  }
+
+  $$("[data-focus]").forEach((el) => {
+    el.addEventListener("click", () => select(el.dataset.focus));
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(el.dataset.focus); } });
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
+  });
+
+  /* ── mode / theme / motion ─────────────────────────────── */
+  function setMode(mode) {
+    state.mode = mode;
+    stage.classList.toggle("config", mode === "config");
+    $$("#modeSeg button").forEach((b) => b.classList.toggle("on", b.dataset.mode === mode));
+    renderSeats();
+  }
+  $$("#modeSeg button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+  $("#themeBtn").addEventListener("click", () => {
+    document.documentElement.dataset.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  });
+  $("#motionSelect").addEventListener("change", (e) => { document.body.dataset.motion = e.target.value; });
+
+  $("#detailToggle").addEventListener("click", () => {
+    if (inspector.classList.contains("open")) closeInspector();
+    else select(state.selected || "lan");
+  });
+
+  /* ── tabs ─────────────────────────────────────────────── */
+  function setView(view) {
+    $$(".view").forEach((v) => v.classList.toggle("on", v.dataset.view === view));
+    $$(".tabs .tab[data-view]").forEach((t) => t.classList.toggle("on", t.dataset.view === view));
+    if (view === "live") requestAnimationFrame(fit);
+  }
+  $$(".tabs .tab[data-view]").forEach((t) => t.addEventListener("click", () => setView(t.dataset.view)));
+  $$("[data-view-go]").forEach((b) => b.addEventListener("click", () => setView(b.dataset.viewGo)));
+
+  /* ── stage fit ─────────────────────────────────────────── */
+  function fit() {
+    const box = stage.getBoundingClientRect();
+    const k = Math.min(box.width / 1180, box.height / 640);
+    canvas.style.zoom = k;
+  }
+  new ResizeObserver(fit).observe(stage);
+  window.addEventListener("resize", fit);
+
+  /* ── toast ─────────────────────────────────────────────── */
+  let toastTimer = 0;
+  function toast(message) {
+    const el = $("#toast");
+    el.textContent = message;
+    el.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("on"), 2200);
+  }
+  $$("[data-toast]").forEach((b) => b.addEventListener("click", () => toast(b.dataset.toast)));
+
+  /* ── new scene modal ───────────────────────────────────── */
+  const mask = $("#newMask");
+  const openNew = () => mask.classList.add("on");
+  const closeNew = () => mask.classList.remove("on");
+  $("#openNew").addEventListener("click", openNew);
+  $("#newClose").addEventListener("click", closeNew);
+  $("#newCancel").addEventListener("click", closeNew);
+  mask.addEventListener("mousedown", (e) => { if (e.target === mask) closeNew(); });
+  $$(".modal-template").forEach((b) => b.addEventListener("click", () => {
+    $$(".modal-template").forEach((x) => x.classList.toggle("on", x === b));
+  }));
+  $("#newCreate").addEventListener("click", () => {
+    const tpl = $(".modal-template.on")?.dataset.tpl;
+    closeNew();
+    if (tpl === "carrier") { location.href = "carrier.html"; return; }
+    toast(tpl === "warroom" ? "已创建作战室场景（原型）" : "办公室舞台已上线，作战室 / 航母为舞台原型");
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { closeInspector(); closeNew(); }
+  });
+
+  /* ── init ─────────────────────────────────────────────── */
+  setMode(state.mode);
+  if (params.get("view") === "gallery") setView("gallery");
+  if (state.detail) select(state.selected || "lan");
+  fit();
+})();
+</script>
+</body>
+</html>

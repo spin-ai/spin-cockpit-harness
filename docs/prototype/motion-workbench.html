@@ -1,0 +1,1736 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>动效工作台 · 办公室舞台 · 原型</title>
+<!--
+  动效工作台（Motion Workbench）原型
+  ────────────────────────────────────────────────────────────
+  舞台沿用「场景 → 实况」的办公室（工位 / 主控 / 审批台 / 验收架 / 茶歇），
+  这一页只补上现在缺的三件事：
+
+  1. 舞台只演结果，不解释原因 —— 看到 Agent 走到审批台，但不知道是哪个状态触发的、
+     下次还会不会走。→ 右侧抽屉「状态 → 舞台」把 zone / pose / 动效 / 依据排成可核对的表；
+     时间轴把过去的走位留成可点的记录。
+  2. 动效只有三档，改完只能等下一次真实状态变化 —— 没有回放，没法单独调走位时长 /
+     姿态幅度。→ 时间轴可拖动、可回放；参数面板改完立刻在舞台上生效。
+  3. 动效关掉之后看不看得懂，没人验证 —— 每个角色带一条「关闭动效后」的检查，
+     找出只靠动效表达的状态，并给出静态替代建议。
+
+  设计边界：
+  - 不新建状态，不改主进程；时间轴是「最近 15 分钟的只读回放」，不是编辑器。
+  - 不是所有状态变化都该走位：失败 / 重试 / 计划批注都留在原地，
+    走位只用于「这个人真的换了区域」。
+  - 颜色 / 圆角 / 字号全部取自 src/design-system.css 的 token。
+  - 可直接打开；右上 ◐ 切亮暗。
+    参数：?theme=dark · ?motion=off|full|calm · ?select=lin · ?t=450
+          ?paths=1（区域 + 走位路径）· ?reduced=1（模拟 reduced-motion）
+          ?detail=0（收起抽屉）· ?nowalk=1（截图，不走位）
+-->
+<style>
+:root{
+  --font-sans:"Geist Variable","Geist",-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:"Geist Mono Variable","Geist Mono","SF Mono",SFMono-Regular,ui-monospace,Menlo,Consolas,monospace;
+  --radius:10px;--radius-sm:6px;--radius-lg:14px;--radius-control:8px;
+  --shadow-1:0 1px 2px rgba(10,10,10,.045);
+  --shadow-2:0 10px 24px rgba(0,0,0,.16);
+  --shadow-float:0 18px 46px rgba(0,0,0,.22),0 2px 8px rgba(0,0,0,.10);
+}
+:root[data-theme="light"]{
+  --page-canvas:#fafafa;--surface:#ffffff;--surface-2:#f7f7f7;--surface-hover:#f5f5f5;--surface-selected:#ededed;
+  --border:#e5e5e5;--border-strong:#d4d4d4;--input:#e5e5e5;
+  --fg:#0a0a0a;--fg-2:#3f3f3f;--muted:#5c5c5c;--faint:#767676;
+  --brand:#171717;--brand-soft:#f2f2f2;--brand-line:#dedede;
+  --green:#3f9a68;--green-soft:#edf8f2;--green-line:#d5eedf;
+  --amber:#a97a2f;--amber-soft:#fdf8ee;--amber-line:#f2e3c4;
+  --red:#cf5f5d;--red-soft:#fdf2f2;--red-line:#f4d7d7;
+  --purple:#7d67d1;--purple-soft:#f4f2fd;--purple-line:#e3ddf8;
+  --indigo:#5b6cc0;--indigo-soft:rgba(91,108,192,.10);
+  --slate:#6b7280;
+  --floor-warm:color-mix(in srgb,var(--page-canvas) 90%,var(--slate) 9%);
+  --wall-warm:color-mix(in srgb,var(--surface) 96%,var(--slate) 4%);
+  --rug-warm:color-mix(in srgb,var(--surface) 84%,var(--slate) 10%);
+  --desk-top:color-mix(in srgb,var(--surface) 97%,var(--slate) 3%);
+  --desk-front:color-mix(in srgb,var(--surface-2) 44%,var(--slate) 56%);
+  --sofa:color-mix(in srgb,var(--surface-2) 64%,var(--slate) 36%);
+  --plant:color-mix(in srgb,var(--green) 62%,var(--fg) 38%);
+  --actor-body:color-mix(in srgb,var(--fg) 88%,var(--surface));
+  --actor-visor:color-mix(in srgb,var(--surface) 90%,var(--fg) 6%);
+  --term-bg:#181818;
+  --shadow-soft:0 10px 24px rgba(35,30,24,.08);
+}
+:root[data-theme="dark"]{
+  --page-canvas:#0a0a0a;--surface:#171717;--surface-2:#1c1c1c;--surface-hover:#262626;--surface-selected:#2e2e2e;
+  --border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.14);--input:rgba(255,255,255,.16);
+  --fg:#f0f0f0;--fg-2:#d4d4d4;--muted:#b4b4b4;--faint:#8f8f8f;
+  --brand:#e5e5e5;--brand-soft:#262626;--brand-line:#3a3a3a;
+  --green:#5fb884;--green-soft:rgba(95,184,132,.12);--green-line:rgba(95,184,132,.28);
+  --amber:#c9a25c;--amber-soft:rgba(201,162,92,.12);--amber-line:rgba(201,162,92,.26);
+  --red:#d97a78;--red-soft:rgba(217,122,120,.12);--red-line:rgba(217,122,120,.26);
+  --purple:#9c8ae0;--purple-soft:rgba(156,138,224,.12);--purple-line:rgba(156,138,224,.26);
+  --indigo:#8e9ce0;--indigo-soft:rgba(142,156,224,.12);
+  --slate:#9aa3af;
+  --floor-warm:color-mix(in srgb,var(--page-canvas) 94%,var(--slate) 6%);
+  --wall-warm:color-mix(in srgb,var(--surface) 82%,var(--slate) 18%);
+  --rug-warm:color-mix(in srgb,var(--surface) 84%,var(--slate) 16%);
+  --desk-top:color-mix(in srgb,var(--surface-2) 84%,var(--slate) 16%);
+  --desk-front:color-mix(in srgb,var(--surface-2) 66%,var(--slate) 34%);
+  --sofa:color-mix(in srgb,var(--surface-2) 68%,var(--slate) 32%);
+  --plant:color-mix(in srgb,var(--green) 56%,var(--fg) 44%);
+  --actor-body:color-mix(in srgb,var(--fg) 78%,var(--surface));
+  --actor-visor:color-mix(in srgb,var(--term-bg) 86%,var(--fg) 10%);
+  --term-bg:#0c0c0c;
+  --shadow-1:0 1px 2px rgba(0,0,0,.22);
+  --shadow-2:0 10px 24px rgba(0,0,0,.34);
+  --shadow-float:0 18px 46px rgba(0,0,0,.52),0 2px 8px rgba(0,0,0,.28);
+  --shadow-soft:0 10px 24px rgba(0,0,0,.38);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--page-canvas);color:var(--fg);font:13px/1.55 var(--font-sans);-webkit-font-smoothing:antialiased;overflow:hidden}
+::selection{background:color-mix(in srgb,var(--fg) 14%,transparent);color:inherit}
+button,input,select{font-family:inherit}
+button{color:inherit}
+.mono{font-family:var(--mono)}
+.muted{color:var(--muted)}
+.faint{color:var(--faint)}
+.spacer{flex:1}
+button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px solid color-mix(in srgb,var(--fg) 30%,transparent);outline-offset:2px}
+
+/* ── shell ────────────────────────────────────────────────── */
+.app-frame{position:fixed;inset:0;display:grid;place-items:center;background:var(--page-canvas);overflow:hidden}
+.app{width:1440px;height:900px;zoom:var(--z,1);display:grid;grid-template-columns:64px minmax(0,1fr);background:var(--page-canvas);overflow:hidden}
+/* 侧边栏：与 src/components/Rail.tsx 同构 —— 品牌块 / 主分组 / 底部说明·设置，
+   选中态用 surface-selected + 1px hairline，不再用贴边的竖条（会被裁切、也像滚动条）。 */
+.rail{background:var(--page-canvas);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:12px 0 10px;gap:2px;min-height:0}
+.rail-brand{width:34px;height:34px;flex:none;border:1px solid var(--border);border-radius:10px;background:var(--surface);display:grid;place-items:center;color:var(--fg);font:600 13px var(--mono);box-shadow:var(--shadow-1);user-select:none}
+.rail-sep{width:22px;height:1px;flex:none;background:var(--border);margin:9px 0 7px}
+.rail-item{position:relative;width:52px;height:48px;flex:none;border:0;border-radius:10px;background:transparent;color:var(--muted);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:11.5px;line-height:1.15;letter-spacing:.01em;cursor:pointer;transition:background .12s,color .12s,box-shadow .12s}
+.rail-item svg{width:19px;height:19px;flex:none;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.rail-item span{white-space:nowrap}
+.rail-item:hover{background:var(--surface-hover);color:var(--fg-2)}
+.rail-item.on{background:var(--surface-selected);color:var(--fg);font-weight:600;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 7%,transparent)}
+.rail-item.on svg{stroke-width:1.85}
+.rail-item:focus-visible{outline-offset:-2px}
+.rail-badge{position:absolute;top:3px;right:2px;min-width:15px;height:15px;padding:0 4px;border-radius:999px;background:var(--red);color:var(--surface);font:600 10px/15px var(--mono);font-style:normal;text-align:center;font-variant-numeric:tabular-nums;box-shadow:0 0 0 2px var(--page-canvas)}
+.rail-badge.run{background:var(--green)}
+.rail-bottom{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:2px}
+.rail-bottom::before{content:"";width:22px;height:1px;background:var(--border);margin:9px 0 7px}
+.main{min-width:0;min-height:0;display:flex;flex-direction:column}
+
+/* ── header ───────────────────────────────────────────────── */
+.page-head{flex:none;display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding:16px 22px 10px}
+.kicker{font-size:10px;line-height:1.4;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.page-title h1{margin:0;font-size:22px;line-height:1.15;font-weight:600;letter-spacing:-.03em}
+.page-sub{margin:2px 0 0;font-size:12.5px;line-height:1.5;color:var(--muted);max-width:720px}
+.page-actions{display:flex;align-items:center;gap:6px;flex:none}
+.btn{height:30px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--surface);color:var(--fg-2);font-size:12px;display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;cursor:pointer;transition:background .12s,border-color .12s,color .12s}
+.btn:hover{background:var(--surface-hover);border-color:var(--border-strong);color:var(--fg)}
+.btn.primary{background:var(--fg);border-color:var(--fg);color:var(--surface);box-shadow:var(--shadow-1)}
+.btn.primary:hover{background:color-mix(in srgb,var(--fg) 92%,var(--surface));border-color:var(--fg);color:var(--surface)}
+.btn.tiny{height:26px;padding:0 8px;font-size:11px}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.btn.ghost:hover{background:var(--surface-hover);color:var(--fg)}
+.btn.on{background:var(--fg);border-color:var(--fg);color:var(--surface)}
+.icon-btn{width:28px;height:28px;border:0;border-radius:6px;background:transparent;color:var(--muted);display:grid;place-items:center;font-size:13px;cursor:pointer;flex:none}
+.icon-btn:hover{background:var(--surface-hover);color:var(--fg)}
+select{height:28px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--fg-2);font-size:11.5px;padding:0 7px;min-width:0}
+.mini-select{height:27px;font-size:11.5px;color:var(--muted);background:transparent;border-color:transparent}
+.mini-select:hover{border-color:var(--border);background:var(--surface)}
+
+/* tabs */
+.tabs{flex:none;display:flex;align-items:center;gap:2px;padding:0 22px;border-bottom:1px solid var(--border);min-height:37px}
+.tab{height:36px;padding:0 10px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);font-size:12.5px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;margin-bottom:-1px}
+.tab:hover{color:var(--fg)}
+.tab.on{color:var(--fg);border-bottom-color:var(--fg)}
+.tab .live-dot{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+.chip{height:21px;padding:0 7px;border:1px solid var(--border);border-radius:99px;background:var(--surface);color:var(--fg-2);font-size:10.5px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.chip.mono{font-family:var(--mono);font-size:10px;letter-spacing:.02em}
+
+/* ── live layout ──────────────────────────────────────────── */
+.live{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;padding:10px 16px 14px}
+.stage-head{flex:none;display:flex;align-items:center;gap:8px;min-width:0;height:22px}
+.stage-head h2{margin:0;font-size:13px;font-weight:600;letter-spacing:-.01em;white-space:nowrap}
+.stage-head .sub{font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stage-tools{margin-left:auto;display:flex;align-items:center;gap:5px;min-width:0}
+.stage-tools .hint{font-size:10.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.scene-stats{display:flex;align-items:center;gap:9px;padding-left:10px;border-left:1px solid var(--border);font-size:11.5px;color:var(--muted);min-width:0;overflow:hidden}
+.scene-stats span{display:inline-flex;align-items:baseline;gap:3px;white-space:nowrap}
+.scene-stats b{font:600 12px var(--mono);color:var(--fg);font-variant-numeric:tabular-nums}
+.scene-stats .run b{color:var(--green)}
+.scene-stats .wait b{color:var(--amber)}
+.scene-stats .review b{color:var(--purple)}
+.scene-stats .fail b{color:var(--red)}
+.legend{flex:none;height:20px;display:flex;align-items:center;gap:14px;padding:0 2px;font-size:11px;color:var(--muted);min-width:0;overflow:hidden}
+.legend span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.legend .line{width:16px;flex:none}
+.legend .line.walk{border-top:1.5px dashed var(--green)}
+.legend .line.stay{border-top:1px dashed var(--border-strong)}
+.legend .note{margin-left:auto;color:var(--faint);font-size:10.5px;overflow:hidden;text-overflow:ellipsis}
+.stage-area{position:relative;flex:1;min-height:300px}
+
+/* 光照对照页：四个时段各一页，同一批状态只换光 */
+.lights-view{display:none;flex:1;min-height:0;overflow:auto;padding:2px 2px 10px}
+.live.lights-mode .stage-head,
+.live.lights-mode .stage-area,
+.live.lights-mode .legend,
+.live.lights-mode .timeline{display:none}
+.live.lights-mode .lights-view{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-content:start}
+.lights-note{grid-column:1/-1;display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted);padding:0 2px 2px}
+.lights-note b{color:var(--fg-2);font-weight:600}
+.light-card{border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-1);overflow:hidden;cursor:pointer;transition:border-color .12s,box-shadow .12s}
+.light-card:hover{border-color:var(--border-strong);box-shadow:0 8px 20px rgba(0,0,0,.06)}
+.light-head{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border);min-width:0}
+.light-head b{font-size:12.5px;font-weight:600;white-space:nowrap}
+.light-head span{font-size:10.5px;color:var(--muted);white-space:nowrap}
+.light-head .mono{margin-left:auto;font-size:10px;color:var(--faint);white-space:nowrap}
+.light-frame{position:relative;display:grid;place-items:center;overflow:hidden;background:var(--page-canvas);aspect-ratio:1340/540}
+.light-wrap{zoom:var(--lk,.45);line-height:0}
+.light-wrap .stage{position:relative;width:1340px;height:540px;box-shadow:none}
+
+/* ── stage ────────────────────────────────────────────────── */
+.stage-fit{position:absolute;inset:0;display:grid;place-items:center}
+.stage{
+  position:relative;zoom:var(--k,1);width:1340px;height:540px;
+  border:1px solid var(--border);border-radius:16px;overflow:hidden;
+  background:repeating-linear-gradient(90deg,transparent 0 124px,color-mix(in srgb,var(--slate) 5%,transparent) 124px 125px),var(--floor-warm);
+  isolation:isolate;box-shadow:inset 0 0 90px rgba(35,30,24,.06),var(--shadow-1);
+  --walk-dur:900ms;
+}
+:root[data-theme="dark"] .stage{box-shadow:inset 0 0 90px rgba(0,0,0,.35),var(--shadow-1)}
+.stage::before{content:"";position:absolute;left:0;right:0;top:0;height:150px;background:linear-gradient(180deg,var(--wall-warm),color-mix(in srgb,var(--wall-warm) 78%,var(--floor-warm)));border-bottom:2px solid color-mix(in srgb,var(--border-strong) 82%,var(--fg) 18%);box-shadow:0 8px 18px rgba(35,30,24,.06);z-index:0}
+.stage::after{content:"";position:absolute;left:0;right:0;top:150px;bottom:0;pointer-events:none;background:radial-gradient(70% 60% at 50% 0%,color-mix(in srgb,var(--surface) 50%,transparent),transparent 72%);z-index:1}
+.sunbeam{position:absolute;left:720px;top:146px;width:250px;height:240px;background:linear-gradient(180deg,color-mix(in srgb,var(--amber) 10%,transparent),transparent 82%);clip-path:polygon(22% 0,78% 0,100% 100%,0 100%);transform:skewX(-7deg);z-index:1;pointer-events:none;opacity:.7}
+
+/* ── 时段光照：清晨 / 白天 / 黄昏 / 夜晚 ───────────────────── */
+.stage[data-light="dawn"]{
+  --wall-warm:color-mix(in srgb,var(--surface) 90%,var(--indigo) 10%);
+  --floor-warm:color-mix(in srgb,var(--page-canvas) 88%,var(--indigo) 8%);
+}
+.stage[data-light="dusk"]{
+  --wall-warm:color-mix(in srgb,var(--surface) 80%,var(--amber) 20%);
+  --floor-warm:color-mix(in srgb,var(--page-canvas) 82%,var(--amber) 16%);
+}
+/* 夜晚：舞台内的表面整体压暗，由吊灯 / 台灯 / 落地灯照回来 */
+.stage[data-light="night"]{
+  --wall-warm:color-mix(in srgb,var(--term-bg) 78%,var(--amber) 22%);
+  --floor-warm:color-mix(in srgb,var(--term-bg) 90%,var(--amber) 10%);
+  --surface:color-mix(in srgb,var(--term-bg) 84%,var(--amber) 16%);
+  --surface-2:color-mix(in srgb,var(--term-bg) 76%,var(--amber) 24%);
+  --surface-hover:color-mix(in srgb,var(--term-bg) 70%,var(--amber) 30%);
+  --surface-selected:color-mix(in srgb,var(--term-bg) 64%,var(--amber) 36%);
+  --desk-top:color-mix(in srgb,var(--term-bg) 72%,var(--amber) 28%);
+  --desk-front:color-mix(in srgb,var(--term-bg) 90%,var(--slate) 10%);
+  --rug-warm:color-mix(in srgb,var(--term-bg) 78%,var(--amber) 22%);
+  --sofa:color-mix(in srgb,var(--term-bg) 74%,var(--slate) 26%);
+  --border:rgba(255,255,255,.12);
+  --border-strong:rgba(255,255,255,.22);
+  --fg:color-mix(in srgb,white 94%,var(--amber) 6%);
+  --fg-2:color-mix(in srgb,white 80%,var(--amber) 20%);
+  --muted:color-mix(in srgb,white 66%,var(--amber) 34%);
+  --faint:color-mix(in srgb,white 52%,var(--amber) 48%);
+}
+.stage[data-light="night"] .sunbeam,
+.stage[data-light="dusk"] .sunbeam{opacity:.18}
+.stage[data-light="night"] .sunbeam{opacity:0}
+
+/* 吊灯 / 地面光斑：黄昏与夜晚才亮 */
+.lights{position:absolute;inset:0;z-index:3;pointer-events:none;opacity:0;transition:opacity .6s ease}
+.stage[data-lights="1"] .lights{opacity:1}
+.ceil-lamp{position:absolute;top:0;width:56px;height:190px;transform:translateX(-50%)}
+.ceil-lamp::before{content:"";position:absolute;left:50%;top:0;width:1px;height:16px;background:var(--border-strong)}
+.ceil-lamp::after{content:"";position:absolute;left:50%;top:16px;width:36px;height:9px;transform:translateX(-50%);border:1px solid color-mix(in srgb,var(--amber) 34%,var(--border));border-radius:2px 2px 6px 6px;background:linear-gradient(180deg,color-mix(in srgb,var(--amber) 42%,var(--surface)),color-mix(in srgb,var(--amber) 20%,var(--surface)));box-shadow:0 0 18px color-mix(in srgb,var(--amber) 34%,transparent)}
+.ceil-lamp i{position:absolute;left:50%;top:25px;width:190px;height:240px;transform:translateX(-50%);background:linear-gradient(180deg,color-mix(in srgb,var(--amber) 24%,transparent),transparent 78%);clip-path:polygon(36% 0,64% 0,100% 100%,0 100%)}
+.ceil-lamp.c1{left:430px}
+.ceil-lamp.c2{left:770px}
+.lightpool{position:absolute;width:440px;height:250px;transform:translateX(-50%);border-radius:50%;background:radial-gradient(ellipse at 50% 50%,color-mix(in srgb,var(--amber) 22%,transparent),transparent 70%)}
+.lightpool.p1{left:430px;top:250px}
+.lightpool.p2{left:770px;top:300px}
+.floor-glow{position:absolute;left:60px;top:520px;width:220px;height:150px;border-radius:50%;background:radial-gradient(ellipse at 50% 60%,color-mix(in srgb,var(--amber) 20%,transparent),transparent 72%)}
+
+/* 灯亮起来：台灯 / 落地灯 / 显示器 */
+.stage[data-lights="1"] .desk-lamp span{background:color-mix(in srgb,var(--amber) 62%,var(--surface));box-shadow:0 0 26px color-mix(in srgb,var(--amber) 46%,transparent)}
+.stage[data-lights="1"] .floor-lamp span{background:color-mix(in srgb,var(--amber) 58%,var(--surface));box-shadow:0 0 44px color-mix(in srgb,var(--amber) 44%,transparent)}
+.stage[data-lights="1"] .monitor{filter:drop-shadow(0 0 7px color-mix(in srgb,var(--surface) 26%,transparent))}
+.stage[data-lights="1"] .window{box-shadow:0 0 26px color-mix(in srgb,var(--amber) 16%,transparent),0 12px 22px rgba(0,0,0,.18)}
+
+/* 窗外：黄昏 / 夜晚 */
+.win-dusk,.win-night{display:none}
+.stage[data-light="dusk"] .win-dusk{display:block}
+.stage[data-light="night"] .win-night{display:block}
+.win-stars circle{animation:twinkle 4.2s ease-in-out infinite}
+.win-stars circle:nth-child(2n){animation-delay:1.6s}
+.win-stars circle:nth-child(3n){animation-delay:2.7s}
+.win-city rect{animation:citylight 6s ease-in-out infinite}
+.win-city rect:nth-child(2n){animation-delay:1.4s}
+.win-city rect:nth-child(3n){animation-delay:3.1s}
+@keyframes twinkle{0%,100%{opacity:.3}50%{opacity:.95}}
+@keyframes citylight{0%,100%{opacity:.45}45%{opacity:.95}}
+body[data-motion="off"] .win-stars circle,
+body[data-motion="off"] .win-city rect{animation:none}
+@media (prefers-reduced-motion:reduce){.win-stars circle,.win-city rect{animation:none}}
+
+/* wall */
+.clock{position:absolute;left:50%;top:22px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:1px;z-index:2;min-width:66px;padding:5px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);box-shadow:var(--shadow-soft)}
+.clock b{font:600 13px var(--mono);color:var(--fg-2);letter-spacing:.05em;font-variant-numeric:tabular-nums}
+.clock span{font:8.5px var(--mono);letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
+.pinboard{position:absolute;left:292px;top:24px;width:64px;height:54px;border:1px solid var(--border);border-radius:4px;background:var(--surface);box-shadow:var(--shadow-soft);z-index:1}
+.pinboard i{position:absolute;width:15px;height:14px;border-radius:1px;box-shadow:0 1px 2px rgba(0,0,0,.07)}
+.pinboard i:nth-child(1){left:7px;top:9px;background:color-mix(in srgb,var(--amber) 35%,var(--surface));transform:rotate(-5deg)}
+.pinboard i:nth-child(2){left:26px;top:14px;background:color-mix(in srgb,var(--purple) 26%,var(--surface));transform:rotate(3deg)}
+.pinboard i:nth-child(3){left:42px;top:8px;background:color-mix(in srgb,var(--green) 24%,var(--surface));transform:rotate(-2deg)}
+.window{position:absolute;left:780px;top:18px;width:186px;height:108px;border:1px solid var(--border);border-radius:7px;background:var(--surface);box-shadow:0 12px 22px rgba(35,30,24,.09),var(--shadow-soft);z-index:1}
+.win-view{position:absolute;inset:4px;width:calc(100% - 8px);height:calc(100% - 8px);border-radius:3px;display:block;overflow:hidden}
+.mullion{position:absolute;background:var(--surface);z-index:2}
+.mullion.v{left:50%;top:4px;bottom:4px;width:3px;transform:translateX(-50%)}
+.mullion.h{left:4px;right:4px;top:50%;height:3px;transform:translateY(-50%)}
+.sill{position:absolute;left:-7px;right:-7px;bottom:-8px;height:8px;border:1px solid var(--border);border-radius:2px;background:var(--surface);box-shadow:0 3px 6px rgba(0,0,0,.07);z-index:3}
+.console{position:absolute;left:780px;top:150px;width:186px;height:56px;z-index:2;filter:drop-shadow(0 6px 10px rgba(25,22,18,.07))}
+.console-top{position:absolute;left:0;right:0;top:0;height:9px;border:1px solid var(--border);border-radius:3px;background:linear-gradient(180deg,var(--desk-top),color-mix(in srgb,var(--desk-top) 86%,var(--surface-2)))}
+.console-body{position:absolute;left:4px;right:4px;top:8px;bottom:0;border:1px solid var(--border);border-top:0;border-radius:0 0 4px 4px;background:color-mix(in srgb,var(--desk-front) 86%,var(--surface))}
+.console-book{position:absolute;bottom:9px;width:9px;border:1px solid var(--border);border-radius:1px 1px 2px 2px;background:var(--surface)}
+.console-book.b1{left:18px;height:19px;background:color-mix(in srgb,var(--slate) 22%,var(--surface))}
+.console-book.b2{left:29px;height:15px;background:color-mix(in srgb,var(--amber) 20%,var(--surface))}
+.console-book.b3{left:40px;height:21px;background:color-mix(in srgb,var(--indigo) 16%,var(--surface))}
+.console-plant{position:absolute;right:22px;bottom:9px;width:26px;height:32px}
+.console-plant i{position:absolute;bottom:7px;left:3px;width:8px;height:17px;border-radius:60% 0 60% 60%;background:var(--plant);opacity:.85;transform:rotate(-18deg)}
+.console-plant i:nth-child(2){left:11px;bottom:5px;transform:rotate(20deg)}
+.console-plant span{position:absolute;left:6px;bottom:0;width:12px;height:7px;border:1px solid var(--border);border-radius:0 0 3px 3px;background:var(--surface-2)}
+
+/* whiteboard */
+.whiteboard{position:absolute;left:26px;top:12px;width:240px;height:124px;border:6px solid color-mix(in srgb,var(--surface) 84%,var(--slate) 10%);border-radius:9px;background:color-mix(in srgb,var(--surface) 96%,var(--slate) 3%);box-shadow:0 14px 26px rgba(35,30,24,.10),var(--shadow-soft);z-index:3;padding:8px 9px 7px;display:flex;flex-direction:column;gap:5px;cursor:pointer;transition:box-shadow .14s,transform .14s}
+.whiteboard:hover{box-shadow:var(--shadow-float);transform:translateY(-1px)}
+.whiteboard::before{content:"";position:absolute;left:9px;right:9px;bottom:4px;height:3px;border-radius:2px;background:var(--border)}
+.wb-head{display:flex;align-items:center;justify-content:space-between;gap:6px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.wb-head b{font-size:12.5px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wb-head em{font:600 10px var(--mono);font-style:normal;color:var(--muted);white-space:nowrap}
+.wb-bar{height:3px;border-radius:2px;background:var(--surface-2);overflow:hidden;margin:1px 0 2px}
+.wb-bar i{display:block;height:100%;width:56%;border-radius:2px;background:var(--amber)}
+.wb-step{display:flex;align-items:center;gap:6px;font-size:11px;line-height:1.35;color:var(--muted);min-width:0}
+.wb-step i{width:14px;height:14px;border:1px solid var(--border-strong);border-radius:50%;display:grid;place-items:center;font:600 8px var(--mono);font-style:normal;color:var(--muted);flex:none}
+.wb-step b{font-weight:500;color:var(--fg);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wb-step span{font:9.5px var(--mono);color:var(--muted);flex:none}
+.wb-step.done i{background:var(--green-soft);border-color:var(--green-line);color:var(--green)}
+.wb-step.doing i{background:var(--amber-soft);border-color:var(--amber-line);color:var(--amber)}
+.wb-step.doing b{color:var(--fg)}
+
+/* approval / shelf */
+.prop{position:absolute;z-index:3}
+.approval{left:470px;top:16px;width:96px;height:74px;padding:0;border:0;background:transparent;box-shadow:none;cursor:pointer;text-align:left;transition:transform .14s}
+.approval:hover{transform:translateY(-1px)}
+.approval::before{content:"";position:absolute;left:0;right:0;bottom:0;height:54px;border-radius:0 0 7px 7px;background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 84%,var(--slate) 8%),color-mix(in srgb,var(--surface-2) 86%,var(--slate) 10%));box-shadow:var(--shadow-soft)}
+.approval-head{position:relative;z-index:2;display:flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;color:var(--fg-2);padding:0 1px}
+.lamp{width:5px;height:5px;border-radius:50%;background:var(--faint);flex:none;position:relative;z-index:2}
+.approval.active .lamp{background:var(--amber);box-shadow:0 0 0 3px var(--amber-soft);animation:pulse 2.4s ease-in-out infinite}
+.tray-slot{position:absolute;left:8px;right:8px;top:30px;height:2px;border-radius:2px;background:var(--border-strong);z-index:2}
+.tray-paper{position:absolute;left:8px;right:8px;top:34px;display:flex;align-items:center;gap:4px;font-size:10px;color:var(--muted);line-height:1.2;padding:4px 5px;border:1px solid var(--border);border-radius:2px;background:var(--surface);box-shadow:0 3px 5px rgba(0,0,0,.06);z-index:2;overflow:hidden;white-space:nowrap}
+.tray-paper i{width:6px;height:8px;border:1px solid var(--amber);border-radius:1px;flex:none}
+.tray-count{position:absolute;right:-4px;top:0;min-width:16px;height:16px;padding:0 4px;border-radius:99px;background:var(--amber);color:var(--surface);font:600 9px/16px var(--mono);text-align:center;z-index:3}
+.approval.active{box-shadow:0 0 0 1px var(--amber-line),var(--shadow-soft);border-radius:7px}
+.shelf{left:1070px;top:368px;width:240px;height:164px;border:0;border-radius:8px;filter:drop-shadow(0 14px 18px rgba(35,30,24,.10));background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 90%,var(--slate) 8%),color-mix(in srgb,var(--surface-2) 92%,var(--slate) 6%));padding:9px;box-shadow:var(--shadow-soft);display:flex;flex-direction:column;gap:6px;z-index:3;cursor:pointer;text-align:left}
+.shelf::before{content:"";position:absolute;left:9px;right:9px;bottom:58px;height:1px;background:var(--border-strong);z-index:1}
+.shelf::after{content:"";position:absolute;left:9px;right:9px;top:96px;height:1px;background:var(--border-strong);z-index:1}
+.shelf-head{display:flex;align-items:center;justify-content:space-between;font-size:10.5px;font-weight:600;color:var(--fg-2);padding-bottom:5px;border-bottom:1px solid var(--border);position:relative;z-index:2}
+.shelf-head em{font:600 10px var(--mono);font-style:normal;color:var(--purple)}
+.shelf-paper{display:flex;align-items:flex-start;gap:4px;font-size:10px;line-height:1.35;color:var(--muted);border:1px solid var(--border);border-radius:3px;background:var(--surface);padding:4px;min-height:30px;box-shadow:0 2px 4px rgba(0,0,0,.04);position:relative;z-index:2;overflow:hidden}
+.shelf-paper i{width:6px;height:8px;border:1px solid var(--purple);border-radius:1px;flex:none;margin-top:1px}
+.shelf-paper.dim{opacity:.45}
+.shelf-paper.dim i{border-color:var(--border-strong)}
+.shelf-books{position:relative;z-index:2;display:flex;align-items:flex-end;gap:3px;height:28px;margin-top:auto}
+.shelf-books i{width:7px;height:18px;border:1px solid var(--border);border-radius:1px 1px 2px 2px;background:var(--surface)}
+.shelf-books i:nth-child(1){height:22px;background:color-mix(in srgb,var(--slate) 24%,var(--surface))}
+.shelf-books i:nth-child(2){height:16px;background:color-mix(in srgb,var(--amber) 22%,var(--surface))}
+.shelf-books i:nth-child(3){height:20px;background:color-mix(in srgb,var(--indigo) 18%,var(--surface))}
+.shelf-books i:nth-child(4){height:13px;background:color-mix(in srgb,var(--green) 18%,var(--surface))}
+.shelf-plant{position:absolute;right:10px;bottom:60px;width:20px;height:26px;z-index:3}
+.shelf-plant i{position:absolute;bottom:5px;left:3px;width:7px;height:14px;border-radius:60% 0 60% 60%;background:var(--plant);opacity:.85}
+.shelf-plant i:nth-child(2){left:10px;bottom:7px;transform:rotate(22deg)}
+.shelf-plant span{position:absolute;left:5px;bottom:0;width:11px;height:7px;border-radius:0 0 3px 3px;background:var(--surface-2);border:1px solid var(--border)}
+.led{width:4px;height:4px;border-radius:50%;background:var(--green);flex:none}
+
+/* lounge */
+.lounge{position:absolute;left:28px;top:374px;width:232px;height:154px;z-index:3;pointer-events:none}
+.rug{position:absolute;left:0;right:0;bottom:0;height:132px;border-radius:50% 50% 18px 18px;background:radial-gradient(ellipse at 50% 60%,color-mix(in srgb,var(--rug-warm) 82%,transparent),color-mix(in srgb,var(--rug-warm) 30%,transparent) 70%)}
+.sofa{position:absolute;left:8px;top:20px;width:150px;height:56px;z-index:2;filter:drop-shadow(0 6px 10px rgba(0,0,0,.08))}
+.sofa::before{content:"";position:absolute;left:0;right:0;top:0;height:34px;border:1px solid var(--border);border-radius:9px 9px 4px 4px;background:linear-gradient(180deg,var(--sofa),color-mix(in srgb,var(--sofa) 82%,var(--surface)))}
+.sofa::after{content:"";position:absolute;left:3px;right:3px;top:28px;height:24px;border:1px solid var(--border);border-radius:4px 4px 8px 8px;background:color-mix(in srgb,var(--sofa) 78%,var(--surface))}
+.sofa i{position:absolute;top:6px;width:40px;height:22px;border-radius:5px;background:color-mix(in srgb,var(--sofa) 62%,var(--surface));border:1px solid var(--border);z-index:1}
+.sofa i:nth-child(1){left:7px}.sofa i:nth-child(2){left:52px}.sofa i:nth-child(3){left:97px}
+.sofa .arm{position:absolute;top:20px;width:13px;height:32px;border:1px solid var(--border);border-radius:6px;background:var(--sofa);z-index:3}
+.sofa .arm.l{left:-6px}.sofa .arm.r{right:-6px}
+.sofa .throw{position:absolute;right:13px;top:27px;width:28px;height:18px;border:1px solid var(--amber-line);border-radius:3px 3px 6px 6px;background:color-mix(in srgb,var(--amber) 28%,var(--surface));transform:rotate(-4deg);z-index:4;opacity:.8}
+.coffee-table{position:absolute;left:52px;bottom:10px;width:74px;height:32px;border:1px solid var(--border);border-radius:50%;background:var(--desk-top);box-shadow:var(--shadow-soft);z-index:2}
+.coffee-table::after{content:"";position:absolute;left:50%;bottom:-8px;width:12px;height:8px;border:1px solid var(--border);border-top:0;border-radius:0 0 4px 4px;transform:translateX(-50%);background:var(--surface-2)}
+.coffee-table i{position:absolute;top:-4px;width:8px;height:6px;border:1px solid var(--border-strong);border-radius:1px 1px 3px 3px;background:var(--surface)}
+.coffee-table i:first-child{left:18px}
+.coffee-table i:last-of-type{right:18px}
+.coffee-table .book{position:absolute;left:27px;bottom:3px;width:18px;height:4px;border:1px solid var(--border);border-radius:1px;background:color-mix(in srgb,var(--indigo) 26%,var(--surface));transform:rotate(-7deg)}
+.floor-lamp{position:absolute;left:0;bottom:14px;width:30px;height:104px;z-index:3}
+.floor-lamp::before{content:"";position:absolute;left:50%;bottom:0;width:24px;height:2px;border-radius:2px;background:var(--border-strong);transform:translateX(-50%)}
+.floor-lamp::after{content:"";position:absolute;left:50%;bottom:2px;width:1px;height:62px;background:var(--border-strong);transform:translateX(-50%)}
+.floor-lamp span{position:absolute;left:50%;top:0;width:32px;height:24px;transform:translateX(-50%);border:1px solid var(--border);border-radius:7px 7px 3px 3px;background:color-mix(in srgb,var(--amber) 26%,var(--surface));box-shadow:0 0 24px color-mix(in srgb,var(--amber) 24%,transparent)}
+.coffee-machine{position:absolute;right:4px;top:12px;width:40px;height:52px;border:1px solid var(--border);border-radius:5px;background:var(--surface);box-shadow:var(--shadow-soft);z-index:2}
+.coffee-machine::before{content:"";position:absolute;left:7px;top:8px;width:26px;height:13px;border:1px solid var(--border);border-radius:2px;background:var(--term-bg)}
+.coffee-machine::after{content:"";position:absolute;left:11px;top:28px;width:18px;height:5px;border-radius:2px;background:var(--border-strong)}
+.steam{position:absolute;left:14px;top:-6px;width:12px;height:10px;z-index:3}
+.steam i{position:absolute;bottom:0;width:1px;height:7px;background:var(--faint);border-radius:2px;animation:steam 2.8s ease-in-out infinite;opacity:0}
+.steam i:first-child{left:2px;animation-delay:.2s}
+.steam i:nth-child(2){left:7px;animation-delay:1.1s}
+.lounge-plant{position:absolute;right:2px;bottom:10px;width:34px;height:50px;z-index:2}
+.lounge-plant i{position:absolute;bottom:10px;left:3px;width:12px;height:27px;border-radius:60% 0 60% 60%;background:var(--plant);opacity:.9;transform:rotate(-18deg)}
+.lounge-plant i:nth-child(2){left:14px;bottom:7px;transform:rotate(20deg)}
+.lounge-plant span{position:absolute;left:9px;bottom:0;width:15px;height:9px;border:1px solid var(--border);border-radius:0 0 3px 3px;background:var(--surface-2)}
+
+/* plants */
+.plant{position:absolute;z-index:2;width:44px;height:64px;pointer-events:none}
+.plant .pot{position:absolute;bottom:0;left:11px;width:22px;height:17px;border:1px solid var(--border);border-radius:3px 3px 6px 6px;background:var(--surface-2)}
+.plant i{position:absolute;border:1px solid color-mix(in srgb,var(--plant) 60%,var(--border));background:var(--plant);border-radius:60% 0 60% 60%;width:16px;height:26px;opacity:.85}
+.plant i:nth-child(1){left:12px;top:2px;transform:rotate(-26deg)}
+.plant i:nth-child(2){left:22px;top:6px;transform:rotate(18deg)}
+.plant i:nth-child(3){left:17px;top:16px;width:11px;height:18px;transform:rotate(0)}
+.plant.p2{left:352px;top:470px;transform:scale(.78)}
+.plant.p3{left:626px;top:474px;transform:scale(1.06)}
+.plant.p4{left:880px;top:470px;transform:scale(.86)}
+
+/* desks：固定 508×396 网格，和真实舞台一致 */
+.desks{position:absolute;inset:0}
+.desk-unit{position:absolute;width:180px;height:216px;z-index:4;padding:0;border:0;background:transparent;text-align:center;color:inherit;border-radius:14px}
+.desk-unit.lead{left:3%;top:30%;width:220px;height:230px}
+.monitor{position:absolute;left:14px;top:26px;width:76px;height:52px;border:1px solid color-mix(in srgb,var(--border-strong) 75%,transparent);border-radius:5px;background:var(--term-bg);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 6px 12px rgba(0,0,0,.14);z-index:2}
+.desk-unit.lead .monitor{left:18px;width:96px;height:62px;top:28px}
+.monitor-bar{display:flex;align-items:center;gap:3px;height:14px;padding:0 4px;background:rgba(255,255,255,.05);border-bottom:1px solid rgba(255,255,255,.07);font:600 9px var(--mono);color:rgba(255,255,255,.82);white-space:nowrap;overflow:hidden}
+.monitor-bar .led{width:3px;height:3px;border-radius:50%;background:var(--faint);flex:none}
+.monitor-bar em{font-style:normal;overflow:hidden;text-overflow:ellipsis}
+.monitor-screen{flex:1;display:flex;flex-direction:column;gap:2px;padding:4px 5px;justify-content:center}
+.monitor-screen i{display:block;height:2px;border-radius:2px;background:rgba(255,255,255,.16)}
+.monitor-stand{position:absolute;left:50%;bottom:-28px;width:1px;height:28px;background:var(--border-strong);transform:translateX(-50%)}
+.monitor-stand::after{content:"";position:absolute;left:50%;bottom:-2px;width:14px;height:2px;border-radius:2px;background:var(--border-strong);transform:translateX(-50%)}
+.monitor.run{box-shadow:0 0 0 1px var(--green-line),0 6px 12px rgba(0,0,0,.14)}
+.monitor.run .led{background:var(--green);animation:blink 1.8s steps(2,end) infinite}
+.monitor.run .monitor-screen i{background:rgba(95,184,132,.38)}
+.monitor.wait{box-shadow:0 0 0 1px var(--amber-line),0 6px 12px rgba(0,0,0,.14)}
+.monitor.wait .led{background:var(--amber)}
+.monitor.wait .monitor-screen i{background:rgba(201,162,92,.34)}
+.monitor.fail{box-shadow:0 0 0 1px var(--red-line),0 6px 12px rgba(0,0,0,.14)}
+.monitor.fail .led{background:var(--red);animation:blink 1.2s steps(2,end) infinite}
+.monitor.fail .monitor-screen i{background:rgba(217,122,120,.34)}
+.monitor.review .led{background:var(--purple)}
+.monitor.review .monitor-screen i{background:rgba(156,138,224,.30)}
+.monitor.idle .monitor-screen i{opacity:.4}
+.chair{position:absolute;left:104px;top:60px;width:64px;height:68px;border:1px solid var(--border);border-radius:16px 16px 9px 9px;background:color-mix(in srgb,var(--slate) 52%,var(--surface-2));z-index:3;box-shadow:inset 0 2px 0 color-mix(in srgb,var(--accent) 55%,transparent),0 4px 8px rgba(0,0,0,.04)}
+.desk-unit.lead .chair{left:146px;top:72px;width:68px;height:72px}
+.table{position:absolute;left:0;top:106px;width:180px;height:66px;z-index:2;filter:drop-shadow(0 6px 10px rgba(0,0,0,.07))}
+.desk-unit.lead .table{top:114px;width:220px;height:72px}
+.table-top{position:absolute;left:0;right:0;top:0;height:13px;border:1px solid var(--border);border-radius:5px 5px 2px 2px;background:linear-gradient(180deg,var(--desk-top),color-mix(in srgb,var(--desk-top) 88%,var(--surface-2)))}
+.table-front{position:absolute;left:3px;right:3px;top:12px;height:12px;border:1px solid var(--border);border-top:0;border-radius:0 0 4px 4px;background:linear-gradient(180deg,var(--desk-front),color-mix(in srgb,var(--desk-front) 90%,var(--floor-warm)))}
+.table-front::before{content:"";position:absolute;left:8px;right:8px;top:4px;height:1px;background:color-mix(in srgb,var(--border) 75%,transparent)}
+.table-front::after{content:"";position:absolute;right:10px;top:7px;width:8px;height:2px;border-radius:2px;background:var(--border)}
+.table::before,.table::after{content:"";position:absolute;bottom:0;width:2px;height:42px;background:var(--border)}
+.table::before{left:10px}.table::after{right:10px}
+.desk-mat{position:absolute;left:18px;top:98px;width:68px;height:14px;border:1px solid color-mix(in srgb,var(--accent) 20%,var(--border));border-radius:4px;background:color-mix(in srgb,var(--accent) 11%,var(--surface));z-index:4;opacity:.9}
+.pedestal{position:absolute;left:9px;top:130px;width:28px;height:40px;border:1px solid var(--border);border-radius:0 0 4px 4px;background:color-mix(in srgb,var(--desk-front) 82%,var(--surface));z-index:2}
+.keyboard{position:absolute;left:30px;top:99px;width:42px;height:6px;border:1px solid var(--border);border-radius:2px;background:var(--surface-2);z-index:4;opacity:.9}
+.papers{position:absolute;left:98px;top:98px;width:20px;height:8px;border:1px solid var(--border);border-radius:1px;background:var(--surface);z-index:4;transform:rotate(-4deg);box-shadow:2px 2px 0 var(--surface-2)}
+.mug{position:absolute;left:80px;top:97px;width:8px;height:9px;border:1px solid var(--border-strong);border-radius:1px 1px 3px 3px;background:var(--surface);z-index:4}
+.desk-lamp{position:absolute;left:118px;top:84px;width:24px;height:26px;z-index:4}
+.desk-lamp::before{content:"";position:absolute;left:50%;bottom:0;width:16px;height:2px;border-radius:2px;background:var(--border-strong);transform:translateX(-50%)}
+.desk-lamp::after{content:"";position:absolute;left:50%;bottom:2px;width:1px;height:13px;background:var(--border-strong);transform:translateX(-50%)}
+.desk-lamp span{position:absolute;left:50%;top:0;width:20px;height:11px;transform:translateX(-50%);border:1px solid var(--border);border-radius:5px 5px 2px 2px;background:color-mix(in srgb,var(--amber) 24%,var(--surface));box-shadow:0 0 16px color-mix(in srgb,var(--amber) 20%,transparent)}
+.away-tag{position:absolute;left:50%;top:56px;transform:translateX(-50%);z-index:2;display:none;flex-direction:column;align-items:center;gap:1px;font-size:10px;line-height:1.3;color:var(--muted);white-space:nowrap;text-align:center}
+.away-tag b{font-size:10.5px;font-weight:600;color:var(--fg-2)}
+.desk-unit.away .monitor,.desk-unit.away .chair{opacity:.5}
+.desk-unit.away .table{opacity:.78}
+.desk-unit.away .away-tag{display:flex}
+/* 桌面正面盖住坐姿下半身：和真实舞台一样，让人「坐进」桌子里 */
+.desk-cap{position:absolute;width:180px;height:25px;z-index:6;pointer-events:none;border:1px solid var(--border);border-top:0;border-radius:0 0 4px 4px;
+  background:linear-gradient(180deg,var(--desk-top) 0 6px,var(--desk-front) 6px 100%);
+  box-shadow:0 6px 10px rgba(0,0,0,.07)}
+.desk-cap::before{content:"";position:absolute;left:9px;right:9px;top:9px;height:1px;background:color-mix(in srgb,var(--border) 75%,transparent)}
+.desk-cap.lead{width:220px;height:26px}
+
+/* 房间：经理室 / 工位区 / 茶歇区 / 会议室，常驻可见
+   墙只在需要的地方画：顶部矮墙 + 朝走道那面墙；--d1/--d2 之间就是门洞 */
+.rooms{position:absolute;inset:0;z-index:1;pointer-events:none}
+.room{--tint:var(--slate);--wall:color-mix(in srgb,var(--tint) 58%,var(--border-strong));--d1:56%;--d2:73%;
+  position:absolute;border-radius:12px;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--tint) 7%,transparent),color-mix(in srgb,var(--tint) 2%,transparent));
+  transition:background .16s ease}
+.room::before{content:"";position:absolute;left:8px;right:8px;top:0;height:3px;border-radius:3px;
+  background:linear-gradient(90deg,var(--wall) 0 var(--d1),transparent var(--d1) var(--d2),var(--wall) var(--d2) 100%)}
+/* 经理室：上墙是实墙，门开在右墙、正对工位区 */
+.room-lead{--tint:var(--amber);left:20px;top:166px;width:276px;height:190px}
+.room-lead::before{background:var(--wall)}
+.room-lead::after{content:"";position:absolute;top:10px;bottom:10px;right:0;width:3px;border-radius:3px;
+  background:linear-gradient(180deg,var(--wall) 0 34%,transparent 34% 65%,var(--wall) 65% 100%)}
+/* 工位区：开放区，顶部矮墙的门洞正对审批台（林从这里上去） */
+.room-work{--tint:var(--green);--d1:20%;--d2:38%;
+  left:320px;top:150px;width:690px;height:382px;
+  background:
+    radial-gradient(circle at 1px 1px,color-mix(in srgb,var(--tint) 9%,transparent) 1px,transparent 1.4px) 0 0/22px 22px,
+    linear-gradient(180deg,color-mix(in srgb,var(--tint) 6%,transparent),color-mix(in srgb,var(--tint) 1.5%,transparent))}
+/* 茶歇区：上墙是实墙，门开在右墙、正对工位区过来的走道 */
+.room-lounge{--tint:var(--amber);left:20px;top:368px;width:276px;height:164px}
+.room-lounge::before{background:var(--wall)}
+.room-lounge::after{content:"";position:absolute;top:10px;bottom:10px;right:0;width:3px;border-radius:3px;
+  background:linear-gradient(180deg,var(--wall) 0 38%,transparent 38% 74%,var(--wall) 74% 100%)}
+/* 会议室：玻璃房，门开在左墙、朝走道 */
+.room-meeting{--tint:var(--indigo);left:1034px;top:166px;width:276px;height:190px;
+  background:linear-gradient(160deg,color-mix(in srgb,var(--indigo) 11%,transparent),color-mix(in srgb,var(--indigo) 4%,transparent));
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--indigo) 26%,var(--border)),inset 0 10px 22px -14px color-mix(in srgb,var(--indigo) 30%,transparent)}
+.room-meeting::before{background:var(--wall)}
+.room-meeting::after{content:"";position:absolute;top:10px;bottom:10px;left:0;width:3px;border-radius:3px;
+  background:linear-gradient(180deg,var(--wall) 0 34%,transparent 34% 65%,var(--wall) 65% 100%)}
+:root[data-theme="dark"] .room{background:linear-gradient(180deg,color-mix(in srgb,var(--tint) 16%,transparent),color-mix(in srgb,var(--tint) 5%,transparent))}
+:root[data-theme="dark"] .room-work{background:
+  radial-gradient(circle at 1px 1px,color-mix(in srgb,var(--tint) 20%,transparent) 1px,transparent 1.4px) 0 0/22px 22px,
+  linear-gradient(180deg,color-mix(in srgb,var(--tint) 12%,transparent),color-mix(in srgb,var(--tint) 3%,transparent))}
+:root[data-theme="dark"] .room-meeting{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--tint) 40%,var(--border)),inset 0 10px 22px -14px color-mix(in srgb,var(--tint) 40%,transparent)}
+.stage[data-paths="1"] .room{background:linear-gradient(180deg,color-mix(in srgb,var(--tint) 12%,transparent),color-mix(in srgb,var(--tint) 5%,transparent))}
+
+.room-tag{position:absolute;left:8px;top:-10px;display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px;border:1px solid var(--border);border-radius:99px;background:var(--surface);box-shadow:var(--shadow-1);white-space:nowrap;z-index:2}
+.room-tag::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--tint);flex:none}
+.room-tag b{font-size:10.5px;font-weight:600;color:var(--fg-2)}
+.room-tag em{font:9px var(--mono);font-style:normal;letter-spacing:.07em;text-transform:uppercase;color:var(--faint)}
+.room-lounge .room-tag{top:6px}
+.stage.has-meeting .room-meeting .room-tag{border-color:var(--green-line);background:var(--green-soft)}
+.stage.has-meeting .room-meeting .room-tag b{color:var(--green)}
+.stage.has-meeting .room-meeting .room-tag em{color:var(--green)}
+.stage.has-meeting .room-meeting .room-tag::before{background:var(--green)}
+.stage.has-meeting .room-meeting .mr-screen{border-color:color-mix(in srgb,var(--green) 46%,var(--border-strong));box-shadow:0 0 0 1px var(--green-line),0 0 18px color-mix(in srgb,var(--green) 18%,transparent)}
+.stage.has-idle .room-lounge .room-tag{border-color:var(--green-line);background:var(--green-soft)}
+.stage.has-idle .room-lounge .room-tag b{color:var(--green)}
+.stage.has-idle .room-lounge .room-tag::before{background:var(--green)}
+
+/* 会议室里的桌子 / 椅子 / 投屏 */
+.mr-screen{position:absolute;left:50%;top:24px;transform:translateX(-50%);width:110px;height:20px;border-radius:3px;border:1px solid var(--border-strong);background:var(--term-bg);opacity:.8}
+.mr-screen::after{content:"";position:absolute;left:6px;right:6px;top:5px;height:1px;background:rgba(255,255,255,.28);box-shadow:0 4px 0 rgba(255,255,255,.14)}
+.mr-table{position:absolute;left:50%;top:62%;transform:translate(-50%,-50%);width:128px;height:44px;border-radius:50%;border:1px solid var(--border);background:var(--desk-top);box-shadow:var(--shadow-soft)}
+.mr-table::after{content:"";position:absolute;left:50%;bottom:-9px;width:10px;height:9px;border:1px solid var(--border);border-top:0;border-radius:0 0 3px 3px;transform:translateX(-50%);background:var(--surface-2)}
+.mr-chair{position:absolute;width:20px;height:13px;border-radius:4px;border:1px solid var(--border);background:var(--surface-2)}
+.mr-chair.c1{left:16px;top:58%}
+.mr-chair.c2{right:16px;top:58%}
+.mr-chair.c3{left:50%;bottom:16px;transform:translateX(-50%)}
+.mr-chair.c4{left:50%;top:26%;transform:translateX(-50%)}
+
+/* paths */
+.paths{position:absolute;inset:0;z-index:2;width:100%;height:100%;pointer-events:none;opacity:0;transition:opacity .16s ease}
+.stage[data-paths="1"] .paths{opacity:1}
+.paths line{stroke:color-mix(in srgb,var(--faint) 52%,transparent);stroke-width:1;stroke-dasharray:3 5;vector-effect:non-scaling-stroke}
+.paths line.on{stroke:color-mix(in srgb,var(--fg) 52%,transparent);stroke-width:1.5;stroke-dasharray:5 4}
+.paths circle{fill:color-mix(in srgb,var(--faint) 55%,transparent)}
+.paths circle.on{fill:color-mix(in srgb,var(--fg) 55%,transparent)}
+
+/* actors */
+.actors{position:absolute;inset:0;z-index:5;pointer-events:none}
+.actor{position:absolute;transform:translate(-50%,-100%);width:130px;height:88px;padding:0;border:0;background:transparent;color:inherit;pointer-events:auto;cursor:pointer;text-align:center;
+  transition:left var(--walk-dur) cubic-bezier(.4,0,.2,1),top var(--walk-dur) cubic-bezier(.4,0,.2,1)}
+.actor .robot-wrap{position:absolute;left:50%;bottom:0;transform:translateX(-50%);transform-origin:50% 100%;transition:transform .16s ease}
+.actor.seated .robot-wrap{transform:translateX(-50%) scale(.84)}
+.actor.seated .plate{top:calc(100% + 54px)}
+/* 主控位的桌子更靠下，工牌再收 14px，别压到经理室的门槛 */
+.actor.seated.zone-lead .plate{top:calc(100% + 24px)}
+.actor.seated .robot{filter:drop-shadow(0 1px 2px rgba(0,0,0,.18))}
+.actor:focus-visible{outline:2px solid color-mix(in srgb,var(--fg) 30%,transparent);outline-offset:3px;border-radius:12px}
+.actor.walking{z-index:22}
+.actor .plate{position:absolute;left:50%;top:calc(100% + 10px);transform:translateX(-50%);display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border:1px solid var(--border);border-radius:99px;background:var(--surface);box-shadow:var(--shadow-1);white-space:nowrap;max-width:156px;overflow:hidden;font-size:10.5px;z-index:2}
+.actor:hover .plate,.actor.selected .plate{border-color:var(--border-strong)}
+.actor.selected .plate{box-shadow:var(--shadow-2)}
+.actor .plate i{width:5px;height:5px;border-radius:50%;background:var(--accent);flex:none}
+.actor .plate b{font-size:11px;font-weight:600;color:var(--fg);overflow:hidden;text-overflow:ellipsis;max-width:64px}
+.actor .plate em{font-style:normal;font-size:10px;color:var(--muted);flex:none}
+.actor .plate.tone-run em{color:var(--green)}
+.actor .plate.tone-wait em{color:var(--amber)}
+.actor .plate.tone-review em{color:var(--purple)}
+.actor .plate.tone-fail em{color:var(--red)}
+.actor .plate.tone-lead em{color:var(--fg-2)}
+.pill{display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:4px;font-size:9.5px;font-weight:500;white-space:nowrap}
+.pill.run{color:var(--green);background:var(--green-soft)}
+.pill.wait{color:var(--amber);background:var(--amber-soft)}
+.pill.review{color:var(--purple);background:var(--purple-soft)}
+.pill.fail{color:var(--red);background:var(--red-soft)}
+.pill.idle{color:var(--muted);background:var(--surface-hover)}
+.pill.lead{color:var(--fg-2);background:var(--surface-hover)}
+.actor .bubble{position:absolute;left:50%;bottom:calc(100% + 4px);transform:translateX(-50%);height:21px;padding:0 7px;border-radius:99px;display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:500;white-space:nowrap;border:1px solid var(--border);background:var(--surface);box-shadow:var(--shadow-1);visibility:hidden}
+.actor .bubble b{font:700 11px var(--mono)}
+.actor.tone-wait .bubble{visibility:visible;color:var(--amber);border-color:var(--amber-line);background:var(--amber-soft)}
+.actor.tone-fail .bubble{visibility:visible;color:var(--red);border-color:var(--red-line);background:var(--red-soft)}
+.actor.tone-review .bubble{visibility:visible;color:var(--purple);border-color:var(--purple-line);background:var(--purple-soft)}
+.actor .walkchip{position:absolute;left:50%;top:-8px;transform:translate(-50%,-100%);height:20px;padding:0 7px;border:1px solid var(--border-strong);border-radius:99px;background:var(--surface);box-shadow:var(--shadow-2);font:9.5px var(--mono);color:var(--fg-2);display:none;align-items:center;gap:4px;white-space:nowrap;z-index:40}
+.actor.walking .walkchip{display:inline-flex}
+.actor.walking .walkchip i{width:4px;height:4px;border-radius:50%;background:var(--green)}
+
+/* robot */
+.robot{width:64px;height:88px;display:block;filter:drop-shadow(0 6px 6px rgba(0,0,0,.10))}
+.r-shadow{fill:rgba(0,0,0,.10)}
+.r-antenna{stroke:var(--border-strong);stroke-width:1.1}
+.r-tip{fill:var(--accent)}
+.r-body{fill:var(--actor-body);stroke:var(--border-strong);stroke-width:1.1}
+.r-gloss{fill:color-mix(in srgb,var(--surface) 70%,transparent);opacity:.6}
+.r-visor{fill:var(--actor-visor);stroke:var(--border-strong);stroke-width:.7}
+.r-eye{fill:var(--accent)}
+.r-happy{fill:none;stroke:var(--accent);stroke-width:1.7;stroke-linecap:round}
+.r-char{fill:var(--accent);font:700 11px var(--mono)}
+.r-scarf{fill:var(--accent);opacity:.92}
+.r-arm{fill:var(--actor-body);stroke:var(--border-strong);stroke-width:1}
+.r-badge{fill:var(--accent)}
+.r-paper{fill:var(--surface);stroke:var(--purple);stroke-width:1}
+
+/* poses */
+.actor.pose-working .robot{animation:bob 2.6s ease-in-out infinite}
+.actor.pose-working .r-arm.r{animation:type .52s ease-in-out infinite alternate;transform-origin:43px 39px}
+.actor.pose-waiting .robot{animation:sway 3.2s ease-in-out infinite}
+.actor.pose-failed .robot{transform:rotate(-7deg) translateY(2px)}
+.actor.pose-review .robot,.actor.pose-lead .robot{animation:bob 4.2s ease-in-out infinite}
+.actor.pose-lead .r-tip{animation:pulse 2.8s ease-in-out infinite}
+.actor.walking .robot{animation:walk .32s ease-in-out infinite alternate!important}
+.actor.walking .r-arm.l,.actor.walking .r-arm.r{animation:swing .32s ease-in-out infinite alternate}
+body[data-motion="calm"] .steam{display:none}
+body[data-motion="calm"] .monitor .led{animation:none}
+body[data-motion="off"] .stage *,body[data-motion="off"] .actor{animation:none!important;transition:none!important}
+body[data-motion="off"] .steam{display:none}
+body[data-type="off"] .actor.pose-working .r-arm.r{animation:none}
+body[data-reduced="1"] .stage *,body[data-reduced="1"] .actor{animation:none!important}
+body[data-reduced="1"] .actor{transition:none!important}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(calc(-1.4px * var(--amp,1)))}}
+@keyframes type{from{transform:translateY(0)}to{transform:translateY(calc(-2px * var(--amp,1)))}}
+@keyframes sway{0%,100%{transform:rotate(calc(-1deg * var(--amp,1)))}50%{transform:rotate(calc(1deg * var(--amp,1)))}}
+@keyframes walk{from{transform:translateY(0) rotate(-1.5deg)}to{transform:translateY(-3px) rotate(1.5deg)}}
+@keyframes swing{from{transform:rotate(-6deg)}to{transform:rotate(6deg)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:.25}}
+@keyframes steam{0%{transform:translateY(2px);opacity:0}30%{opacity:.5}100%{transform:translateY(-9px);opacity:0}}
+@media (prefers-reduced-motion:reduce){.stage *,.actor{animation:none!important;transition:none!important}}
+
+/* ── timeline ─────────────────────────────────────────────── */
+.timeline{flex:none;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-1);padding:8px 10px 9px;display:flex;flex-direction:column;gap:4px}
+.tl-head{display:flex;align-items:center;gap:8px;min-width:0}
+.tl-title{display:flex;align-items:baseline;gap:7px;min-width:0}
+.tl-title b{font-size:12px;font-weight:600;white-space:nowrap}
+.tl-title span{font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl-actions{margin-left:auto;display:flex;align-items:center;gap:4px;flex:none}
+.chk{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);white-space:nowrap;cursor:pointer;padding-left:4px}
+.chk input{accent-color:var(--fg);width:12px;height:12px;margin:0}
+.tl-track{position:relative;height:84px;margin-top:2px}
+.tl-lane{position:absolute;left:26px;right:8px;height:22px}
+.tl-lane.l0{top:4px}.tl-lane.l1{top:28px}
+.ev{position:absolute;top:0;transform:translateX(-50%);height:22px;padding:0 6px 0 5px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--fg-2);font-size:10.5px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;box-shadow:var(--shadow-1);transition:border-color .12s,background .12s,color .12s,opacity .12s}
+.ev:hover{border-color:var(--border-strong);color:var(--fg)}
+.ev.future{opacity:.42;border-style:dashed}
+.ev.on{border-color:var(--border-strong);background:var(--surface-selected);color:var(--fg)}
+.ev .dot{width:5px;height:5px;border-radius:50%;flex:none;background:var(--slate)}
+.ev .dot.run{background:var(--green)}.ev .dot.wait{background:var(--amber)}
+.ev .dot.review{background:var(--purple)}.ev .dot.fail{background:var(--red)}
+.ev .dot.lead{background:var(--fg-2)}.ev .dot.idle{background:var(--slate)}
+.ev b{font:600 9.5px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.tl-ticks{position:absolute;left:26px;right:8px;bottom:12px;height:14px;border-top:1px solid var(--border)}
+.tl-ticks span{position:absolute;top:2px;transform:translateX(-50%);font:9.5px var(--mono);color:var(--faint);white-space:nowrap}
+.tl-ticks span::before{content:"";position:absolute;left:50%;top:-3px;width:1px;height:3px;background:var(--border-strong)}
+.tl-playhead{--p:100%;position:absolute;left:26px;right:8px;top:0;bottom:26px;pointer-events:none}
+.tl-playhead i{position:absolute;left:var(--p);top:0;bottom:0;width:1px;background:var(--fg);opacity:.5}
+.tl-playhead::after{content:"";position:absolute;left:var(--p);top:-1px;width:5px;height:5px;margin-left:-2px;border-radius:50%;background:var(--fg);opacity:.75}
+#scrub{position:absolute;left:26px;bottom:-2px;width:calc(100% - 34px);margin:0}
+input[type=range]{-webkit-appearance:none;appearance:none;background:transparent;height:16px;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:2px;background:var(--surface-hover);border:1px solid var(--border)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;margin-top:-5px;border-radius:50%;background:var(--fg);border:2px solid var(--surface);box-shadow:var(--shadow-1)}
+input[type=range]::-moz-range-track{height:3px;border-radius:2px;background:var(--surface-hover);border:1px solid var(--border)}
+input[type=range]::-moz-range-thumb{width:11px;height:11px;border:2px solid var(--surface);border-radius:50%;background:var(--fg)}
+.tl-detail{display:flex;align-items:center;gap:8px;min-width:0;height:20px;font-size:11px;color:var(--muted);border-top:1px solid var(--border);padding-top:5px}
+.tl-detail .t{font:10px var(--mono);color:var(--faint);font-variant-numeric:tabular-nums;flex:none}
+.tl-detail b{color:var(--fg);font-weight:600;flex:none}
+.tl-detail .r{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.tl-detail .sep{width:1px;height:10px;background:var(--border);flex:none}
+.tl-detail .tag{height:18px;padding:0 5px;border-radius:4px;background:var(--surface-hover);color:var(--fg-2);font-size:10px;display:inline-flex;align-items:center;flex:none}
+.tl-detail .tag.walk{background:var(--green-soft);color:var(--green)}
+.tl-detail .tag.stay{background:var(--surface-hover);color:var(--muted)}
+
+/* ── inspector（抽屉，盖在舞台上，和实况一致） ─────────────── */
+.inspector{position:absolute;right:8px;top:0;bottom:0;width:340px;z-index:30;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--shadow-float);display:flex;flex-direction:column;overflow:hidden}
+.stage-area.insp-closed .inspector{display:none}
+.insp-head{flex:none;display:flex;align-items:flex-start;gap:9px;padding:9px 12px 8px;border-bottom:1px solid var(--border);min-width:0}
+.insp-avatar{width:36px;height:36px;border:1px solid var(--border);border-radius:9px;background:var(--surface-hover);display:grid;place-items:center;flex:none;position:relative;overflow:hidden}
+.insp-avatar .robot{width:24px;height:32px;filter:none;animation:none!important}
+.insp-avatar::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--accent,var(--slate))}
+.insp-title{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.insp-title b{font-size:14px;font-weight:600;line-height:1.3;display:flex;align-items:center;gap:5px}
+.insp-title b em{font-style:normal;font-size:9px;font-weight:500;color:var(--faint);border:1px solid var(--border);border-radius:3px;padding:0 3px;line-height:1.5}
+.insp-title span{font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.insp-status{flex:none;display:flex;align-items:center;gap:6px;padding:6px 12px 7px;border-bottom:1px solid var(--border);min-width:0}
+.insp-status .meta{margin-left:auto;font:10px var(--mono);color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.insp-body{flex:1;min-height:0;overflow:auto;padding:0 12px}
+.block{padding:7px 0;border-bottom:1px solid var(--border)}
+.block:last-child{border-bottom:0}
+.block-label{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.block-label span{margin-left:auto;font-size:10px;letter-spacing:0;text-transform:none;color:var(--faint);font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px}
+.map{display:grid;grid-template-columns:40px minmax(0,1fr);gap:3px 8px;font-size:11.5px;line-height:1.45;align-items:start;margin:0}
+.map dt{color:var(--muted);font-size:11px}
+.map dd{margin:0;color:var(--fg-2);min-width:0;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.map dd.mono{font:10.5px var(--mono);color:var(--muted)}
+.map .k{font:9.5px var(--mono);color:var(--fg-2);background:var(--surface-hover);border-radius:3px;padding:0 4px;line-height:1.6}
+.reason{margin:6px 0 0;font-size:11px;line-height:1.6;color:var(--muted)}
+.reason b{color:var(--fg-2);font-weight:600}
+.empty-line{margin:2px 0 0;font-size:11.5px;line-height:1.6;color:var(--muted)}
+.locate{margin-top:6px}
+.mini-link{border:0;background:transparent;color:var(--muted);font-size:11px;padding:0;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.mini-link:hover{color:var(--fg)}
+.ctl{display:flex;flex-direction:column;gap:3px;margin:0 0 8px}
+.ctl:last-child{margin-bottom:0}
+.ctl label{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;color:var(--muted)}
+.ctl label b{font:600 10.5px var(--mono);color:var(--fg-2)}
+.ctl input[type=range]{height:16px}
+.row-switch{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--fg-2);cursor:pointer}
+.row-switch input{accent-color:var(--fg);width:12px;height:12px;margin:0}
+.param-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:2px}
+.effective{font:10px/1.4 var(--mono);color:var(--faint);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.a11y-row{display:flex;align-items:flex-start;gap:6px;padding:5px 0;min-width:0}
+.a11y-row i{flex:none;width:14px;height:14px;border-radius:50%;display:grid;place-items:center;font:600 8px var(--mono);font-style:normal;margin-top:1px;border:1px solid var(--border-strong);color:var(--muted)}
+.a11y-row.ok i{background:var(--green-soft);border-color:var(--green-line);color:var(--green)}
+.a11y-row.risk i{background:var(--amber-soft);border-color:var(--amber-line);color:var(--amber)}
+.a11y-row div{min-width:0}
+.a11y-row b{display:block;font-size:11.5px;font-weight:600;color:var(--fg-2);line-height:1.4}
+.a11y-row p{margin:1px 0 0;font-size:10.5px;line-height:1.55;color:var(--muted)}
+.insp-foot{flex:none;padding:8px 12px 10px;border-top:1px solid var(--border);display:flex;align-items:center;gap:5px}
+.overview-list{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.overview-list button{height:23px;padding:0 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--fg-2);font-size:11px;display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+.overview-list button:hover{border-color:var(--border-strong);color:var(--fg)}
+.overview-list .dot{width:5px;height:5px;border-radius:50%;background:var(--slate)}
+.overview-list .dot.run{background:var(--green)}.overview-list .dot.wait{background:var(--amber)}
+.overview-list .dot.review{background:var(--purple)}.overview-list .dot.fail{background:var(--red)}
+.overview-list .dot.lead{background:var(--fg-2)}
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.stat{border:1px solid var(--border);border-radius:7px;padding:6px 8px;background:var(--surface)}
+.stat b{display:block;font:600 15px var(--mono);line-height:1.3;color:var(--fg);font-variant-numeric:tabular-nums}
+.stat span{font-size:10px;color:var(--muted)}
+.stat.warn b{color:var(--amber)}
+
+@media (max-width:1240px){
+  .stage-tools .hint{display:none}
+  .inspector{width:320px}
+}
+@media (max-width:1040px){
+  .inspector{width:300px}
+  .stage-area{min-height:480px}
+}
+</style>
+</head>
+<body>
+<div class="app-frame">
+<div class="app">
+  <nav class="rail" aria-label="主导航">
+    <div class="rail-brand" title="Cockpit Harness">C</div>
+    <div class="rail-sep" aria-hidden="true"></div>
+
+    <button class="rail-item" type="button" id="navWorkspace" title="工作区">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M3 10h6M15 8h3M15 12h3"/></svg><span>工作区</span><em class="rail-badge run" id="navRun">4</em>
+    </button>
+    <button class="rail-item on" type="button" id="navScene" title="场景" aria-current="page">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11M15 9v11"/></svg><span>场景</span><em class="rail-badge" id="navWait">1</em>
+    </button>
+    <button class="rail-item" type="button" title="项目">
+      <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 11h18"/></svg><span>项目</span>
+    </button>
+    <button class="rail-item" type="button" title="统计">
+      <svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>统计</span>
+    </button>
+    <button class="rail-item" type="button" title="主机">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/></svg><span>主机</span>
+    </button>
+    <button class="rail-item" type="button" title="Git">
+      <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="9" r="2.4"/><path d="M6 8.4v7.2M8.3 6h4.3a3 3 0 0 1 3 3v.2"/></svg><span>Git</span>
+    </button>
+    <button class="rail-item" type="button" title="知识库">
+      <svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M8 7h7M8 11h5"/></svg><span>知识库</span>
+    </button>
+    <button class="rail-item" type="button" title="记忆">
+      <svg viewBox="0 0 24 24"><path d="M12 3v18M5 7v10M19 7v10M8.5 5v14M15.5 5v14"/></svg><span>记忆</span>
+    </button>
+    <button class="rail-item" type="button" title="人物">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4"/><path d="M5 20a7 7 0 0 1 14 0"/></svg><span>人物</span>
+    </button>
+
+    <div class="rail-bottom">
+      <button class="rail-item" type="button" title="说明">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.4 2.3c-.7.3-.9.9-.9 1.7M12 17h.01"/></svg><span>说明</span>
+      </button>
+      <button class="rail-item" type="button" title="设置">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>设置</span>
+      </button>
+    </div>
+  </nav>
+
+  <main class="main">
+    <header class="page-head">
+      <div class="page-title">
+        <span class="kicker">Scene / Live · Motion</span>
+        <h1>动效工作台</h1>
+        <p class="page-sub">舞台只从真实状态取位置和姿态。这里可以回放过去 15 分钟的走位、核对每个动作的触发原因，并当场调参。</p>
+      </div>
+      <div class="page-actions">
+        <select id="tier" class="mini-select" title="动效档位">
+          <option value="calm">动效 · 克制</option>
+          <option value="full">动效 · 完整</option>
+          <option value="off">动效 · 关闭</option>
+        </select>
+        <button class="icon-btn" id="theme" title="切换亮 / 暗（◐）">◐</button>
+        <button class="btn primary" id="replayTop">回放状态变化</button>
+      </div>
+    </header>
+
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="false">场景库</button>
+      <button class="tab on" role="tab" aria-selected="true" data-view="live"><i class="live-dot"></i>实况</button>
+      <button class="tab" role="tab" aria-selected="false" data-view="lights">光照</button>
+      <button class="tab" role="tab" aria-selected="false">执行配置</button>
+      <span class="spacer"></span>
+      <span class="chip mono" id="clockChip">15:40</span>
+    </div>
+
+    <div class="live">
+      <div class="stage-head">
+        <h2>办公室 · 实况</h2>
+        <span class="sub" id="motionChip">动效 克制 · 走位 0.9s</span>
+        <div class="scene-stats" id="sceneStats"></div>
+        <div class="stage-tools">
+          <select id="light" class="mini-select" title="舞台光照（默认跟随本地时间）">
+            <option value="auto">光照 · 跟随时间</option>
+            <option value="dawn">光照 · 清晨</option>
+            <option value="day">光照 · 白天</option>
+            <option value="dusk">光照 · 黄昏</option>
+            <option value="night">光照 · 夜晚</option>
+          </select>
+          <span class="hint">点角色 → 状态与动效</span>
+          <button class="btn tiny ghost" id="pathsBtn" aria-pressed="false" title="画出各角色到目标区域的走位路径">走位路径</button>
+          <button class="btn tiny ghost" id="reducedBtn" aria-pressed="false" title="模拟系统 reduced-motion / 动效关闭">模拟 reduced-motion</button>
+          <button class="btn tiny" id="detailToggle" aria-pressed="true">详情</button>
+        </div>
+      </div>
+
+      <div class="stage-area" id="stageArea">
+        <div class="stage-fit" id="stageFit">
+        <div class="stage" id="stage" data-paths="0">
+          <div class="sunbeam"></div>
+          <div class="lights" aria-hidden="true">
+            <span class="ceil-lamp c1"><i></i></span>
+            <span class="ceil-lamp c2"><i></i></span>
+            <span class="lightpool p1"></span>
+            <span class="lightpool p2"></span>
+            <span class="floor-glow"></span>
+          </div>
+          <div class="clock"><b id="wallClock">15:40</b><span id="phase">DAYLIGHT</span></div>
+
+          <div class="window">
+            <svg class="win-view" viewBox="0 0 178 100" preserveAspectRatio="none" aria-hidden="true">
+              <defs>
+                <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#c9d6e8" stop-opacity=".5"/>
+                  <stop offset="1" stop-color="#f0e3cd" stop-opacity=".32"/>
+                </linearGradient>
+                <linearGradient id="skyDusk" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#8f7fa8" stop-opacity=".55"/>
+                  <stop offset=".62" stop-color="#d9a06a" stop-opacity=".5"/>
+                  <stop offset="1" stop-color="#f0c98d" stop-opacity=".55"/>
+                </linearGradient>
+                <linearGradient id="skyNight" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#141826"/>
+                  <stop offset="1" stop-color="#232335"/>
+                </linearGradient>
+              </defs>
+              <rect width="178" height="100" fill="url(#sky)"/>
+              <circle cx="132" cy="26" r="12" fill="#e8c88a" opacity=".5"/>
+              <path d="M0 78h20v22H0zM26 66h16v34H26zM48 74h24v26H48zM80 58h14v42H80zM100 70h22v30h-22zM128 62h18v38h-18zM152 76h26v24h-26z" fill="#8a8f98" opacity=".22"/>
+              <rect y="94" width="178" height="6" fill="#8a8f98" opacity=".16"/>
+              <g class="win-dusk">
+                <rect width="178" height="100" fill="url(#skyDusk)"/>
+                <circle cx="134" cy="66" r="11" fill="var(--amber)" opacity=".7"/>
+                <path d="M0 78h20v22H0zM26 66h16v34H26zM48 74h24v26H48zM80 58h14v42H80zM100 70h22v30h-22zM128 62h18v38h-18zM152 76h26v24h-26z" fill="var(--term-bg)" opacity=".55"/>
+              </g>
+              <g class="win-night">
+                <rect width="178" height="100" fill="url(#skyNight)"/>
+                <g class="win-stars">
+                  <circle cx="14" cy="14" r=".9" fill="#fff" opacity=".85"/>
+                  <circle cx="42" cy="8" r=".7" fill="#fff" opacity=".6"/>
+                  <circle cx="66" cy="22" r="1" fill="#fff" opacity=".8"/>
+                  <circle cx="94" cy="12" r=".7" fill="#fff" opacity=".55"/>
+                  <circle cx="112" cy="30" r=".8" fill="#fff" opacity=".7"/>
+                  <circle cx="24" cy="34" r=".7" fill="#fff" opacity=".5"/>
+                  <circle cx="156" cy="16" r=".9" fill="#fff" opacity=".75"/>
+                </g>
+                <circle cx="136" cy="26" r="15" fill="var(--amber)" opacity=".12"/>
+                <circle cx="136" cy="26" r="8" fill="color-mix(in srgb,white 78%,var(--amber) 22%)" opacity=".95"/>
+                <path d="M0 78h20v22H0zM26 66h16v34H26zM48 74h24v26H48zM80 58h14v42H80zM100 70h22v30h-22zM128 62h18v38h-18zM152 76h26v24h-26z" fill="var(--term-bg)" opacity=".85"/>
+                <g class="win-city">
+                  <rect x="6" y="82" width="2.4" height="2.6" fill="var(--amber)" opacity=".8"/>
+                  <rect x="12" y="88" width="2.4" height="2.6" fill="var(--amber)" opacity=".55"/>
+                  <rect x="30" y="70" width="2.4" height="2.6" fill="var(--amber)" opacity=".7"/>
+                  <rect x="34" y="84" width="2.4" height="2.6" fill="var(--amber)" opacity=".6"/>
+                  <rect x="54" y="78" width="2.4" height="2.6" fill="var(--amber)" opacity=".75"/>
+                  <rect x="64" y="86" width="2.4" height="2.6" fill="var(--amber)" opacity=".5"/>
+                  <rect x="84" y="62" width="2.4" height="2.6" fill="var(--amber)" opacity=".8"/>
+                  <rect x="87" y="74" width="2.4" height="2.6" fill="var(--amber)" opacity=".55"/>
+                  <rect x="106" y="74" width="2.4" height="2.6" fill="var(--amber)" opacity=".7"/>
+                  <rect x="114" y="82" width="2.4" height="2.6" fill="var(--amber)" opacity=".6"/>
+                  <rect x="132" y="66" width="2.4" height="2.6" fill="var(--amber)" opacity=".7"/>
+                  <rect x="140" y="74" width="2.4" height="2.6" fill="var(--amber)" opacity=".55"/>
+                  <rect x="158" y="80" width="2.4" height="2.6" fill="var(--amber)" opacity=".7"/>
+                  <rect x="164" y="88" width="2.4" height="2.6" fill="var(--amber)" opacity=".5"/>
+                </g>
+              </g>
+            </svg>
+            <span class="mullion v"></span><span class="mullion h"></span>
+            <span class="sill"></span>
+          </div>
+
+          <div class="pinboard"><i></i><i></i><i></i></div>
+
+          <div class="console">
+            <span class="console-top"></span><span class="console-body"></span>
+            <i class="console-book b1"></i><i class="console-book b2"></i><i class="console-book b3"></i>
+            <span class="console-plant"><i></i><i></i><span></span></span>
+          </div>
+
+          <div class="whiteboard" id="wb" role="button" tabindex="0" title="打开 Mission">
+            <div class="wb-head"><b>TODAY 发布收口</b><em>3/5</em></div>
+            <div class="wb-bar"><i></i></div>
+            <div class="wb-step done"><i>✓</i><b>登录页校验</b><span>lin</span></div>
+            <div class="wb-step doing"><i>◐</i><b>工作台空态</b><span>zhou</span></div>
+            <div class="wb-step"><i>○</i><b>发布检查</b><span>—</span></div>
+          </div>
+
+          <button class="prop approval" id="approval" title="审批台">
+            <span class="approval-head"><i class="lamp"></i>审批台</span>
+            <span class="tray-slot"></span>
+            <span class="tray-paper"><i></i><span id="approvalText">等待审批</span></span>
+            <span class="tray-count" id="approvalCount">1</span>
+          </button>
+
+          <div class="prop shelf" id="shelf" role="button" tabindex="0" title="验收架">
+            <div class="shelf-head">验收架 <em id="shelfCount">1</em></div>
+            <div class="shelf-paper"><i></i><span id="shelfText">T-015 工作台空态</span></div>
+            <div class="shelf-paper dim"><i></i>昨天 · T-012 通过</div>
+            <div class="shelf-books"><i></i><i></i><i></i><i></i></div>
+            <div class="shelf-plant"><i></i><i></i><span></span></div>
+          </div>
+
+          <div class="lounge">
+            <span class="rug"></span>
+            <span class="sofa"><i></i><i></i><i></i><span class="arm l"></span><span class="arm r"></span><span class="throw"></span></span>
+            <span class="coffee-table"><i></i><i></i><span class="book"></span></span>
+            <span class="floor-lamp"><span></span></span>
+            <span class="coffee-machine"><span class="steam"><i></i><i></i></span></span>
+            <span class="lounge-plant"><i></i><i></i><span></span></span>
+          </div>
+
+          <div class="plant p2"><i></i><i></i><i></i><span class="pot"></span></div>
+          <div class="plant p3"><i></i><i></i><i></i><span class="pot"></span></div>
+          <div class="plant p4"><i></i><i></i><i></i><span class="pot"></span></div>
+
+          <div class="rooms" aria-hidden="true">
+            <div class="room room-lead"><span class="room-tag"><b>经理室</b><em>manager</em></span></div>
+            <div class="room room-work"><span class="room-tag"><b>工位区</b><em>workspace</em></span></div>
+            <div class="room room-lounge"><span class="room-tag"><b>茶歇区</b><em>lounge</em></span></div>
+            <div class="room room-meeting">
+              <span class="room-tag"><b>会议室</b><em id="meetingTag">空闲</em></span>
+              <span class="mr-screen"></span>
+              <span class="mr-table"></span>
+              <span class="mr-chair c1"></span><span class="mr-chair c2"></span><span class="mr-chair c3"></span><span class="mr-chair c4"></span>
+            </div>
+          </div>
+
+          <svg class="paths" id="pathsSvg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+
+          <div id="furniture"></div>
+          <div id="desks" class="desks"></div>
+          <div id="caps"></div>
+          <div class="actors" id="actors"></div>
+        </div>
+        </div>
+
+        <aside class="inspector" id="inspector" aria-label="动效检查器">
+          <div class="insp-head" id="inspHead"></div>
+          <div class="insp-status" id="inspStatus"></div>
+          <div class="insp-body">
+            <div id="inspDynamic"></div>
+            <div class="block" id="inspA11y"></div>
+            <div class="block">
+              <div class="block-label">动效参数<span>全局 · 立即生效</span></div>
+              <div class="ctl">
+                <label>走位时长 <b id="walkVal">0.9s</b></label>
+                <input type="range" id="walk" min="300" max="1400" step="100" value="900" aria-label="走位时长" />
+              </div>
+              <div class="ctl">
+                <label>姿态幅度 <b id="ampVal">100%</b></label>
+                <input type="range" id="amp" min="0" max="150" step="10" value="100" aria-label="姿态幅度" />
+              </div>
+              <div class="param-row">
+                <label class="row-switch"><input type="checkbox" id="typing" checked /> 打字动作</label>
+                <span class="effective" id="effective"></span>
+              </div>
+            </div>
+          </div>
+          <div class="insp-foot">
+            <button class="btn tiny ghost" id="resetParams">还原默认</button>
+            <span class="spacer"></span>
+            <span class="faint" style="font-size:10px">只影响预览，不上线</span>
+          </div>
+        </aside>
+      </div>
+
+      <div class="legend">
+        <span><i class="line walk"></i>走位只发生在真的换区域时</span>
+        <span><i class="line stay"></i>失败 / 重试 / 计划批注停在原地</span>
+        <span class="note">位置来自 run / todo 的真实 zone · 舞台不做演示动画</span>
+      </div>
+
+      <div class="timeline" aria-label="状态变化时间轴">
+        <div class="tl-head">
+          <div class="tl-title">
+            <b>时间轴</b>
+            <span id="tlSub">过去 15 分钟 · 9 次状态变化 · 5 次走位</span>
+          </div>
+          <div class="tl-actions">
+            <button class="btn tiny" id="play" aria-pressed="false">▶ 回放</button>
+            <button class="btn tiny ghost" id="jumpNow">回到现在</button>
+            <label class="chk"><input type="checkbox" id="walkOnly" /> 只看走位</label>
+          </div>
+        </div>
+        <div class="tl-track" id="track">
+          <div class="tl-lane l0" id="lane0"></div>
+          <div class="tl-lane l1" id="lane1"></div>
+          <div class="tl-ticks" id="ticks"></div>
+          <div class="tl-playhead" id="playhead"><i></i></div>
+          <input type="range" id="scrub" min="0" max="900" step="1" value="900" aria-label="拖动查看过去 15 分钟" />
+        </div>
+        <div class="tl-detail" id="tlDetail"></div>
+      </div>
+
+      <div class="lights-view" id="lightsView"></div>
+    </div>
+  </main>
+</div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  /* ── 时间 ─────────────────────────────────────────────── */
+  const T_END = 900;
+  const URLP = new URLSearchParams(location.search);
+  const BASE = (() => {
+    const d = new Date();
+    const pin = URLP.get("clock");
+    if (pin && /^\d{1,2}:\d{2}$/.test(pin)) {
+      const [h, m] = pin.split(":").map(Number);
+      d.setHours(h, m, 0, 0);
+    }
+    return d.getTime();
+  })();
+  const pad = (n) => String(n).padStart(2, "0");
+  const at = (t) => new Date(BASE - (T_END - t) * 1000);
+  const hhmm = (t) => { const d = at(t); return pad(d.getHours()) + ":" + pad(d.getMinutes()); };
+  const hhmmss = (t) => { const d = at(t); return hhmm(t) + ":" + pad(d.getSeconds()); };
+
+  /* ── 坐标：和真实舞台同一套工位网格 ───────────────────── */
+  /* 画布 1340×540：三列工位在中间，左列经理室/茶歇区，右列会议室/验收架 */
+  const STATIONS = [
+    { seat: "seat0", x: 344, y: 158 },
+    { seat: "seat1", x: 569, y: 158 },
+    { seat: "seat2", x: 794, y: 158 },
+    { seat: "seat3", x: 344, y: 336 },
+    { seat: "seat4", x: 569, y: 336 },
+    { seat: "seat5", x: 794, y: 336 },
+  ];
+  /* 工位里人坐右侧、显示器在左，所以锚点是「工位左边 + 142px」 */
+  const SEAT = { lead: { left: "208px", top: "312px" } };
+  for (const st of STATIONS) SEAT[st.seat] = { left: (st.x + 142) + "px", top: (st.y + 122) + "px" };
+  const ZONE_POS = {
+    approval: { left: "518px", top: "196px" },
+    review: { left: "1180px", top: "500px" },
+    tea: { left: "150px", top: "490px" },
+    meeting: { left: "1075px", top: "300px" },
+  };
+  const ZONE_LABEL = { lead: "经理室", desk: "工位区", approval: "审批台", review: "验收架", tea: "茶歇区", meeting: "会议室" };
+
+  /* ── 角色：每个状态都写清「谁触发的 / 区域 / 姿态 / 动效 / 依据」── */
+  const ACTORS = [
+    {
+      id: "bei", name: "北", role: "主控", roleLong: "主控 · supervisor", accent: "purple", seat: "lead", host: "mac-mini", key: "M-03",
+      states: [
+        { t: 0, label: "协调中", tone: "lead", zone: "lead", pose: "lead", screen: [58, 46, 68],
+          basis: "mission m3 · planning", motion: "4.2s 呼吸 + 天线脉冲 2.8s", trigger: "—" },
+        { t: 150, label: "计划评审", tone: "lead", zone: "meeting", pose: "reviewing", screen: [52, 62, 48],
+          basis: "mission m3 · plan_review", motion: "走位 经理室→会议室 + 3.6s 呼吸", trigger: "mission.plan_review" },
+        { t: 330, label: "计划已批", tone: "lead", zone: "lead", pose: "lead", screen: [70, 52, 44],
+          basis: "mission_plans.approved · rev2", motion: "走位 会议室→经理室 · 白板进度更新一次", trigger: "mission_plans.approved" },
+      ],
+      a11y: [{ ok: true, title: "两间房都有门", text: "计划评审时走位到会议室，回来再更新白板；门开在朝走道的墙上，动效关掉也能看出他换了房间。" }],
+    },
+    {
+      id: "zhou", name: "舟", role: "执行", roleLong: "执行 · worker", accent: "green", seat: "seat0", host: "mac-mini", key: "T-021",
+      states: [
+        { t: 0, label: "排队", tone: "idle", zone: "desk", pose: "idle", screen: [40, 32, 52],
+          basis: "todo T-021 · queued", motion: "无（等 run 起来）", trigger: "—" },
+        { t: 60, label: "执行中", tone: "run", zone: "desk", pose: "working", screen: [58, 42, 66], activity: "bash · 通过 · src/ui",
+          basis: "run r-118 · streaming", motion: "2.6s 呼吸 + 0.52s 打字（原地）", trigger: "run.started" },
+        { t: 390, label: "失败", tone: "fail", zone: "desk", pose: "failed", screen: [30, 24, 38],
+          basis: "run r-118 · exit 1", motion: "姿态倾斜 -7°（原地，不走位）", trigger: "run.failed" },
+        { t: 545, label: "重试中", tone: "run", zone: "desk", pose: "working", screen: [62, 48, 58], activity: "tsc · 通过 · 3.2s",
+          basis: "run r-119 · streaming", motion: "呼吸恢复（原地）", trigger: "run.retry" },
+      ],
+      a11y: [{ ok: true, title: "失败不靠动效表达", text: "倾斜 -7° 只是动效；气泡「! 运行失败」和姓名牌「失败」是静态替代，关掉动效仍然读得懂。" }],
+    },
+    {
+      id: "qiao", name: "乔", role: "评审", roleLong: "评审 · reviewer", accent: "indigo", seat: "seat1", host: "mac-mini", key: "T-015",
+      states: [
+        { t: 0, label: "执行中", tone: "run", zone: "desk", pose: "working", screen: [54, 44, 60], activity: "rg · 通过 · electron/",
+          basis: "run r-112 · streaming", motion: "2.6s 呼吸 + 打字（原地）", trigger: "—" },
+        { t: 200, label: "待验收", tone: "review", zone: "review", pose: "review", screen: [46, 38, 54],
+          basis: "todo T-015 · in_review", motion: "走位 工位→验收架 + 3.6s 呼吸", trigger: "todo.in_review" },
+        { t: 820, label: "执行中", tone: "run", zone: "desk", pose: "working", screen: [60, 50, 44], activity: "vitest · 通过 · 42 files",
+          basis: "run r-121 · 验收通过后接新任务", motion: "走位 验收架→工位", trigger: "acceptance.passed" },
+      ],
+      a11y: [{ ok: true, title: "两个方向都看得到", text: "去验收架会走位近 1 秒，验收架计数 +1；回座同样。位置和文字一起变，不是单靠动效。" }],
+    },
+    {
+      id: "lin", name: "林", role: "执行", roleLong: "执行 · worker", accent: "amber", seat: "seat2", host: "mini-2", key: "T-112",
+      states: [
+        { t: 0, label: "执行中", tone: "run", zone: "desk", pose: "working", screen: [56, 46, 62], activity: "git · 完成 · feat/ui",
+          basis: "run r-115 · streaming", motion: "2.6s 呼吸 + 打字（原地）", trigger: "—" },
+        { t: 450, label: "待确认", tone: "wait", zone: "approval", pose: "waiting", screen: [44, 36, 50],
+          basis: "run r-115 · waiting_input", motion: "走位 工位→审批台 + 3.2s 摇摆", trigger: "run.waiting_input" },
+      ],
+      a11y: [{ ok: true, title: "待确认只有一个落点", text: "审批台是固定区域；姓名牌「待确认」+ 气泡 ?，不依赖走位也知道要人处理。" }],
+    },
+    {
+      id: "han", name: "韩", role: "执行", roleLong: "执行 · worker", accent: "slate", seat: "seat3", host: "mini-2", key: "T-109",
+      states: [
+        { t: 0, label: "执行中", tone: "run", zone: "desk", pose: "working", screen: [52, 40, 58], activity: "pytest · 4 通过",
+          basis: "run r-109 · streaming", motion: "2.6s 呼吸 + 打字（原地）", trigger: "—" },
+        { t: 285, label: "空闲", tone: "neutral", zone: "tea", pose: "idle", screen: [34, 28, 40],
+          basis: "run r-109 · completed", motion: "走位 工位→茶歇", trigger: "run.completed" },
+        { t: 680, label: "执行中", tone: "run", zone: "desk", pose: "working", screen: [50, 44, 62], activity: "eslint · 12 files",
+          basis: "run r-120 · streaming", motion: "走位 茶歇→工位", trigger: "todo.assigned" },
+      ],
+      a11y: [{ ok: false, title: "「空闲」没有说明去了哪", text: "关闭动效后角色直接出现在茶歇区，但姓名牌只写「空闲」。建议补「茶歇 · 空闲」，或让茶歇标签显示人数。" }],
+    },
+    {
+      id: "chen", name: "陈", role: "执行", roleLong: "执行 · worker", accent: "slate", seat: "seat4", host: "mini-2", key: "T-104",
+      states: [{ t: 0, label: "待命", tone: "neutral", zone: "desk", pose: "idle", screen: [30, 26, 34],
+        basis: "无 active run · 未派活", motion: "无", trigger: "—" }],
+      a11y: [{ ok: true, title: "待命就坐在自己工位", text: "没有额外动效；姓名牌写「待命」，显示器 LED 不闪，和「执行中」区分得开。" }],
+    },
+    {
+      id: "su", name: "苏", role: "执行", roleLong: "执行 · worker", accent: "slate", seat: "seat5", host: "mini-2", key: "T-105",
+      states: [{ t: 0, label: "待命", tone: "neutral", zone: "desk", pose: "idle", screen: [28, 24, 32],
+        basis: "无 active run · 未派活", motion: "无", trigger: "—" }],
+      a11y: [{ ok: true, title: "待命就坐在自己工位", text: "没有额外动效；姓名牌写「待命」，显示器 LED 不闪，和「执行中」区分得开。" }],
+    },
+  ];
+
+  const stateAt = (actor, t) => {
+    let cur = actor.states[0];
+    for (const s of actor.states) if (s.t <= t) cur = s;
+    return cur;
+  };
+  const posOf = (actor, st) => (st.zone === "desk" || st.zone === "lead") ? SEAT[actor.seat] : ZONE_POS[st.zone];
+
+  const EVENTS = [];
+  for (const a of ACTORS) {
+    for (let i = 1; i < a.states.length; i++) {
+      const from = a.states[i - 1], to = a.states[i];
+      EVENTS.push({
+        actorId: a.id, actorName: a.name, accent: a.accent, t: to.t, from, to, tone: to.tone,
+        walked: from.zone !== to.zone,
+        fromLabel: ZONE_LABEL[from.zone], toLabel: ZONE_LABEL[to.zone],
+        trigger: to.trigger,
+      });
+    }
+  }
+  EVENTS.sort((a, b) => a.t - b.t);
+  const laneOf = (() => {
+    /* 往“上一条更早”的泳道放，两条泳道交替，时间轴不会堆在一起 */
+    const last = [-999, -999];
+    return (e) => {
+      const lane = (e.t - last[0] >= e.t - last[1]) ? 0 : 1;
+      last[lane] = e.t;
+      return lane;
+    };
+  })();
+  EVENTS.forEach((e) => { e.lane = laneOf(e); });
+
+  /* ── 状态 ─────────────────────────────────────────────── */
+  const S = {
+    time: T_END, selected: null, tier: "calm", walk: 900, amp: 100, typing: true, light: "auto",
+    reduced: false, paths: false, walkOnly: false, playing: false, nowalk: false, lastEvent: null, detail: false,
+  };
+  const params = URLP;
+  if (params.get("theme") === "dark") document.documentElement.dataset.theme = "dark";
+  if (["calm", "full", "off"].includes(params.get("motion"))) S.tier = params.get("motion");
+  if (params.get("select") && ACTORS.some((a) => a.id === params.get("select"))) S.selected = params.get("select");
+  if (params.get("t") && !Number.isNaN(+params.get("t"))) S.time = Math.min(T_END, Math.max(0, +params.get("t")));
+  if (params.get("paths") === "1") S.paths = true;
+  if (params.get("reduced") === "1") S.reduced = true;
+  if (params.get("detail") === "1") S.detail = true;
+  if (["auto", "dawn", "day", "dusk", "night"].includes(params.get("light"))) S.light = params.get("light");
+  S.nowalk = params.get("nowalk") === "1";
+
+  const phaseOf = (h) => (h >= 5 && h < 8 ? "dawn" : h < 17 ? "day" : h < 20 ? "dusk" : "night");
+  const $ = (sel) => document.querySelector(sel);
+  const el = (tag, cls) => { const n = document.createElement(tag); if (cls) n.className = cls; return n; };
+
+  const robotSVG = (tone) => {
+    const eye = tone === "wait"
+      ? '<text class="r-char" x="26" y="36" text-anchor="middle">?</text>'
+      : tone === "fail"
+        ? '<text class="r-char" x="26" y="36" text-anchor="middle">×</text>'
+        : (tone === "run" || tone === "lead")
+          ? '<path class="r-happy" d="M21.4 32.2c1.4-2.1 2.9-2.1 4.3 0M29.1 32.2c1.4-2.1 2.9-2.1 4.3 0"/>'
+          : '<circle class="r-eye" cx="26" cy="32" r="2.8"/>';
+    return '<svg class="robot" viewBox="0 0 52 72" aria-hidden="true">'
+      + '<ellipse class="r-shadow" cx="26" cy="68" rx="14" ry="3"/>'
+      + '<line class="r-antenna" x1="26" y1="15" x2="26" y2="7"/>'
+      + '<circle class="r-tip" cx="26" cy="6" r="2.4"/>'
+      + '<rect class="r-body" x="10" y="14" width="32" height="46" rx="16"/>'
+      + '<ellipse class="r-gloss" cx="18" cy="25" rx="3.4" ry="7" transform="rotate(-18 18 25)"/>'
+      + '<rect class="r-visor" x="15" y="23" width="22" height="16" rx="8"/>' + eye
+      + '<path class="r-scarf" d="M12 47h28v5c0 4-3 7-7 7h-3l-4 5-4-5h-3c-4 0-7-3-7-7z"/>'
+      + '<rect class="r-arm l" x="5" y="37" width="7" height="14" rx="3.5"/>'
+      + '<rect class="r-arm r" x="40" y="37" width="7" height="14" rx="3.5"/>'
+      + '<circle class="r-badge" cx="35" cy="54" r="2"/>'
+      + (tone === "review" ? '<rect class="r-paper" x="37" y="49" width="12" height="15" rx="1.5"/>' : "")
+      + "</svg>";
+  };
+
+  /* ── 工位：显示器和桌面（桌面正面另起一层，压住坐姿下半身） ── */
+  const desksEl = $("#desks");
+  const capsEl = $("#caps");
+  const actorsEl = $("#actors");
+  const actorNodes = new Map();
+  const deskNodes = new Map();
+  const agentZone = new Map();
+  const walkTimers = new Map();
+
+  const monitorHTML = (key, tone, lines) => {
+    const t = tone === "neutral" ? "idle" : tone === "lead" ? "run" : tone;
+    const bars = (lines || [58, 42, 66]).map((w) => '<i style="width:' + w + '%"></i>').join("");
+    return '<span class="monitor ' + t + '"><span class="monitor-bar"><i class="led"></i><em>' + (key || "idle") + '</em></span>'
+      + '<span class="monitor-screen">' + bars + "</span><span class=\"monitor-stand\"></span></span>";
+  };
+
+  const desktopHTML = (lead) => monitorHTML(lead ? "M-03" : "", "neutral", [58, 42, 66])
+    + '<span class="chair"></span>'
+    + '<span class="table"><span class="table-top"></span><span class="table-front"></span></span>'
+    + '<span class="desk-mat"></span><span class="pedestal"></span>'
+    + '<span class="keyboard"></span><span class="papers"></span><span class="mug"></span>'
+    + (lead ? '<span class="desk-lamp"><span></span></span>' : "")
+    + '<span class="away-tag"><b></b><span>已离座</span></span>';
+
+  for (const d of STATIONS) {
+    const node = el("div", "desk-unit");
+    node.dataset.seat = d.seat;
+    node.style.left = d.x + "px";
+    node.style.top = d.y + "px";
+    node.innerHTML = desktopHTML(false);
+    desksEl.appendChild(node);
+    deskNodes.set(d.seat, node);
+
+    const cap = el("span", "desk-cap");
+    cap.style.left = d.x + "px";
+    cap.style.top = (d.y + 106) + "px";
+    capsEl.appendChild(cap);
+  }
+
+  const leadDesk = el("div", "desk-unit lead");
+  leadDesk.dataset.seat = "lead";
+  leadDesk.style.left = "24px";
+  leadDesk.style.top = "176px";
+  leadDesk.style.width = "220px";
+  leadDesk.style.height = "230px";
+  leadDesk.innerHTML = desktopHTML(true);
+  $("#furniture").appendChild(leadDesk);
+  deskNodes.set("lead", leadDesk);
+
+  const leadCap = el("span", "desk-cap lead");
+  leadCap.style.left = "24px";
+  leadCap.style.top = "290px";
+  capsEl.appendChild(leadCap);
+
+  for (const a of ACTORS) {
+    const node = el("button", "actor seated");
+    node.type = "button";
+    node.dataset.id = a.id;
+    node.setAttribute("aria-label", a.name + " · " + a.roleLong);
+    node.style.setProperty("--accent", "var(--" + a.accent + ")");
+    node.innerHTML =
+      '<span class="bubble"><b></b><span class="bubble-text"></span></span>'
+      + '<span class="robot-wrap">' + robotSVG(a.states[0].tone) + "</span>"
+      + '<span class="plate"><i></i><b>' + a.name + '</b><em></em></span>'
+      + '<span class="walkchip"><i></i><span></span></span>';
+    node.addEventListener("click", (e) => { e.stopPropagation(); select(a.id); });
+    actorsEl.appendChild(node);
+    actorNodes.set(a.id, node);
+  }
+
+  function select(id) {
+    S.selected = (S.selected === id) ? null : id;
+    if (S.selected) S.detail = true;
+    renderInspector();
+    paintActors(false);
+    paintPaths();
+    applyDetail();
+  }
+
+  function paintActors(animate) {
+    for (const a of ACTORS) {
+      const node = actorNodes.get(a.id);
+      const st = stateAt(a, S.time);
+      const p = posOf(a, st);
+      const prev = agentZone.get(a.id);
+      const zoneChanged = prev && prev !== st.zone;
+      const seated = st.zone === "desk" || st.zone === "lead";
+
+      node.className = "actor " + (seated ? "seated " : "") + "zone-" + st.zone + " pose-" + st.pose
+        + " tone-" + st.tone + (S.selected === a.id ? " selected" : "");
+      node.style.left = p.left;
+      node.style.top = p.top;
+
+      const plate = node.querySelector(".plate");
+      plate.className = "plate tone-" + st.tone;
+      plate.querySelector("em").textContent = st.label;
+
+      const robot = node.querySelector(".robot");
+      if (robot.dataset.tone !== st.tone) {
+        robot.outerHTML = robotSVG(st.tone);
+        node.querySelector(".robot").dataset.tone = st.tone;
+      }
+      const bubble = node.querySelector(".bubble");
+      bubble.querySelector("b").textContent = st.tone === "fail" ? "!" : st.tone === "wait" ? "?" : "";
+      bubble.querySelector(".bubble-text").textContent =
+        st.tone === "fail" ? "运行失败" : st.tone === "wait" ? "等待确认" : st.tone === "review" ? "待验收" : "";
+
+      if (zoneChanged && animate && !S.nowalk && S.tier !== "off" && !S.reduced) {
+        node.classList.add("walking");
+        node.querySelector(".walkchip span").textContent =
+          (ZONE_LABEL[prev] || "工位") + " → " + ZONE_LABEL[st.zone] + " · " + (S.walk / 1000).toFixed(1) + "s";
+        clearTimeout(walkTimers.get(a.id));
+        walkTimers.set(a.id, setTimeout(() => node.classList.remove("walking"), S.walk + 240));
+      }
+      agentZone.set(a.id, st.zone);
+
+      const desk = deskNodes.get(a.seat);
+      if (desk) {
+        const away = !seated;
+        desk.style.setProperty("--accent", "var(--" + a.accent + ")");
+        desk.classList.toggle("away", away);
+        desk.querySelector(".away-tag b").textContent = a.name + " · " + st.label;
+        const mon = desk.querySelector(".monitor");
+        if (mon) mon.outerHTML = monitorHTML(away ? a.key + " · away" : a.key, st.tone, st.screen);
+      }
+    }
+
+    const clock = hhmm(S.time);
+    $("#wallClock").textContent = clock;
+    $("#clockChip").textContent = clock;
+    const phase = S.light === "auto" ? phaseOf(at(S.time).getHours()) : S.light;
+    const lightsOn = phase === "dusk" || phase === "night";
+    const stageEl = $("#stage");
+    stageEl.dataset.light = phase;
+    stageEl.dataset.lights = lightsOn ? "1" : "0";
+    $("#phase").textContent = { dawn: "DAWN", day: "DAYLIGHT", dusk: "DUSK", night: "NIGHT" }[phase];
+    $("#light").value = S.light;
+    $("#stage").classList.toggle("has-idle", ACTORS.some((a) => stateAt(a, S.time).zone === "tea"));
+    const inMeeting = ACTORS.some((a) => stateAt(a, S.time).zone === "meeting");
+    $("#stage").classList.toggle("has-meeting", inMeeting);
+    $("#meetingTag").textContent = inMeeting ? "会议中" : "空闲";
+  }
+
+  /* ── 走位路径（锚点从真实 DOM 里取，和舞台一致） ─────────── */
+  function paintPaths() {
+    const svg = $("#pathsSvg");
+    if (!S.paths) { svg.innerHTML = ""; return; }
+    const stageEl = $("#stage");
+    const SW = stageEl.clientWidth || 1340;
+    const SH = stageEl.clientHeight || 540;
+    const parts = [];
+    for (const a of ACTORS) {
+      const st = stateAt(a, S.time);
+      if (!["approval", "review", "tea", "meeting"].includes(st.zone)) continue;
+      const desk = deskNodes.get(a.seat);
+      const node = actorNodes.get(a.id);
+      if (!desk || !node) continue;
+      const dx = a.seat === "lead" ? 184 : 142;
+      const dy = a.seat === "lead" ? 136 : 122;
+      const x1 = ((desk.offsetLeft + dx) / SW) * 100;
+      const y1 = ((desk.offsetTop + dy) / SH) * 100;
+      const x2 = (node.offsetLeft / SW) * 100;
+      const y2 = (node.offsetTop / SH) * 100;
+      const on = S.selected === a.id;
+      parts.push('<line x1="' + x1.toFixed(2) + '" y1="' + y1.toFixed(2) + '" x2="' + x2.toFixed(2) + '" y2="' + y2.toFixed(2) + '" class="' + (on ? "on" : "") + '"/>');
+      parts.push('<circle cx="' + x2.toFixed(2) + '" cy="' + y2.toFixed(2) + '" r="' + (on ? "1.1" : "0.8") + '" class="' + (on ? "on" : "") + '"/>');
+    }
+    svg.innerHTML = parts.join("");
+  }
+
+  /* ── 时间轴 ────────────────────────────────────────────── */
+  const pct = (t) => (t / T_END) * 100;
+  const lane0 = $("#lane0"), lane1 = $("#lane1");
+
+  $("#ticks").innerHTML = [0, 150, 300, 450, 600, 750, 900]
+    .map((t) => '<span style="left:' + pct(t) + '%">' + hhmm(t) + "</span>").join("");
+
+  EVENTS.forEach((e) => {
+    const b = el("button", "ev");
+    b.type = "button";
+    b.dataset.walked = e.walked ? "1" : "0";
+    b.style.left = pct(e.t) + "%";
+    b.title = hhmmss(e.t) + " · " + e.actorName + " " + e.fromLabel + " → " + e.toLabel
+      + " · " + e.trigger + (e.walked ? " · 走位" : " · 原地");
+    b.innerHTML = '<i class="dot ' + e.tone + '"></i><b>' + hhmm(e.t) + "</b>"
+      + "<span>" + (e.walked ? e.actorName + "→" + e.toLabel : e.actorName + "·原地") + "</span>";
+    b.addEventListener("click", () => { stopPlay(); S.lastEvent = e; setTime(e.t); });
+    (e.lane === 0 ? lane0 : lane1).appendChild(b);
+    e.node = b;
+  });
+
+  const walkCount = EVENTS.filter((e) => e.walked).length;
+  $("#tlSub").textContent = "过去 15 分钟 · " + EVENTS.length + " 次状态变化 · " + walkCount + " 次走位";
+
+  function setTime(t, keepDetail) {
+    S.time = Math.min(T_END, Math.max(0, Math.round(t)));
+    $("#scrub").value = String(S.time);
+    paintActors(true);
+    paintPaths();
+    paintTimeline(keepDetail);
+    renderInspector();
+  }
+
+  function paintTimeline(keepDetail) {
+    $("#playhead").style.setProperty("--p", pct(S.time) + "%");
+    for (const e of EVENTS) {
+      e.node.classList.toggle("future", e.t > S.time);
+      e.node.classList.toggle("on", !!S.lastEvent && S.lastEvent === e);
+      e.node.style.display = S.walkOnly && !e.walked ? "none" : "";
+    }
+    const live = ACTORS.filter((a) => stateAt(a, S.time).tone === "wait").length;
+    const review = ACTORS.filter((a) => stateAt(a, S.time).tone === "review").length;
+    const running = ACTORS.filter((a) => ["run", "lead"].includes(stateAt(a, S.time).tone)).length;
+    const failed = ACTORS.filter((a) => stateAt(a, S.time).tone === "fail").length;
+    const idle = ACTORS.filter((a) => stateAt(a, S.time).tone === "neutral").length;
+    $("#sceneStats").innerHTML = '<span><b>' + ACTORS.length + "</b>人</span>"
+      + '<span class="run"><b>' + running + "</b>运行</span>"
+      + '<span class="wait"><b>' + live + "</b>待确认</span>"
+      + '<span class="review"><b>' + review + "</b>待验收</span>"
+      + '<span class="fail"><b>' + failed + "</b>失败</span>"
+      + (idle ? '<span><b>' + idle + "</b>空闲</span>" : "");
+    // 侧边栏徽标跟时间轴同一份状态：工作区 = 运行中，场景 = 待确认
+    for (const [sel, n] of [["#navRun", running], ["#navWait", live]]) {
+      const el = $(sel);
+      if (!el) continue;
+      el.textContent = String(n);
+      el.style.display = n ? "" : "none";
+    }
+    $("#navWorkspace").title = "工作区 · " + running + " 个运行中";
+    $("#navScene").title = live ? "场景 · " + live + " 项待确认" : "场景";
+    $("#approvalCount").textContent = String(live);
+    $("#approvalCount").style.display = live ? "block" : "none";
+    $("#approvalText").textContent = live ? "run r-115 · git 完成确认" : "没有待确认";
+    $("#approval").classList.toggle("active", live > 0);
+    $("#shelfCount").textContent = String(review);
+    $("#shelfText").textContent = review ? "T-015 工作台空态" : "没有待验收任务";
+
+    if (!keepDetail) {
+      const recent = EVENTS.filter((e) => e.t <= S.time && (!S.walkOnly || e.walked)).slice(-1)[0];
+      paintDetail(recent);
+    }
+  }
+
+  function paintDetail(e) {
+    const box = $("#tlDetail");
+    if (!e) {
+      box.innerHTML = '<span class="t">' + hhmmss(S.time) + '</span><span class="r">这段时间还没有状态变化 —— 拖动时间轴或点上面的记录。</span>';
+      return;
+    }
+    box.innerHTML = '<span class="t">' + hhmmss(e.t) + "</span>"
+      + "<b>" + e.actorName + "</b>"
+      + '<span class="r">' + e.fromLabel + " → " + e.toLabel + " · " + e.to.label + "</span>"
+      + '<span class="sep"></span><span class="tag">' + e.trigger + "</span>"
+      + '<span class="sep"></span><span class="tag ' + (e.walked ? "walk" : "stay") + '">'
+      + (e.walked ? "走位 " + (S.walk / 1000).toFixed(1) + "s" : "原地 · 不走位") + "</span>";
+  }
+
+  /* ── 回放 ──────────────────────────────────────────────── */
+  let playTimer = null;
+  function stopPlay() {
+    S.playing = false;
+    clearInterval(playTimer);
+    playTimer = null;
+    $("#play").textContent = "▶ 回放";
+    $("#play").setAttribute("aria-pressed", "false");
+    $("#replayTop").classList.remove("on");
+  }
+  function startPlay() {
+    const list = EVENTS.filter((e) => !S.walkOnly || e.walked);
+    if (!list.length) return;
+    let next = list.find((e) => e.t > S.time + 1);
+    if (!next) { stopPlay(); setTime(0); next = list[0]; }
+    S.playing = true;
+    $("#play").textContent = "⏸ 暂停";
+    $("#play").setAttribute("aria-pressed", "true");
+    $("#replayTop").classList.add("on");
+    setTime(next.t);
+    let i = list.indexOf(next);
+    playTimer = setInterval(() => {
+      i += 1;
+      if (i >= list.length) { stopPlay(); setTime(T_END); return; }
+      setTime(list[i].t);
+    }, 1500);
+  }
+  $("#play").addEventListener("click", () => (S.playing ? stopPlay() : startPlay()));
+  $("#replayTop").addEventListener("click", () => { stopPlay(); setTime(0); startPlay(); });
+  $("#jumpNow").addEventListener("click", () => { stopPlay(); setTime(T_END); });
+  $("#scrub").addEventListener("input", (ev) => { stopPlay(); S.lastEvent = null; setTime(+ev.target.value, false); });
+  $("#walkOnly").addEventListener("change", (ev) => { S.walkOnly = ev.target.checked; paintTimeline(); });
+
+  /* ── 动效参数 ──────────────────────────────────────────── */
+  const stage = $("#stage");
+  function applyMotion() {
+    document.body.dataset.motion = S.reduced ? "off" : S.tier;
+    document.body.dataset.type = S.typing ? "on" : "off";
+    document.body.dataset.reduced = S.reduced ? "1" : "0";
+    stage.style.setProperty("--walk-dur", S.walk + "ms");
+    stage.style.setProperty("--amp", String(S.amp / 100));
+    $("#walkVal").textContent = (S.walk / 1000).toFixed(1) + "s";
+    $("#ampVal").textContent = S.amp + "%";
+    $("#walk").value = String(S.walk);
+    $("#amp").value = String(S.amp);
+    $("#typing").checked = S.typing;
+    $("#tier").value = S.tier;
+    $("#motionChip").textContent = "动效 " + (S.tier === "calm" ? "克制" : S.tier === "full" ? "完整" : "关闭")
+      + " · 走位 " + (S.walk / 1000).toFixed(1) + "s";
+    $("#effective").textContent = S.walk + "ms · " + S.amp + "%" + (S.reduced ? " · reduced" : "");
+    $("#reducedBtn").classList.toggle("on", S.reduced);
+    $("#reducedBtn").setAttribute("aria-pressed", S.reduced ? "true" : "false");
+    $("#pathsBtn").classList.toggle("on", S.paths);
+    $("#pathsBtn").setAttribute("aria-pressed", S.paths ? "true" : "false");
+    stage.dataset.paths = S.paths ? "1" : "0";
+  }
+  function applyDetail() {
+    $("#stageArea").classList.toggle("insp-closed", !S.detail);
+    $("#detailToggle").classList.toggle("on", S.detail);
+    $("#detailToggle").setAttribute("aria-pressed", S.detail ? "true" : "false");
+  }
+  $("#tier").addEventListener("change", (e) => { S.tier = e.target.value; applyMotion(); });
+  $("#light").addEventListener("change", (e) => { S.light = e.target.value; paintActors(false); });
+  $("#walk").addEventListener("input", (e) => { S.walk = +e.target.value; applyMotion(); paintTimeline(true); });
+  $("#amp").addEventListener("input", (e) => { S.amp = +e.target.value; applyMotion(); });
+  $("#typing").addEventListener("change", (e) => { S.typing = e.target.checked; applyMotion(); });
+  $("#pathsBtn").addEventListener("click", () => { S.paths = !S.paths; applyMotion(); paintPaths(); });
+  $("#reducedBtn").addEventListener("click", () => { S.reduced = !S.reduced; applyMotion(); });
+  $("#detailToggle").addEventListener("click", () => { S.detail = !S.detail; applyDetail(); });
+  $("#resetParams").addEventListener("click", () => {
+    S.tier = "calm"; S.walk = 900; S.amp = 100; S.typing = true; S.reduced = false;
+    applyMotion();
+  });
+  $("#theme").addEventListener("click", () => {
+    const root = document.documentElement;
+    root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
+    paintPaths();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !["INPUT", "SELECT"].includes(document.activeElement.tagName)) {
+      if (S.selected) { S.selected = null; renderInspector(); paintActors(false); paintPaths(); }
+      else stopPlay();
+    }
+  });
+
+  const bind = (sel, id) => {
+    const node = $(sel);
+    node.addEventListener("click", () => select(id));
+    node.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(id); }
+    });
+  };
+  bind("#approval", "lin");
+  bind("#shelf", "qiao");
+  bind("#wb", "bei");
+
+  /* ── 检查器 ────────────────────────────────────────────── */
+  const poseName = (pose) => ({
+    lead: "主控呼吸", working: "呼吸 + 打字", waiting: "摇摆", reviewing: "呼吸 + 接收",
+    failed: "倾斜静止", idle: "静止",
+  })[pose] || pose;
+
+  function renderInspector() {
+    const a = ACTORS.find((x) => x.id === S.selected);
+    const head = $("#inspHead"), status = $("#inspStatus"), dyn = $("#inspDynamic"), a11y = $("#inspA11y");
+
+    if (!a) {
+      head.innerHTML = '<div class="insp-avatar" style="--accent:var(--slate)">'
+        + '<svg class="robot" viewBox="0 0 52 72" aria-hidden="true" style="width:24px;height:32px;filter:none">'
+        + '<circle cx="26" cy="6" r="2.4" fill="var(--slate)"/><rect x="10" y="14" width="32" height="46" rx="16" fill="var(--surface-hover)" stroke="var(--border-strong)"/>'
+        + '<rect x="15" y="23" width="22" height="16" rx="8" fill="var(--surface)" stroke="var(--border-strong)"/></svg></div>'
+        + '<div class="insp-title"><b>没有选中角色</b><span>舞台上的位置和动作只读真实状态</span></div>';
+      status.innerHTML = '<span class="pill idle">' + hhmmss(S.time) + "</span>"
+        + '<span class="muted" style="font-size:11px">回放中</span>'
+        + '<span class="meta">过去 15 分钟</span>';
+      const risk = ACTORS.filter((x) => x.a11y.some((y) => !y.ok)).length;
+      dyn.innerHTML = '<div class="block"><div class="block-label">这一页在回答什么</div>'
+        + '<p class="empty-line">点角色看它的「状态 → 区域 / 姿态 / 动效 / 依据」，拖动时间轴看它什么时候走、走了多久。'
+        + "走位只在状态真的换了区域时发生；失败、重试、计划批注都停在原地。</p>"
+        + '<div class="stat-grid" style="margin-top:8px">'
+        + '<div class="stat"><b>' + EVENTS.length + '</b><span>次状态变化</span></div>'
+        + '<div class="stat"><b>' + walkCount + '</b><span>次走位</span></div>'
+        + '<div class="stat"><b>' + (EVENTS.length - walkCount) + '</b><span>次原地变化</span></div>'
+        + '<div class="stat ' + (risk ? "warn" : "") + '"><b>' + risk + '</b><span>处动效依赖风险</span></div>'
+        + '</div><div class="overview-list" id="overviewList"></div></div>';
+      const list = $("#overviewList");
+      for (const x of ACTORS) {
+        const st = stateAt(x, S.time);
+        const b = el("button");
+        b.innerHTML = '<i class="dot ' + st.tone + '"></i>' + x.name;
+        b.addEventListener("click", () => select(x.id));
+        list.appendChild(b);
+      }
+      a11y.innerHTML = '<div class="block-label">关闭动效后</div>'
+        + '<p class="empty-line">选中角色后，这里会逐条检查：位置、姓名牌、气泡能不能替代走位和姿态。'
+        + "目前有 <b>" + risk + "</b> 个角色的状态只靠动效表达。</p>";
+      return;
+    }
+
+    const st = stateAt(a, S.time);
+    head.innerHTML = '<div class="insp-avatar" style="--accent:var(--' + a.accent + ')">' + robotSVG(st.tone) + "</div>"
+      + '<div class="insp-title"><b>' + a.name + " <em>" + a.role + "</em></b><span>" + a.roleLong + " · " + a.host + "</span></div>"
+      + '<button class="icon-btn" id="closeInsp" title="取消选中（Esc）">✕</button>';
+    const closeBtn = $("#closeInsp");
+    if (closeBtn) closeBtn.addEventListener("click", () => select(a.id));
+
+    status.innerHTML = '<span class="pill ' + (st.tone === "neutral" ? "idle" : st.tone) + '">' + st.label + "</span>"
+      + '<span class="mono" style="font-size:10.5px;color:var(--muted)">' + ZONE_LABEL[st.zone] + "</span>"
+      + '<span class="meta">' + (st.activity || st.basis) + "</span>";
+
+    const walkedSince = EVENTS.filter((e) => e.actorId === a.id && e.walked && e.t <= S.time).slice(-1)[0];
+    dyn.innerHTML = '<div class="block">'
+      + '<div class="block-label">状态 → 舞台<span>只读 · 来自 State</span></div>'
+      + '<dl class="map">'
+      + '<dt>触发</dt><dd class="mono">' + st.trigger + "</dd>"
+      + "<dt>区域</dt><dd>" + ZONE_LABEL[st.zone] + ' <span class="k">zone-' + st.zone + "</span></dd>"
+      + "<dt>姿态</dt><dd>" + poseName(st.pose) + ' <span class="k">pose-' + st.pose + "</span></dd>"
+      + "<dt>动效</dt><dd>" + st.motion + "</dd>"
+      + "</dl>"
+      + "</div>"
+      + '<div class="block">'
+      + (walkedSince
+        ? '<p class="reason"><b>最近一次走位</b> ' + hhmmss(walkedSince.t) + " · " + walkedSince.fromLabel + " → " + walkedSince.toLabel
+          + " · " + (S.walk / 1000).toFixed(1) + "s · <button class=\"mini-link\" data-locate=\"" + walkedSince.t + '">在时间轴定位</button></p>'
+        : '<p class="reason"><b>最近一次走位</b> 过去 15 分钟没有 —— 这个角色的状态变化都发生在原地。'
+          + (st.tone === "fail" ? "失败不是「离开」，是「停在原地」。" : "") + "</p>")
+      + "</div>";
+
+    const locate = dyn.querySelector("[data-locate]");
+    if (locate) locate.addEventListener("click", () => { stopPlay(); setTime(+locate.dataset.locate); });
+
+    a11y.innerHTML = '<div class="block-label">关闭动效后<span>reduced-motion 等价检查</span></div>'
+      + a.a11y.map((row) => '<div class="a11y-row ' + (row.ok ? "ok" : "risk") + '"><i>' + (row.ok ? "✓" : "!") + "</i>"
+        + "<div><b>" + row.title + "</b><p>" + row.text + "</p></div></div>").join("");
+  }
+
+  /* ── 光照对照页：同一时刻，四个时段各一张 ───────────────── */
+  const LIGHT_PAGES = [
+    { phase: "dawn", name: "清晨", en: "DAWN", range: "05:00 – 08:00", clock: "05:40" },
+    { phase: "day", name: "白天", en: "DAYLIGHT", range: "08:00 – 17:00", clock: "12:30" },
+    { phase: "dusk", name: "黄昏", en: "DUSK", range: "17:00 – 20:00", clock: "18:30" },
+    { phase: "night", name: "夜晚", en: "NIGHT", range: "20:00 – 05:00", clock: "21:30" },
+  ];
+
+  function buildLightsView() {
+    const grid = $("#lightsView");
+    grid.innerHTML = "";
+    const note = el("div", "lights-note");
+    note.innerHTML = "<b>光照对照</b><span>同一时刻、同一批状态，只换光照；点任意一张切到实况并固定该时段。</span>";
+    grid.appendChild(note);
+
+    for (const page of LIGHT_PAGES) {
+      const card = el("div", "light-card");
+      card.dataset.phase = page.phase;
+      card.innerHTML = '<div class="light-head"><b>' + page.name + "</b><span>" + page.en
+        + "</span><span>· " + page.range + '</span><code class="mono">?light=' + page.phase + "</code></div>";
+      const frame = el("div", "light-frame");
+      const wrap = el("div", "light-wrap");
+      const clone = stage.cloneNode(true);
+      clone.removeAttribute("id");
+      clone.removeAttribute("style");
+      clone.querySelectorAll("[id]").forEach((n) => n.removeAttribute("id"));
+      clone.dataset.light = page.phase;
+      clone.dataset.lights = (page.phase === "dusk" || page.phase === "night") ? "1" : "0";
+      const clockEl = clone.querySelector(".clock");
+      if (clockEl) {
+        clockEl.querySelector("b").textContent = page.clock;
+        clockEl.querySelector("span").textContent = page.en;
+      }
+      wrap.appendChild(clone);
+      frame.appendChild(wrap);
+      card.appendChild(frame);
+      card.addEventListener("click", () => {
+        S.light = page.phase;
+        paintActors(false);
+        setView("live");
+      });
+      grid.appendChild(card);
+      requestAnimationFrame(() => { wrap.style.setProperty("--lk", String(frame.clientWidth / 1340)); });
+    }
+  }
+
+  function setView(view) {
+    const lights = view === "lights";
+    document.querySelector(".live").classList.toggle("lights-mode", lights);
+    document.querySelectorAll(".tabs .tab").forEach((t) => {
+      const on = t.dataset.view === view || (!lights && t.dataset.view === "live");
+      t.classList.toggle("on", on);
+      t.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    if (lights) buildLightsView();
+    else fitStage();
+  }
+
+  document.querySelectorAll(".tabs .tab").forEach((t) => {
+    if (!t.dataset.view) return;
+    t.addEventListener("click", () => setView(t.dataset.view));
+  });
+  if (params.get("view") === "lights") setTimeout(() => setView("lights"), 0);
+
+  /* ── 自适应：画布等比缩放到可用区域 ────────────────────── */
+  function fitStage() {
+    /* 整页按 1440×900 设计稿等比缩放到窗口（zoom = 重新排版，不是位图拉伸） */
+    const z = Math.max(0.5, Math.min(innerWidth / 1440, innerHeight / 900, 2.6));
+    const app = document.querySelector(".app");
+    app.style.setProperty("--z", String(z));
+    /* 画布铺满窗口：宽高按 zoom 反算，窗口比 16:10 更宽时不再左右留白 */
+    app.style.width = `${innerWidth / z}px`;
+    app.style.height = `${innerHeight / z}px`;
+    /* 舞台在自己的格子里再放大到最大，避免设计稿与窗口比例不同时留白 */
+    const area = $("#stageFit");
+    const w = area.clientWidth;
+    const h = area.clientHeight;
+    if (!w || !h) return;
+    const k = Math.min(w / 1340, h / 540, 2.6);
+    stage.style.setProperty("--k", String(Math.max(0.4, k)));
+  }
+
+  /* ── 启动 ──────────────────────────────────────────────── */
+  applyMotion();
+  applyDetail();
+  $("#scrub").value = String(S.time);
+  paintActors(false);
+  paintTimeline();
+  paintPaths();
+  renderInspector();
+  window.addEventListener("resize", () => {
+    fitStage();
+    paintPaths();
+    if (document.querySelector(".live").classList.contains("lights-mode")) buildLightsView();
+  });
+  fitStage();
+})();
+</script>
+</body>
+</html>

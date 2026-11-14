@@ -1,0 +1,158 @@
+import type { State } from "../types";
+import type { OfficeCastMember, OfficeCastRole, OfficeModel } from "./model";
+import { templateLabel } from "./templates";
+
+export type SceneLight = "auto" | "dawn" | "day" | "dusk" | "night";
+export type SceneMotionTier = "calm" | "full" | "off";
+export interface SceneMotion {
+  tier: SceneMotionTier;
+  /** 走位时长（ms） */
+  walk: number;
+  /** 姿态幅度（%） */
+  amp: number;
+  /** 打字动作 */
+  typing: boolean;
+}
+export const DEFAULT_MOTION: SceneMotion = { tier: "calm", walk: 900, amp: 100, typing: true };
+
+export function motionOf(prefs: Pick<ScenePrefs, "motion">): SceneMotion {
+  return { ...DEFAULT_MOTION, ...(prefs.motion ?? {}) };
+}
+
+export const MOTION_LABEL: Record<SceneMotionTier, string> = { calm: "克制", full: "完整", off: "关闭" };
+
+export interface ScenePrefs {
+  name: string;
+  template: "office" | "warroom" | "carrier";
+  reviewGate: boolean;
+  escalate: boolean;
+  inject: boolean;
+  showLinks: boolean;
+  showLabels: boolean;
+  light: SceneLight;
+  motion?: SceneMotion;
+}
+
+export function SceneConfigPanel({ state, model, cast, onCast, prefs, onPrefs, onClose, notify }: {
+  state: State;
+  model: OfficeModel;
+  cast: OfficeCastMember[];
+  onCast: (next: OfficeCastMember[]) => void;
+  prefs: ScenePrefs;
+  onPrefs: (next: Partial<ScenePrefs>) => void;
+  onClose: () => void;
+  notify: (message: string) => void;
+}) {
+  const projectAgents = state.agents.filter((a) => !a.projectId || a.projectId === state.activeProjectId);
+  const leadId = cast.find((c) => c.role === "lead")?.agentId ?? model.lead?.agent.id ?? null;
+  const rows = projectAgents.map((agent) => {
+    const member = cast.find((c) => c.agentId === agent.id);
+    const actor = model.actors.find((a) => a.agent.id === agent.id);
+    return {
+      agent,
+      name: actor?.displayName || member?.displayName || agent.name,
+      role: (member?.role ?? (agent.id === leadId ? "lead" : actor?.role === "reviewer" ? "reviewer" : "worker")) as OfficeCastRole,
+      seat: member?.seat ?? actor?.seat ?? null,
+      accent: actor?.accent || (agent.role === "supervisor" ? "slate" : agent.color || "slate"),
+    };
+  });
+
+  const update = (agentId: string, patch: Partial<OfficeCastMember>, autoSeat = true) => {
+    const current = rows.map((r) => ({
+      agentId: r.agent.id,
+      role: r.role,
+      seat: r.seat,
+      displayName: cast.find((c) => c.agentId === r.agent.id)?.displayName,
+    })) as OfficeCastMember[];
+    let next = current.filter((c) => c.agentId !== agentId);
+    const prev = current.find((c) => c.agentId === agentId) ?? { agentId, role: "worker" as OfficeCastRole, seat: null };
+    const merged: OfficeCastMember = { ...prev, ...patch };
+    if (merged.role === "lead") {
+      next = next.map((c) => (c.role === "lead" ? { ...c, role: "worker" as OfficeCastRole, seat: null } : c));
+      merged.seat = null;
+    } else if (merged.seat === null && autoSeat) {
+      const used = new Set(next.map((c) => c.seat).filter((s): s is number => s !== null));
+      const free = [0, 1, 2, 3, 4, 5].find((s) => !used.has(s));
+      if (free !== undefined) merged.seat = free;
+    }
+    next.push(merged);
+    onCast(next);
+  };
+
+  return (
+    <aside className="off-inspector off-config-panel" aria-label="场景配置">
+      <div className="off-insp-head">
+        <div className="off-insp-title"><b>场景配置</b><span>{prefs.name} · {templateLabel(prefs.template)}</span></div>
+        <span className="off-cfg-count">{rows.length} 人</span>
+        <button type="button" className="off-icon-btn" onClick={onClose} aria-label="关闭配置">✕</button>
+      </div>
+      <div className="off-insp-body">
+        <section className="off-insp-block">
+          <div className="off-cfg-fields">
+            <div className="off-cfg-field"><span>场景名称</span><input value={prefs.name} onChange={(e) => onPrefs({ name: e.target.value })} aria-label="场景名称" /></div>
+            <div className="off-cfg-field"><span>舞台模板</span>
+              <select value={prefs.template} onChange={(e) => onPrefs({ template: e.target.value as ScenePrefs["template"] })} aria-label="舞台模板">
+                <option value="office">办公室 · Office</option>
+                <option value="warroom">作战室 · War Room</option>
+                <option value="carrier">航母 · 电磁弹射</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section className="off-insp-block">
+          <div className="off-block-label">阵容 <span>{rows.length} 位 Agent</span><button className="off-mini-link" onClick={() => { onCast([]); notify("已按项目 Agent 自动生成阵容"); }}>自动阵容</button></div>
+          <div className="off-cast-list">
+            {rows.map(({ agent, name, role, seat, accent }) => {
+              const seatValue = role === "lead" ? "lead" : seat === null ? "standby" : String(seat);
+              return (
+                <div className={`off-cast-row ${agent.id === leadId ? "lead" : ""}`} key={agent.id}>
+                  <span className={`off-cast-dot accent-${accent}`} />
+                  <span className="off-cast-name" title={agent.alias || agent.id}>{name}</span>
+                  <select className="off-cast-role" value={role} onChange={(e) => update(agent.id, { role: e.target.value as OfficeCastRole })} aria-label={`${name} 的角色`}>
+                    <option value="lead">lead</option>
+                    <option value="worker">worker</option>
+                    <option value="reviewer">reviewer</option>
+                  </select>
+                  <select className="off-cast-seat" value={seatValue} onChange={(e) => {
+                    const v = e.target.value;
+                    update(agent.id, { seat: v === "standby" ? null : v === "lead" ? null : Number(v), ...(v === "lead" ? { role: "lead" as OfficeCastRole } : {}) }, v !== "standby");
+                  }} aria-label={`${name} 的座位`}>
+                    {role === "lead" ? <option value="lead">lead-desk</option> : null}
+                    {[0, 1, 2, 3, 4, 5].map((s) => <option value={String(s)} key={s}>desk-0{s + 1}</option>)}
+                    <option value="standby">standby</option>
+                  </select>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="off-insp-block">
+          <div className="off-block-label">编排 <span>默认值</span></div>
+          <div className="off-toggle-row"><div><b>评审门</b><span>完成后进入待验收，不自动确认</span></div><button className={`off-switch ${prefs.reviewGate ? "on" : ""}`} onClick={() => onPrefs({ reviewGate: !prefs.reviewGate })} aria-pressed={prefs.reviewGate}><i /></button></div>
+          <div className="off-toggle-row"><div><b>失败升级给 lead</b><span>失败后由主 Agent 决定重试或换人</span></div><button className={`off-switch ${prefs.escalate ? "on" : ""}`} onClick={() => onPrefs({ escalate: !prefs.escalate })} aria-pressed={prefs.escalate}><i /></button></div>
+          <div className="off-toggle-row"><div><b>角色提示注入</b><span>开启后写入 instructions，并记录审计</span></div><button className={`off-switch ${prefs.inject ? "on" : ""}`} onClick={() => { onPrefs({ inject: !prefs.inject }); if (!prefs.inject) notify("角色提示注入默认关闭；开启会改变 Agent 行为"); }} aria-pressed={prefs.inject}><i /></button></div>
+        </section>
+
+        <section className="off-insp-block">
+          <div className="off-block-label">呈现</div>
+          {prefs.template === "office" ? <div className="off-toggle-row"><div><b>舞台光照</b><span>自动跟随本地时间；也可锁定清晨 / 白天 / 黄昏 / 夜间</span></div>
+            <select className="off-light-select" value={prefs.light} onChange={(e) => onPrefs({ light: e.target.value as SceneLight })} aria-label="舞台光照">
+              <option value="auto">自动</option>
+              <option value="dawn">清晨</option>
+              <option value="day">白天</option>
+              <option value="dusk">黄昏</option>
+              <option value="night">夜间</option>
+            </select>
+          </div> : null}
+          <div className="off-toggle-row"><div><b>显示真实委派</b><span>只画运行中的 delegation</span></div><button className={`off-switch ${prefs.showLinks ? "on" : ""}`} onClick={() => onPrefs({ showLinks: !prefs.showLinks })} aria-pressed={prefs.showLinks}><i /></button></div>
+          <div className="off-toggle-row"><div><b>显示姓名牌</b><span>关闭后只保留角色本体</span></div><button className={`off-switch ${prefs.showLabels ? "on" : ""}`} onClick={() => onPrefs({ showLabels: !prefs.showLabels })} aria-pressed={prefs.showLabels}><i /></button></div>
+        </section>
+
+        <div className="off-cfg-note"><b>边界：</b>场景只提供默认值与呈现；执行仍走 Mission / Delegation。</div>
+      </div>
+      <div className="off-insp-foot"><button className="btn off-insp-btn" onClick={onClose}>关闭</button><span className="off-spacer" /><button className="btn primary off-insp-btn" onClick={() => notify("场景配置已保存（本地）")}>保存配置</button></div>
+    </aside>
+  );
+}
