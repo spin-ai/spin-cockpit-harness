@@ -121,14 +121,15 @@ export function Persona({ act }: { act: Act }) {
   };
 
   // AI/统计建模：动作会一直跑到结束，所以启动后不 await，改为轮询进度
-  const startModel = async (mode: "llm" | "stats") => {
+  const startModel = async (mode: "llm" | "stats", limitOverride?: number) => {
     if (mode === "llm" && !window.confirm("建模会把联系人的部分发言样本发给模型分析（默认最多 12 人，同一份样本只算一次）。继续？")) return;
     try {
       const st = await act("personaModelStatus");
       if (st?.running) { setNotice("已有建模任务在跑"); return; }
       setJob({ running: true, total: 0, done: 0, current: "", cards: 0, llmAdded: 0, statsAdded: 0, skippedCache: 0, cancelled: false, failed: [] });
       setProgress(0);
-      void act("personaModel", { mode, limit: mode === "llm" ? 12 : 80 })
+      const limit = limitOverride ?? (mode === "llm" ? 12 : 0);
+      void act("personaModel", { mode, limit })
         .then(() => reload())
         .catch((err) => setNotice(String((err as Error)?.message || err)));
     } catch (err) { setNotice(String((err as Error)?.message || err)); }
@@ -249,8 +250,10 @@ export function Persona({ act }: { act: Act }) {
     }),
     [people, q, onlyModeled],
   );
-  const listSelf = searchable.filter((p) => p.isSelf);
-  const listOthers = searchable.filter((p) => !p.isSelf);
+  const byScore = (a: PersonRow, b: PersonRow) => (b.completeness - a.completeness) || a.name.localeCompare(b.name);
+  const listSelf = searchable.filter((p) => p.isSelf).sort(byScore);
+  const modeled = searchable.filter((p) => !p.isSelf && (p.tags || []).includes("已建模")).sort(byScore);
+  const listOthers = searchable.filter((p) => !p.isSelf && !(p.tags || []).includes("已建模")).sort(byScore);
 
   const toggleEv = (key: string) => setOpenEv((prev) => ({ ...prev, [key]: !prev[key] }));
   const sectionSupport = (sec: CardSection) => Math.max(0, ...sec.rows.map((r) => r.support));
@@ -376,6 +379,18 @@ export function Persona({ act }: { act: Act }) {
             onClick={() => void startModel("llm")}
           >建模</button>
           <RowMenu title="建模选项">
+            <button
+              disabled={Boolean(job?.running)}
+              onClick={async () => {
+                try {
+                  const plan = await act("personaModelPlan", { minMessages: 30 });
+                  const calls = plan?.calls ?? plan?.eligible ?? 0;
+                  if (!calls) { setNotice("没有需要建模的人（可能都已缓存）"); return; }
+                  if (!window.confirm(`一键全部建模：\n\n可建模 ${plan.eligible} 人（已缓存 ${plan.cached} 人跳过）\n本次预计 ${calls} 次模型调用，按顺序逐人跑，可随时取消。\n\n继续？`)) return;
+                  await startModel("llm", 0);
+                } catch (err) { setNotice(String((err as Error)?.message || err)); }
+              }}
+            >一键全部建模（未建模的全部跑一遍）</button>
             <button onClick={() => void startModel("stats")} disabled={Boolean(job?.running)}>只跑统计（不调用模型，不消耗额度）</button>
             <button onClick={() => { setJob(null); setNotice(`上次任务：${job?.cards || 0} 人出卡`); }}>查看上次进度</button>
           </RowMenu>
@@ -462,7 +477,25 @@ export function Persona({ act }: { act: Act }) {
                 </button>
               ))}
             </div>
-            {listOthers.length > 0 && <div className="persona-group">他人</div>}
+            {modeled.length > 0 && (
+              <div className="persona-group">
+                已建模 <em>{modeled.length}</em>
+              </div>
+            )}
+            {modeled.map((p) => (
+              <button key={p.id} className={`persona-row ${selected === p.id ? "on" : ""}`} onClick={() => setSelected(p.id)}>
+                <span className="persona-ava on">{p.name.slice(0, 1)}</span>
+                <span>
+                  <b>{p.name}</b>
+                  <em>{p.relation || "关系未知"} · {p.completeness}%</em>
+                  <span className="persona-tags">
+                    {(p.tags || []).slice(0, 3).map((t) => <i key={t} className={`ptag ${t === "已建模" || t === "人设卡" ? "on" : ""}`}>{t}</i>)}
+                  </span>
+                </span>
+                {p.pending > 0 && <span className="persona-badge">{p.pending}</span>}
+              </button>
+            ))}
+            {listOthers.length > 0 && <div className="persona-group">未建模 <em>{listOthers.length}</em></div>}
             <div className="persona-list">
               {listOthers.map((p) => (
                 <button key={p.id} className={`persona-row ${selected === p.id ? "on" : ""}`} onClick={() => setSelected(p.id)}>
