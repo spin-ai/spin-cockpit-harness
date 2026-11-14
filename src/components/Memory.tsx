@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
 import { RowMenu } from "./RowMenu";
+import { relTime } from "../ui";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
@@ -23,17 +24,6 @@ const LAYERS = [
 const ACTION_LABEL: Record<string, string> = { fix: "校正", build: "构建", fill: "补洞", promote: "晋升", prune: "剪枝" };
 const SOURCE_LABEL: Record<string, string> = { transcript: "来自会话", page: "来自资料", manual: "人工写入", dream: "Dream" };
 
-function timeAgo(at?: number) {
-  if (!at) return "";
-  const diff = Date.now() - at;
-  const min = Math.round(diff / 60000);
-  if (min < 1) return "刚刚";
-  if (min < 60) return `${min} 分钟前`;
-  const hour = Math.round(min / 60);
-  if (hour < 24) return `${hour} 小时前`;
-  const day = Math.round(hour / 24);
-  return day < 30 ? `${day} 天前` : new Date(at).toLocaleDateString();
-}
 
 /** 记忆：左选层级/来源 → 中看条目 → 右处理复核、注入与回查 */
 export function Memory({ act }: { act: Act }) {
@@ -46,6 +36,7 @@ export function Memory({ act }: { act: Act }) {
   const [tab, setTab] = useState<"notes" | "dream">("notes");
   const [openInjectId, setOpenInjectId] = useState<string>("");
   const [srcFilter, setSrcFilter] = useState("");
+  const [entrySort, setEntrySort] = useState<"updated" | "title" | "length">("updated");
   const [archived, setArchived] = useState<Entry[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [dreamCfg, setDreamCfg] = useState<{ enabled: boolean; maxSuggestions: number }>({ enabled: true, maxSuggestions: 40 });
@@ -153,7 +144,11 @@ export function Memory({ act }: { act: Act }) {
   };
 
   const shownNotes = srcFilter ? notes.filter((n) => n.sourceKind === srcFilter) : notes;
-  const shownEntries = srcFilter ? entries.filter((e) => (e.sourceRefs || []).some((r) => String(r).startsWith(srcFilter))) : entries;
+  const shownEntries = (srcFilter ? entries.filter((e) => (e.sourceRefs || []).some((r) => String(r).startsWith(srcFilter))) : entries)
+    .slice()
+    .sort((a, b) => entrySort === "title" ? a.title.localeCompare(b.title, "zh-Hans-CN")
+      : entrySort === "length" ? (b.body?.length || 0) - (a.body?.length || 0)
+        : (b.updatedAt || 0) - (a.updatedAt || 0));
   const restore = async (entry: Entry) => {
     try { await act("memoryEntryRestore", { id: entry.id }); setNotice("已恢复"); await load(); } catch (err) { fail(err); }
   };
@@ -266,7 +261,14 @@ export function Memory({ act }: { act: Act }) {
               <h2>{layerMeta.name}<span className="kv-type">{layer === "L4" ? "注入优先" : layer === "L1" ? "仅回查" : "按预算注入"}</span></h2>
               <p>{layerMeta.desc}。{layer === "L4" ? "写进这里的条目每次 run 都会注入，所以宁少不多。" : ""}</p>
             </div>
-            <button className="btn tiny-btn" onClick={() => { setDraft(""); document.querySelector<HTMLTextAreaElement>(".pr-new-entry")?.focus(); }}>＋ 新条目</button>
+            <span className="row gap6">
+              <select className="list-select" value={entrySort} onChange={(e) => setEntrySort(e.target.value as typeof entrySort)} aria-label="排序">
+                <option value="updated">按最近更新</option>
+                <option value="title">按标题</option>
+                <option value="length">按篇幅</option>
+              </select>
+              <button className="btn tiny-btn" onClick={() => { setDraft(""); document.querySelector<HTMLTextAreaElement>(".pr-new-entry")?.focus(); }}>＋ 新条目</button>
+            </span>
           </div>
 
           <div className="kv-block">
@@ -297,7 +299,7 @@ export function Memory({ act }: { act: Act }) {
                       <h3>{e.title}</h3>
                       <button className="btn tiny-btn" onClick={() => void restore(e)}>恢复</button>
                     </div>
-                    <div className="pr-entry-meta"><span className="kv-type">{e.layer}</span><span className="time">更新 {timeAgo(e.updatedAt)}</span></div>
+                    <div className="pr-entry-meta"><span className="kv-type">{e.layer}</span><span className="time">更新 {relTime(e.updatedAt)}</span></div>
                   </div>
                 ))}
               </div>
@@ -332,7 +334,7 @@ export function Memory({ act }: { act: Act }) {
                 )}
                 <div className="pr-entry-meta">
                   <span className="chip">来源 {e.sourceRefs?.length || 0}</span>
-                  <span className="time">更新 {timeAgo(e.updatedAt)}</span>
+                  <span className="time">更新 {relTime(e.updatedAt)}</span>
                 </div>
                 {(e.sourceRefs || []).length > 0 && (
                   <div className="pr-evidence">{e.sourceRefs.slice(0, 3).map((s) => <span key={s} className="em">{s}</span>)}</div>
@@ -378,7 +380,7 @@ export function Memory({ act }: { act: Act }) {
                     <div className="pr-qh">观察<span className="kv-type">{SOURCE_LABEL[n.sourceKind] || n.sourceKind}</span></div>
                     <p>{n.body.slice(0, 200)}</p>
                     <div className="pr-qf">
-                      <span className="src">{n.sourceRef || "无来源"} · {timeAgo(n.createdAt)}</span>
+                      <span className="src">{n.sourceRef || "无来源"} · {relTime(n.createdAt)}</span>
                       <span className="row gap6">
                         <button className="btn tiny-btn" onClick={() => void resolveNote(n.id, "stale")}>拒绝</button>
                         <button className="btn tiny-btn" onClick={() => void promoteNote(n.id)} title="晋升为结论条目">晋升</button>

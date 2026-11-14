@@ -75,6 +75,8 @@ export function Persona({ act }: { act: Act }) {
   const [selfName, setSelfName] = useState("");
   const [busy, setBusy] = useState(false);
   const [onlyModeled, setOnlyModeled] = useState(false);
+  const [sortBy, setSortBy] = useState<"score" | "recent" | "name" | "pending">("score");
+  const [tagFilter, setTagFilter] = useState("");
   const [job, setJob] = useState<{ running: boolean; total: number; done: number; current: string; cards: number; llmAdded: number; statsAdded: number; skippedCache: number; cancelled: boolean; failed: string[] } | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
@@ -207,6 +209,57 @@ export function Persona({ act }: { act: Act }) {
     } catch (err) { fail(err); }
   };
 
+  const removePersonById = async (p: PersonRow) => {
+    if (!window.confirm(`删除「${p.name}」的全部观察？人设卡会一起消失。`)) return;
+    try {
+      const res = await act("personaRemove", { personId: p.id });
+      setNotice(`已删除 ${res?.removed || 0} 条`);
+      if (selected === p.id) setSelected("");
+      await loadList();
+    } catch (err) { setNotice(String((err as Error)?.message || err)); }
+  };
+
+  const copyInjectFor = async (p: PersonRow) => {
+    try {
+      const inj = await act("personaInject", { personId: p.id, maxChars: 6000 });
+      if (!inj?.markdown) { setNotice("这个人还没有可注入内容"); return; }
+      await navigator.clipboard.writeText(inj.markdown);
+      setNotice(`已复制「${p.name}」的注入片段`);
+    } catch (err) { setNotice(String((err as Error)?.message || err)); }
+  };
+
+  const exportCardFor = async (p: PersonRow) => {
+    try {
+      const c = await act("personaCard", { personId: p.id });
+      await navigator.clipboard.writeText(JSON.stringify(c, null, 2));
+      setNotice(`已复制「${p.name}」的角色卡 JSON`);
+    } catch (err) { setNotice(String((err as Error)?.message || err)); }
+  };
+
+  const personRow = (p: PersonRow) => (
+    <div key={p.id} className="persona-rowwrap">
+      <button className={`persona-row ${selected === p.id ? "on" : ""}`} onClick={() => setSelected(p.id)}>
+        <span className={`persona-ava ${p.isSelf ? "" : (p.tags || []).includes("已建模") ? "on" : ""}`}>{p.isSelf ? "我" : p.name.slice(0, 1)}</span>
+        <span>
+          <b>{p.name}</b>
+          <em>{p.isSelf ? "本人" : p.relation || "关系未知"}{!p.isSelf && p.groupOnly ? " · 仅群聊" : ""} · {p.completeness}%</em>
+          {(p.tags || []).length > 0 && (
+            <span className="persona-tags">
+              {(p.tags || []).slice(0, 3).map((t) => <i key={t} className={`ptag ${t === "已建模" || t === "人设卡" ? "on" : ""}`}>{t}</i>)}
+            </span>
+          )}
+        </span>
+        {p.pending > 0 && <span className="persona-badge">{p.pending}</span>}
+      </button>
+      <RowMenu title="人物操作">
+        <button onClick={() => setSelected(p.id)}>打开人设卡</button>
+        <button onClick={() => void copyInjectFor(p)}>复制注入片段</button>
+        <button onClick={() => void exportCardFor(p)}>复制角色卡 JSON</button>
+        <button className="danger" onClick={() => void removePersonById(p)}>删除此人全部观察</button>
+      </RowMenu>
+    </div>
+  );
+
   const copyInject = async () => {
     if (!inject?.markdown) return;
     try {
@@ -246,14 +299,25 @@ export function Persona({ act }: { act: Act }) {
   const searchable = useMemo(
     () => people.filter((p) => {
       if (onlyModeled && !(p.tags || []).includes("已建模")) return false;
+      if (tagFilter && !(p.tags || []).includes(tagFilter)) return false;
       return !q.trim() || p.name.includes(q.trim()) || (p.relation || "").includes(q.trim());
     }),
-    [people, q, onlyModeled],
+    [people, q, onlyModeled, tagFilter],
   );
-  const byScore = (a: PersonRow, b: PersonRow) => (b.completeness - a.completeness) || a.name.localeCompare(b.name);
-  const listSelf = searchable.filter((p) => p.isSelf).sort(byScore);
-  const modeled = searchable.filter((p) => !p.isSelf && (p.tags || []).includes("已建模")).sort(byScore);
-  const listOthers = searchable.filter((p) => !p.isSelf && !(p.tags || []).includes("已建模")).sort(byScore);
+  const sorter = (a: PersonRow, b: PersonRow) => {
+    if (sortBy === "name") return a.name.localeCompare(b.name, "zh-Hans-CN");
+    if (sortBy === "recent") return (b.lastAt || 0) - (a.lastAt || 0);
+    if (sortBy === "pending") return (b.pending || 0) - (a.pending || 0) || b.completeness - a.completeness;
+    return (b.completeness - a.completeness) || a.name.localeCompare(b.name);
+  };
+  const listSelf = searchable.filter((p) => p.isSelf).sort(sorter);
+  const modeled = searchable.filter((p) => !p.isSelf && (p.tags || []).includes("已建模")).sort(sorter);
+  const listOthers = searchable.filter((p) => !p.isSelf && !(p.tags || []).includes("已建模")).sort(sorter);
+  const allTags = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of people) for (const t of p.tags || []) map.set(t, (map.get(t) || 0) + 1);
+    return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+  }, [people]);
 
   const toggleEv = (key: string) => setOpenEv((prev) => ({ ...prev, [key]: !prev[key] }));
   const sectionSupport = (sec: CardSection) => Math.max(0, ...sec.rows.map((r) => r.support));
@@ -455,61 +519,34 @@ export function Persona({ act }: { act: Act }) {
               className="notes-search" value={q} placeholder="搜人物 / 关系"
               onChange={(e) => setQ(e.target.value)} aria-label="搜索人物"
             />
-            <div className="row gap6" style={{ marginTop: 2 }}>
-              <button className={`ptag ${onlyModeled ? "on" : ""}`} onClick={() => setOnlyModeled((v) => !v)}>
-                {onlyModeled ? "只看已建模 ✓" : "只看已建模"}
-              </button>
-              <span className="tiny faint">已建模 {people.filter((p) => (p.tags || []).includes("已建模")).length} / {people.length}</span>
+            <div className="list-tools">
+              <select className="list-select" value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} aria-label="排序">
+                <option value="score">按完整度</option>
+                <option value="recent">按最近更新</option>
+                <option value="pending">按待确认</option>
+                <option value="name">按姓名</option>
+              </select>
+              <button className={`list-chip ${onlyModeled ? "on" : ""}`} onClick={() => setOnlyModeled((v) => !v)}>已建模 {people.filter((p) => (p.tags || []).includes("已建模")).length}</button>
+              <button className={`list-chip ${tagFilter ? "on" : ""}`} onClick={() => setTagFilter("")} hidden={!tagFilter}>清除筛选</button>
+            </div>
+            <div className="list-chips">
+              {allTags.map(([t, n]) => (
+                <button key={t} className={`list-chip ${tagFilter === t ? "on" : ""}`} onClick={() => setTagFilter(tagFilter === t ? "" : t)}>{t} <em>{n}</em></button>
+              ))}
             </div>
             {listSelf.length > 0 && <div className="persona-group">本人</div>}
             <div className="persona-list">
-              {listSelf.map((p) => (
-                <button key={p.id} className={`persona-row ${selected === p.id ? "on" : ""}`} onClick={() => setSelected(p.id)}>
-                  <span className="persona-ava">我</span>
-                  <span>
-                    <b>{p.name}</b>
-                    <em>本人 · {p.completeness}%</em>
-                    <span className="persona-tags">
-                      {(p.tags || []).slice(0, 3).map((t) => <i key={t} className={`ptag ${t === "已建模" || t === "人设卡" ? "on" : ""}`}>{t}</i>)}
-                    </span>
-                  </span>
-                  {p.pending > 0 && <span className="persona-badge">{p.pending}</span>}
-                </button>
-              ))}
+              {listSelf.map(personRow)}
             </div>
             {modeled.length > 0 && (
               <div className="persona-group">
                 已建模 <em>{modeled.length}</em>
               </div>
             )}
-            {modeled.map((p) => (
-              <button key={p.id} className={`persona-row ${selected === p.id ? "on" : ""}`} onClick={() => setSelected(p.id)}>
-                <span className="persona-ava on">{p.name.slice(0, 1)}</span>
-                <span>
-                  <b>{p.name}</b>
-                  <em>{p.relation || "关系未知"} · {p.completeness}%</em>
-                  <span className="persona-tags">
-                    {(p.tags || []).slice(0, 3).map((t) => <i key={t} className={`ptag ${t === "已建模" || t === "人设卡" ? "on" : ""}`}>{t}</i>)}
-                  </span>
-                </span>
-                {p.pending > 0 && <span className="persona-badge">{p.pending}</span>}
-              </button>
-            ))}
+            {modeled.map(personRow)}
             {listOthers.length > 0 && <div className="persona-group">未建模 <em>{listOthers.length}</em></div>}
             <div className="persona-list">
-              {listOthers.map((p) => (
-                <button key={p.id} className={`persona-row ${selected === p.id ? "on" : ""}`} onClick={() => setSelected(p.id)}>
-                  <span className="persona-ava">{p.name.slice(0, 1)}</span>
-                  <span>
-                    <b>{p.name}</b>
-                    <em>{p.relation || "关系未知"}{p.groupOnly ? " · 仅群聊" : ""} · {p.completeness}%</em>
-                    <span className="persona-tags">
-                      {(p.tags || []).slice(0, 3).map((t) => <i key={t} className={`ptag ${t === "已建模" || t === "人设卡" ? "on" : ""}`}>{t}</i>)}
-                    </span>
-                  </span>
-                  {p.pending > 0 && <span className="persona-badge">{p.pending}</span>}
-                </button>
-              ))}
+              {listOthers.map(personRow)}
             </div>
             {listSelf.length + listOthers.length === 0 && (
               <p className="notes-meta-empty">还没有人物。导入聊天记录后，发言者会出现在这里。</p>
