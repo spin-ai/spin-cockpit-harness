@@ -3282,3 +3282,5 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .persona-ev-item .ev-del{position:absolute;right:2px;top:2px;border:0;background:transparent;color:var(--faint);font-size:12px;line-height:1;padding:2px 4px;cursor:pointer;opacity:0;transition:opacity .12s}
 .persona-ev-item:hover .ev-del{opacity:1}
 .persona-ev-item .ev-del:hover{color:var(--red)}
+.pr-entry[draggable="true"]{cursor:grab}
+.pr-entry.dragging{opacity:.5;background:var(--brand-soft)}

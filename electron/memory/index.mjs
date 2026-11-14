@@ -56,6 +56,7 @@ export function createMemory({ dir }) {
   fs.mkdirSync(dir, { recursive: true });
   const db = new DatabaseSync(path.join(dir, "mem.db"));
   db.exec(SCHEMA);
+  try { db.exec("ALTER TABLE entries ADD COLUMN sort_order INTEGER"); } catch { /* 已存在 */ }
 
   const rows = (sql, params = []) => db.prepare(sql).all(...params);
   const one = (sql, params = []) => db.prepare(sql).get(...params);
@@ -116,14 +117,20 @@ export function createMemory({ dir }) {
         return entryRow(one("SELECT * FROM entries WHERE id=?", [id]));
       }
       const next = id || uid("m");
-      run("INSERT INTO entries VALUES (?,?,?,?,?,?,?,?)", [next, layer, name, String(body).slice(0, 8000), JSON.stringify(sources), "active", at, at]);
+      run("INSERT INTO entries(id, layer, title, body, source_refs, status, created_at, updated_at, sort_order) VALUES (?,?,?,?,?,?,?,?,NULL)", [next, layer, name, String(body).slice(0, 8000), JSON.stringify(sources), "active", at, at]);
       return entryRow(one("SELECT * FROM entries WHERE id=?", [next]));
     },
     entryList({ layer, status = "active", limit = 200 } = {}) {
       const sql = layer
-        ? "SELECT * FROM entries WHERE layer=? AND status=? ORDER BY updated_at DESC LIMIT ?"
-        : "SELECT * FROM entries WHERE status=? ORDER BY layer, updated_at DESC LIMIT ?";
+        ? "SELECT * FROM entries WHERE layer=? AND status=? ORDER BY COALESCE(sort_order, 1e12), updated_at DESC LIMIT ?"
+        : "SELECT * FROM entries WHERE status=? ORDER BY layer, COALESCE(sort_order, 1e12), updated_at DESC LIMIT ?";
       return (layer ? rows(sql, [layer, status, limit]) : rows(sql, [status, limit])).map(entryRow);
+    },
+    /** 拖拽排序：按给定顺序写 sort_order（决定注入优先级） */
+    entryReorder({ ids = [] } = {}) {
+      let i = 0;
+      for (const id of ids) { run("UPDATE entries SET sort_order=? WHERE id=?", [i, id]); i += 1; }
+      return { count: ids.length };
     },
     entryArchive({ id } = {}) { run("UPDATE entries SET status='archived', updated_at=? WHERE id=?", [Date.now(), id]); return true; },
 
@@ -210,8 +217,8 @@ export function createMemory({ dir }) {
     inject({ maxChars } = {}) {
       const stored = Number(metaGet("injectBudget")) || 12000;
       const budget = Math.max(800, Number(maxChars) || stored);
-      const l4 = rows("SELECT * FROM entries WHERE layer='L4' AND status='active' ORDER BY updated_at DESC").map(entryRow);
-      const others = rows("SELECT * FROM entries WHERE layer!='L4' AND status='active' ORDER BY layer, updated_at DESC").map(entryRow);
+      const l4 = rows("SELECT * FROM entries WHERE layer='L4' AND status='active' ORDER BY COALESCE(sort_order, 1e12), updated_at DESC").map(entryRow);
+      const others = rows("SELECT * FROM entries WHERE layer!='L4' AND status='active' ORDER BY layer, COALESCE(sort_order, 1e12), updated_at DESC").map(entryRow);
       const head = "## 记忆（L4 目录 / 结论）";
       let out = head;
       let used = head.length;

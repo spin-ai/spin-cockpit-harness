@@ -765,6 +765,11 @@ export function Persona({ act }: { act: Act }) {
                   <RowMenu title="人物操作">
                     <button onClick={() => void copyInject()}>复制注入片段</button>
                     <button onClick={() => void exportCard()}>导出角色卡 JSON</button>
+                    <button
+                      onClick={() => void act("personaExportMarkdown", { personId: card.person.id })
+                        .then((res) => setNotice(`已写入知识库：${res?.title || ""}`))
+                        .catch((err) => setNotice(String((err as Error)?.message || err)))}
+                    >写入知识库（Markdown）</button>
                     <button onClick={() => setShowImport(true)}>从聊天记录补全</button>
                     <button className="danger" onClick={() => void removePerson(card.person)}>删除此人全部观察</button>
                   </RowMenu>

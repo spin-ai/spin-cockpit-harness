@@ -42,6 +42,7 @@ export function Memory({ act }: { act: Act }) {
   const [picking, setPicking] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [activeEntry, setActiveEntry] = useState("");
+  const [dragId, setDragId] = useState("");
   const [ctx, setCtx] = useState<{ x: number; y: number; entry: Entry } | null>(null);
   const [undo, setUndo] = useState<UndoAction | null>(null);
   const { dense, toggle: toggleDense } = useDensity("memory");
@@ -396,9 +397,28 @@ export function Memory({ act }: { act: Act }) {
 
             {shownEntries.map((e) => (
               <div
-                className={`pr-entry ${picked.has(e.id) ? "picked" : ""} ${activeEntry === e.id ? "active" : ""}`}
+                className={`pr-entry ${picked.has(e.id) ? "picked" : ""} ${activeEntry === e.id ? "active" : ""} ${dragId === e.id ? "dragging" : ""}`}
                 key={e.id}
                 data-eid={e.id}
+                draggable
+                onDragStart={() => setDragId(e.id)}
+                onDragOver={(ev) => ev.preventDefault()}
+                onDragEnd={() => setDragId("")}
+                onDrop={async (ev) => {
+                  ev.preventDefault();
+                  if (!dragId || dragId === e.id) { setDragId(""); return; }
+                  const order = shownEntries.map((x) => x.id);
+                  const from = order.indexOf(dragId);
+                  const to = order.indexOf(e.id);
+                  if (from < 0 || to < 0) return;
+                  order.splice(to, 0, order.splice(from, 1)[0]);
+                  setDragId("");
+                  try {
+                    await act("memoryEntryReorder", { ids: order });
+                    setNotice("顺序已保存（影响注入优先级）");
+                    await load();
+                  } catch (err) { fail(err); }
+                }}
                 onContextMenu={(ev) => { ev.preventDefault(); setActiveEntry(e.id); setCtx({ x: ev.clientX, y: ev.clientY, entry: e }); }}
               >
                 <div className="pr-entry-head">
