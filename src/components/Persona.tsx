@@ -15,7 +15,7 @@ type CardRow = {
 };
 type CardSection = { id: string; title: string; rows: CardRow[] };
 type Person = { id: string; name: string; relation: string; groupOnly: boolean; isSelf: boolean };
-type PersonRow = Person & { confirmed: number; pending: number; completeness: number; lastAt: number };
+type PersonRow = Person & { confirmed: number; pending: number; completeness: number; lastAt: number; tags?: string[] };
 type Network = { id: string; name: string; type: string; strength: number; at: number };
 type Card = {
   person: Person; sections: CardSection[]; network: Network[]; oneLiner: string; completeness: number;
@@ -39,6 +39,15 @@ const FIELD_LABEL: Record<string, string> = {
 /** 多值字段用 chip 展示，其余按「一个结论一行」 */
 const CHIP_FIELDS = new Set(["traits", "style", "capability", "preference", "constraint", "stance", "event"]);
 const SAMPLE_FIELDS = new Set(["voice"]);
+
+/** 刷新时保持已有人员的位置：只有新出现的人进顶部，操作别人不会让他跳位 */
+function mergePeopleOrder(prev: PersonRow[], next: PersonRow[]): PersonRow[] {
+  if (!prev.length) return next;
+  const rank = new Map(prev.map((p, i) => [p.id, i]));
+  const fresh = next.filter((p) => !rank.has(p.id));
+  const kept = next.filter((p) => rank.has(p.id)).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+  return [...fresh, ...kept];
+}
 
 function levelDot(level: string) {
   return level === "高" ? "green" : level === "中" ? "amber" : "slate";
@@ -65,6 +74,9 @@ export function Persona({ act }: { act: Act }) {
   const [paste, setPaste] = useState("");
   const [selfName, setSelfName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [onlyModeled, setOnlyModeled] = useState(false);
+  const [job, setJob] = useState<{ running: boolean; total: number; done: number; current: string; cards: number; llmAdded: number; statsAdded: number; skippedCache: number; cancelled: boolean; failed: string[] } | null>(null);
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const queueRef = useRef<HTMLDivElement | null>(null);
@@ -79,7 +91,7 @@ export function Persona({ act }: { act: Act }) {
         act("personaPending", { limit: 200 }),
       ]);
       setStats(st);
-      setPeople(list || []);
+      setPeople((prev) => mergePeopleOrder(prev, list || []));
       setPending(pd || []);
       setSelected((current) => current || (list || []).find((p: PersonRow) => p.isSelf)?.id || (list || [])[0]?.id || "");
     } catch (err) { fail(err); }
@@ -107,6 +119,40 @@ export function Persona({ act }: { act: Act }) {
     await loadList();
     if (id) await openPerson(id);
   };
+
+  // AI/统计建模：动作会一直跑到结束，所以启动后不 await，改为轮询进度
+  const startModel = async (mode: "llm" | "stats") => {
+    if (mode === "llm" && !window.confirm("建模会把联系人的部分发言样本发给模型分析（默认最多 12 人，同一份样本只算一次）。继续？")) return;
+    try {
+      const st = await act("personaModelStatus");
+      if (st?.running) { setNotice("已有建模任务在跑"); return; }
+      setJob({ running: true, total: 0, done: 0, current: "", cards: 0, llmAdded: 0, statsAdded: 0, skippedCache: 0, cancelled: false, failed: [] });
+      setProgress(0);
+      void act("personaModel", { mode, limit: mode === "llm" ? 12 : 80 })
+        .then(() => reload())
+        .catch((err) => setNotice(String((err as Error)?.message || err)));
+    } catch (err) { setNotice(String((err as Error)?.message || err)); }
+  };
+
+  useEffect(() => {
+    if (!job?.running) return;
+    let stopped = false;
+    const tick = async () => {
+      try {
+        const st = await act("personaModelStatus");
+        if (stopped || !st) return;
+        setJob(st);
+        setProgress(st.total ? Math.round((st.done / st.total) * 100) : 0);
+        if (!st.running) {
+          setNotice(`建模完成：${st.cards} 人出卡 · 统计 ${st.statsAdded} 条 · AI 结论 ${st.llmAdded} 条待确认${st.skippedCache ? ` · 缓存跳过 ${st.skippedCache}` : ""}${st.cancelled ? " · 已取消" : ""}`);
+          await reload();
+        }
+      } catch { /* 结束时动作已抛错，忽略 */ }
+    };
+    void tick();
+    const timer = window.setInterval(tick, 1200);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [job?.running, act]);
 
   const resolve = async (id: string, accept: boolean, sensitive = false) => {
     try {
@@ -191,15 +237,17 @@ export function Persona({ act }: { act: Act }) {
     try { setAnswer(await act("personaAsk", { question: ask.trim() })); } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
-  const others = useMemo(() => people.filter((p) => !p.isSelf && (!q.trim() || p.name.includes(q.trim()))), [people, q]);
   const visibleQueue = useMemo(
     () => pending.filter((item) => !onlyMine || item.personId === selected),
     [pending, onlyMine, selected],
   );
   const minePending = pending.filter((item) => item.personId === selected);
   const searchable = useMemo(
-    () => people.filter((p) => !q.trim() || p.name.includes(q.trim()) || (p.relation || "").includes(q.trim())),
-    [people, q],
+    () => people.filter((p) => {
+      if (onlyModeled && !(p.tags || []).includes("已建模")) return false;
+      return !q.trim() || p.name.includes(q.trim()) || (p.relation || "").includes(q.trim());
+    }),
+    [people, q, onlyModeled],
   );
   const listSelf = searchable.filter((p) => p.isSelf);
   const listOthers = searchable.filter((p) => !p.isSelf);
@@ -323,18 +371,14 @@ export function Persona({ act }: { act: Act }) {
           <button className="btn" onClick={() => setShowImport((v) => !v)}>{showImport ? "收起导入" : "导入聊天记录"}</button>
           <button
             className="btn"
-            disabled={busy}
-            title="把聊天记录算成可观测特征（话量 / 句长 / 回复速度 / 语气 / 话题 / 活跃时段），结果进待确认"
-            onClick={async () => {
-              setBusy(true);
-              try {
-                const res = await act("personaModel", { limit: 60, useModel: false });
-                setNotice(`建模 ${res?.people || 0} 人，新增 ${res?.added || 0} 条待确认`);
-                await reload();
-              } catch (err) { setNotice(String((err as Error)?.message || err)); }
-              finally { setBusy(false); }
-            }}
+            disabled={Boolean(job?.running)}
+            title="建模：先用统计算出可观测特征，再让模型逐人分析（同一份样本只算一次）"
+            onClick={() => void startModel("llm")}
           >建模</button>
+          <RowMenu title="建模选项">
+            <button onClick={() => void startModel("stats")} disabled={Boolean(job?.running)}>只跑统计（不调用模型，不消耗额度）</button>
+            <button onClick={() => { setJob(null); setNotice(`上次任务：${job?.cards || 0} 人出卡`); }}>查看上次进度</button>
+          </RowMenu>
           <button className="icon-btn" onClick={() => void reload()} title="刷新">↻</button>
         </>}
       />
@@ -342,6 +386,27 @@ export function Persona({ act }: { act: Act }) {
         <div className={`notes-banner ${error ? "error" : ""}`}>
           <span className="ellipsis">{error || notice}</span>
           <button className="notes-banner-x" onClick={() => { setError(""); setNotice(""); }}>×</button>
+        </div>
+      )}
+
+      {(job?.running || job?.done) && (
+        <div className="pr-modeljob">
+          <div className="pr-modeljob-main">
+            <b>{job.running ? `建模中 · ${job.done}/${job.total || "?"}` : `本次建模完成 · ${job.cards} 人出卡`}</b>
+            <span className="tiny faint">
+              {job.running ? (job.current ? `当前：${job.current}` : "准备中…") : `统计 ${job.statsAdded} 条 · 模型结论 ${job.llmAdded} 条待确认${job.skippedCache ? ` · 缓存跳过 ${job.skippedCache}` : ""}`}
+            </span>
+          </div>
+          <div className="pr-modeljob-bar"><i style={{ width: `${job.running ? Math.max(4, progress) : 100}%` }} /></div>
+          <div className="row gap6">
+            {job.running
+              ? <button className="btn tiny-btn" onClick={() => void act("personaModelCancel").then(() => setNotice("已请求取消"))}>取消</button>
+              : <>
+                {job.llmAdded > 0 && <button className="btn tiny-btn primary" onClick={() => void act("personaModelResolve", { accept: true }).then(async () => { setNotice("本次 AI 结论已全部确认"); await reload(); })}>确认本次 AI 结论</button>}
+                {job.llmAdded > 0 && <button className="btn tiny-btn" onClick={() => void act("personaModelResolve", { accept: false }).then(async () => { setNotice("本次 AI 结论已全部拒绝"); await reload(); })}>全部拒绝</button>}
+                <button className="link tiny" onClick={() => setJob(null)}>收起</button>
+              </>}
+          </div>
         </div>
       )}
 
@@ -375,6 +440,12 @@ export function Persona({ act }: { act: Act }) {
               className="notes-search" value={q} placeholder="搜人物 / 关系"
               onChange={(e) => setQ(e.target.value)} aria-label="搜索人物"
             />
+            <div className="row gap6" style={{ marginTop: 2 }}>
+              <button className={`ptag ${onlyModeled ? "on" : ""}`} onClick={() => setOnlyModeled((v) => !v)}>
+                {onlyModeled ? "只看已建模 ✓" : "只看已建模"}
+              </button>
+              <span className="tiny faint">已建模 {people.filter((p) => (p.tags || []).includes("已建模")).length} / {people.length}</span>
+            </div>
             {listSelf.length > 0 && <div className="persona-group">本人</div>}
             <div className="persona-list">
               {listSelf.map((p) => (
@@ -383,6 +454,9 @@ export function Persona({ act }: { act: Act }) {
                   <span>
                     <b>{p.name}</b>
                     <em>本人 · {p.completeness}%</em>
+                    <span className="persona-tags">
+                      {(p.tags || []).slice(0, 3).map((t) => <i key={t} className={`ptag ${t === "已建模" || t === "人设卡" ? "on" : ""}`}>{t}</i>)}
+                    </span>
                   </span>
                   {p.pending > 0 && <span className="persona-badge">{p.pending}</span>}
                 </button>
@@ -396,6 +470,9 @@ export function Persona({ act }: { act: Act }) {
                   <span>
                     <b>{p.name}</b>
                     <em>{p.relation || "关系未知"}{p.groupOnly ? " · 仅群聊" : ""} · {p.completeness}%</em>
+                    <span className="persona-tags">
+                      {(p.tags || []).slice(0, 3).map((t) => <i key={t} className={`ptag ${t === "已建模" || t === "人设卡" ? "on" : ""}`}>{t}</i>)}
+                    </span>
                   </span>
                   {p.pending > 0 && <span className="persona-badge">{p.pending}</span>}
                 </button>
@@ -425,7 +502,7 @@ export function Persona({ act }: { act: Act }) {
                   <h2>
                     {card.person.name}
                     <span className="tag">{card.person.isSelf ? "本人" : card.person.relation || "关系未知"}</span>
-                    {card.person.groupOnly && <span className="tag warn">仅群聊</span>}
+                    {(card.person as PersonRow).tags?.map((t) => <span key={t} className={`ptag ${t === "已建模" || t === "人设卡" ? "on" : ""}`}>{t}</span>)}
                   </h2>
                   <p>
                     <span>依据 {card.counts.confirmed} 条原话</span>
