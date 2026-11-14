@@ -77,6 +77,9 @@ export function Persona({ act }: { act: Act }) {
   const [onlyModeled, setOnlyModeled] = useState(false);
   const [sortBy, setSortBy] = useState<"score" | "recent" | "name" | "pending">("score");
   const [tagFilter, setTagFilter] = useState("");
+  const [picking, setPicking] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [lastPick, setLastPick] = useState("");
   const [job, setJob] = useState<{ running: boolean; total: number; done: number; current: string; cards: number; llmAdded: number; statsAdded: number; skippedCache: number; cancelled: boolean; failed: string[] } | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
@@ -123,7 +126,7 @@ export function Persona({ act }: { act: Act }) {
   };
 
   // AI/统计建模：动作会一直跑到结束，所以启动后不 await，改为轮询进度
-  const startModel = async (mode: "llm" | "stats", limitOverride?: number) => {
+  const startModel = async (mode: "llm" | "stats", limitOverride?: number, names?: string[]) => {
     if (mode === "llm" && !window.confirm("建模会把联系人的部分发言样本发给模型分析（默认最多 12 人，同一份样本只算一次）。继续？")) return;
     try {
       const st = await act("personaModelStatus");
@@ -131,7 +134,7 @@ export function Persona({ act }: { act: Act }) {
       setJob({ running: true, total: 0, done: 0, current: "", cards: 0, llmAdded: 0, statsAdded: 0, skippedCache: 0, cancelled: false, failed: [] });
       setProgress(0);
       const limit = limitOverride ?? (mode === "llm" ? 12 : 0);
-      void act("personaModel", { mode, limit })
+      void act("personaModel", { mode, limit, ...(names?.length ? { names } : {}) })
         .then(() => reload())
         .catch((err) => setNotice(String((err as Error)?.message || err)));
     } catch (err) { setNotice(String((err as Error)?.message || err)); }
@@ -209,6 +212,54 @@ export function Persona({ act }: { act: Act }) {
     } catch (err) { fail(err); }
   };
 
+  const togglePick = (p: PersonRow, ev?: { metaKey?: boolean; shiftKey?: boolean }) => {
+    const ordered = [...listSelf, ...modeled, ...listOthers];
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (ev?.shiftKey && lastPick) {
+        const a = ordered.findIndex((x) => x.id === lastPick);
+        const b = ordered.findIndex((x) => x.id === p.id);
+        if (a >= 0 && b >= 0) {
+          for (let i = Math.min(a, b); i <= Math.max(a, b); i += 1) next.add(ordered[i].id);
+          return next;
+        }
+      }
+      if (next.has(p.id)) next.delete(p.id); else next.add(p.id);
+      return next;
+    });
+    setLastPick(p.id);
+  };
+
+  const pickAll = () => setPicked(new Set([...listSelf, ...modeled, ...listOthers].map((p) => p.id)));
+
+  const batchRemove = async () => {
+    const ids = [...picked];
+    if (!ids.length) return;
+    if (!window.confirm(`删除所选 ${ids.length} 人的全部观察？`)) return;
+    try {
+      const res = await act("personaRemoveMany", { personIds: ids });
+      setNotice(`已删除 ${res?.people || 0} 人 / ${res?.removed || 0} 条观察`);
+      setPicked(new Set()); setPicking(false);
+      await loadList();
+    } catch (err) { setNotice(String((err as Error)?.message || err)); }
+  };
+
+  const batchModel = async () => {
+    const names = [...picked].map((id) => people.find((p) => p.id === id)?.name).filter(Boolean) as string[];
+    if (!names.length) return;
+    if (!window.confirm(`对所选 ${names.length} 人跑建模（未缓存的会调用模型）？`)) return;
+    setPicking(false);
+    await startModel("llm", -1, names);
+  };
+
+  const batchCopyCards = async () => {
+    try {
+      const cards = await act("personaCards", { personIds: [...picked] });
+      await navigator.clipboard.writeText(JSON.stringify(cards, null, 2));
+      setNotice(`已复制 ${cards?.length || 0} 张角色卡 JSON`);
+    } catch (err) { setNotice(String((err as Error)?.message || err)); }
+  };
+
   const removePersonById = async (p: PersonRow) => {
     if (!window.confirm(`删除「${p.name}」的全部观察？人设卡会一起消失。`)) return;
     try {
@@ -237,8 +288,25 @@ export function Persona({ act }: { act: Act }) {
   };
 
   const personRow = (p: PersonRow) => (
-    <div key={p.id} className="persona-rowwrap">
-      <button className={`persona-row ${selected === p.id ? "on" : ""}`} onClick={() => setSelected(p.id)}>
+    <div key={p.id} className={`persona-rowwrap ${picked.has(p.id) ? "picked" : ""}`}>
+      {picking && (
+        <input
+          type="checkbox"
+          className="pick-box"
+          checked={picked.has(p.id)}
+          onChange={() => togglePick(p)}
+          onClick={(ev) => ev.stopPropagation()}
+          aria-label={`选择 ${p.name}`}
+        />
+      )}
+      <button
+        className={`persona-row ${selected === p.id ? "on" : ""}`}
+        onClick={(ev) => {
+          if (!picking) { setSelected(p.id); return; }
+          togglePick(p, { shiftKey: (ev as unknown as { shiftKey: boolean }).shiftKey });
+        }}
+        onContextMenu={(ev) => { if (picking) { ev.preventDefault(); togglePick(p); } }}
+      >
         <span className={`persona-ava ${p.isSelf ? "" : (p.tags || []).includes("已建模") ? "on" : ""}`}>{p.isSelf ? "我" : p.name.slice(0, 1)}</span>
         <span>
           <b>{p.name}</b>
@@ -527,8 +595,20 @@ export function Persona({ act }: { act: Act }) {
                 <option value="name">按姓名</option>
               </select>
               <button className={`list-chip ${onlyModeled ? "on" : ""}`} onClick={() => setOnlyModeled((v) => !v)}>已建模 {people.filter((p) => (p.tags || []).includes("已建模")).length}</button>
+              <button className={`list-chip ${picking ? "on" : ""}`} onClick={() => { setPicking((v) => !v); setPicked(new Set()); }}>{picking ? "退出多选" : "多选"}</button>
               <button className={`list-chip ${tagFilter ? "on" : ""}`} onClick={() => setTagFilter("")} hidden={!tagFilter}>清除筛选</button>
             </div>
+            {picking && (
+              <div className="bulk-bar">
+                <span>已选 {picked.size}</span>
+                <button className="link tiny" onClick={pickAll}>全选可见</button>
+                <button className="link tiny" onClick={() => setPicked(new Set())} disabled={!picked.size}>清空</button>
+                <span style={{ flex: 1 }} />
+                <button className="btn tiny-btn primary" onClick={() => void batchModel()} disabled={!picked.size}>建模所选</button>
+                <button className="btn tiny-btn" onClick={() => void batchCopyCards()} disabled={!picked.size}>复制角色卡</button>
+                <button className="btn tiny-btn" onClick={() => void batchRemove()} disabled={!picked.size}>删除</button>
+              </div>
+            )}
             <div className="list-chips">
               {allTags.map(([t, n]) => (
                 <button key={t} className={`list-chip ${tagFilter === t ? "on" : ""}`} onClick={() => setTagFilter(tagFilter === t ? "" : t)}>{t} <em>{n}</em></button>
