@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
 import { RowMenu } from "./RowMenu";
+import { ListContextMenu } from "./ListContextMenu";
 import { relTime } from "../ui";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
@@ -39,6 +40,8 @@ export function Memory({ act }: { act: Act }) {
   const [entrySort, setEntrySort] = useState<"updated" | "title" | "length">("updated");
   const [picking, setPicking] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [activeEntry, setActiveEntry] = useState("");
+  const [ctx, setCtx] = useState<{ x: number; y: number; entry: Entry } | null>(null);
   const [archived, setArchived] = useState<Entry[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [dreamCfg, setDreamCfg] = useState<{ enabled: boolean; maxSuggestions: number }>({ enabled: true, maxSuggestions: 40 });
@@ -228,6 +231,17 @@ export function Memory({ act }: { act: Act }) {
         </div>
       )}
 
+      <ListContextMenu
+        at={ctx ? { x: ctx.x, y: ctx.y } : null}
+        onClose={() => setCtx(null)}
+        items={ctx ? [
+          { label: "编辑", onSelect: () => setEditing({ id: ctx.entry.id, title: ctx.entry.title, body: ctx.entry.body }) },
+          { label: "降级到下一层", onSelect: () => void demote(ctx.entry) },
+          { label: "复制标题", onSelect: () => void navigator.clipboard?.writeText(ctx.entry.title) },
+          { label: ctx.entry.status === "archived" ? "恢复" : "标为过期", danger: ctx.entry.status !== "archived", onSelect: () => void (ctx.entry.status === "archived" ? restore(ctx.entry) : archive(ctx.entry)) },
+        ] : []}
+      />
+
       <div className="pr-grid">
         {/* 左：层级 / 来源 / 其它 */}
         <aside className="pr-col">
@@ -314,7 +328,30 @@ export function Memory({ act }: { act: Act }) {
             </div>
           )}
 
-          <div className="pr-entries">
+          <div
+            className="pr-entries"
+            tabIndex={0}
+            onKeyDown={(ev) => {
+              if (!shownEntries.length) return;
+              const idx = Math.max(0, shownEntries.findIndex((e) => e.id === activeEntry));
+              if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+                ev.preventDefault();
+                const next = shownEntries[Math.min(shownEntries.length - 1, Math.max(0, idx + (ev.key === "ArrowDown" ? 1 : -1)))];
+                setActiveEntry(next.id);
+                document.querySelector(`[data-eid="${next.id}"]`)?.scrollIntoView({ block: "nearest" });
+              } else if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "a") {
+                ev.preventDefault();
+                setPicking(true);
+                setPicked(new Set(shownEntries.map((e) => e.id)));
+              } else if (ev.key === " " && picking && shownEntries[idx]) {
+                ev.preventDefault();
+                const id = shownEntries[idx].id;
+                setPicked((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+              } else if (ev.key === "Escape") {
+                setPicking(false); setPicked(new Set());
+              }
+            }}
+          >
             {shownEntries.length === 0 && (
               <EmptyState compact mark="◍" title={`「${layerMeta.name}」还是空的`} desc={layer === "L4" ? "接受 Dream 的「晋升」建议会写到这里，也可以手动添加。" : "条目只由 Dream 建议或人工写入。"} />
             )}
@@ -335,7 +372,12 @@ export function Memory({ act }: { act: Act }) {
             )}
 
             {shownEntries.map((e) => (
-              <div className={`pr-entry ${picked.has(e.id) ? "picked" : ""}`} key={e.id}>
+              <div
+                className={`pr-entry ${picked.has(e.id) ? "picked" : ""} ${activeEntry === e.id ? "active" : ""}`}
+                key={e.id}
+                data-eid={e.id}
+                onContextMenu={(ev) => { ev.preventDefault(); setActiveEntry(e.id); setCtx({ x: ev.clientX, y: ev.clientY, entry: e }); }}
+              >
                 <div className="pr-entry-head">
                   {picking && (
                     <input
