@@ -13,14 +13,9 @@ import { shell, utilityProcess } from "electron";
 
 const API_VERSION = 1;
 const PLUGIN_MANIFEST = "plugin.json";
-const MAX_EVENT_LOG = 200;
 
 function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
-}
-
-function safeId(id) {
-  return /^[a-zA-Z0-9._-]+$/.test(String(id || ""));
 }
 
 function pluginMainPath(dir, manifest) {
@@ -60,6 +55,7 @@ export class PluginHost {
     this.dialog = dialog;
     this.onChange = onChange;
     this.children = new Map();
+    this.activating = new Map();
     this.pending = new Map();
     this.logs = new Map();
     this.started = false;
@@ -195,6 +191,9 @@ export class PluginHost {
   }
 
   async startPlugin(plugin) {
+    // 正在激活时不要去拿「还没 ready」的 child：那会让 invoke 早于 api.handle 注册，
+    // 报 "unknown plugin method: wiki.*"（启动后第一次点页面很容易撞上）
+    if (this.activating?.has(plugin.id)) return this.activating.get(plugin.id);
     if (this.children.has(plugin.id)) return this.children.get(plugin.id);
     if (!plugin.enabled) throw new Error("plugin is disabled");
     if (!fs.existsSync(this.runtimePath)) throw new Error(`plugin runtime not found: ${this.runtimePath}`);
@@ -214,22 +213,24 @@ export class PluginHost {
       this.onChange?.();
     });
     child.stderr?.on("data", (buf) => this.appendLog(plugin.id, "info", buf.toString().slice(-2000)));
-    try {
-      await new Promise((resolve, reject) => {
+    const activation = new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("plugin activate timeout")), 15000);
         const ready = (evt) => {
           const msg = evt?.data ?? evt;
           if (msg?.type === "ready") { clearTimeout(timer); child.off("message", ready); resolve(); }
           else if (msg?.type === "activate-error") { clearTimeout(timer); child.off("message", ready); reject(new Error(msg.error)); }
         };
-        child.on("message", ready);
-        child.postMessage({
-          type: "activate",
-          manifest: plugin.manifest,
-          dir,
-          dataDir: this.dataDir(plugin.id),
-        });
+      child.on("message", ready);
+      child.postMessage({
+        type: "activate",
+        manifest: plugin.manifest,
+        dir,
+        dataDir: this.dataDir(plugin.id),
       });
+    }).finally(() => this.activating.delete(plugin.id));
+    this.activating.set(plugin.id, activation);
+    try {
+      await activation;
     } catch (err) {
       this.stopPlugin(plugin.id, false);
       throw err;

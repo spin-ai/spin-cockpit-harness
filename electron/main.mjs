@@ -2751,6 +2751,7 @@ const actions = {
   memoryEntryArchive: async ({ id } = {}) => memory().entryArchive({ id }),
   memoryEntrySources: async ({ id } = {}) => memory().entrySources({ id }),
   memoryEntryRestore: async ({ id } = {}) => memory().entryRestore({ id }),
+  memoryEntryReorder: async ({ ids } = {}) => memory().entryReorder({ ids }),
   memoryEntryArchived: async ({ limit } = {}) => memory().entryArchived({ limit }),
   memoryEntrySearch: async ({ query, limit } = {}) => memory().entrySearch({ query, limit }),
   memoryPromoteNote: async ({ id, layer } = {}) => memory().promoteNote({ id, layer }),
@@ -2821,6 +2822,37 @@ const actions = {
   personaAsk: async ({ question } = {}) => persona().ask({ question }),
   personaMerge: async ({ keepId, aliasIds } = {}) => persona().merge({ keepId, aliasIds }),
   personaRemove: async ({ personId, from, to, sourcePrefix } = {}) => persona().remove({ personId, from, to, sourcePrefix }),
+  /** 人设卡 → Markdown 草稿写进知识库（走 Source → Page → Review 流程） */
+  personaExportMarkdown: async ({ personId } = {}) => {
+    const card = persona().card({ personId });
+    if (!card) throw new Error("人物不存在");
+    const p = card.person;
+    const lines = [`# ${p.name}`, "", card.oneLiner ? `> ${card.oneLiner}` : "", ""];
+    lines.push(`- 关系：${p.relation || "未知"}${p.isSelf ? "（本人）" : ""}`);
+    lines.push(`- 完整度：${card.completeness}%｜已确认 ${card.counts?.confirmed || 0} 条`);
+    lines.push("");
+    for (const sec of card.sections || []) {
+      const rowsWith = (sec.rows || []).filter((r) => (r.values || []).length);
+      if (!rowsWith.length) continue;
+      lines.push(`## ${sec.title}`, "");
+      for (const row of rowsWith) {
+        lines.push(`- **${row.label}**：${row.values.slice(0, 3).join("；")}（依据 ${row.support}）`);
+      }
+      lines.push("");
+    }
+    if ((card.network || []).length) {
+      lines.push("## 关系网", "");
+      for (const n of card.network.slice(0, 12)) lines.push(`- ${n.name}${n.type ? `（${n.type}）` : ""}`);
+      lines.push("");
+    }
+    const page = await pluginHost.invoke("ai.cockpit.notes", "wiki.upsertDraft", {
+      title: `人物：${p.name}`,
+      content: lines.join("\n"),
+      summary: (card.oneLiner || `${p.name} 的人设卡`).slice(0, 200),
+    });
+    store.addEvent("persona.export", `persona.export ${p.name} → ${page?.id || "?"}`);
+    return { pageId: page?.id || "", title: page?.title || `人物：${p.name}` };
+  },
   personaConflicts: async () => persona().detectConflicts(),
   /** 批量删除（按 personId） */
   personaRemoveMany: async ({ personIds = [] } = {}) => {
