@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
 import { RowMenu } from "./RowMenu";
+import { ListContextMenu } from "./ListContextMenu";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
@@ -80,6 +81,7 @@ export function Persona({ act }: { act: Act }) {
   const [picking, setPicking] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [lastPick, setLastPick] = useState("");
+  const [ctx, setCtx] = useState<{ x: number; y: number; person: PersonRow } | null>(null);
   const [job, setJob] = useState<{ running: boolean; total: number; done: number; current: string; cards: number; llmAdded: number; statsAdded: number; skippedCache: number; cancelled: boolean; failed: string[] } | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
@@ -288,7 +290,16 @@ export function Persona({ act }: { act: Act }) {
   };
 
   const personRow = (p: PersonRow) => (
-    <div key={p.id} className={`persona-rowwrap ${picked.has(p.id) ? "picked" : ""}`}>
+    <div
+      key={p.id}
+      data-pid={p.id}
+      className={`persona-rowwrap ${picked.has(p.id) ? "picked" : ""}`}
+      onContextMenu={(ev) => {
+        ev.preventDefault();
+        setSelected(p.id);
+        setCtx({ x: ev.clientX, y: ev.clientY, person: p });
+      }}
+    >
       {picking && (
         <input
           type="checkbox"
@@ -577,6 +588,17 @@ export function Persona({ act }: { act: Act }) {
         </div>
       )}
 
+      <ListContextMenu
+        at={ctx ? { x: ctx.x, y: ctx.y } : null}
+        onClose={() => setCtx(null)}
+        items={ctx ? [
+          { label: "打开人设卡", onSelect: () => setSelected(ctx.person.id) },
+          { label: "复制注入片段", onSelect: () => void copyInjectFor(ctx.person) },
+          { label: "复制角色卡 JSON", onSelect: () => void exportCardFor(ctx.person) },
+          { label: picked.size > 1 ? `删除所选 ${picked.size} 人` : "删除此人全部观察", danger: true, onSelect: () => void (picked.size > 1 ? batchRemove() : removePersonById(ctx.person)) },
+        ] : []}
+      />
+
       <div className="persona-grid">
 
         {/* ── 左：人物列表常驻 ───────────────────────────── */}
@@ -615,7 +637,31 @@ export function Persona({ act }: { act: Act }) {
               ))}
             </div>
             {listSelf.length > 0 && <div className="persona-group">本人</div>}
-            <div className="persona-list">
+            <div
+              className="persona-list"
+              tabIndex={0}
+              onKeyDown={(ev) => {
+                const ordered = [...listSelf, ...modeled, ...listOthers];
+                if (!ordered.length) return;
+                const idx = Math.max(0, ordered.findIndex((x) => x.id === (picking ? lastPick : selected)));
+                if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+                  ev.preventDefault();
+                  const next = ordered[Math.min(ordered.length - 1, Math.max(0, idx + (ev.key === "ArrowDown" ? 1 : -1)))];
+                  setSelected(next.id);
+                  if (picking) setLastPick(next.id);
+                  document.querySelector(`[data-pid="${next.id}"]`)?.scrollIntoView({ block: "nearest" });
+                } else if (ev.key === " " && picking) {
+                  ev.preventDefault();
+                  if (lastPick) togglePick(ordered.find((x) => x.id === lastPick) || ordered[idx]);
+                } else if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "a") {
+                  ev.preventDefault();
+                  setPicking(true);
+                  pickAll();
+                } else if (ev.key === "Escape") {
+                  setPicking(false); setPicked(new Set());
+                }
+              }}
+            >
               {listSelf.map(personRow)}
             </div>
             {modeled.length > 0 && (

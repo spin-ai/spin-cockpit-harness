@@ -1392,7 +1392,7 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
   --term-bg:#fdfaf3;--term-bar:#f5efe3;--term-tabs:#efe8da;--term-border:#e2d8c6;--term-fg:#3a352c;--term-muted:#857e71;--term-hover:#ebe3d5;--term-selection:#f0dfc2;
   --app-shell:#f2eee5;--page-canvas:#f8f5ee;--surface:var(--amber-soft);--surface-hover:#f4eee3;--surface-selected:#ece4d6;
   --sidebar:#f0ebe1;--sidebar-accent:#e7e0d2;--border:#e5ddcd;--border-strong:#d8cebb;--input:#ddd4c3;
-  --fg:#2d2a24;--fg-2:#565148;--muted:#857e71;--faint:#aaa294;
+  --fg:#2d2a24;--fg-2:#565148;--muted:#655f54;--faint:#6c6659;
   --brand:#b07a3c;--brand-soft:#faf1e4;--brand-line:#efdfc8;
   --green:#4f8f63;--green-soft:#edf6ef;--green-line:#d8ebdc;
   --amber:#a97a2f;--amber-soft:#fbf3e2;--amber-line:#eeddbc;
@@ -1669,7 +1669,7 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
   --term-bg:#ffffff;--term-bar:#f3f3f3;--term-tabs:#ececec;--term-border:#e5e5e5;--term-fg:#333333;--term-muted:#717171;--term-hover:#e8e8e8;--term-selection:#add6ff;
   --app-shell:#f3f3f3;--page-canvas:#f3f3f3;--surface:#ffffff;--surface-hover:#f0f0f0;--surface-selected:#e4e6f1;
   --sidebar:#f3f3f3;--sidebar-accent:#e8e8e8;--border:#e5e5e5;--border-strong:#cecece;--input:#cecece;
-  --fg:#333333;--fg-2:#444444;--muted:#717171;--faint:#a0a0a0;
+  --fg:#333333;--fg-2:#444444;--muted:#686868;--faint:#6f6f6f;
   --brand:#007acc;--brand-soft:#e8f4fd;--brand-line:#cce4f7;
   --green:#388a34;--green-soft:#eef6ec;--green-line:#d4e8d0;
   --amber:#bf8803;--amber-soft:#fdf6e3;--amber-line:#f0e0b8;
@@ -3239,3 +3239,13 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .persona-rowwrap.picked{background:var(--brand-soft);border-radius:var(--radius-sm)}
 .notes-row.picked{background:var(--brand-soft);border-radius:var(--radius-sm)}
 .pr-entry.picked{background:var(--brand-soft);border-radius:var(--radius-sm);padding-left:6px}
+/* 列表右键菜单 */
+.list-ctx{position:fixed;z-index:600;padding:4px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);box-shadow:var(--shadow-float);display:flex;flex-direction:column;gap:1px}
+.list-ctx button{border:0;background:transparent;color:var(--fg-2);text-align:left;font-size:12px;padding:6px 8px;border-radius:5px;cursor:pointer}
+.list-ctx button:hover{background:var(--surface-hover);color:var(--fg)}
+.list-ctx button.danger{color:var(--red)}
+.list-ctx button.danger:hover{background:var(--red-soft)}
+.list-ctx button:disabled{opacity:.45;cursor:default}
+.persona-list:focus-visible{outline:1px solid var(--brand-line);outline-offset:2px;border-radius:var(--radius-sm)}
+.pr-entry.active{background:var(--surface-hover);border-radius:var(--radius-sm);padding-left:6px}
+.pr-entries:focus-visible,.notes-tree:focus-visible{outline:1px solid var(--brand-line);outline-offset:2px;border-radius:var(--radius-sm)}

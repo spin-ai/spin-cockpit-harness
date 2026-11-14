@@ -5,6 +5,7 @@ import { relTime } from "../ui";
 import { FileTextIcon, RefreshIcon, SearchIcon, SparkleIcon } from "./Icons";
 import { NotesEditor } from "./NotesEditor";
 import { Knowledge } from "./Knowledge";
+import { ListContextMenu } from "./ListContextMenu";
 import { PageHeader } from "./PageHeader";
 import { RowMenu } from "./RowMenu";
 
@@ -72,6 +73,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   const [statusFilter, setStatusFilter] = useState<"" | "draft" | "reviewed" | "stale">("");
   const [picking, setPicking] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [ctx, setCtx] = useState<{ x: number; y: number; page: PageSummary } | null>(null);
   useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
   const [query, setQuery] = useState("");
   const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
@@ -1048,11 +1050,17 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   };
 
   const pageRow = (p: PageSummary) => (
-    <div key={p.id} className={`notes-row ${activeDoc?.id === p.id ? "on" : ""} ${picked.has(p.id) ? "picked" : ""}`}>
+    <div
+      key={p.id}
+      data-nid={p.id}
+      className={`notes-row ${activeDoc?.id === p.id ? "on" : ""} ${picked.has(p.id) ? "picked" : ""}`}
+      onContextMenu={(ev) => { ev.preventDefault(); setCtx({ x: ev.clientX, y: ev.clientY, page: p }); }}
+    >
       {picking && (
         <input
           type="checkbox"
           className="pick-box"
+          data-pid={p.id}
           checked={picked.has(p.id)}
           onChange={() => setPicked((prev) => { const n = new Set(prev); if (n.has(p.id)) n.delete(p.id); else n.add(p.id); return n; })}
           onClick={(e) => e.stopPropagation()}
@@ -1203,6 +1211,17 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
           <button className="notes-banner-x" onClick={() => { setError(""); setNotice(""); }} aria-label="关闭提示">×</button>
         </div>
       )}
+      <ListContextMenu
+        at={ctx ? { x: ctx.x, y: ctx.y } : null}
+        onClose={() => setCtx(null)}
+        items={ctx ? [
+          { label: "打开页面", onSelect: () => void openPage(ctx.page.id) },
+          { label: pins.includes(ctx.page.id) ? "取消收藏" : "收藏 / 置顶", onSelect: () => void pinPage(ctx.page.id) },
+          { label: "复制标题", onSelect: () => void navigator.clipboard?.writeText(ctx.page.title) },
+          { label: "删除页面", danger: true, onSelect: () => void deletePage({ id: ctx.page.id, title: ctx.page.title }) },
+        ] : []}
+      />
+
       {tab === "docs" && (
         <div className="notes-docs-page">
           {tabsBar}
@@ -1279,7 +1298,32 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               )}
             </div>
           )}
-          <div className="notes-tree">
+          <div
+            className="notes-tree"
+            tabIndex={0}
+            onKeyDown={(ev) => {
+              if (tab !== "pages") return;
+              const ordered = [...pinnedPages, ...restPages];
+              if (!ordered.length) return;
+              const idx = Math.max(0, ordered.findIndex((x) => x.id === activeDoc?.id));
+              if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+                ev.preventDefault();
+                const next = ordered[Math.min(ordered.length - 1, Math.max(0, idx + (ev.key === "ArrowDown" ? 1 : -1)))];
+                void openPage(next.id);
+                document.querySelector(`[data-nid="${next.id}"]`)?.scrollIntoView({ block: "nearest" });
+              } else if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "a") {
+                ev.preventDefault();
+                setPicking(true);
+                setPicked(new Set(ordered.map((p) => p.id)));
+              } else if (ev.key === " " && picking) {
+                ev.preventDefault();
+                const id = ordered[idx]?.id;
+                if (id) setPicked((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+              } else if (ev.key === "Escape") {
+                setPicking(false); setPicked(new Set());
+              }
+            }}
+          >
             {tab === "pages" && !tagFilter && pinnedPages.length > 0 && (
               <>
                 <div className="notes-folder-label">收藏 <em>{pinnedPages.length}</em></div>
