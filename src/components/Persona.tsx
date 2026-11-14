@@ -9,11 +9,11 @@ type Act = (type: string, payload?: unknown) => Promise<any>;
 
 type Evidence = {
   id: string; value: string; quote: string; sourceKind?: string; sourceRef?: string;
-  at?: number | null; confidence?: number; conflict?: string | null;
+  at?: number | null; confidence?: number; conflict?: string | null; verified?: boolean | null;
 };
 type CardRow = {
   field: string; label: string; values: string[]; support: number; level: string;
-  conflict: string | null; evidence: Evidence[];
+  conflict: string | null; evidence: Evidence[]; heat?: number; total?: number; overflow?: number;
 };
 type CardSection = { id: string; title: string; rows: CardRow[] };
 /** 导入格式的中文名，用来在提示里说清「识别成了什么」 */
@@ -27,20 +27,26 @@ const FORMAT_LABEL: Record<string, string> = {
 };
 
 type Person = { id: string; name: string; relation: string; groupOnly: boolean; isSelf: boolean };
-type PersonRow = Person & { confirmed: number; pending: number; completeness: number; lastAt: number; tags?: string[] };
+type PersonRow = Person & { confirmed: number; pending: number; review?: number; completeness: number; lastAt: number; supportMedian?: number; tags?: string[] };
 type Network = { id: string; name: string; type: string; strength: number; at: number; context?: string | null; groupOnly?: boolean };
+/** 可观测特征：数得出来的，每次建模重算，不算"事实"，因此不参与冲突/漂移 */
+type Measure = { key: string; field: string; label: string; value: string; num: number | null; prevValue?: string | null; prevNum?: number | null; times: number; computedAt: number; changedAt: number };
+type ReviewItem = { id: string; field: string; label: string; value: string; quote: string; reason: string; expiresAt: number | null; heat: number };
+type MergeHint = { field: string; label: string; personId: string; person: string; keep: { id: string; value: string; evidence: number }; drop: { id: string; value: string; evidence: number }; score: number };
 type Card = {
-  person: Person; sections: CardSection[]; network: Network[]; oneLiner: string; completeness: number;
-  counts: { confirmed: number; pending: number; sensitive: number; fields: number; total: number };
+  person: Person; sections: CardSection[]; network: Network[]; oneLiner: string; oneLinerAt?: number | null; oneLinerStale?: boolean; completeness: number;
+  measures: Measure[]; needsReview: ReviewItem[];
+  metrics: { supportMedian: number; conflictRatio: number; needsReview: number; unverified?: number; overflow?: number; measureAt: number };
+  counts: { confirmed: number; pending: number; sensitive: number; fields: number; measureFields?: number; total: number };
   empty: boolean;
 };
 type Obs = {
   id: string; personId: string | null; person: string; field: string; value: string; quote: string;
-  sourceKind: string; sourceRef: string; sensitive: boolean; createdAt: number;
+  sourceKind: string; sourceRef: string; sensitive: boolean; createdAt: number; evidenceCount?: number; reviewAt?: number | null; quoteVerified?: boolean | null; evidenceStat?: boolean;
 };
 type AsOfField = { field: string; label: string; value?: string; values?: string[]; history?: { value: string; from: number; to: number | null }[]; at: number; confidence: number };
-type AsOf = { at: number; fields: AsOfField[]; count: number };
-type Drift = { kind: "drift" | "conflict"; field: string; label: string; from?: string; to?: string; value?: string; note?: string; at: number };
+type AsOf = { at: number; mode?: "event" | "known"; fields: AsOfField[]; count: number };
+type Drift = { kind: "drift" | "conflict" | "trend"; field: string; label: string; from?: string; to?: string; value?: string; note?: string; at: number; key?: string; times?: number };
 type Inject = { markdown: string; chars: number; budget: number; dropped: number };
 
 const FIELD_LABEL: Record<string, string> = {
@@ -79,7 +85,10 @@ export function Persona({ act }: { act: Act }) {
   const [card, setCard] = useState<Card | null>(null);
   const [drift, setDrift] = useState<Drift[]>([]);
   const [asOfAt, setAsOfAt] = useState("");
+  const [asOfMode, setAsOfMode] = useState<"event" | "known">("event");
   const [asOf, setAsOf] = useState<AsOf | null>(null);
+  const [merges, setMerges] = useState<MergeHint[]>([]);
+  const [skipMerges, setSkipMerges] = useState<Set<string>>(new Set());
   const [inject, setInject] = useState<Inject | null>(null);
   const [openEv, setOpenEv] = useState<Record<string, boolean>>({});
   const [onlyMine, setOnlyMine] = useState(false);
@@ -101,7 +110,7 @@ export function Persona({ act }: { act: Act }) {
   const { dense, toggle: toggleDense } = useDensity("persona");
   const [showFilter, setShowFilter] = useState(false);
   const [adding, setAdding] = useState<{ field: string; value: string } | null>(null);
-  const [job, setJob] = useState<{ running: boolean; total: number; done: number; current: string; cards: number; llmAdded: number; statsAdded: number; skippedCache: number; cancelled: boolean; failed: string[] } | null>(null);
+  const [job, setJob] = useState<{ running: boolean; total: number; done: number; current: string; cards: number; llmAdded: number; statsAdded: number; unverified?: number; skippedCache: number; skippedNames?: string[]; cancelled: boolean; failed: string[]; failedCount?: number } | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -126,14 +135,17 @@ export function Persona({ act }: { act: Act }) {
   const openPerson = useCallback(async (id: string) => {
     if (!id) return;
     try {
-      const [c, d, inj] = await Promise.all([
+      const [c, d, inj, mg] = await Promise.all([
         act("personaCard", { personId: id }),
         act("personaDrift", { personId: id }),
         act("personaInject", { personId: id, maxChars: 6000 }),
+        act("personaMergeSuggestions", { personId: id, limit: 5 }).catch(() => []),
       ]);
       setCard(c);
       setDrift(d || []);
       setInject(inj);
+      setMerges(mg || []);
+      setSkipMerges(new Set());
       setAnswer(null);
       setAsOf(null);
     } catch (err) { fail(err); }
@@ -141,6 +153,8 @@ export function Persona({ act }: { act: Act }) {
 
   useEffect(() => { void loadList(); }, [loadList]);
   useEffect(() => { if (selected) void openPerson(selected); }, [selected, openPerson]);
+  // 到期扫描：只标 stale（不删数据），进页面跑一次，复核队列才不会永远是空的
+  useEffect(() => { void act("personaSweep").catch(() => {}); }, [act]);
 
   const reload = async (id = selected) => {
     await loadList();
@@ -148,17 +162,17 @@ export function Persona({ act }: { act: Act }) {
   };
 
   // AI/统计建模：动作会一直跑到结束，所以启动后不 await，改为轮询进度
-  const startModel = async (mode: "llm" | "stats", limitOverride?: number, names?: string[], ask = true) => {
+  const startModel = async (mode: "llm" | "stats", limitOverride?: number, names?: string[], ask = true, ignoreCache = false) => {
     if (ask && mode === "llm" && !window.confirm("建模会把联系人的部分发言样本发给模型分析（默认最多 12 人，同一份样本只算一次）。继续？")) return;
     try {
       const st = await act("personaModelStatus");
       if (st?.running) { setNotice("已有建模任务在跑"); return; }
-      setJob({ running: true, total: 0, done: 0, current: "", cards: 0, llmAdded: 0, statsAdded: 0, skippedCache: 0, cancelled: false, failed: [] });
+      setJob({ running: true, total: 0, done: 0, current: "", cards: 0, llmAdded: 0, statsAdded: 0, skippedCache: 0, skippedNames: [], cancelled: false, failed: [] });
       setProgress(0);
       const limit = limitOverride ?? (mode === "llm" ? 12 : 0);
-      void act("personaModel", { mode, limit, ...(names?.length ? { names } : {}) })
+      void act("personaModel", { mode, limit, ...(ignoreCache ? { ignoreCache: true } : {}), ...(names?.length ? { names } : {}) })
         .then(() => reload())
-        .catch((err) => setNotice(String((err as Error)?.message || err)));
+        .catch((err) => { setJob(null); setNotice(String((err as Error)?.message || err)); });
     } catch (err) { setNotice(String((err as Error)?.message || err)); }
   };
 
@@ -186,7 +200,10 @@ export function Persona({ act }: { act: Act }) {
         setJob(st);
         setProgress(st.total ? Math.round((st.done / st.total) * 100) : 0);
         if (!st.running) {
-          setNotice(`建模完成：${st.cards} 人出卡 · 统计 ${st.statsAdded} 条 · AI 结论 ${st.llmAdded} 条待确认${st.skippedCache ? ` · 缓存跳过 ${st.skippedCache}` : ""}${st.cancelled ? " · 已取消" : ""}`);
+          const skip = st.skippedCache ? ` · 缓存跳过 ${st.skippedCache} 人${st.skippedNames?.length ? `（${st.skippedNames.slice(0, 3).join("、")}${st.skippedCache > 3 ? " 等" : ""}）` : ""}` : "";
+          const failed = st.failed?.length ? ` · ${st.failedCount || st.failed.length} 人没出结论：${String(st.failed[0]).slice(0, 60)}` : "";
+          const unv = st.unverified ? ` · 其中 ${st.unverified} 条引用在样本里核对不到（已标出、降权）` : "";
+          setNotice(`建模完成：${st.cards} 人出卡 · 统计 ${st.statsAdded} 条 · AI 结论 ${st.llmAdded} 条待确认${unv}${skip}${failed}${st.cancelled ? " · 已取消" : ""}`);
           await reload();
         }
       } catch { /* 结束时动作已抛错，忽略 */ }
@@ -199,9 +216,62 @@ export function Persona({ act }: { act: Act }) {
   const resolve = async (id: string, accept: boolean, sensitive = false) => {
     try {
       await act("personaResolve", { id, accept, sensitive });
-      setNotice(accept ? "已确认" : "已拒绝，同类不再打扰");
+      setNotice(accept ? "已确认" : "已拒绝；同类事实第二次被观察到时会再问一次，不会永久静音");
       await reload();
     } catch (err) { fail(err); }
+  };
+
+  /** 复核：仍然成立就续期，否则用 valid_to 收口（不删除，历史仍可回查） */
+  const reviewOne = async (id: string, keep: boolean) => {
+    try {
+      await act("personaReviewResolve", { id, keep });
+      setNotice(keep ? "已续期，重新进人设卡" : "已收口（不删除，可在回看里找到）");
+      await reload();
+    } catch (err) { fail(err); }
+  };
+
+  /** 批量复核：13 条逐个点没人干，但要到人确认，所以给两个整体动作而不是自动处理 */
+  const reviewAll = async (keep: boolean) => {
+    if (!card) return;
+    setBusy(true);
+    try {
+      const res = await act("personaReviewMany", { personId: card.person.id, keep });
+      setNotice(keep ? `${res?.resolved || 0} 条已续期` : `${res?.resolved || 0} 条已收口（回看里仍可查）`);
+      await reload();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const mergeOne = async (m: MergeHint) => {
+    try {
+      await act("personaMergeApply", { keepId: m.keep.id, dropId: m.drop.id });
+      setNotice(`已合并：${m.drop.value} → ${m.keep.value}（证据累加）`);
+      await reload();
+    } catch (err) { fail(err); }
+  };
+
+  /** 旧建模把统计值当证据写的结论：批量拒绝（一次点击，可预见结果） */
+  const rejectStat = async () => {
+    const list = visibleQueue.filter((o) => o.evidenceStat && !o.sensitive);
+    if (!list.length) return;
+    if (!window.confirm(`拒绝这 ${list.length} 条「证据是统计值」的结论？\n\n统计结论已经由「可观测特征」承担，这些留着只会让待确认列表变成过时数字的回放。\n拒绝会记入「不再打扰」，同一结论不会再被提出来。`)) return;
+    setBusy(true);
+    try {
+      for (const item of list) await act("personaResolve", { id: item.id, accept: false });
+      setNotice(`已拒绝 ${list.length} 条统计值结论`);
+      await reload();
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  /** 只确认「有原话可回查」的那批：批量但不盲目 */
+  const acceptVerified = async () => {
+    if (!confirmable.length) return;
+    if (!window.confirm(`确认这 ${confirmable.length} 条？\n\n它们的引用都能在聊天记录里核对上，且不含敏感项。\n其余「引用待核对」和「证据是统计值」的会留在队列里等你逐条看。`)) return;
+    setBusy(true);
+    try {
+      for (const item of confirmable) await act("personaResolve", { id: item.id, accept: true });
+      setNotice(`已确认 ${confirmable.length} 条（引用可核对）`);
+      await reload();
+    } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
   const acceptMine = async () => {
@@ -222,7 +292,8 @@ export function Persona({ act }: { act: Act }) {
       const res = await act("personaImport", { text: paste, selfName, title: "手动粘贴", kind: "chat" });
       const fmt = res?.format ? `（${FORMAT_LABEL[res.format] || res.format}）` : "";
       const warn = Array.isArray(res?.warnings) && res.warnings.length ? ` · ${res.warnings[0]}` : "";
-      setNotice(res?.deduped ? "内容重复，已跳过" : `解析 ${res?.messages || 0} 条发言${fmt}，新增 ${res?.added || 0} 条待确认${warn}`);
+      const stats = res?.statsPeople ? ` · ${res.statsPeople} 人算出可观测特征` : "";
+      setNotice(res?.deduped ? "内容重复，已跳过" : `解析 ${res?.messages || 0} 条发言${fmt}，新增 ${res?.added || 0} 条待确认${stats}${warn}`);
       setPaste("");
       await reload();
     } catch (err) { fail(err); } finally { setBusy(false); }
@@ -234,8 +305,9 @@ export function Persona({ act }: { act: Act }) {
       const res = await act("personaImportPick");
       const added = res?.added || [];
       const fmts = [...new Set(added.map((a: { format?: string }) => a.format).filter(Boolean))].map((f) => FORMAT_LABEL[String(f)] || String(f));
+      const statPeople = added.reduce((n: number, a: { statsPeople?: number }) => n + (a.statsPeople || 0), 0);
       setNotice(added.length
-        ? `导入 ${added.length} 个文件${fmts.length ? `（${fmts.join(" / ")}）` : ""}，新增 ${added.reduce((n: number, a: { added?: number }) => n + (a.added || 0), 0)} 条待确认`
+        ? `导入 ${added.length} 个文件${fmts.length ? `（${fmts.join(" / ")}）` : ""}，新增 ${added.reduce((n: number, a: { added?: number }) => n + (a.added || 0), 0)} 条待确认${statPeople ? ` · ${statPeople} 人算出可观测特征` : ""}`
         : "没有选择文件");
       await reload();
     } catch (err) { fail(err); } finally { setBusy(false); }
@@ -295,6 +367,26 @@ export function Persona({ act }: { act: Act }) {
     if (!window.confirm(`对所选 ${names.length} 人跑建模（未缓存的会调用模型）？`)) return;
     setPicking(false);
     await startModel("llm", 0, names, false);
+  };
+
+  /**
+   * 合并人物：同一人从不同导出进来会变成两条（「纸鸢戏」/「纸鸢戏(工作)」）。
+   * 合并只搬数据不改结论：观察、关系、可观测特征都并到保留的那个人，旧名字记进别名。
+   */
+  const batchMerge = async () => {
+    const ids = [...picked];
+    if (ids.length < 2) return;
+    const keep = people.find((p) => p.id === ids[0]);
+    const rest = ids.slice(1).map((id) => people.find((p) => p.id === id)?.name).filter(Boolean) as string[];
+    if (!keep || !rest.length) return;
+    if (!window.confirm(`把 ${rest.join("、")} 合并到「${keep.name}」？\n\n观察 / 关系 / 可观测特征都会并过去，被合并的名字记进别名（同一份导出再导入时不会再建出一个人）。\n这个操作没有撤销。`)) return;
+    try {
+      await act("personaMerge", { keepId: keep.id, aliasIds: ids.slice(1) });
+      setNotice(`已把 ${rest.length} 人合并到「${keep.name}」`);
+      setPicked(new Set()); setPicking(false);
+      setSelected(keep.id);
+      await reload(keep.id);
+    } catch (err) { fail(err); }
   };
 
   const batchCopyCards = async () => {
@@ -430,6 +522,21 @@ export function Persona({ act }: { act: Act }) {
     [pending, onlyMine, selected],
   );
   const minePending = pending.filter((item) => item.personId === selected);
+  /**
+   * 「只确认这些」的选择规则（严格，可解释）：
+   *  ① 引用能在聊天记录里核对上（quoteVerified !== false）
+   *  ② 证据不是统计值（统计由可观测特征承担）
+   *  ③ 不是敏感项（敏感必须逐条判断）
+   * 换句话说：只确认「有原话可回查、且不敏感」的那些，其余留在队列里让人一条条看。
+   */
+  const statCount = visibleQueue.filter((o) => o.evidenceStat && !o.sensitive).length;
+  const confirmable = useMemo(
+    () => visibleQueue.filter((o) => !o.sensitive && !o.evidenceStat
+      && o.quoteVerified === true
+      && String(o.quote || "").trim().length >= 6
+      && String(o.quote || "").trim() !== "(模型归纳)"),
+    [visibleQueue],
+  );
   const searchable = useMemo(
     () => people.filter((p) => {
       if (onlyModeled && !(p.tags || []).includes("已建模")) return false;
@@ -455,6 +562,7 @@ export function Persona({ act }: { act: Act }) {
 
   const toggleEv = (key: string) => setOpenEv((prev) => ({ ...prev, [key]: !prev[key] }));
   const sectionSupport = (sec: CardSection) => Math.max(0, ...sec.rows.map((r) => r.support));
+  const sectionOverflow = (sec: CardSection) => sec.rows.reduce((n, r) => n + (r.overflow || 0), 0);
   const sectionLevel = (sec: CardSection) => {
     const n = sectionSupport(sec);
     return n >= 4 ? "高" : n >= 2 ? "中" : n ? "低" : "无";
@@ -504,7 +612,7 @@ export function Persona({ act }: { act: Act }) {
       <section className="persona-sec" key={sec.id}>
         <div className="persona-sec-head">
           <h3>{sec.title}</h3>
-          <em>依据 {sectionSupport(sec)} · 置信 {sectionLevel(sec)}</em>
+          <em>依据 {sectionSupport(sec)} · 置信 {sectionLevel(sec)}{sectionOverflow(sec) ? ` · 另有 ${sectionOverflow(sec)} 条较早` : ""}</em>
           <span style={{ flex: 1 }} />
           {hasEvidence && (
             <button className="link" onClick={() => toggleEv(key)}>{openEv[key] ? "收起原话" : "展开原话"}</button>
@@ -548,6 +656,7 @@ export function Persona({ act }: { act: Act }) {
                   <span>{row.label}</span>
                   {e.at ? <span>{fmtDate(e.at)}</span> : null}
                   <span>{e.sourceKind === "doc" ? "资料" : "聊天"}</span>
+                  {e.verified === false ? <span className="tag warn" title="建模时在样本里核对不到这句引用">引用待核对</span> : null}
                   {e.conflict ? <span className="tag warn">{e.conflict}</span> : null}
                 </div>
               </div>
@@ -588,12 +697,19 @@ export function Persona({ act }: { act: Act }) {
                 try {
                   const plan = await act("personaModelPlan", { minMessages: 30 });
                   const calls = plan?.calls ?? plan?.eligible ?? 0;
-                  if (!calls) { setNotice("没有需要建模的人（可能都已缓存）"); return; }
+                  if (!calls) { setNotice(`没有需要建模的人：可建模 ${plan?.eligible || 0} 人，样本都和上次一样（要重建请用「忽略缓存重跑」）`); return; }
                   if (!window.confirm(`一键全部建模：\n\n可建模 ${plan.eligible} 人（已缓存 ${plan.cached} 人跳过）\n本次预计 ${calls} 次模型调用，按顺序逐人跑，可随时取消。\n\n继续？`)) return;
                   await startModel("llm", 0, undefined, false);
                 } catch (err) { setNotice(String((err as Error)?.message || err)); }
               }}
             >一键全部建模（未建模的全部跑一遍）</button>
+            <button
+              disabled={Boolean(job?.running)}
+              onClick={() => {
+                if (!window.confirm("忽略已分析缓存，重新对前 12 人调模型？\n\n缓存只是为了不重复花钱；如果上次只写了「一句话」却没出结论（旧版本的问题），或者你删过结论，就用这个重跑。")) return;
+                void startModel("llm", 12, undefined, false, true);
+              }}
+            >忽略缓存重跑（默认 12 人）</button>
             <button onClick={() => void startModel("stats")} disabled={Boolean(job?.running)}>只跑统计（不调用模型，不消耗额度）</button>
             <button onClick={() => { setJob(null); setNotice(`上次任务：${job?.cards || 0} 人出卡`); }}>查看上次进度</button>
           </RowMenu>
@@ -612,7 +728,7 @@ export function Persona({ act }: { act: Act }) {
           <div className="pr-modeljob-main">
             <b>{job.running ? (job.cancelled ? `正在停止…（已完成 ${job.done}/${job.total || "?"}）` : `建模中 · ${job.done}/${job.total || "?"}`) : `本次建模完成 · ${job.cards} 人出卡`}</b>
             <span className="tiny faint">
-              {job.running ? (job.current ? `当前：${job.current}` : "准备中…") : `统计 ${job.statsAdded} 条 · 模型结论 ${job.llmAdded} 条待确认${job.skippedCache ? ` · 缓存跳过 ${job.skippedCache}` : ""}`}
+              {job.running ? (job.current ? `当前：${job.current}` : "准备中…") : `统计 ${job.statsAdded} 条 · 模型结论 ${job.llmAdded} 条待确认${job.unverified ? `（${job.unverified} 条引用核对不到）` : ""}${job.skippedCache ? ` · 缓存跳过 ${job.skippedCache} 人${job.skippedNames?.length ? `（${job.skippedNames.slice(0, 3).join("、")}${job.skippedCache > 3 ? " 等" : ""}）` : ""}` : ""}${!job.running && job.failed?.length ? ` · ${job.failedCount || job.failed.length} 人未出结论` : ""}`}
             </span>
           </div>
           <div className="pr-modeljob-bar"><i style={{ width: `${job.running ? Math.max(4, progress) : 100}%` }} /></div>
@@ -669,6 +785,12 @@ export function Persona({ act }: { act: Act }) {
           <span style={{ flex: 1 }} />
           <button className="btn tiny-btn primary" onClick={() => void batchModel()} disabled={!picked.size}>建模所选</button>
           <button className="btn tiny-btn" onClick={() => void batchCopyCards()} disabled={!picked.size}>复制角色卡</button>
+          <button
+            className="btn tiny-btn"
+            onClick={() => void batchMerge()}
+            disabled={picked.size < 2}
+            title="把所选合并到第一个点选的人（观察 / 关系 / 可观测特征并过去，旧名字记进别名）"
+          >合并到「{[...picked].map((id) => people.find((p) => p.id === id)?.name).filter(Boolean)[0] || "第 1 个"}」</button>
           <button className="btn tiny-btn" onClick={() => void batchRemove()} disabled={!picked.size}>删除</button>
           <button className="icon-btn" title="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}>×</button>
         </div>
@@ -781,9 +903,18 @@ export function Persona({ act }: { act: Act }) {
                   <p>
                     <span>依据 {card.counts.confirmed} 条原话</span>
                     <span>·</span>
-                    <span>覆盖 {card.counts.fields}/{card.counts.total} 类字段</span>
+                    <span>证据中位 {card.metrics?.supportMedian || 0}</span>
+                    <span>·</span>
+                    <span>
+                      覆盖 {card.counts.fields}/{card.counts.total} 类字段
+                      {card.counts.measureFields ? `（+${card.counts.measureFields} 项可观测）` : ""}
+                    </span>
                     {card.counts.pending > 0 && <span>·</span>}
                     {card.counts.pending > 0 && <span>{card.counts.pending} 条待确认</span>}
+                    {(card.metrics?.unverified || 0) > 0 && <span>·</span>}
+                    {(card.metrics?.unverified || 0) > 0 && <span className="warn">{card.metrics.unverified} 条引用待核对</span>}
+                    {(card.needsReview?.length || 0) > 0 && <span>·</span>}
+                    {(card.needsReview?.length || 0) > 0 && <span className="warn">{card.needsReview.length} 条待复核</span>}
                   </p>
                 </div>
                 <div className="row gap6" style={{ alignItems: "center" }}>
@@ -824,7 +955,10 @@ export function Persona({ act }: { act: Act }) {
                   {card.oneLiner && (
                     <p className="persona-oneline">
                       {card.oneLiner}
-                      <span>由 {card.counts.confirmed} 条已确认观察归纳 · 可改写；没有依据的推断进不来</span>
+                      <span>
+                        由 {card.counts.confirmed} 条已确认观察归纳 · 可改写；没有依据的推断进不来
+                        {card.oneLinerStale ? ` · ${fmtDate(card.oneLinerAt)}写的，之后又有新结论，建议重写` : ""}
+                      </span>
                     </p>
                   )}
 
@@ -852,6 +986,33 @@ export function Persona({ act }: { act: Act }) {
                   )}
 
                   {card.sections.map(renderSection)}
+
+                  {card.measures.length > 0 && (
+                    <section className="persona-sec">
+                      <div className="persona-sec-head">
+                        <h3>可观测特征</h3>
+                        <em>{card.metrics?.measureAt ? `重算于 ${fmtDate(card.metrics.measureAt)}` : "统计"}</em>
+                        <span style={{ flex: 1 }} />
+                        <span className="tiny faint">数得出来的，每次建模重算，不算事实</span>
+                      </div>
+                      <div className="persona-beh">
+                        {card.measures.map((m) => (
+                          <div className="persona-beh-row" key={m.key}>
+                            <span className="k">{m.label}</span>
+                            <span className="v">
+                              {m.value}
+                              {m.prevValue && m.prevValue !== m.value
+                                ? <span className="tiny faint" style={{ display: "block" }}>上次：{m.prevValue}</span>
+                                : null}
+                            </span>
+                            <span className="m">
+                              {m.times > 0 ? <span className="tiny faint">{m.times} 次变化</span> : null}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
 
                   {card.network.length > 0 && (
                     <section className="persona-sec">
@@ -900,6 +1061,19 @@ export function Persona({ act }: { act: Act }) {
                 {onlyMine ? "看全部" : "只看此人"}
               </button>
             </div>
+            {(statCount > 0 || confirmable.length > 0) && (
+              <div className="persona-batch">
+                <span>
+                  证据质量：
+                  {statCount > 0 ? `${statCount} 条是统计值` : ""}
+                  {statCount > 0 && confirmable.length > 0 ? " · " : ""}
+                  {confirmable.length > 0 ? `${confirmable.length} 条引用可核对` : ""}
+                </span>
+                <span style={{ flex: 1 }} />
+                {statCount > 0 && <button className="link" onClick={() => void rejectStat()} disabled={busy}>拒绝统计值</button>}
+                {confirmable.length > 0 && <button className="link" onClick={() => void acceptVerified()} disabled={busy}>只确认核过的</button>}
+              </div>
+            )}
             {minePending.some((item) => !item.sensitive) && (
               <div className="persona-batch">
                 <span>{card?.person.name || "此人"} 还有 {minePending.filter((i) => !i.sensitive).length} 条可批量确认</span>
@@ -916,8 +1090,18 @@ export function Persona({ act }: { act: Act }) {
                   {o.person} · <span className={`tag ${o.sensitive ? "warn" : ""}`}>{FIELD_LABEL[o.field] || o.field}</span>
                 </div>
                 {o.quote && <q>{o.quote}</q>}
+                {o.evidenceStat && (
+                  <p className="notes-meta-empty" style={{ margin: "2px 0 4px" }}>
+                    这条的「证据」其实是统计值，不是原话 —— 统计结论已经由「可观测特征」承担，多半可以直接拒绝。
+                  </p>
+                )}
+                {!o.evidenceStat && o.quoteVerified === false && (
+                  <p className="notes-meta-empty" style={{ margin: "2px 0 4px" }}>
+                    这条引用在建模用的样本里核对不到，可能被模型改写或概括过 —— 确认前建议回聊天记录对一下。
+                  </p>
+                )}
                 <div className="qfoot">
-                  <span className="src">{o.sourceKind === "doc" ? "资料" : "聊天"} · {fmtDate(o.createdAt)}</span>
+                  <span className="src">{o.sourceKind === "doc" ? "资料" : "聊天"} · {fmtDate(o.createdAt)}{(o.evidenceCount || 1) > 1 ? ` · 已见 ${o.evidenceCount} 次` : ""}{o.reviewAt ? " · 复审" : ""}{o.quoteVerified === false ? " · 引用待核对" : ""}</span>
                   <button className="btn tiny-btn" onClick={() => void resolve(o.id, false)}>拒绝</button>
                   <button className="btn tiny-btn ok" onClick={() => void resolve(o.id, true, o.sensitive)}>确认</button>
                 </div>
@@ -926,8 +1110,59 @@ export function Persona({ act }: { act: Act }) {
             {visibleQueue.length > 12 && <p className="notes-meta-empty">还有 {visibleQueue.length - 12} 条未显示。</p>}
           </div>
 
+          {card && card.needsReview.length > 0 && (
+            <div className="kv-block">
+              <div className="persona-block-title">
+              衰减与复核 <em>{card.needsReview.length}</em>
+              <button className="link" disabled={busy} onClick={() => void reviewAll(true)}>全部仍然成立</button>
+            </div>
+              <p className="notes-meta-empty" style={{ marginTop: 0 }}>
+                这几条说的时间已经过了，不再进人设卡与注入。「仍然成立」续期，否则用 valid_to 收口 —— 数据不删，回看里还在。
+              </p>
+              {card.needsReview.slice(0, 8).map((r) => (
+                <div className="persona-qitem" key={r.id}>
+                  <div className="qhead">{r.label} · <span className="tag warn">{r.reason}</span></div>
+                  <q>{r.value}</q>
+                  <div className="qfoot">
+                    <span className="src">{r.expiresAt ? `到期 ${fmtDate(r.expiresAt)}` : "未到期"}</span>
+                    <button className="btn tiny-btn" onClick={() => void reviewOne(r.id, false)}>已过期</button>
+                    <button className="btn tiny-btn ok" onClick={() => void reviewOne(r.id, true)}>仍然成立</button>
+                  </div>
+                </div>
+              ))}
+              {card.needsReview.length > 8 && <p className="notes-meta-empty">还有 {card.needsReview.length - 8} 条。</p>}
+            </div>
+          )}
+
+          {merges.filter((m) => !skipMerges.has(`${m.keep.id}:${m.drop.id}`)).length > 0 && (
+            <div className="kv-block">
+              <div className="persona-block-title">近似说法 <em>{merges.length}</em></div>
+              <p className="notes-meta-empty" style={{ marginTop: 0 }}>
+                同一个字段里可能有两条在说一件事。合并只累加证据，不是改写结论 —— 是否同一件事由你判断。
+              </p>
+              {merges.filter((m) => !skipMerges.has(`${m.keep.id}:${m.drop.id}`)).slice(0, 4).map((m) => (
+                <div className="persona-qitem" key={`${m.keep.id}:${m.drop.id}`}>
+                  <div className="qhead">{m.label} · <span className="tag">相似 {Math.round(m.score * 100)}%</span></div>
+                  <q>{m.drop.value} → {m.keep.value}</q>
+                  <div className="qfoot">
+                    <span className="src">依据 {m.drop.evidence} + {m.keep.evidence}</span>
+                    <button className="btn tiny-btn" onClick={() => setSkipMerges((prev) => new Set(prev).add(`${m.keep.id}:${m.drop.id}`))}>不合并</button>
+                    <button className="btn tiny-btn ok" onClick={() => void mergeOne(m)}>合并</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="kv-block">
-            <div className="persona-block-title">回看 <em>{asOf ? new Date(asOf.at).toLocaleDateString() : "当时什么是真的"}</em></div>
+            <div className="persona-block-title">
+              回看
+              <em>{asOf ? `${new Date(asOf.at).toLocaleDateString()} · ${asOf.mode === "known" ? "当时已知" : "事件时间"}` : "当时什么是真的"}</em>
+            </div>
+            <div className="row gap6" style={{ marginBottom: 6 }}>
+              <button className={`list-chip ${asOfMode === "event" ? "on" : ""}`} onClick={() => setAsOfMode("event")} title="回放事实：那个时间点什么是真的">事件时间</button>
+              <button className={`list-chip ${asOfMode === "known" ? "on" : ""}`} onClick={() => setAsOfMode("known")} title="回放认知：系统在那个时间点已经知道什么（双时间）">当时已知</button>
+            </div>
             <div className="row gap6" style={{ alignItems: "center" }}>
               <input
                 className="kv-input"
@@ -941,7 +1176,7 @@ export function Persona({ act }: { act: Act }) {
                 className="btn tiny-btn"
                 disabled={!asOfAt || !selected}
                 onClick={() => void (async () => {
-                  try { setAsOf(await act("personaAsOf", { personId: selected, at: new Date(`${asOfAt}T23:59:59`).getTime() })); }
+                  try { setAsOf(await act("personaAsOf", { personId: selected, at: new Date(`${asOfAt}T23:59:59`).getTime(), mode: asOfMode })); }
                   catch (err) { fail(err); }
                 })()}
               >回看</button>
@@ -961,7 +1196,9 @@ export function Persona({ act }: { act: Act }) {
                       </span>
                     </div>
                   ))}
-                  <p className="notes-meta-empty">只显示当时已确认的事实；未确认的推断不算。</p>
+                  <p className="notes-meta-empty">
+                    「事件时间」看那个时间点什么是真的；「当时已知」只算系统当时已经得知的事实（双时间）。
+                  </p>
                 </div>
               )
             ) : (
@@ -982,7 +1219,7 @@ export function Persona({ act }: { act: Act }) {
                       <b>{d.label}</b>
                       {d.kind === "drift" ? `：${d.from} → ${d.to}` : `：${d.value}${d.note ? `（${d.note}）` : ""}`}
                     </span>
-                    <span className={`tag ${d.kind === "conflict" ? "warn" : ""}`}>{d.kind === "drift" ? "漂移" : "矛盾"}</span>
+                    <span className={`tag ${d.kind === "conflict" ? "warn" : ""}`}>{d.kind === "drift" ? "漂移" : d.kind === "trend" ? "特征变化" : "矛盾"}</span>
                   </div>
                 ))}
               </div>
@@ -1001,7 +1238,8 @@ export function Persona({ act }: { act: Act }) {
             </div>
             <pre className="kv-inject">{inject?.markdown || "（还没有可注入的人设卡）"}</pre>
             <p className="notes-meta-empty">
-              敏感项永不注入。预算不足时先砍关系网、再砍其他事实；一句话概括与处事方式优先保留。
+              敏感项永不注入。按「字段优先级 × 热度（衰减后的权重）× 与问题的相关性」打分填预算，每节有配额上限。
+              预算不足时先砍长期事实、再砍关系网。
               {inject?.dropped ? `本次省略 ${inject.dropped} 条。` : ""}
             </p>
           </div>

@@ -1,0 +1,763 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>人物建模 · 原型</title>
+<!--
+  人物（原「人像」）页面优化原型
+  设计依据：
+    1. 左：人物列表常驻（选择不销毁上下文）
+    2. 中：人物卡 —— 业界 Card V2 / character bible 的"单一可读面"，
+       但每一条结论都挂 quote 证据（这是角色卡体系没有的）
+    3. 右：待确认队列置顶 + 性格漂移/矛盾 + 注入预览（和记忆页对称）
+    4. 字段补「处事方式」与「说话风格」：陈述性事实无法回答"他会怎么反应/怎么说"
+  全部取值来自 src/design-system.css token，无一次性颜色/圆角/阴影。
+-->
+<style>
+:root{
+  --font-sans:"Geist Variable","Geist",-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:"Geist Mono Variable","Geist Mono","SF Mono",SFMono-Regular,ui-monospace,Menlo,Consolas,monospace;
+  --radius:10px;--radius-sm:6px;--radius-lg:14px;--radius-control:8px;
+  --shadow-1:0 1px 2px rgba(10,10,10,.045);
+  --shadow-float:0 18px 46px rgba(0,0,0,.22),0 2px 8px rgba(0,0,0,.10);
+  --text-title:22px;
+}
+:root[data-theme="light"]{
+  --page-canvas:#fafafa;--surface:#ffffff;--surface-hover:#f5f5f5;--surface-selected:#ededed;
+  --border:#e5e5e5;--border-strong:#d4d4d4;--input:#e5e5e5;
+  --fg:#0a0a0a;--fg-2:#404040;--muted:#696969;--faint:#a3a3a3;
+  --brand:#171717;--brand-soft:#f2f2f2;--brand-line:#dedede;
+  --green:#3f9a68;--green-soft:#edf8f2;--green-line:#d5eedf;
+  --amber:#a97a2f;--amber-soft:#fdf8ee;--amber-line:#f2e3c4;
+  --red:#cf5f5d;--red-soft:#fdf2f2;--red-line:#f4d7d7;
+  --purple:#7d67d1;--purple-soft:#f4f2fd;--purple-line:#e3ddf8;
+}
+:root[data-theme="dark"]{
+  --page-canvas:#0a0a0a;--surface:#171717;--surface-hover:#262626;--surface-selected:#2e2e2e;
+  --border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.14);--input:rgba(255,255,255,.16);
+  --fg:#f0f0f0;--fg-2:#d4d4d4;--muted:#a3a3a3;--faint:#737373;
+  --brand:#e5e5e5;--brand-soft:#262626;--brand-line:#3a3a3a;
+  --green:#5fb884;--green-soft:rgba(95,184,132,.12);--green-line:rgba(95,184,132,.28);
+  --amber:#c9a25c;--amber-soft:rgba(201,162,92,.12);--amber-line:rgba(201,162,92,.26);
+  --red:#d97a78;--red-soft:rgba(217,122,120,.12);--red-line:rgba(217,122,120,.26);
+  --purple:#9c8ae0;--purple-soft:rgba(156,138,224,.12);--purple-line:rgba(156,138,224,.26);
+  --shadow-1:0 1px 2px rgba(0,0,0,.22);
+  --shadow-float:0 18px 46px rgba(0,0,0,.52),0 2px 8px rgba(0,0,0,.28);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--page-canvas);color:var(--fg);
+  font:13px/1.55 var(--font-sans);-webkit-font-smoothing:antialiased;
+}
+::selection{background:color-mix(in srgb,var(--fg) 14%,transparent);color:inherit}
+button{font-family:inherit}
+.shell{max-width:1280px;margin:0 auto;padding:22px 28px 44px;display:flex;flex-direction:column;gap:14px}
+
+/* ── PageHeader ───────────────────────────────────────────── */
+.page-header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 20px;align-items:end;padding-bottom:2px}
+.page-header-copy{min-width:0;display:flex;flex-direction:column;gap:3px}
+.kicker{font-size:10px;line-height:1.4;letter-spacing:.16em;text-transform:uppercase;color:var(--brand);font-weight:700}
+h1{margin:0;font-size:var(--text-title);line-height:1.15;font-weight:600;letter-spacing:-.03em}
+.stats{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.stats b{color:var(--fg);font-weight:600;font-family:var(--mono);font-size:11.5px}
+.stats .warn b{color:var(--amber)}
+.page-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+
+/* ── 基础控件 ─────────────────────────────────────────────── */
+.btn{height:30px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-control);
+  background:var(--surface);color:var(--fg-2);font-size:12.5px;display:inline-flex;align-items:center;gap:5px;
+  white-space:nowrap;cursor:pointer;box-shadow:none;transition:background .12s,border-color .12s}
+.btn:hover{background:var(--surface-hover);border-color:var(--border-strong)}
+.btn.primary{background:var(--fg);border-color:var(--fg);color:var(--surface);box-shadow:var(--shadow-1)}
+.btn.primary:hover{background:color-mix(in srgb,var(--fg) 92%,var(--surface))}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.btn.ghost:hover{background:var(--surface);border-color:transparent;color:var(--fg);box-shadow:var(--shadow-1)}
+.btn.tiny{height:26px;padding:0 8px;font-size:11.5px}
+.btn.ok{color:var(--green);background:var(--green-soft);border-color:var(--green-line)}
+.btn.ok:hover{background:var(--green-soft);border-color:var(--green)}
+.btn em{font-style:normal;font-family:var(--mono);font-size:11px;opacity:.7}
+.icon-btn{width:26px;height:26px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--muted);
+  display:grid;place-items:center;font-size:13px;line-height:1;cursor:pointer}
+.icon-btn:hover{background:var(--surface-hover);color:var(--fg)}
+.link{border:0;background:none;color:var(--muted);font-size:11.5px;padding:0;cursor:pointer}
+.link:hover{color:var(--fg)}
+button:focus-visible,input:focus-visible{outline:2px solid color-mix(in srgb,var(--fg) 30%,transparent);outline-offset:2px}
+input[type="search"]{
+  height:28px;width:100%;border:1px solid var(--input);border-radius:var(--radius-sm);background:var(--surface);
+  color:var(--fg);padding:0 8px;font:11.5px var(--font-sans);outline:none
+}
+input[type="search"]:focus{border-color:var(--border-strong);box-shadow:var(--shadow-1)}
+
+/* ── 三栏 ─────────────────────────────────────────────────── */
+.grid{display:grid;grid-template-columns:216px minmax(0,1fr) 320px;gap:18px;align-items:start}
+.col{min-width:0;display:flex;flex-direction:column;gap:16px}
+.block{display:flex;flex-direction:column;gap:7px;padding:12px 0;border-top:1px solid var(--border)}
+.block:first-child{border-top:0;padding-top:0}
+.block-title{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:var(--fg-2)}
+.block-title em{font-style:normal;font-family:var(--mono);font-size:10.5px;color:var(--faint);font-weight:500}
+.block-title .spacer{flex:1}
+
+/* ── 左：人物列表 ─────────────────────────────────────────── */
+.group-label{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);font-weight:600;padding:2px 0 1px}
+.plist{display:flex;flex-direction:column;gap:1px}
+.prow{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:8px;align-items:center;
+  padding:6px 7px;border-radius:var(--radius-sm);border:0;background:transparent;text-align:left;cursor:pointer;color:var(--fg-2)}
+.prow:hover{background:var(--surface-hover)}
+.prow.on{background:var(--surface-selected);box-shadow:inset 2px 0 0 var(--brand)}
+.avatar{width:24px;height:24px;border-radius:999px;display:grid;place-items:center;flex:none;
+  font-size:11px;font-weight:600;background:var(--brand-soft);color:var(--fg-2);border:1px solid var(--border)}
+.prow .pname{font-size:11.5px;font-weight:550;color:var(--fg-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prow.on .pname{color:var(--fg)}
+.prow .psub{display:block;font-size:10.5px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge{min-width:16px;height:16px;padding:0 5px;border-radius:999px;font:600 10px var(--mono);line-height:16px;
+  text-align:center;background:var(--amber-soft);color:var(--amber);border:1px solid var(--amber-line)}
+.badge.mute{background:var(--brand-soft);color:var(--muted);border-color:var(--border)}
+.prow-more{display:flex;align-items:center;justify-content:space-between;padding:6px 7px 0;border-top:1px solid var(--border);margin-top:4px}
+
+/* ── 中：人物卡（主面） ───────────────────────────────────── */
+.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow-1);border:1px solid var(--border);
+  padding:18px 20px 20px;display:flex;flex-direction:column;gap:0}
+.card-head{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:11px;align-items:center}
+.card-head .avatar{width:40px;height:40px;font-size:15px}
+.card-head h2{margin:0;font-size:15.5px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:6px}
+.card-head .cmeta{margin:2px 0 0;font-size:11px;color:var(--faint);display:flex;gap:8px;flex-wrap:wrap}
+.tag{height:16px;padding:0 6px;border-radius:999px;font-size:10px;line-height:16px;font-weight:500;
+  background:var(--brand-soft);color:var(--muted);border:1px solid var(--border)}
+.tag.ok{background:var(--green-soft);color:var(--green);border-color:var(--green-line)}
+.tag.warn{background:var(--amber-soft);color:var(--amber);border-color:var(--amber-line)}
+.head-right{display:flex;align-items:center;gap:8px}
+.completeness{display:flex;flex-direction:column;gap:3px;align-items:flex-end}
+.completeness .lab{font-size:10px;color:var(--faint);font-family:var(--mono)}
+.meter{width:64px;height:3px;border-radius:999px;background:color-mix(in srgb,var(--fg) 10%,transparent);overflow:hidden}
+.meter i{display:block;height:100%;background:color-mix(in srgb,var(--fg) 65%,transparent)}
+
+.oneline{margin:14px 0 0;padding:10px 12px;border-left:2px solid var(--border-strong);
+  font-size:12.5px;line-height:1.7;color:var(--fg-2);background:var(--page-canvas);border-radius:0 var(--radius-sm) var(--radius-sm) 0}
+.oneline .hint{display:block;margin-top:5px;font-size:10.5px;color:var(--faint)}
+
+.section{padding:16px 0 0}
+.section + .section{border-top:1px solid var(--border);margin-top:16px}
+.sec-head{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+.sec-head h3{margin:0;font-size:12.5px;font-weight:600;color:var(--fg-2);letter-spacing:-.01em}
+.sec-head .sub{font-size:10.5px;color:var(--faint);font-family:var(--mono)}
+.sec-head .spacer{flex:1}
+
+/* 基本信息：两列 definition */
+.facts{display:grid;grid-template-columns:1fr 1fr;gap:9px 20px}
+.fact{min-width:0}
+.fact dt{font-size:10.5px;color:var(--faint);margin-bottom:1px}
+.fact dd{margin:0;font-size:12px;color:var(--fg-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 性格：标签 + 强度条 */
+.traits{display:flex;flex-direction:column;gap:7px}
+.trait{display:grid;grid-template-columns:84px minmax(90px,220px) 44px;gap:10px;align-items:center;justify-items:start}
+.trait .tname{font-size:11.5px;color:var(--fg-2)}
+.trait .tbar{width:100%;height:4px;border-radius:999px;background:color-mix(in srgb,var(--fg) 8%,transparent);overflow:hidden}
+.trait .tbar i{display:block;height:100%;background:color-mix(in srgb,var(--fg) 55%,transparent)}
+.trait .tnums{font:10px/1 var(--mono);color:var(--faint);text-align:left}
+.trait .tnums b{color:var(--muted);font-weight:600}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
+.chip{height:20px;padding:0 8px;border-radius:999px;border:1px solid var(--border);background:var(--page-canvas);
+  color:var(--muted);font-size:10.5px;line-height:18px}
+.chip.solid{background:var(--brand-soft);color:var(--fg-2)}
+.chip.warn{background:var(--amber-soft);color:var(--amber);border-color:var(--amber-line)}
+
+/* 处事方式：行 */
+.beh{display:flex;flex-direction:column}
+.beh-row{display:grid;grid-template-columns:74px minmax(0,1fr) auto;gap:10px;align-items:start;
+  padding:8px 0;border-bottom:1px solid var(--border)}
+.beh-row:last-child{border-bottom:0;padding-bottom:0}
+.beh-row .k{font-size:11.5px;color:var(--faint)}
+.beh-row .v{font-size:12px;line-height:1.6;color:var(--fg-2);min-width:0}
+.beh-row .v b{font-weight:600;color:var(--fg)}
+.beh-row .v .sub{display:block;margin-top:2px;font-size:10.5px;color:var(--muted)}
+.beh-row .m{display:flex;flex-direction:row;align-items:center;gap:3px;flex:none;padding-top:1px}
+.conf{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--faint);font-family:var(--mono)}
+.dot{width:5px;height:5px;border-radius:50%;background:var(--faint)}
+.dot.g{background:var(--green)}.dot.a{background:var(--amber)}.dot.r{background:var(--red)}
+.row-menu{position:relative;flex:none}
+.row-menu>summary{list-style:none;width:22px;height:22px;display:grid;place-items:center;border-radius:var(--radius-sm);
+  color:var(--faint);cursor:pointer;font-size:13px;line-height:1}
+.row-menu>summary::-webkit-details-marker{display:none}
+.row-menu[open]>summary,.row-menu>summary:hover{background:var(--surface-hover);color:var(--fg)}
+.row-menu-pop{position:absolute;right:0;top:calc(100% + 4px);z-index:80;min-width:184px;padding:5px;display:flex;flex-direction:column;gap:1px;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-float)}
+.row-menu-pop button{border:0;background:transparent;color:var(--fg-2);text-align:left;font-size:12px;
+  padding:6px 8px;border-radius:var(--radius-sm);cursor:pointer;white-space:nowrap}
+.row-menu-pop button:hover{background:var(--surface-hover);color:var(--fg)}
+.row-menu-pop button.danger{color:var(--red)}
+.row-menu-pop button.danger:hover{background:var(--red-soft)}
+
+/* 说话风格：原话样本 */
+.samples{display:flex;flex-direction:column;gap:7px}
+.sample{padding:8px 11px;border-left:2px solid var(--border);background:var(--page-canvas);
+  border-radius:0 var(--radius-sm) var(--radius-sm) 0}
+.sample q{quotes:none;font-size:11.5px;line-height:1.65;color:var(--fg-2);display:block}
+.sample .smeta{display:block;margin-top:4px;font:10px var(--mono);color:var(--faint)}
+
+/* 关系网 */
+.rel{display:flex;flex-direction:column}
+.rel-row{display:grid;grid-template-columns:24px minmax(0,1fr) minmax(40px,72px) auto;gap:9px;align-items:center;
+  padding:7px 0;border-bottom:1px solid var(--border)}
+.rel-row:last-child{border-bottom:0;padding-bottom:0}
+.rel-row .avatar{width:20px;height:20px;font-size:10.5px;background:var(--surface-hover);border-color:transparent}
+.rel-row .rname{font-size:11.5px;color:var(--fg-2);font-weight:550}
+.rel-row .rsub{display:block;font-size:10.5px;color:var(--faint)}
+.rel-row .rbar{height:3px;border-radius:999px;background:color-mix(in srgb,var(--fg) 8%,transparent);overflow:hidden}
+.rel-row .rbar i{display:block;height:100%;background:color-mix(in srgb,var(--fg) 45%,transparent)}
+.rel-row .rtime{font:10px var(--mono);color:var(--faint);white-space:nowrap}
+
+/* 敏感区：默认折叠 */
+.locked{display:flex;align-items:center;gap:8px;padding:9px 11px;border:1px solid var(--border);
+  border-radius:var(--radius-sm);background:var(--page-canvas);color:var(--muted);font-size:11.5px}
+.locked .spacer{flex:1}
+
+/* 证据（每节展开的原话） */
+.evidence{display:none;flex-direction:column;gap:6px;margin-top:9px}
+.evidence.open{display:flex}
+.ev{padding:7px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--page-canvas)}
+.ev q{quotes:none;display:block;font-size:11.5px;line-height:1.6;color:var(--fg-2)}
+.ev .evmeta{display:flex;gap:8px;align-items:center;margin-top:4px;font:10px var(--mono);color:var(--faint);flex-wrap:wrap}
+.ev .evmeta .tag{height:16px;line-height:15px;font-size:10px}
+
+/* ── 右：待确认 / 漂移 / 注入 ────────────────────────────── */
+.qitem{display:flex;flex-direction:column;gap:6px;padding:9px 10px;border:1px solid var(--border);
+  border-radius:var(--radius-sm);background:var(--surface)}
+.qitem .qhead{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--fg-2);font-weight:550}
+.qitem .qhead .tag{flex:none}
+.qitem q{quotes:none;display:block;font-size:11px;line-height:1.6;color:var(--muted);font-style:italic}
+.qitem .qfoot{display:flex;align-items:center;gap:6px}
+.qitem .qfoot .src{font:10px var(--mono);color:var(--faint);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.batch{display:flex;align-items:center;gap:6px;padding:6px 9px;border-radius:var(--radius-sm);
+  background:var(--brand-soft);border:1px solid var(--border);font-size:11px;color:var(--muted)}
+.batch .spacer{flex:1}
+.empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:20px 12px;text-align:center}
+.empty .mark{width:32px;height:32px;display:grid;place-items:center;border-radius:var(--radius);
+  background:var(--brand-soft);border:1px solid var(--border);color:var(--muted);font:600 14px var(--mono)}
+.empty b{font-size:12px;color:var(--fg-2)}
+.empty p{margin:0;font-size:11px;line-height:1.6;color:var(--faint);max-width:230px}
+
+.drift{display:flex;flex-direction:column;gap:0}
+.drift-row{display:grid;grid-template-columns:46px minmax(0,1fr) auto;gap:8px;align-items:start;
+  padding:7px 0;border-bottom:1px solid var(--border);font-size:11px}
+.drift-row:last-child{border-bottom:0}
+.drift-row .d{font:10px var(--mono);color:var(--faint);padding-top:1px}
+.drift-row .c{color:var(--muted);line-height:1.55;min-width:0}
+.drift-row .c b{color:var(--fg-2);font-weight:550}
+
+.budget{display:flex;align-items:center;gap:8px}
+.budget .track{flex:1;height:3px;border-radius:999px;background:color-mix(in srgb,var(--fg) 8%,transparent);overflow:hidden}
+.budget .track i{display:block;height:100%;background:color-mix(in srgb,var(--fg) 50%,transparent)}
+.budget .num{font:10px var(--mono);color:var(--faint);white-space:nowrap}
+pre.inject{margin:0;max-height:196px;overflow:auto;white-space:pre-wrap;font:10.5px/1.6 var(--mono);
+  color:var(--muted);background:var(--page-canvas);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 9px}
+.muted-note{margin:0;font-size:10.5px;line-height:1.6;color:var(--faint)}
+
+.proto-note{font-size:10.5px;line-height:1.7;color:var(--faint);border-top:1px solid var(--border);padding-top:10px}
+.proto-note b{color:var(--muted);font-weight:600}
+
+@media (max-width:1080px){
+  .grid{grid-template-columns:1fr}
+  .col-side{order:3}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- PageHeader：主 CTA 是"清队列"，不是"导入" -->
+  <header class="page-header">
+    <div class="page-header-copy">
+      <div class="kicker">Persona</div>
+      <h1>人物</h1>
+      <div class="stats">
+        <span><b>6</b> 人物</span>
+        <span><b>1</b> 人设卡就绪</span>
+        <span class="warn"><b id="stat-pending">7</b> 待确认</span>
+        <span><b>2</b> 性格漂移</span>
+        <span><b>1</b> 矛盾待裁决</span>
+      </div>
+    </div>
+    <div class="page-actions">
+      <button class="btn primary" id="btn-review">确认待确认 <em id="cta-pending">7</em></button>
+      <button class="btn ghost">导入聊天记录</button>
+      <button class="icon-btn" id="theme" title="切换亮色 / 暗色" aria-label="切换主题">◐</button>
+    </div>
+  </header>
+
+  <div class="grid">
+
+    <!-- ── 左：人物列表常驻，选择不销毁上下文 ────────────── -->
+    <aside class="col col-list">
+      <div class="block">
+        <div class="block-title">人物 <em>6</em><span class="spacer"></span>
+          <button class="icon-btn" title="新建人物" aria-label="新建人物">＋</button>
+        </div>
+        <input type="search" placeholder="搜人物 / 字段 / 原话" aria-label="搜索人物" />
+        <div class="group-label">本人</div>
+        <div class="plist">
+          <button class="prow on" data-person="self">
+            <span class="avatar">我</span>
+            <span><span class="pname">李雯</span><span class="psub">本人 · 完整度 92%</span></span>
+            <span class="badge mute">1</span>
+          </button>
+        </div>
+        <div class="group-label">他人</div>
+        <div class="plist">
+          <button class="prow" data-person="chen">
+            <span class="avatar">陈</span>
+            <span><span class="pname">陈方</span><span class="psub">直属上级 · 84%</span></span>
+            
+          </button>
+          <button class="prow" data-person="wang">
+            <span class="avatar">王</span>
+            <span><span class="pname">王凯</span><span class="psub">后端负责人 · 41%</span></span>
+            <span class="badge">3</span>
+          </button>
+          <button class="prow" data-person="zhao">
+            <span class="avatar">赵</span>
+            <span><span class="pname">赵敏</span><span class="psub">客户 · 仅群聊 · 48%</span></span>
+            <span class="badge">2</span>
+          </button>
+          <button class="prow" data-person="zhou">
+            <span class="avatar">周</span>
+            <span><span class="pname">周霖</span><span class="psub">合作方 · 66%</span></span>
+            
+          </button>
+          <button class="prow" data-person="lin">
+            <span class="avatar">林</span>
+            <span><span class="pname">林夏</span><span class="psub">下属 · 35%</span></span>
+            <span class="badge">1</span>
+          </button>
+        </div>
+        <div class="prow-more">
+          <button class="link">看已归档 14</button>
+          <button class="link" id="open-import">导入…</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── 中：人物卡（唯一主面） ─────────────────────────── -->
+    <main class="col col-card">
+      <article class="card" id="card">
+
+        <div class="card-head">
+          <span class="avatar" id="c-avatar">我</span>
+          <div style="min-width:0">
+            <h2 id="c-name">李雯 <span class="tag">本人</span></h2>
+            <p class="cmeta" id="c-meta">
+              <span>产品负责人</span><span>·</span><span>认识 4 年</span><span>·</span>
+              <span>近 30 天互动 12 次</span><span>·</span><span>依据 26 条原话</span>
+            </p>
+          </div>
+          <div class="head-right">
+            <div class="completeness">
+              <span class="lab" id="c-pct">92%</span>
+              <span class="meter"><i id="c-meter" style="width:92%"></i></span>
+            </div>
+            <details class="row-menu">
+              <summary title="人物操作" aria-label="人物操作">⋯</summary>
+              <div class="row-menu-pop">
+                <button>编辑人设卡</button>
+                <button>导出为角色卡 JSON</button>
+                <button>复制注入片段</button>
+                <button>从聊天记录补全</button>
+                <button class="danger">删除此人全部观察</button>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <!-- 一句话概括：可读优先的第一屏 -->
+        <p class="oneline" id="c-oneline">
+          结果导向，先要结论再要过程；压力下会收窄沟通面，只找已经建立信任的人。
+          给她的材料必须带数据与风险敞口，纯愿景描述会被打回。
+          <span class="hint">由 26 条已确认观察归纳 · 最后更新 3 天前 · 可直接改写</span>
+        </p>
+
+        <div id="c-body">
+
+          <!-- 基本信息 -->
+          <section class="section">
+            <div class="sec-head">
+              <h3>基本信息</h3><span class="sub">依据 5 · 置信 高</span><span class="spacer"></span>
+              <button class="link" data-ev="ev-basic">展开原话</button>
+            </div>
+            <dl class="facts">
+              <div class="fact"><dt>角色 / 组织</dt><dd>产品负责人 · 平台事业部（12 人）</dd></div>
+              <div class="fact"><dt>与我的关系</dt><dd>直属上级 · 信任度中高</dd></div>
+              <div class="fact"><dt>决策权范围</dt><dd>可定需求优先级；预算需 VP 签</dd></div>
+              <div class="fact"><dt>沟通渠道偏好</dt><dd>飞书文字 &gt; 会议；不看长语音</dd></div>
+              <div class="fact"><dt>工作节奏</dt><dd>上午写文档，14:00 后开评审</dd></div>
+              <div class="fact"><dt>协作语言</dt><dd>中文；中英术语混用</dd></div>
+            </dl>
+            <div class="evidence" id="ev-basic">
+              <div class="ev"><q>“上午别给我打电话，我在写周报。”</q>
+                <div class="evmeta"><span>2024-11-02 09:14</span><span>飞书 · 私聊</span><span class="tag ok">已确认</span></div></div>
+              <div class="ev"><q>“预算这块你别找我，我签不了，得老周点头。”</q>
+                <div class="evmeta"><span>2024-09-18 16:40</span><span>飞书 · 群：Q3 排期</span><span class="tag ok">已确认</span></div></div>
+            </div>
+          </section>
+
+          <!-- 性格与价值观（业界：可量化的正交维度） -->
+          <section class="section">
+            <div class="sec-head">
+              <h3>性格与价值观</h3><span class="sub">依据 9 · 置信 中高</span><span class="spacer"></span>
+              <button class="link" data-ev="ev-trait">展开原话</button>
+            </div>
+            <div class="traits">
+              <div class="trait"><span class="tname">结果导向</span>
+                <span class="tbar"><i style="width:86%"></i></span><span class="tnums"><b>4.3</b>/5</span></div>
+              <div class="trait"><span class="tname">风险偏好</span>
+                <span class="tbar"><i style="width:34%"></i></span><span class="tnums"><b>1.7</b>/5</span></div>
+              <div class="trait"><span class="tname">表达直接度</span>
+                <span class="tbar"><i style="width:78%"></i></span><span class="tnums"><b>3.9</b>/5</span></div>
+              <div class="trait"><span class="tname">结构化程度</span>
+                <span class="tbar"><i style="width:90%"></i></span><span class="tnums"><b>4.5</b>/5</span></div>
+              <div class="trait"><span class="tname">关系投入</span>
+                <span class="tbar"><i style="width:46%"></i></span><span class="tnums"><b>2.3</b>/5</span></div>
+            </div>
+            <div class="chips">
+              <span class="chip solid">价值观：把话说清楚</span>
+              <span class="chip solid">价值观：先对齐目标再谈方案</span>
+              <span class="chip warn">厌恶：会议没结论</span>
+              <span class="chip warn">厌恶：需求临时加塞</span>
+            </div>
+            <div class="evidence" id="ev-trait">
+              <div class="ev"><q>“不用跟我讲背景，直接说你想让我拍哪个板。”</q>
+                <div class="evmeta"><span>2024-10-21 11:02</span><span>飞书 · 私聊</span><span class="tag ok">已确认</span></div></div>
+              <div class="ev"><q>“这个方案我不签。没有回滚路径的东西我不上。”</q>
+                <div class="evmeta"><span>2024-08-06 15:31</span><span>飞书 · 群：平台评审</span><span class="tag ok">已确认</span></div></div>
+              <div class="ev"><q>“会开完了，结论是什么？没人写我就当没开。”</q>
+                <div class="evmeta"><span>2024-07-30 18:07</span><span>导入 · 微信</span><span class="tag ok">已确认</span></div></div>
+            </div>
+          </section>
+
+          <!-- 处事方式：原字段集最缺的一组 -->
+          <section class="section">
+            <div class="sec-head">
+              <h3>处事方式</h3><span class="sub">依据 12 · 置信 中高</span><span class="spacer"></span>
+              <button class="link" data-ev="ev-beh">展开原话</button>
+            </div>
+            <div class="beh">
+              <div class="beh-row">
+                <span class="k">决策依据</span>
+                <span class="v"><b>数据 + 风险敞口</b>，其次才是用户声音<span class="sub">要求给出「最坏情况」；没有逆向指标的需求会被推回</span></span>
+                <div class="m"><span class="conf"><i class="dot g"></i>依据 5</span>
+                  <details class="row-menu"><summary aria-label="更多">⋯</summary><div class="row-menu-pop">
+                    <button>查看依据</button><button>改写结论</button><button>标为过期</button></div></details></div>
+              </div>
+              <div class="beh-row">
+                <span class="k">冲突处理</span>
+                <span class="v"><b>协作型 → 回避型</b>（Thomas-Kilmann）<span class="sub">对平级先谈后让；对上级不正面顶，会绕到数据上；对下属直接给结论</span></span>
+                <div class="m"><span class="conf"><i class="dot a"></i>依据 4 · 含矛盾</span>
+                  <details class="row-menu"><summary aria-label="更多">⋯</summary><div class="row-menu-pop">
+                    <button>查看依据</button><button>看 2 处矛盾</button><button>改写结论</button></div></details></div>
+              </div>
+              <div class="beh-row">
+                <span class="k">压力反应</span>
+                <span class="v"><b>收窄沟通面</b>：只找 2–3 个已信任的人，消息变短、回复变慢<span class="sub">此时推新需求成功率最低；先给一个 10 分钟能批的小决定</span></span>
+                <div class="m"><span class="conf"><i class="dot g"></i>依据 3</span>
+                  <details class="row-menu"><summary aria-label="更多">⋯</summary><div class="row-menu-pop">
+                    <button>查看依据</button><button>改写结论</button><button>标为过期</button></div></details></div>
+              </div>
+              <div class="beh-row">
+                <span class="k">承诺可靠性</span>
+                <span class="v"><b>答应了会做</b>，但排期常被更高优先级挤掉<span class="sub">口头答应 ≈ 有共识 ≠ 有时间；要落到排期表才算数</span></span>
+                <div class="m"><span class="conf"><i class="dot g"></i>依据 4</span>
+                  <details class="row-menu"><summary aria-label="更多">⋯</summary><div class="row-menu-pop">
+                    <button>查看依据</button><button>改写结论</button><button>标为过期</button></div></details></div>
+              </div>
+              <div class="beh-row">
+                <span class="k">沟通方式</span>
+                <span class="v"><b>书面优先、结论先行</b>；不接受长语音与无准备会议<span class="sub">3 段以内能读完的材料会被认真看，超过一屏会被批「先精简」</span></span>
+                <div class="m"><span class="conf"><i class="dot g"></i>依据 6</span>
+                  <details class="row-menu"><summary aria-label="更多">⋯</summary><div class="row-menu-pop">
+                    <button>查看依据</button><button>改写结论</button><button>标为过期</button></div></details></div>
+              </div>
+              <div class="beh-row">
+                <span class="k">授权习惯</span>
+                <span class="v"><b>先小范围放权，看两次结果再加</b><span class="sub">第一次交付她会逐行看；连续两次达标后基本不干预</span></span>
+                <div class="m"><span class="conf"><i class="dot a"></i>依据 2 · 弱</span>
+                  <details class="row-menu"><summary aria-label="更多">⋯</summary><div class="row-menu-pop">
+                    <button>查看依据</button><button>改写结论</button><button>标为过期</button></div></details></div>
+              </div>
+            </div>
+            <div class="evidence" id="ev-beh">
+              <div class="ev"><q>“最坏情况是什么？谁来回滚？答不上来就先别做。”</q>
+                <div class="evmeta"><span>2024-10-08 10:22</span><span>飞书 · 群：平台评审</span><span class="tag ok">已确认</span></div></div>
+              <div class="ev"><q>“我不跟你争这个，你去跟数据争。”</q>
+                <div class="evmeta"><span>2024-09-02 14:55</span><span>飞书 · 私聊</span><span class="tag ok">已确认</span></div></div>
+              <div class="ev"><q>“这周先别找我了，我处理不完。”</q>
+                <div class="evmeta"><span>2024-11-11 20:31</span><span>飞书 · 私聊</span><span class="tag warn">单次 · 弱信号</span></div></div>
+              <div class="ev"><q>“答应你的我记着，但得排到下个迭代。”</q>
+                <div class="evmeta"><span>2024-06-19 11:07</span><span>导入 · 微信</span><span class="tag ok">已确认</span></div></div>
+            </div>
+          </section>
+
+          <!-- 说话风格：让分身"像她"的唯一原料 -->
+          <section class="section">
+            <div class="sec-head">
+              <h3>说话风格</h3><span class="sub">依据 8 条原话 · 用于起草消息</span><span class="spacer"></span>
+              <button class="link" data-ev="ev-voice">更多样本</button>
+            </div>
+            <div class="samples">
+              <div class="sample"><q>“结论先行：这个需求这期不做。原因两条——”</q>
+                <span class="smeta">2024-10-21 · 私聊 · 典型句式「结论先行」</span></div>
+              <div class="sample"><q>“我不太同意，但我听你的，出问题一起担。”</q>
+                <span class="smeta">2024-09-30 · 评审 · 反对时先给态度再给承诺</span></div>
+            </div>
+            <div class="chips">
+              <span class="chip">短句 + 破折号</span>
+              <span class="chip">不说「可能」「也许」</span>
+              <span class="chip">习惯用「两条 / 三点」编号</span>
+              <span class="chip">不发表情，偶尔用「。」结尾</span>
+            </div>
+            <div class="evidence" id="ev-voice">
+              <div class="ev"><q>“三件事：一、范围砍一半；二、周五给灰度；三、回滚脚本谁写？”</q>
+                <div class="evmeta"><span>2024-08-14 09:48</span><span>飞书 · 群：平台评审</span><span class="tag ok">已确认</span></div></div>
+            </div>
+          </section>
+
+          <!-- 关系网：决定"该找谁推进" -->
+          <section class="section">
+            <div class="sec-head">
+              <h3>关系网</h3><span class="sub">依据 6 · 3 人</span><span class="spacer"></span>
+              <button class="link">看关系图</button>
+            </div>
+            <div class="rel">
+              <div class="rel-row">
+                <span class="avatar">周</span>
+                <span><span class="rname">周霖</span><span class="rsub">VP · 预算与终审；她对其为「汇报型」</span></span>
+                <span class="rbar"><i style="width:82%"></i></span><span class="rtime">10-28</span>
+              </div>
+              <div class="rel-row">
+                <span class="avatar">王</span>
+                <span><span class="rname">王凯</span><span class="rsub">后端负责人 · 有旧摩擦；议题绕开他更省时</span></span>
+                <span class="rbar"><i style="width:34%"></i></span><span class="rtime">11-09</span>
+              </div>
+              <div class="rel-row">
+                <span class="avatar">林</span>
+                <span><span class="rname">林夏</span><span class="rsub">下属 · 重点培养；她会替其挡需求</span></span>
+                <span class="rbar"><i style="width:68%"></i></span><span class="rtime">11-15</span>
+              </div>
+            </div>
+          </section>
+
+          <!-- 敏感：默认折叠，不参与默认注入 -->
+          <section class="section">
+            <div class="locked">
+              <span>🔒 敏感与禁区</span>
+              <span class="sub" style="font:10.5px var(--mono);color:var(--faint)">2 条</span>
+              <span class="spacer"></span>
+              <span style="font-size:10.5px;color:var(--faint)">默认不展开、不注入</span>
+              <button class="link">解锁查看</button>
+            </div>
+          </section>
+
+        </div>
+
+        <!-- 没有整理过的人物：给一个真实的下一步，而不是空白 -->
+        <div class="empty" id="c-nocard" style="display:none">
+          <span class="mark">◔</span>
+          <b id="nc-title">王凯还没有人设卡</b>
+          <p id="nc-desc">已有 3 条待确认观察。确认后会自动归到「性格 / 处事 / 关系」对应小节。</p>
+          <button class="btn tiny primary" id="nc-cta">按现有观察生成卡片</button>
+        </div>
+
+      </article>
+    </main>
+
+    <!-- ── 右：待确认置顶 + 漂移 + 注入预览 ──────────────── -->
+    <aside class="col col-side">
+
+      <div class="block">
+        <div class="block-title">待确认 <em id="q-count">7</em><span class="spacer"></span>
+          <button class="link" id="q-all">全部接受 4 条</button>
+        </div>
+        <div id="queue">
+          <div class="qitem">
+            <div class="qhead">王凯 · <span class="tag">处事：冲突处理</span></div>
+            <q>“这事我不掺和，你们定，我照着做。”</q>
+            <div class="qfoot"><span class="src">11-09 群：排期 · 1 处来源</span>
+              <button class="btn tiny">拒绝</button><button class="btn tiny ok">确认</button></div>
+          </div>
+          <div class="qitem">
+            <div class="qhead">林夏 · <span class="tag">性格：风险偏好</span></div>
+            <q>“我先把灰度发出去，出事再回滚呗。”</q>
+            <div class="qfoot"><span class="src">11-12 私聊 · 1 处来源</span>
+              <button class="btn tiny">拒绝</button><button class="btn tiny ok">确认</button></div>
+          </div>
+          <div class="qitem">
+            <div class="qhead">李雯 · <span class="tag warn">敏感：健康</span></div>
+            <q>“下个月手术，评审别排我。”</q>
+            <div class="qfoot"><span class="src">11-11 私聊 · 需单独确认</span>
+              <button class="btn tiny">拒绝</button><button class="btn tiny ok">确认</button></div>
+          </div>
+          <div class="batch">
+            <span>同类 4 条：陈方「决策依赖上级」</span><span class="spacer"></span>
+            <button class="link" data-batch>全部接受</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="block" id="drift-note" style="display:none">
+        <div class="block-title">变化与矛盾</div>
+        <p class="muted-note">该人物还没有足够已确认观察形成变化轨迹。至少需要同一字段的 2 条不同时期记录。</p>
+      </div>
+
+      <div class="block" id="drift-block">
+        <div class="block-title">变化与矛盾 <em>3</em></div>
+        <div class="drift">
+          <div class="drift-row">
+            <span class="d">10-30</span>
+            <span class="c"><b>冲突处理</b>：回避 → 协作<span class="sub" style="display:block;font-size:10px;color:var(--faint)">依据 09-02 → 10-30 的 3 处原话</span></span>
+            <span class="badge mute">漂移</span>
+          </div>
+          <div class="drift-row">
+            <span class="d">11-06</span>
+            <span class="c"><b>工作节奏</b>：上午写文档 → 上午开会<span class="sub" style="display:block;font-size:10px;color:var(--faint)">与 06-12 记录冲突，需裁决</span></span>
+            <span class="badge">矛盾</span>
+          </div>
+          <div class="drift-row">
+            <span class="d">11-15</span>
+            <span class="c"><b>沟通方式</b>：新增「不看长语音」</span>
+            <span class="badge mute">新增</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="block">
+        <div class="block-title">注入预览 <em id="inj-num">1.9k / 6k</em><span class="spacer"></span>
+          <button class="link">复制</button></div>
+        <div class="budget"><span class="track"><i id="inj-bar" style="width:32%"></i></span><span class="num" id="inj-pct">32%</span></div>
+        <pre class="inject" id="inj-body">## 李雯（本人 · 产品负责人）
+- 一句话：结果导向，先要结论；压力下收窄沟通面。
+- 处事：决策看数据与风险敞口；对上级绕数据，
+  对下属直接给结论；书面优先、结论先行。
+- 语气：短句 + 编号；不说「可能」；不发表情。
+  样本：「结论先行：这个需求这期不做。原因两条——」
+- 关系：周霖（终审，汇报型）；王凯（有旧摩擦，绕开）
+- 禁区：（敏感 2 条，未注入）</pre>
+        <p class="muted-note" id="inj-note">预算不足时先砍「关系网」再砍「样本」，一句话概括与禁区永不裁剪。本次省略 2 条：2 条弱信号观察（依据 &lt; 2）。</p>
+      </div>
+
+    </aside>
+  </div>
+
+  <p class="proto-note">
+    <b>原型说明：</b>左栏常驻人物列表（选择不销毁上下文）；中栏是唯一主面，每节右侧挂「依据 N · 原话」；
+    右栏顶部是复核队列，一处只有一种主操作。对比旧版的三处改动：① 主 CTA 从「导入聊天记录」改为「确认待确认」；
+    ② 新增「处事方式 / 说话风格」两组字段（旧字段全是陈述性事实，回答不了「他会怎么反应 / 怎么说」）；
+    ③ 人物卡成为可读、可改写、可导出（角色卡 JSON）、可注入预览的单一实体。
+  </p>
+</div>
+
+<script>
+// ── 主题 ────────────────────────────────────────────────
+document.getElementById('theme').addEventListener('click', () => {
+  const root = document.documentElement;
+  root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+});
+
+// ── 每节展开原话 ────────────────────────────────────────
+document.querySelectorAll('[data-ev]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const box = document.getElementById(btn.dataset.ev);
+    if (!box) return;
+    const open = box.classList.toggle('open');
+    btn.textContent = open ? '收起原话' : '展开原话';
+  });
+});
+
+// ── 待确认队列：确认/拒绝后立刻减少计数 ─────────────────
+const qCount = document.getElementById('q-count');
+const ctaCount = document.getElementById('cta-pending');
+const statPending = document.getElementById('stat-pending');
+function syncPending(delta) {
+  [qCount, ctaCount, statPending].forEach((el) => {
+    el.textContent = Math.max(0, Number(el.textContent) + delta);
+  });
+  if (Number(qCount.textContent) === 0) {
+    document.getElementById('queue').innerHTML =
+      '<div class="empty"><span class="mark">✓</span><b>队列已清空</b><p>下次导入或 Dream 运行后会再出现。</p></div>';
+  }
+}
+document.querySelectorAll('#queue .qitem').forEach((item) => {
+  item.querySelectorAll('.btn').forEach((btn) => {
+    btn.addEventListener('click', () => { item.remove(); syncPending(-1); });
+  });
+});
+document.querySelector('[data-batch]')?.addEventListener('click', (ev) => {
+  ev.target.closest('.batch').remove();
+  syncPending(-4);
+});
+
+// ── 人物切换：列表常驻，卡片内容跟着换 ──────────────────
+const INJECT_SELF = document.getElementById('inj-body').textContent;
+const PEOPLE = {
+  self: { name: '李雯', initial: '我', tag: '本人', pct: 92, hasCard: true,
+    meta: ['产品负责人', '认识 4 年', '近 30 天互动 12 次', '依据 26 条原话'] },
+  chen: { name: '陈方', initial: '陈', tag: '直属上级', pct: 84, hasCard: false,
+    meta: ['平台事业部 VP', '预算终审', '近 30 天互动 5 次', '依据 19 条原话'],
+    desc: '已确认 16 条观察，3 条待确认。生成后可补「处事方式」与「说话风格」。',
+    inject: '## 陈方（直属上级 · 事业部 VP）\n- 尚无人设卡，只用 16 条已确认观察：\n  · 决策：预算与终审权，拍板快\n  · 偏好：先看结论页，不接受超一屏材料\n- 置信度中：可直接用于排期判断' },
+  wang: { name: '王凯', initial: '王', tag: '同级', pct: 41, hasCard: false,
+    meta: ['后端负责人', '1 处旧摩擦', '近 30 天互动 7 次', '依据 5 条 · 3 条待确认'],
+    desc: '只有 2 条已确认观察，先确认这 3 条再生成卡片，避免用弱信号下定论。',
+    inject: '## 王凯（同级 · 后端负责人）\n- 尚无人设卡，只用 2 条已确认观察：\n  · 立场：反对季度末上大改动\n  · 偏好：先看接口契约再谈排期\n- 置信度低：涉及他的判断必须标「推测」' },
+  zhao: { name: '赵敏', initial: '赵', tag: '客户', pct: 48, hasCard: false,
+    meta: ['甲方接口人', '仅群聊', '近 30 天互动 3 次', '依据 6 条 · 2 条待确认'],
+    desc: '只有群聊来源。群内互动不当作亲密关系，生成时会标「仅群聊」。' },
+  zhou: { name: '周霖', initial: '周', tag: '合作方', pct: 66, hasCard: false,
+    meta: ['外部设计团队', '合同对接', '近 30 天互动 4 次', '依据 11 条原话'],
+    desc: '已确认 9 条观察。外部合作方默认不采集敏感项。' },
+  lin:   { name: '林夏', initial: '林', tag: '下属', pct: 35, hasCard: false,
+    meta: ['前端工程师', '入职 5 个月', '近 30 天互动 16 次', '依据 4 条 · 1 条待确认'],
+    desc: '观察太少，生成的人设卡置信度会很低；建议先进「观察」模式积累 10 条。' },
+};
+document.querySelectorAll('.prow').forEach((row) => {
+  row.addEventListener('click', () => {
+    document.querySelectorAll('.prow').forEach((r) => r.classList.remove('on'));
+    row.classList.add('on');
+    const p = PEOPLE[row.dataset.person];
+    if (!p) return;
+    document.getElementById('c-avatar').textContent = p.initial;
+    document.getElementById('c-name').innerHTML = `${p.name} <span class="tag">${p.tag}</span>`;
+    document.getElementById('c-meta').innerHTML = p.meta.map((m) => `<span>${m}</span>`).join('<span>·</span>');
+    document.getElementById('c-pct').textContent = p.pct + '%';
+    document.getElementById('c-meter').style.width = p.pct + '%';
+    document.getElementById('c-body').style.display = p.hasCard ? '' : 'none';
+    document.getElementById('c-oneline').style.display = p.hasCard ? '' : 'none';
+    const empty = document.getElementById('c-nocard');
+    empty.style.display = p.hasCard ? 'none' : 'flex';
+    if (!p.hasCard) {
+      document.getElementById('nc-title').textContent = `${p.name} 还没有人设卡`;
+      document.getElementById('nc-desc').textContent = p.desc || '';
+    }
+    // 注入预览跟着换：没人设卡就只注入观察摘要
+    const inj = p.inject;
+    document.getElementById('inj-body').textContent = inj || INJECT_SELF;
+    document.getElementById('inj-num').textContent = inj ? '0.3k / 6k' : '1.9k / 6k';
+    document.getElementById('inj-bar').style.width = inj ? '5%' : '32%';
+    document.getElementById('inj-pct').textContent = inj ? '5%' : '32%';
+    document.getElementById('inj-note').textContent = inj
+      ? '没有人设卡时只注入观察摘要，单条观察都会标来源；生成卡片后按 6k 预算分节注入，敏感项永不注入。'
+      : '预算不足时先砍「关系网」再砍「样本」，一句话概括与禁区永不裁剪。本次省略 2 条：2 条弱信号观察（依据 < 2）。';
+    document.getElementById('drift-block').style.display = p.hasCard ? '' : 'none';
+    document.getElementById('drift-note').style.display = p.hasCard ? 'none' : '';
+  });
+});
+
+// ── 点击外部关闭 ⋯ 菜单 ────────────────────────────────
+document.addEventListener('click', (ev) => {
+  document.querySelectorAll('details.row-menu[open]').forEach((menu) => {
+    if (!menu.contains(ev.target)) menu.removeAttribute('open');
+  });
+});
+</script>
+</body>
+</html>

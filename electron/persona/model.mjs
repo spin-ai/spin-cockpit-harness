@@ -118,44 +118,133 @@ export function computeFeatures(msgs = [], name = "", context = []) {
   };
 }
 
-/** 特征 → 可读结论（带证据），每条都写清楚「依据是什么」 */
-export function describePerson(name, f) {
+/**
+ * 引用可核对性：模型的 evidence 必须是输入里出现过的原话。
+ *
+ * 不核对的后果：画像看起来每条都带「原文」，但其中一部分是模型自己编的；
+ * 一旦有人拿它当依据，整份画像的可信度就没了。这里只做保守核对（宽松归一化 + 允许截断），
+ * 核不过的不删、不拦，只降权并标出来等人看。
+ */
+export function normalizeForMatch(text) {
+  return String(text || "")
+    .replace(/[\s\u3000]+/g, "")
+    .replace(/[，。、；：！？,.;:!?"'“”‘’（）()【】\[\]—…~·]/g, "");
+}
+
+export function evidenceMatches(evidence, corpus) {
+  const e = normalizeForMatch(evidence);
+  if (e.length < 6) return false; // 太短（「等老板定」这种）没法判断真伪
+  const c = normalizeForMatch(corpus);
+  if (!c) return false;
+  if (c.includes(e)) return true;
+  // 模型常把原话截断/加省略号：允许「证据的前 80%」在语料里
+  const head = e.slice(0, Math.max(6, Math.floor(e.length * 0.8)));
+  return c.includes(head);
+}
+
+/**
+ * 证据是不是「统计值」冒充的原话。
+ *
+ * 老提示词把统计事实一起喂给模型，模型会把「问句 19%」「句长中位 10 字」当成 evidence 写回来 ——
+ * 那不是原话，也没法核对。这类不该标成「引用待核对」，它的问题更根本：这条结论没有原话支撑。
+ * 现在统计值走 measures，模型不该再产出这类 evidence，这里用于识别存量脏数据。
+ */
+const STAT_PATTERNS = [
+  /中位\s*\d+\s*字/, /中位时延/, /接话时延中位/, /问句\s*\d+%/, /礼貌用语\s*\d+%/,
+  /群聊\s*\d+\s*条/, /私聊\s*\d+\s*条/, /群聊\s*\d+%/, /活跃时段/, /高频词/,
+  /样本\s*\d+\s*条/, /平均每个活跃日/, /表情出现率/, /感叹号出现率/, /口语化用词占/,
+  // 老版本把「发言人146条 / 活跃54天 / 每日3条」「笑声86%」这类直接当 evidence 写过
+  /发言\s*\d+\s*条/, /活跃\s*\d+\s*天/, /每日\s*\d+\s*条/, /笑声\s*\d+%/, /表情\s*\d+%/,
+  /词频/, /出现率/,
+  /^\d+(?:\.\d+)?%$/,
+];
+
+export function looksLikeStat(text) {
+  const t = String(text || "").trim();
+  if (!t) return false;
+  return STAT_PATTERNS.some((re) => re.test(t));
+}
+
+/**
+ * 分析缓存的「契约版本」：提示词 / 输出字段 / 写入逻辑变化时必须递增。
+ *
+ * 只按样本 hash 缓存有个致命问题：模型换了输出结构（比如 traits 从对象数组变成字符串数组）时，
+ * 卡片能解析、缓存被写、但一条结论都落不了库 —— 之后同一份样本永远命中缓存，永远 0 条结论。
+ * v2：补上「缓存必须对应已落库的结论」，并让旧版本写出的空缓存（只有一句话、没有结论）作废。
+ */
+export const ANALYSIS_CACHE_VERSION = "v2";
+
+/** 分析缓存键：契约版本 + 模型 + 人 + 样本。建模与「建模计划」必须用同一个函数算 */
+export function analysisCacheHash(name, features, model = "") {
+  const samples = (features?.samples || []).map((s) => s.text).join("");
+  return crypto.createHash("sha1").update([ANALYSIS_CACHE_VERSION, model || "default", name, samples].join("|")).digest("hex");
+}
+
+/**
+ * 可观测特征（measure）：数得出来、随时可以重算的东西。
+ *
+ * 这些**不进记忆层**（observations）：一次建模算出「群聊 0% / 私聊 100%」，下次样本变了算出 1% / 99%，
+ * 两条都叫「事实」的话，失效（invalidate）永远追不上重算的速度，人物卡里会堆满互相矛盾的测量值。
+ * 记忆层只放「重算不出来、需要人确认」的观察（belief）；measure 进 measures 表，只留最新值 + 上一次值。
+ *
+ * 返回项：{ key, field, label, value, short, num, quote }
+ *  - value 给人看（含阈值判断，例如「话多」/「话少」）
+ *  - short 给注入用（只有数字，省预算）
+ */
+export function computeMeasures(f) {
   if (!f) return [];
   const out = [];
-  const add = (field, value, quote) => out.push({ field, value, quote, confidence: 0.7 });
+  const add = (key, field, label, value, short, num, quote) => out.push({ key, field, label, value, short, num, quote });
 
-  if (f.count >= 200) add("traits", "话多：发言量大（样本 " + f.count + " 条）", `共 ${f.count} 条发言`);
-  else if (f.count < 30) add("traits", "话少：发言稀疏（样本 " + f.count + " 条）", `共 ${f.count} 条发言`);
+  if (f.count >= 200) add("msgs.count", "traits", "发言量", `话多：发言量大（样本 ${f.count} 条）`, `发言 ${f.count} 条`, f.count, `共 ${f.count} 条发言`);
+  else if (f.count < 30) add("msgs.count", "traits", "发言量", `话少：发言稀疏（样本 ${f.count} 条）`, `发言 ${f.count} 条`, f.count, `共 ${f.count} 条发言`);
+  else add("msgs.count", "traits", "发言量", `发言量中等（样本 ${f.count} 条）`, `发言 ${f.count} 条`, f.count, `共 ${f.count} 条发言`);
 
   // 用中位数判断（转发/文章会把均值拉飞）：中位长 = 长段落，中位短 = 碎片化
-  if (f.medianLen >= 40) add("traits", "习惯长段落表达", `中位 ${f.medianLen} 字/条（均值 ${f.avgLen}）`);
-  else if (f.medianLen <= 12) add("traits", "习惯短句、碎片化回复", `中位 ${f.medianLen} 字/条`);
+  if (f.medianLen >= 40) add("len.median", "traits", "句长", `习惯长段落表达（中位 ${f.medianLen} 字）`, `句长中位 ${f.medianLen} 字`, f.medianLen, `中位 ${f.medianLen} 字/条（均值 ${f.avgLen}）`);
+  else if (f.medianLen <= 12) add("len.median", "traits", "句长", `习惯短句、碎片化回复（中位 ${f.medianLen} 字）`, `句长中位 ${f.medianLen} 字`, f.medianLen, `中位 ${f.medianLen} 字/条`);
+  else add("len.median", "traits", "句长", `句长中位 ${f.medianLen} 字（均值 ${f.avgLen}）`, `句长中位 ${f.medianLen} 字`, f.medianLen, `中位 ${f.medianLen} 字/条`);
 
   if (f.replyMedianMin != null) {
     const m = f.replyMedianMin;
     const human = m <= 90 ? `${m} 分钟` : `${(m / 60).toFixed(1)} 小时`;
     const tone = m <= 10 ? "回复很快" : m <= 60 ? "回复节奏中等" : "回复偏慢";
-    add("communication", `${tone}：中位时延约 ${human}`, `基于 ${f.replySamples} 次跨人回复间隔`);
+    add("reply.median", "communication", "接话时延", `${tone}：中位时延约 ${human}`, `接话时延 ${human}`, m, `基于 ${f.replySamples} 次跨人回复间隔`);
   }
-  if (f.activeDays >= 5) add("traits", `平均每个活跃日 ${f.perDay} 条发言（共 ${f.activeDays} 天）`, "按自然日统计");
+  add("msgs.per_day", "traits", "发言密度", f.activeDays >= 5
+    ? `平均每个活跃日 ${f.perDay} 条发言（共 ${f.activeDays} 天）`
+    : `活跃 ${f.activeDays} 天，每天 ${f.perDay} 条`, `每日 ${f.perDay} 条`, f.perDay, "按自然日统计");
   if (f.groupMsgs || f.privateMsgs) {
     const total = f.groupMsgs + f.privateMsgs;
-    add("situation", `群聊 ${Math.round((f.groupMsgs / total) * 100)}% / 私聊 ${Math.round((f.privateMsgs / total) * 100)}%`, `群 ${f.groupMsgs} 条，私聊 ${f.privateMsgs} 条`);
+    add("chat.ratio", "situation", "群 / 私聊", `群聊 ${Math.round((f.groupMsgs / total) * 100)}% / 私聊 ${Math.round((f.privateMsgs / total) * 100)}%`, `群聊 ${Math.round((f.groupMsgs / total) * 100)}%`, f.groupMsgs, `群 ${f.groupMsgs} 条，私聊 ${f.privateMsgs} 条`);
   }
   if (f.topInterlocutors?.length) {
-    add("situation", `最常互动：${f.topInterlocutors.map((x) => x.w).join(" / ")}`, `按相邻发言配对：${f.topInterlocutors.map((x) => `${x.w}×${x.c}`).join(" ")}`);
+    add("interlocutors.top", "situation", "最常互动", `最常互动：${f.topInterlocutors.map((x) => x.w).join(" / ")}`, `常互动 ${f.topInterlocutors.map((x) => x.w).join("/")}`, f.topInterlocutors.length, `按相邻发言配对：${f.topInterlocutors.map((x) => `${x.w}×${x.c}`).join(" ")}`);
   }
-  if (f.questionPct >= 25) add("communication", "常用提问推进对话", `问句占 ${f.questionPct}%`);
-  if (f.politePct >= 20) add("communication", "礼貌用语高频（谢谢 / 收到 / 好的）", `礼貌用语占 ${f.politePct}%`);
-  if (f.laughPct >= 10) add("style", "爱用笑声 / 网络语气（哈哈、笑死、233）", `出现率 ${f.laughPct}%`);
-  if (f.emojiPct >= 15) add("style", "常用表情符号", `表情出现率 ${f.emojiPct}%`);
-  if (f.ellipsisPct >= 12) add("style", "常用省略号语气（…、。。。）", `出现率 ${f.ellipsisPct}%`);
-  if (f.exclaimPct >= 25) add("style", "语气偏强烈（感叹号多）", `感叹号出现率 ${f.exclaimPct}%`);
-  if (f.fillerPct >= 25) add("style", "口语化明显（然后 / 其实 / 就是）", `口语化用词占 ${f.fillerPct}%`);
-  if (f.activeHours.length) add("situation", `活跃时段集中在 ${f.activeHours.map((h) => `${h}:00`).join(" / ")}`, "按发言时间统计");
-  if (f.topWords.length) add("situation", `高频词：${f.topWords.slice(0, 5).map((w) => w.w).join("、")}`, `词频 ${f.topWords.map((w) => `${w.w}×${w.c}`).join(" ")}`);
-  void name;
+  add("ratio.question", "communication", "提问比例", f.questionPct >= 25 ? `常用提问推进对话（问句 ${f.questionPct}%）` : `问句占 ${f.questionPct}%`, `问句 ${f.questionPct}%`, f.questionPct, `问句占 ${f.questionPct}%`);
+  add("ratio.polite", "communication", "礼貌用语", f.politePct >= 20 ? `礼貌用语高频（谢谢 / 收到 / 好的，${f.politePct}%）` : `礼貌用语占 ${f.politePct}%`, `礼貌 ${f.politePct}%`, f.politePct, `礼貌用语占 ${f.politePct}%`);
+  add("ratio.laugh", "style", "笑声", f.laughPct >= 10 ? `爱用笑声 / 网络语气（哈哈、笑死、233，${f.laughPct}%）` : `笑声出现率 ${f.laughPct}%`, `笑声 ${f.laughPct}%`, f.laughPct, `出现率 ${f.laughPct}%`);
+  add("ratio.emoji", "style", "表情", f.emojiPct >= 15 ? `常用表情符号（${f.emojiPct}%）` : `表情出现率 ${f.emojiPct}%`, `表情 ${f.emojiPct}%`, f.emojiPct, `表情出现率 ${f.emojiPct}%`);
+  if (f.ellipsisPct >= 12) add("ratio.ellipsis", "style", "省略号", `常用省略号语气（…、。。。，${f.ellipsisPct}%）`, `省略号 ${f.ellipsisPct}%`, f.ellipsisPct, `出现率 ${f.ellipsisPct}%`);
+  if (f.exclaimPct >= 25) add("ratio.exclaim", "style", "感叹号", `语气偏强烈（感叹号 ${f.exclaimPct}%）`, `感叹号 ${f.exclaimPct}%`, f.exclaimPct, `感叹号出现率 ${f.exclaimPct}%`);
+  if (f.fillerPct >= 25) add("ratio.filler", "style", "口语化", `口语化明显（然后 / 其实 / 就是，${f.fillerPct}%）`, `口语化 ${f.fillerPct}%`, f.fillerPct, `口语化用词占 ${f.fillerPct}%`);
+  if (f.activeHours.length) {
+    add("hours.active", "situation", "活跃时段", `活跃时段集中在 ${f.activeHours.map((h) => `${h}:00`).join(" / ")}`, `活跃 ${f.activeHours.join("/")} 点`, f.activeHours.length, "按发言时间统计");
+  }
+  if (f.topWords.length) {
+    add("words.top", "situation", "高频词", `高频词：${f.topWords.slice(0, 5).map((w) => w.w).join("、")}`, `高频词 ${f.topWords.slice(0, 3).map((w) => w.w).join("/")}`, f.topWords.length, `词频 ${f.topWords.map((w) => `${w.w}×${w.c}`).join(" ")}`);
+  }
   return out;
+}
+
+/**
+ * 特征 → 可读结论（带证据）。
+ * 注意：这只是 computeMeasures 的薄包装，**不再写进 observations**；
+ * 旧版本把它的输出当事实落库，导致失效（invalidate）永远追不上重算。
+ */
+export function describePerson(name, f) {
+  void name;
+  return computeMeasures(f).map((m) => ({ key: m.key, field: m.field, value: m.value, quote: m.quote, confidence: 0.7 }));
 }
 
 /**
@@ -185,9 +274,9 @@ const ANALYSIS_SYSTEM = [
 export async function analyzePersonWithLLM({ name, relation = "", stats = null, samples = [], context = [], key, model, signal = null } = {}) {
   const arkKey = key || resolveArkKey("");
   if (!arkKey) return null;
-  const sampleText = samples.slice(-12).map((s) => `- ${String(s.text || "").slice(0, 100)}`).join("\n");
+  const sampleText = samples.slice(-8).map((s) => `- ${String(s.text || "").slice(0, 90)}`).join("\n");
   if (sampleText.length < 40) return null;
-  const contextText = context.slice(-12).map((c) => `- ${c.from}: ${String(c.text || "").slice(0, 80)}`).join("\n");
+  const contextText = context.slice(-6).map((c) => `- ${c.from}: ${String(c.text || "").slice(0, 70)}`).join("\n");
   const statText = stats ? [
     `发言 ${stats.count} 条 / 活跃 ${stats.activeDays} 天 / 每日 ${stats.perDay} 条`,
     `句长中位 ${stats.medianLen} 字`,
@@ -211,7 +300,7 @@ export async function analyzePersonWithLLM({ name, relation = "", stats = null, 
     },
   ], {
     key: arkKey,
-    maxTokens: 1200,
+    maxTokens: 700,
     // 外部 signal（取消任务）+ 单次超时；任一触发都中断当前请求
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(25000)]) : AbortSignal.timeout(25000),
     ...(model ? { model } : {}),
