@@ -44,4 +44,28 @@ export const WIKI_DEMOS: Record<string, WikiDemo> = {
       { key: "confirm", label: "确认", title: "人确认 Mission 完成", detail: "Agent 可以建议「做完了」，但不能替人宣布「验收通过」。", tone: "done" },
     ],
   },
+  office: {
+    eyebrow: "OFFICE · PROJECTION",
+    title: "状态怎么落到舞台上",
+    steps: [
+      { key: "state", label: "读状态", title: "只读现有 State", detail: "agents / runs / todos / approvals / terminals / delegations；不新建表，也不伪造任务。", tone: "idle" },
+      { key: "model", label: "投影", title: "State → OfficeModel", detail: "纯函数算出区域、姿态、tone 与走位；没有数据的位置保持空闲。", tone: "idle" },
+      { key: "zone", label: "分区", title: "按优先级落位", detail: "审批 / 等待输入 > 失败 > 待验收 > 主管 > 运行中 > 排队 > 空闲。", tone: "review" },
+      { key: "stage", label: "舞台", title: "三套模板共用一份模型", detail: "办公室 2.5D 是默认；作战室与航母是 three.js 3D，按需加载。", tone: "running" },
+      { key: "inspect", label: "点开", title: "Inspector 才提供操作", detail: "状态 → 区域 → 姿态 → 动效；打开任务 / 会话 / 终端、停止、重试、审批。", tone: "steer" },
+      { key: "motion", label: "动效", title: "克制 / 完整 / 关闭", detail: "走位时长、姿态幅度、打字速度存 config.prefs.motion，reduced-motion 同样生效。", tone: "done" },
+    ],
+  },
+  memory: {
+    eyebrow: "MEMORY · DREAM",
+    title: "记忆怎么流动",
+    steps: [
+      { key: "l1", label: "L1", title: "L1 会话不可变", detail: "消息、run、事件由系统落库，建 bigram 索引；Agent 只能读。", tone: "idle" },
+      { key: "l2", label: "L2", title: "L2 note 允许写错", detail: "必须带来源，一条 ≤ 400 字符；同一句话只存一行，重复写只抬置信度。", tone: "queued" },
+      { key: "l3", label: "L3", title: "L3 知识可审核", detail: "资料只读、页面可写；Agent 只能写 draft。", tone: "running" },
+      { key: "dream", label: "Dream", title: "Dream 只出建议", detail: "换说法的重复 / 已不成立 / 缺来源 / 该晋升，进建议队列，不直接改写。", tone: "review" },
+      { key: "l4", label: "L4", title: "L4 打分填预算", detail: "置顶 + 有来源 + 层级 + 近两周 + 被用过的 log，按节配额贪心填，≤12k 字符。", tone: "steer" },
+      { key: "log", label: "台账", title: "inject_log 回填命中", detail: "记下每次注入了什么、有没有被回答用到；归因目前只到标题片段匹配。", tone: "done" },
+    ],
+  },
 };

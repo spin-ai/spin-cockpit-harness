@@ -55,7 +55,10 @@
     "db:bench": "node scripts/db-bench.mjs",
     "db:selftest": "node scripts/db-selftest.mjs",
     "wiki:curate:selftest": "node scripts/wiki-curate-selftest.mjs",
-    "wiki:plugin:selftest": "node scripts/wiki-plugin-selftest.mjs"
+    "wiki:plugin:selftest": "node scripts/wiki-plugin-selftest.mjs",
+    "video:douyin": "electron scripts/video/render-douyin.cjs",
+    "video:wide": "electron scripts/video/render-douyin.cjs --wide --reuse-audio",
+    "video:pages": "node scripts/video/publish-web.cjs"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.1.1",

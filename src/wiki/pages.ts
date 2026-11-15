@@ -5,6 +5,10 @@ import llmWiki from "../../resources/wiki/llm-wiki.md?raw";
 import architecture from "../../resources/wiki/architecture.md?raw";
 import agents from "../../resources/wiki/agents.md?raw";
 import superAgent from "../../resources/wiki/super-agent.md?raw";
+import office from "../../resources/wiki/office.md?raw";
+import memory from "../../resources/wiki/memory.md?raw";
+import knowledge from "../../resources/wiki/knowledge.md?raw";
+import tech from "../../resources/wiki/tech.md?raw";
 import designNotes from "../../resources/wiki/design-notes.md?raw";
 import persona from "../../resources/wiki/persona.md?raw";
 import terminal from "../../resources/wiki/terminal.md?raw";
@@ -31,6 +35,10 @@ export const WIKI_PAGES: WikiPage[] = [
   { id: "architecture", title: "架构", group: "系统", summary: "Electron 主进程、React 渲染层、SQLite、ACP 与 pty 的边界。", body: architecture },
   { id: "agents", title: "Agent 与执行适配器", group: "系统", summary: "哪些 CLI 能从 Chat 派活，dsh ACP 如何驱动一次 run。", body: agents },
   { id: "super-agent", title: "Super Agent / Mission", group: "系统", summary: "Mission、Plan、Delegation、Supervisor 与 MCP 编排。", body: superAgent },
+  { id: "office", title: "场景与办公室", group: "系统", summary: "真实运行状态的空间投影：状态映射、三套舞台、动效与明确未做。", body: office },
+  { id: "memory", title: "记忆与 Dream", group: "系统", summary: "L1–L4 四层、四种「忘」、打分注入与只提建议的 Dream。", body: memory },
+  { id: "knowledge", title: "知识库", group: "系统", summary: "资料只读 / 页面可审核：解析路由、摄入状态机、混合检索与引用。", body: knowledge },
+  { id: "tech", title: "五个技术难点", group: "系统", summary: "解析 / 编排 / 整理 / 记忆 / 画像：难在哪、做到什么算做到、现在到哪了。", body: tech },
   { id: "design-notes", title: "设计取舍与踩坑", group: "系统", summary: "关键决策、已踩的坑，以及明确没做的事。", body: designNotes },
   { id: "persona", title: "人物画像与记忆语义", group: "系统", summary: "四种「忘」、可观测特征与事实的分界、建模怎么跑才值。", body: persona },
   { id: "terminal", title: "终端与预览", group: "系统", summary: "真实 pty、标签拆分、预览和元素拾取上下文。", body: terminal },

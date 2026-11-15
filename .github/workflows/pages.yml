@@ -7,6 +7,7 @@ on:
       - "resources/wiki/**"
       - "CHANGELOG.md"
       - "public/wiki/**"
+      - "public/video/**"
       - "src/wiki/**"
       - "src/components/GitWiki.tsx"
       - "src/components/WikiFlowDemo.tsx"

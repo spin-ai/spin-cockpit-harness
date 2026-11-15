@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Added（内容 · 抖音介绍视频）
+- **按 WorkBuddy 定稿的 11 段第一人称脚本重做**：热点开场（5 个 Agent 上限）→ 我也是这样 → 我写了个东西 → 派活 / 分工 / 场景 / 知识 / 记忆 / 画像 → 五个难点 → 开源；成片约 **60s**、1080×1920、30fps
+- **视频生成器**：`scripts/video/`（`scenes.cjs` 11 个场景 / `stage.css` 舞台 / `tts.cjs` 分段合成 / `render-douyin.cjs` 时间线 → Electron 逐帧截图 → ffmpeg / `voiceover.md` + `storyboard.md`）；字幕烧进画面，避开抖音底部 400px / 右侧 120px 安全区
+- **配音**：改用 Edge 神经语音 `zh-CN-XiaoxiaoNeural`（`rate +30%` / `pitch -2Hz`），更柔和、现代；后期加轻 EQ / 压缩 / 短空间感。火山引擎适配器仍就绪（`VOLC_TTS_APPID / TOKEN / CLUSTER / VOICE`，`TTS_ENGINE=volcengine`）；Pi Agent 的 `models.json` 里 volcengine 是 **Ark plan 网关**，不含 TTS
+- **音乐**：`scripts/video/music.cjs` 纯合成 96 BPM 铺底（Am7–Fmaj7–Cmaj7–G6），人声 sidechain 自动让位，无第三方版权素材；静音版仍保留，方便抖音加热门音乐
+- **去个人内容**：记忆 / 画像两段不再用真实截图，改成纯 HTML 合成卡片（`示例数据` / `示例人物`），视频里不含真实联系人、真实笔记、本地路径
+- **横版 / GitHub Pages**：`--wide` 输出 1920×1080 横版，`publish-web.cjs` 压成 1600×900 / 4.5MB，落到 `public/video/`；Pages 首页新增 `#video` 区块（`<video controls poster>`），工作流监听 `public/video/**`
+- **产物**：竖版配音 / 静音 + 横版 1920×1080 + Pages 1600×900 + 封面 / 海报；母片在 `.preview/douyin*`（gitignore），Pages 版入库
+
 ### Added（场景 · 场景库卡片管理）
 - **场景库卡片就地增删改查**：`⋯` 菜单里 `重命名 / 复制一份 / 复制为 JSON / 删除`，原来的占位提示换成真实操作；标题双击也能改名（Enter 提交、Esc 取消、失焦提交）
 - **删除二次确认**在卡片底部完成（不再弹系统 confirm），每个项目至少保留一个场景；删掉当前场景后自动回落到第一个
