@@ -7,6 +7,13 @@ import { a11yChecks, motionOf, poseLabel, triggerOf, ZONE_LABEL } from "./motion
 type Act = (type: string, payload?: unknown) => Promise<unknown>;
 
 const ACTIVE = new Set(["queued", "running", "waiting_input", "waiting_plan", "waiting_children"]);
+/** 回合决策：舞台上「转人工 / 被拦 / 沉默」也是状态，不只是没说话 */
+const DECISION_LABEL: Record<string, string> = {
+  answered: "主动开口", replied: "回你", reported: "汇报", asked: "先问一句",
+  silent: "沉默", blocked: "被拦", escalated: "转人工", watching: "监视中",
+  streaming: "生成中", interrupted: "被打断",
+};
+const CAP_LABEL: Record<string, string> = { read: "只读", dispatch: "可起任务", work: "能执行" };
 const DELEGATION_STATUS: Record<string, string> = {
   proposed: "待批准", queued: "排队", running: "进行中", waiting_input: "等待确认",
   completed: "已完成", accepted: "已接受", rework: "返工", failed: "失败", cancelled: "已取消",
@@ -77,7 +84,11 @@ export function OfficeInspector({ actor, model, act, notify, onOpenTask, onOpenT
         </div>
         <div className="insp-title">
           <b>{actor.displayName} <em>{actor.role === "lead" ? "主控" : actor.role === "reviewer" ? "评审" : "执行"}</em></b>
-          <span>{actor.role === "lead" ? "主控 · supervisor" : actor.role === "reviewer" ? "评审 · reviewer" : "执行 · worker"} · {actor.hostName}</span>
+          <span>
+            {actor.role === "lead" ? "主控" : actor.role === "reviewer" ? "评审" : "执行"}
+            {actor.bot ? ` · 机器人 · 执行体 ${actor.agent ? (actor.agent.alias || actor.agent.name) : "未绑定"}` : " · 执行体"}
+            {actor.agent ? ` · ${actor.hostName}` : ""}
+          </span>
         </div>
         <button type="button" className="icon-btn" onClick={onClose} aria-label="取消选中（Esc）">✕</button>
       </div>
@@ -89,6 +100,22 @@ export function OfficeInspector({ actor, model, act, notify, onOpenTask, onOpenT
       </div>
 
       <div className="insp-body">
+        {actor.bot ? (
+          <div className="block">
+            <div className="block-label">机器人<span>{CAP_LABEL[actor.bot.capability || "read"]}{actor.agent ? "" : " · 未绑定执行体"}</span></div>
+            <dl className="map">
+              <dt>职责</dt><dd>{actor.bot.persona?.mission || "还没写职责"}</dd>
+              <dt>语气</dt><dd>{actor.bot.persona?.tone || "还没写语气"}</dd>
+              <dt>最近一次</dt>
+              <dd>
+                {actor.botTurn
+                  ? `${DECISION_LABEL[actor.botTurn.decision || ""] || "回合"}${actor.botTurn.reason ? ` · ${actor.botTurn.reason}` : ""}`
+                  : actor.agent ? "还没有回合记录" : "选一个执行体才能干活"}
+              </dd>
+            </dl>
+          </div>
+        ) : null}
+
         <div className="block">
           <div className="block-label">状态 → 舞台<span>只读 · 来自 State</span></div>
           <dl className="map">
@@ -232,7 +259,7 @@ export function OfficeInspector({ actor, model, act, notify, onOpenTask, onOpenT
             {approval ? <button className="btn danger" onClick={() => void decide(false)}>拒绝</button> : null}
             {showsTask && task ? <button className="btn" onClick={() => onOpenTask(task.id)}>打开任务</button> : null}
             {actor.thread ? <button className="btn" onClick={() => onOpenThread(actor.thread!.id)}>会话</button> : null}
-            <button className="btn" onClick={() => onOpenTerminal(terminal?.cwd || actor.agent.cwd, terminal?.status === "running" ? terminal.id : undefined)}>终端</button>
+            <button className="btn" onClick={() => onOpenTerminal(terminal?.cwd || actor.agent?.cwd || "", terminal?.status === "running" ? terminal.id : undefined)} disabled={!terminal?.cwd && !actor.agent?.cwd}>终端</button>
             {actor.run && ACTIVE.has(actor.run.status) ? <button className="btn danger" onClick={() => void stop()}>停止</button> : null}
           </div>
         </div>

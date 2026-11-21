@@ -106,7 +106,7 @@ export function OfficeStage({ model, now, selectedId, onSelect, onOpenTask, ligh
       .map((a) => {
         const from = a.zone === "lead" ? { left: LEAD.x + 184, top: LEAD.y + 136 } : a.seat !== null ? { left: STATIONS[a.seat].x + 142, top: STATIONS[a.seat].y + 122 } : ZONE_POS.standby;
         const to = seatPosition(a);
-        return { id: a.agent.id, from, to, on: selectedId === a.agent.id };
+        return { id: a.id, from, to, on: selectedId === a.id };
       });
   }, [model.actors, selectedId, showPaths]);
 
@@ -200,7 +200,7 @@ export function OfficeStage({ model, now, selectedId, onSelect, onOpenTask, ligh
       </div>
 
       <button type="button" className={`prop approval ${model.approval.count ? "active" : ""}`}
-        onClick={() => interactive && model.approval.actor && onSelect?.(model.approval.actor.agent.id)} title="审批台">
+        onClick={() => interactive && model.approval.actor && onSelect?.(model.approval.actor.id)} title="审批台">
         <span className="approval-head"><i className="lamp" />审批台</span>
         <span className="tray-slot" />
         <span className="tray-paper"><i /><span>{model.approval.count ? model.approval.title : "没有待确认"}</span></span>
@@ -208,8 +208,8 @@ export function OfficeStage({ model, now, selectedId, onSelect, onOpenTask, ligh
       </button>
 
       <div className="prop shelf" role="button" tabIndex={0} title="验收架"
-        onClick={() => interactive && model.review.actor && onSelect?.(model.review.actor.agent.id)}
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (interactive && model.review.actor) onSelect?.(model.review.actor.agent.id); } }}>
+        onClick={() => interactive && model.review.actor && onSelect?.(model.review.actor.id)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (interactive && model.review.actor) onSelect?.(model.review.actor.id); } }}>
         <div className="shelf-head">验收架 <em>{model.review.count}</em></div>
         <div className="shelf-paper"><i /><span>{model.review.count ? model.review.title : "没有待验收任务"}</span></div>
         <div className="shelf-paper dim"><i />最近验收记录</div>
@@ -285,15 +285,15 @@ export function OfficeStage({ model, now, selectedId, onSelect, onOpenTask, ligh
         {model.actors.map((a) => {
           const p = seatPosition(a);
           const seated = a.zone === "desk" || a.zone === "lead";
-          const isWalking = Boolean(walking?.has(a.agent.id));
-          const fromLabel = walkFrom?.[a.agent.id];
+          const isWalking = Boolean(walking?.has(a.id));
+          const fromLabel = walkFrom?.[a.id];
           return (
             <button
-              key={a.agent.id}
+              key={a.id}
               type="button"
-              className={`actor ${seated ? "seated" : ""} zone-${a.zone} pose-${a.pose} tone-${a.tone} ${selectedId === a.agent.id ? "selected" : ""} ${isWalking ? "walking" : ""}`}
+              className={`actor ${seated ? "seated" : ""} zone-${a.zone} pose-${a.pose} tone-${a.tone} ${selectedId === a.id ? "selected" : ""} ${isWalking ? "walking" : ""}`}
               style={{ left: p.left, top: p.top, "--accent": ACCENT[a.accent] || "var(--fg-2)" } as CSSProperties}
-              onClick={(e) => { if (!onSelect) return; e.stopPropagation(); onSelect(a.agent.id); }}
+              onClick={(e) => { if (!onSelect) return; e.stopPropagation(); onSelect(a.id); }}
               tabIndex={interactive ? 0 : -1}
               aria-label={`${a.displayName} · ${a.statusLabel}`}
             >

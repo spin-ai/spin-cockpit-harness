@@ -4,6 +4,29 @@
 
 ## [Unreleased]
 
+### Changed（设置：用语、顺序、排版）
+- **导航分组**：分区按「基础 / 运行 / 连接 / 观察 / 维护」分节，组间一条 hairline；顺序改为 通用 · 外观 · 执行 · 主机 · 终端 · 预览 · 即时通信 · 统计 · 插件 · 数据 · 快捷键 · 关于（主机跟着执行走，统计单独成组）
+- **用语统一**：分区说明一句话、**不带句号**；行 hint 一句话、不带句号、技术值前置、并列用「；」；`settings-note` 才是完整句子（带句号）。术语固定为 Agent / 机器人 / 运行 / 主机 / 会话 / 任务，英文保留 dsh、DSH_HOME、ACP、CLI、worktree、Webhook、Mission、Supervisor
+- **标题规范**：卡片标题 2–6 字名词（`dsh 运行时`、`模型与密钥`、`运行环境（只读）`、`全部快捷键`）；行标题 ≤8 字、不带括号补丁（`全局并发上限`→`并发上限`、`默认模型（高级）`→`默认模型`、`Reasoning effort`→`推理强度（effort）`）
+- **卡片重排**：执行分区改为 并发与审批 → dsh 运行时 → 模型与密钥 → Mission → Agent 角色 → 桌面操作 → 运行环境（只读，合并「Chat 执行适配器 + 已检测 CLI」）→ Runtime 视图（只读）；模型/effort 从 dsh 卡挪进模型卡；「人物建模」改名「人物语料」并搬进数据分区
+- **补齐缺失的 hint**：通用、预览、数据、主机等 20+ 行补上「它影响什么」，空行说明不再只靠标题猜
+- **排版**：控件宽度收到三档（下拉/短文本 200 / 数字 88 / 长文本 260），只读值右对齐到同一条边（新增 `.set-row-value`）；`hint` 限宽 56ch；卡片间距 28px、卡片标题降级为 11.5px 小标；窄屏（≤820px）行自动变上下布局
+- 飞书「一次粘贴就配好」块只保留一个 primary（保存并测试），小标题与行标题同级
+
+### Changed（统计 / 主机收进设置）
+- **rail 不再有「统计」「主机」**：两块内容以 `embedded` 模式嵌进设置分区（`Hosts` / `Stats`，不再自带 `PageHeader`，只留一条右对齐工具条），设置分区顺序：通用 / 外观 / 执行 / 终端 / 预览与元素 / 即时通信 / **主机** / **统计** / 插件 / 数据 / 快捷键 / 关于
+- **旧入口都还能用**：命令面板「统计 / 主机」→ 设置对应分区；`defaultView=stats|hosts` 的老库读到时落成 `settings`；`harness:view` 传 `stats|hosts` 同样落到分区。主机离线的红点从 rail 挪到「设置」的角标
+- **启动视图选项**：`工作区 / 项目 / 设置`（原来的「统计」换成「设置」）
+- 新增 dev-only 预览 `settings-preview.html`（`?section=hosts|stats&theme=dark`），设置分区里的整页内容也能截图检查
+
+### Changed（舞台的主角从 Agent 换成 Bot）
+- **阵容按机器人登记**：`coordination_scenes.config.cast[]` 从 `agentId` 改成 `botId`（`src/types.ts: CoordinationCastMember`）。人格、头像、配色、走位、名字牌都跟机器人走，执行体（Agent）只是它**此刻借的身体**——换执行体不再等于换人
+- **读兼容老数据**：老的 `cast[].agentId` 在 `buildOfficeModel` 里按 `bots.executor_agent_id` 反查成机器人；新的编辑器只写 `botId`
+- **不静默丢人**：没绑执行体的机器人照样上台（待命位，状态「待绑定执行体」），协调台里「派了活但没人上场」也标出名字；一条 bot 都没有的老库仍按执行体呈现
+- **状态里多一层**：除 run / todo 的机器状态外，舞台上还能读到机器人最近一条回合（`turn / silent / blocked / escalated / watching`）→ 「转人工 / 被拦 / 沉默 / 监视中」与「等待确认」平级；检查器新增「机器人」块（职责 / 语气 / 最近一次）
+- 场景统计改口径：`stats.bots` / `stats.unbound` 新增，页头与场景库显示「几位机器人（含未绑定执行体）」；`?select=` 现在接 botId（`office-preview.html?select=b-golo`）
+- **派单链记住「谁派的」**：新增 `todos.bot_id` / `delegations.bot_id`（老库启动时 `ALTER`，老数据留空）。`botAcceptProposal` 建的任务、Mission 派下去的子任务都带上它；协调台仍以「谁在干」（执行体所在座位）为先，执行体没上场才退回机器人。机器人检查器里的「真实委派」也按 `botId` 一起算
+
 ### Fixed（易用性 · Electron 里点了没反应的按钮）
 根因是 `window.prompt`：**Electron 不实现它**，调用不会弹任何东西。以下入口之前都是"点了没反应"，现在全部改成行内输入：
 

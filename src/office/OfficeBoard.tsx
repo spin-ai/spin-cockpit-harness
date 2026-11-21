@@ -25,10 +25,10 @@ export function OfficeBoard({ model, selectedId, onSelect }: {
       <div className="off-board-rows">
         {rows.map((a) => (
           <button
-            key={a.agent.id}
+            key={a.id}
             type="button"
-            className={`off-board-card tone-${a.tone} ${selectedId === a.agent.id ? "on" : ""}`}
-            onClick={() => onSelect(a.agent.id)}
+            className={`off-board-card tone-${a.tone} ${selectedId === a.id ? "on" : ""}`}
+            onClick={() => onSelect(a.id)}
             title={a.detail}
           >
             <span className="off-board-top">

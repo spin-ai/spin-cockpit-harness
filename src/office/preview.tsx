@@ -14,7 +14,7 @@ import "../design-system.css";
  *   ?template=office|warroom|carrier   切舞台（航母 / 作战室是 3D）
  *   ?theme=light|dark  ?hour=0-23      主题与光照
  *   ?tab=gallery|live|lights|execution  场景页 tab
- *   ?select=<agentId>|none  ?detail=1  ?mode=config
+ *   ?select=<botId>|none  ?detail=1  ?mode=config
  *   ?mission=plan_review               主管去会议室（真实 missionState）
  *   ?script=1                          9 秒时间线：审批 → 放行 → 验收 → 派活 → 收工
  *
@@ -55,6 +55,22 @@ const baseState: State = {
     { id: "an", name: "安", hostId: "h1", cli: "dsh", cwd: "~/work/research", max: 1, approval: "ask", color: "orange", skills: [], alias: "an", projectId: "p1", role: "worker", chatRunnable: true },
     { id: "qiao", name: "乔", hostId: "h1", cli: "dsh", cwd: "~/work/research", max: 1, approval: "ask", color: "purple", skills: [], alias: "qiao", projectId: "p1", role: "worker", chatRunnable: true },
     { id: "man", name: "小满", hostId: "h1", cli: "dsh", cwd: "~/work/research", max: 1, approval: "ask", color: "slate", skills: [], alias: "man", projectId: "p1", role: "worker", chatRunnable: true },
+  ],
+  // 舞台上的「人」= 机器人；executorAgentId 是它此刻借的执行体。起草机故意不绑执行体（演示空态）。
+  bots: [
+    { id: "b-golo", name: "戈洛", avatar: "戈", avatarClass: "a", capability: "work", executorAgentId: "lan", persona: { mission: "项目值守", tone: "直接、短句" }, status: "active", channels: ["local"], createdAt: ago(300) },
+    { id: "b-nan", name: "南", avatar: "南", avatarClass: "b", capability: "dispatch", executorAgentId: "lin", persona: { mission: "资料管家" }, status: "active", channels: ["local"], createdAt: ago(280) },
+    { id: "b-zhou", name: "舟", avatar: "舟", avatarClass: "c", capability: "work", executorAgentId: "zhou", persona: { mission: "前端" }, status: "active", channels: ["local"], createdAt: ago(260) },
+    { id: "b-bei", name: "北", avatar: "北", avatarClass: "a", capability: "work", executorAgentId: "bei", persona: { mission: "迁移" }, status: "active", channels: ["local"], createdAt: ago(240) },
+    { id: "b-an", name: "安", avatar: "安", avatarClass: "b", capability: "work", executorAgentId: "an", persona: { mission: "回归" }, status: "active", channels: ["local"], createdAt: ago(220) },
+    { id: "b-qiao", name: "乔", avatar: "乔", avatarClass: "c", capability: "work", executorAgentId: "qiao", persona: { mission: "验收" }, status: "active", channels: ["local"], createdAt: ago(200) },
+    { id: "b-man", name: "小满", avatar: "满", avatarClass: "a", capability: "read", executorAgentId: "man", persona: { mission: "巡检" }, status: "active", mutedUntil: now + 3_600_000, channels: ["local"], createdAt: ago(180) },
+    { id: "b-draft", name: "起草机", avatar: "起", avatarClass: "b", capability: "dispatch", executorAgentId: null, persona: { mission: "写作" }, status: "active", channels: ["local"], createdAt: ago(120) },
+  ],
+  botTurns: [
+    { id: "turn-1", botId: "b-golo", channel: "local", trigger: { kind: "run.finished", ref: "T-014" }, decision: "reported", reply: "登录页校验跑完了，diff 在 th-t14。", reason: "", createdAt: ago(1) },
+    { id: "turn-2", botId: "b-man", channel: "local", trigger: { kind: "todo.changed" }, decision: "silent", reason: "静音中（1 小时）", createdAt: ago(6) },
+    { id: "turn-3", botId: "b-draft", channel: "local", trigger: { kind: "mention" }, decision: "blocked", reason: "还没绑定执行体，只能写文本", createdAt: ago(9) },
   ],
   todos: [
     { id: "m3", key: "M-03", title: "发布 v0.3", desc: "", acceptance: [], status: "in_progress", agentId: "lan", priority: "P1", due: "", parentId: null, tags: [], subtasks: [
@@ -104,13 +120,15 @@ const baseState: State = {
     { id: "d4", missionId: "m3", supervisorRunId: "r-lead", childTodoId: "t09", childRunId: "r-qiao", agentId: "qiao", planStepKey: "s4", title: "回归验收", brief: "", acceptance: [], status: "completed", resultSummary: "", artifacts: [], branch: null, createdAt: ago(12), updatedAt: ago(4), completedAt: ago(4) },
   ],
   coordinationScenes: [{ id: "cs1", name: "research 小队", projectId: "p1", template: TEMPLATE, config: { cast: [
-    { agentId: "lan", role: "lead", seat: null },
-    { agentId: "lin", role: "worker", seat: 0 },
-    { agentId: "zhou", role: "worker", seat: 1 },
-    { agentId: "bei", role: "worker", seat: 2 },
-    { agentId: "an", role: "worker", seat: 3 },
-    { agentId: "qiao", role: "reviewer", seat: 4 },
-    { agentId: "man", role: "worker", seat: 5 },
+    { botId: "b-golo", role: "lead", seat: null },
+    { botId: "b-nan", role: "worker", seat: 0 },
+    { botId: "b-zhou", role: "worker", seat: 1 },
+    { botId: "b-bei", role: "worker", seat: 2 },
+    { botId: "b-an", role: "worker", seat: 3 },
+    { botId: "b-qiao", role: "reviewer", seat: 4 },
+    { botId: "b-man", role: "worker", seat: 5 },
+    // 没绑执行体的机器人也在阵容里：它上台，但只能等（不是消失）
+    { botId: "b-draft", role: "worker", seat: null },
   ], prefs: { reviewGate: true, escalate: true, inject: false, showLinks: true, showLabels: true, light: "auto", motion: { tier: "calm", walk: 900, amp: 100, typing: true } } }, createdAt: now, updatedAt: now }],
   settings: { defaultView: "workspace", theme: "light", chatFontSize: 13, enterToSend: true, confirmStop: false, defaultAgentId: null, maxConcurrentRuns: 2, approvalPolicy: "ask", dshBinary: "", dshHome: "", dshEnv: "", model: "", effort: "", terminalFontSize: 12, terminalScrollback: 5000, shellPath: "", autoDetectDevServerUrl: true, previewHomeUrl: "", elementScreenshots: true, previewIgnoreCertErrors: false, previewPermissionSites: "", previewAgentControl: true, contextDetail: "compact", uiScale: 100 },
   cliCapabilities: [],
@@ -190,7 +208,7 @@ function useScriptedState() {
 }
 
 const initialTab = (params.get("tab") as "gallery" | "live" | "lights" | "execution" | null) || "live";
-const initialSelectedId = params.get("select") === "none" ? null : (params.get("select") || "lin");
+const initialSelectedId = params.get("select") === "none" ? null : (params.get("select") || "b-golo");
 
 function Preview() {
   const state = useScriptedState();

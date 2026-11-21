@@ -43,29 +43,44 @@ export function SceneConfigPanel({ state, model, cast, onCast, prefs, onPrefs, o
   onClose: () => void;
   notify: (message: string) => void;
 }) {
+  // 阵容里坐的是机器人；执行体只是它们此刻借的身体，所以在行里作为附注显示
   const projectAgents = state.agents.filter((a) => !a.projectId || a.projectId === state.activeProjectId);
-  const leadId = cast.find((c) => c.role === "lead")?.agentId ?? model.lead?.agent.id ?? null;
-  const rows = projectAgents.map((agent) => {
-    const member = cast.find((c) => c.agentId === agent.id);
-    const actor = model.actors.find((a) => a.agent.id === agent.id);
+  const bots = state.bots ?? [];
+  const agentOf = (botId: string) => {
+    const bot = bots.find((b) => b.id === botId);
+    const agent = bot?.executorAgentId ? projectAgents.find((a) => a.id === bot.executorAgentId) : undefined;
+    return { bot, agent };
+  };
+  const castIds = new Set(cast.map((c) => c.botId ?? bots.find((b) => b.executorAgentId === c.agentId)?.id).filter(Boolean) as string[]);
+  const leadId = cast.find((c) => c.role === "lead")?.botId
+    ?? cast.find((c) => c.role === "lead")?.agentId
+    ?? model.lead?.id
+    ?? null;
+  const rows = bots.map((bot) => {
+    const { agent } = agentOf(bot.id);
+    const member = cast.find((c) => c.botId === bot.id) ?? cast.find((c) => !c.botId && c.agentId === bot.executorAgentId);
+    const actor = model.actors.find((a) => a.id === bot.id);
     return {
-      agent,
-      name: actor?.displayName || member?.displayName || agent.name,
-      role: (member?.role ?? (agent.id === leadId ? "lead" : actor?.role === "reviewer" ? "reviewer" : "worker")) as OfficeCastRole,
+      bot,
+      executorName: agent?.alias || agent?.name || null,
+      name: actor?.displayName || member?.displayName || bot.name,
+      role: (member?.role ?? (bot.id === leadId ? "lead" : actor?.role === "reviewer" ? "reviewer" : "worker")) as OfficeCastRole,
       seat: member?.seat ?? actor?.seat ?? null,
-      accent: actor?.accent || (agent.role === "supervisor" ? "slate" : agent.color || "slate"),
+      accent: actor?.accent || "slate",
     };
   });
 
-  const update = (agentId: string, patch: Partial<OfficeCastMember>, autoSeat = true) => {
-    const current = rows.map((r) => ({
-      agentId: r.agent.id,
-      role: r.role,
-      seat: r.seat,
-      displayName: cast.find((c) => c.agentId === r.agent.id)?.displayName,
-    })) as OfficeCastMember[];
-    let next = current.filter((c) => c.agentId !== agentId);
-    const prev = current.find((c) => c.agentId === agentId) ?? { agentId, role: "worker" as OfficeCastRole, seat: null };
+  const update = (botId: string, patch: Partial<OfficeCastMember>, autoSeat = true) => {
+    const current = rows
+      .filter((r) => castIds.has(r.bot.id) || r.bot.id === botId)
+      .map((r) => ({
+        botId: r.bot.id,
+        role: r.role,
+        seat: r.seat,
+        displayName: cast.find((c) => c.botId === r.bot.id)?.displayName,
+      })) as OfficeCastMember[];
+    let next = current.filter((c) => c.botId !== botId);
+    const prev = current.find((c) => c.botId === botId) ?? { botId, role: "worker" as OfficeCastRole, seat: null };
     const merged: OfficeCastMember = { ...prev, ...patch };
     if (merged.role === "lead") {
       next = next.map((c) => (c.role === "lead" ? { ...c, role: "worker" as OfficeCastRole, seat: null } : c));
@@ -101,22 +116,26 @@ export function SceneConfigPanel({ state, model, cast, onCast, prefs, onPrefs, o
         </section>
 
         <section className="off-insp-block">
-          <div className="off-block-label">阵容 <span>{rows.length} 位 Agent</span><button className="off-mini-link" onClick={() => { onCast([]); notify("已按项目 Agent 自动生成阵容"); }}>自动阵容</button></div>
+          <div className="off-block-label">阵容 <span>{castIds.size || rows.length} 位机器人</span><button className="off-mini-link" onClick={() => { onCast([]); notify("已按机器人自动生成阵容"); }}>自动阵容</button></div>
           <div className="off-cast-list">
-            {rows.map(({ agent, name, role, seat, accent }) => {
+            {rows.map(({ bot, executorName, name, role, seat, accent }) => {
               const seatValue = role === "lead" ? "lead" : seat === null ? "standby" : String(seat);
+              const onStage = castIds.has(bot.id) || role === "lead";
               return (
-                <div className={`off-cast-row ${agent.id === leadId ? "lead" : ""}`} key={agent.id}>
+                <div className={`off-cast-row ${bot.id === leadId ? "lead" : ""} ${onStage ? "" : "off"}`} key={bot.id}>
                   <span className={`off-cast-dot accent-${accent}`} />
-                  <span className="off-cast-name" title={agent.alias || agent.id}>{name}</span>
-                  <select className="off-cast-role" value={role} onChange={(e) => update(agent.id, { role: e.target.value as OfficeCastRole })} aria-label={`${name} 的角色`}>
+                  <span className="off-cast-name" title={`${bot.name}${executorName ? ` · 执行体 ${executorName}` : " · 未绑定执行体"}`}>
+                    {name}
+                    <em className="off-cast-sub">{executorName ? `执行体 ${executorName}` : "未绑定执行体"}</em>
+                  </span>
+                  <select className="off-cast-role" value={role} onChange={(e) => update(bot.id, { role: e.target.value as OfficeCastRole })} aria-label={`${name} 的角色`}>
                     <option value="lead">lead</option>
                     <option value="worker">worker</option>
                     <option value="reviewer">reviewer</option>
                   </select>
                   <select className="off-cast-seat" value={seatValue} onChange={(e) => {
                     const v = e.target.value;
-                    update(agent.id, { seat: v === "standby" ? null : v === "lead" ? null : Number(v), ...(v === "lead" ? { role: "lead" as OfficeCastRole } : {}) }, v !== "standby");
+                    update(bot.id, { seat: v === "standby" ? null : v === "lead" ? null : Number(v), ...(v === "lead" ? { role: "lead" as OfficeCastRole } : {}) }, v !== "standby");
                   }} aria-label={`${name} 的座位`}>
                     {role === "lead" ? <option value="lead">lead-desk</option> : null}
                     {[0, 1, 2, 3, 4, 5].map((s) => <option value={String(s)} key={s}>desk-0{s + 1}</option>)}
@@ -131,8 +150,8 @@ export function SceneConfigPanel({ state, model, cast, onCast, prefs, onPrefs, o
         <section className="off-insp-block">
           <div className="off-block-label">编排 <span>默认值</span></div>
           <div className="off-toggle-row"><div><b>评审门</b><span>完成后进入待验收，不自动确认</span></div><button className={`off-switch ${prefs.reviewGate ? "on" : ""}`} onClick={() => onPrefs({ reviewGate: !prefs.reviewGate })} aria-pressed={prefs.reviewGate}><i /></button></div>
-          <div className="off-toggle-row"><div><b>失败升级给 lead</b><span>失败后由主 Agent 决定重试或换人</span></div><button className={`off-switch ${prefs.escalate ? "on" : ""}`} onClick={() => onPrefs({ escalate: !prefs.escalate })} aria-pressed={prefs.escalate}><i /></button></div>
-          <div className="off-toggle-row"><div><b>角色提示注入</b><span>开启后写入 instructions，并记录审计</span></div><button className={`off-switch ${prefs.inject ? "on" : ""}`} onClick={() => { onPrefs({ inject: !prefs.inject }); if (!prefs.inject) notify("角色提示注入默认关闭；开启会改变 Agent 行为"); }} aria-pressed={prefs.inject}><i /></button></div>
+          <div className="off-toggle-row"><div><b>失败升级给 lead</b><span>失败后由主控机器人决定重试或换人</span></div><button className={`off-switch ${prefs.escalate ? "on" : ""}`} onClick={() => onPrefs({ escalate: !prefs.escalate })} aria-pressed={prefs.escalate}><i /></button></div>
+          <div className="off-toggle-row"><div><b>角色提示注入</b><span>开启后写入 instructions，并记录审计</span></div><button className={`off-switch ${prefs.inject ? "on" : ""}`} onClick={() => { onPrefs({ inject: !prefs.inject }); if (!prefs.inject) notify("角色提示注入默认关闭；开启会改变执行体行为"); }} aria-pressed={prefs.inject}><i /></button></div>
         </section>
 
         <section className="off-insp-block">

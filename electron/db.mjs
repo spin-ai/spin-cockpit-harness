@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT, path TEXT, desc TEXT, color TEXT, status TEXT, created_at INTEGER, last_opened_at INTEGER, alias TEXT);
 CREATE TABLE IF NOT EXISTS hosts (id TEXT PRIMARY KEY, name TEXT, kind TEXT, addr TEXT, status TEXT, heartbeat INTEGER, version TEXT, port INTEGER, user TEXT, caps TEXT, last_probe INTEGER, latency_ms INTEGER, max_concurrency INTEGER, default_cwd TEXT, probe_error TEXT);
 CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT, host_id TEXT, cli TEXT, cwd TEXT, max_concurrency INTEGER, approval TEXT, color TEXT, skills TEXT, alias TEXT, project_id TEXT, terminal_id TEXT, role TEXT DEFAULT 'worker', instructions TEXT DEFAULT '', max_children INTEGER DEFAULT 4);
-CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, key TEXT, title TEXT, desc TEXT, acceptance TEXT, status TEXT, agent_id TEXT, priority TEXT, due TEXT, parent_id TEXT, tags TEXT, subtasks TEXT, blocked_by TEXT, missing_writeback INTEGER, last_run_failed INTEGER, cwd TEXT, created_at INTEGER, updated_at INTEGER, confirmed INTEGER, project_id TEXT, kind TEXT DEFAULT 'task', mission_state TEXT);
+CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, key TEXT, title TEXT, desc TEXT, acceptance TEXT, status TEXT, agent_id TEXT, priority TEXT, due TEXT, parent_id TEXT, tags TEXT, subtasks TEXT, blocked_by TEXT, missing_writeback INTEGER, last_run_failed INTEGER, cwd TEXT, created_at INTEGER, updated_at INTEGER, confirmed INTEGER, project_id TEXT, kind TEXT DEFAULT 'task', mission_state TEXT, bot_id TEXT);
 CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, todo_id TEXT, agent_id TEXT, status TEXT, trigger TEXT, started_at INTEGER, ended_at INTEGER, cost REAL, tokens INTEGER, error TEXT, parent_run_id TEXT, cwd TEXT, branch TEXT, host_id TEXT, created_at INTEGER, tokens_in INTEGER, tokens_out INTEGER, usage_source TEXT, error_class TEXT, exit_code INTEGER, queue_wait_ms INTEGER, duration_ms INTEGER, queue_reason TEXT, kind TEXT DEFAULT 'worker', delegation_id TEXT, terminal_id TEXT, runtime TEXT, worktree_cleaned INTEGER, acp_session TEXT);
 CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, todo_id TEXT, title TEXT, project_id TEXT, project TEXT, agent_id TEXT, created_at INTEGER, updated_at INTEGER, model TEXT, model_name TEXT, effort TEXT, kind TEXT DEFAULT 'chat', bot_id TEXT);
 CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, todo_id TEXT, run_id TEXT, role TEXT, kind TEXT, content TEXT, injected INTEGER, created_at INTEGER, thread_id TEXT, delivery TEXT, context TEXT);
@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, ts INTEGER, type TEXT, t
 CREATE TABLE IF NOT EXISTS context (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS mission_plans (id TEXT PRIMARY KEY, mission_id TEXT, revision INTEGER, status TEXT, plan TEXT, created_at INTEGER, approved_at INTEGER);
-CREATE TABLE IF NOT EXISTS delegations (id TEXT PRIMARY KEY, mission_id TEXT, supervisor_run_id TEXT, child_todo_id TEXT, child_run_id TEXT, agent_id TEXT, plan_step_key TEXT, title TEXT, brief TEXT, acceptance TEXT, status TEXT, result_summary TEXT, artifacts TEXT, branch TEXT, created_at INTEGER, updated_at INTEGER, completed_at INTEGER);
+CREATE TABLE IF NOT EXISTS delegations (id TEXT PRIMARY KEY, mission_id TEXT, supervisor_run_id TEXT, child_todo_id TEXT, child_run_id TEXT, agent_id TEXT, plan_step_key TEXT, title TEXT, brief TEXT, acceptance TEXT, status TEXT, result_summary TEXT, artifacts TEXT, branch TEXT, created_at INTEGER, updated_at INTEGER, completed_at INTEGER, bot_id TEXT);
 CREATE TABLE IF NOT EXISTS plugins (id TEXT PRIMARY KEY, version TEXT, path TEXT, enabled INTEGER, builtin INTEGER, manifest TEXT, permissions TEXT, installed_at INTEGER, last_error TEXT, last_run_at INTEGER);
 CREATE TABLE IF NOT EXISTS plugin_kv (plugin_id TEXT, key TEXT, value TEXT, updated_at INTEGER, PRIMARY KEY (plugin_id, key));
 CREATE TABLE IF NOT EXISTS todo_links (id TEXT PRIMARY KEY, todo_id TEXT, plugin_id TEXT, kind TEXT, ref TEXT, title TEXT, created_at INTEGER);
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS routines (id TEXT PRIMARY KEY, bot_id TEXT, kind TEXT
 
 /** 应用设置默认值。缺失的键一律从这里补齐。 */
 export const DEFAULT_SETTINGS = {
-  defaultView: "workspace",        // workspace | projects | stats | hosts
+  defaultView: "workspace",        // workspace | projects | settings（老的 stats|hosts 由渲染层落到 settings）
   theme: "system",                // system | light | paper | vslight | dark | vsdark | midnight | forest | graphite | monokai | onedark | solarized | dracula
   chatFontSize: 13,               // 11–16
   uiScale: 0,                     // 0 = 自动（跟随屏幕分辨率）；80–150 = 手动固定百分比
@@ -142,6 +142,13 @@ export async function openDb(dir, { onTranscript } = {}) {
     // 人格 bot：主动建议落成任务后记 todo_id；建议本身存 proposal（含 dismissed）
     "ALTER TABLE bot_turns ADD COLUMN todo_id TEXT",
     "ALTER TABLE bot_turns ADD COLUMN proposal TEXT",
+    // bot 绑定执行体：work 档位起 run 时用它当 agent
+    "ALTER TABLE bots ADD COLUMN executor_agent_id TEXT",
+    // bot 的角色：主管（拆解/分派）/ 员工（接任务）
+    "ALTER TABLE bots ADD COLUMN role TEXT",
+    // 派单链记住「谁派的」：bot 建的任务 / 它派下去的子任务（舞台用它把活挂回机器人）
+    "ALTER TABLE todos ADD COLUMN bot_id TEXT",
+    "ALTER TABLE delegations ADD COLUMN bot_id TEXT",
     // 编辑消息后重发：被新版本取代的后续消息打标记（软删除，可追溯）
     "ALTER TABLE messages ADD COLUMN superseded_by TEXT",
     // 主机：能力矩阵 / 探测时间 / 负载上限 / 默认远端目录（见 docs/arch/ARCH-hosts-stats.md）
@@ -213,7 +220,7 @@ export async function openDb(dir, { onTranscript } = {}) {
     tags: J(r.tags, []), subtasks: J(r.subtasks, []), blockedBy: J(r.blocked_by, []),
     missingWriteback: !!r.missing_writeback, lastRunFailed: !!r.last_run_failed, confirmed: !!r.confirmed,
     cwd: r.cwd || "", projectId: r.project_id || null, createdAt: r.created_at, updatedAt: r.updated_at,
-    kind: r.kind || "task", missionState: r.mission_state || null,
+    kind: r.kind || "task", missionState: r.mission_state || null, botId: r.bot_id || null,
   }));
   state.runs = rows("SELECT * FROM runs").map((r) => ({
     id: r.id, todoId: r.todo_id, agentId: r.agent_id, status: r.status, trigger: r.trigger,
@@ -253,6 +260,7 @@ export async function openDb(dir, { onTranscript } = {}) {
     acceptance: J(r.acceptance, []), status: r.status || "proposed",
     resultSummary: r.result_summary || "", artifacts: J(r.artifacts, []), branch: r.branch || null,
     createdAt: r.created_at || Date.now(), updatedAt: r.updated_at || Date.now(), completedAt: r.completed_at || null,
+    botId: r.bot_id || null,
   }));
   state.plugins = rows("SELECT * FROM plugins").map((r) => ({
     id: r.id, version: r.version || "", path: r.path || "", enabled: !!r.enabled, builtin: !!r.builtin,
@@ -268,6 +276,8 @@ export async function openDb(dir, { onTranscript } = {}) {
   state.bots = rows("SELECT * FROM bots").map((r) => ({
     id: r.id, name: r.name, avatar: r.avatar || "", avatarClass: r.avatar_class || "a",
     persona: J(r.persona, {}), capability: r.capability || "read",
+    role: r.role === "supervisor" ? "supervisor" : "worker",
+    executorAgentId: r.executor_agent_id || null,
     channels: J(r.channels, ["local"]), policy: J(r.policy, {}), budget: J(r.budget, {}),
     status: r.status || "active", mutedUntil: r.muted_until || 0,
     createdAt: r.created_at || 0, updatedAt: r.updated_at || 0,
@@ -351,7 +361,7 @@ export async function openDb(dir, { onTranscript } = {}) {
     );
     for (const p of state.projects) run("INSERT INTO projects VALUES (?,?,?,?,?,?,?,?,?)", [p.id, p.name, p.path, p.desc || "", p.color || "slate", p.status || "in_progress", p.createdAt || Date.now(), p.lastOpenedAt || 0, p.alias || ""]);
     for (const a of state.agents) run("INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [a.id, a.name, a.hostId, a.cli, a.cwd, a.max, a.approval, a.color, JSON.stringify(a.skills || []), a.alias || "", a.projectId || "", a.terminalId || "", a.role || "worker", a.instructions || "", a.maxChildren ?? 4]);
-    for (const t of state.todos) run("INSERT INTO todos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.key, t.title, t.desc || "", JSON.stringify(t.acceptance || []), t.status, t.agentId || null, t.priority, t.due || "", t.parentId || null, JSON.stringify(t.tags || []), JSON.stringify(t.subtasks || []), JSON.stringify(t.blockedBy || []), t.missingWriteback ? 1 : 0, t.lastRunFailed ? 1 : 0, t.cwd || "", t.createdAt || Date.now(), t.updatedAt || Date.now(), t.confirmed ? 1 : 0, t.projectId || null, t.kind || "task", t.missionState || null]);
+    for (const t of state.todos) run("INSERT INTO todos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.key, t.title, t.desc || "", JSON.stringify(t.acceptance || []), t.status, t.agentId || null, t.priority, t.due || "", t.parentId || null, JSON.stringify(t.tags || []), JSON.stringify(t.subtasks || []), JSON.stringify(t.blockedBy || []), t.missingWriteback ? 1 : 0, t.lastRunFailed ? 1 : 0, t.cwd || "", t.createdAt || Date.now(), t.updatedAt || Date.now(), t.confirmed ? 1 : 0, t.projectId || null, t.kind || "task", t.missionState || null, t.botId || null]);
     for (const r of state.runs) run(
       "INSERT INTO runs (id,todo_id,agent_id,status,trigger,started_at,ended_at,cost,tokens,error,parent_run_id,cwd,branch,host_id,created_at,tokens_in,tokens_out,usage_source,error_class,exit_code,queue_wait_ms,duration_ms,queue_reason,kind,delegation_id,terminal_id,runtime,worktree_cleaned,acp_session) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [r.id, r.todoId, r.agentId, r.status, r.trigger || "assign", r.startedAt || null, r.endedAt || null, r.cost || 0,
@@ -366,13 +376,13 @@ export async function openDb(dir, { onTranscript } = {}) {
     for (const a of state.artifacts) run("INSERT INTO artifacts VALUES (?,?,?,?,?,?,?,?,?)", [a.id, a.todoId, a.runId, a.kind, a.title, a.origin, a.ref, a.deepLink, a.createdAt || Date.now()]);
     for (const e of state.events) run("INSERT INTO events VALUES (?,?,?,?)", [e.id, e.ts, e.type, e.text]);
     for (const p of state.missionPlans || []) run("INSERT INTO mission_plans VALUES (?,?,?,?,?,?,?)", [p.id, p.missionId, p.revision || 1, p.status || "draft", JSON.stringify(p.plan || {}), p.createdAt || Date.now(), p.approvedAt || null]);
-    for (const d of state.delegations || []) run("INSERT INTO delegations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [d.id, d.missionId, d.supervisorRunId, d.childTodoId, d.childRunId || null, d.agentId, d.planStepKey || "", d.title, d.brief || "", JSON.stringify(d.acceptance || []), d.status || "proposed", d.resultSummary || "", JSON.stringify(d.artifacts || []), d.branch || null, d.createdAt || Date.now(), d.updatedAt || Date.now(), d.completedAt || null]);
+    for (const d of state.delegations || []) run("INSERT INTO delegations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [d.id, d.missionId, d.supervisorRunId, d.childTodoId, d.childRunId || null, d.agentId, d.planStepKey || "", d.title, d.brief || "", JSON.stringify(d.acceptance || []), d.status || "proposed", d.resultSummary || "", JSON.stringify(d.artifacts || []), d.branch || null, d.createdAt || Date.now(), d.updatedAt || Date.now(), d.completedAt || null, d.botId || null]);
     for (const p of state.plugins || []) run("INSERT INTO plugins VALUES (?,?,?,?,?,?,?,?,?,?)", [p.id, p.version || "", p.path || "", p.enabled ? 1 : 0, p.builtin ? 1 : 0, JSON.stringify(p.manifest || {}), JSON.stringify(p.permissions || []), p.installedAt || 0, p.lastError || null, p.lastRunAt || null]);
     for (const kv of state.pluginKv || []) run("INSERT INTO plugin_kv VALUES (?,?,?,?)", [kv.pluginId, kv.key, JSON.stringify(kv.value), kv.updatedAt || Date.now()]);
     for (const l of state.todoLinks || []) run("INSERT INTO todo_links VALUES (?,?,?,?,?,?,?)", [l.id, l.todoId, l.pluginId, l.kind, l.ref, l.title || "", l.createdAt || Date.now()]);
     for (const sc of state.scenes || []) run("INSERT INTO scenes VALUES (?,?,?,?)", [sc.projectId, sc.text || "", JSON.stringify(sc.config || {}), sc.updatedAt || Date.now()]);
     for (const cs of state.coordinationScenes || []) run("INSERT INTO coordination_scenes VALUES (?,?,?,?,?,?,?)", [cs.id, cs.name || "场景", cs.projectId || null, cs.template || "office", JSON.stringify(cs.config || {}), cs.createdAt || Date.now(), cs.updatedAt || Date.now()]);
-    for (const b of state.bots || []) run("INSERT INTO bots VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [b.id, b.name, b.avatar || "", b.avatarClass || "a", JSON.stringify(b.persona || {}), b.capability || "read", JSON.stringify(b.channels || ["local"]), JSON.stringify(b.policy || {}), JSON.stringify(b.budget || {}), b.status || "active", b.mutedUntil || 0, b.createdAt || Date.now(), b.updatedAt || Date.now()]);
+    for (const b of state.bots || []) run("INSERT INTO bots VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [b.id, b.name, b.avatar || "", b.avatarClass || "a", JSON.stringify(b.persona || {}), b.capability || "read", JSON.stringify(b.channels || ["local"]), JSON.stringify(b.policy || {}), JSON.stringify(b.budget || {}), b.status || "active", b.mutedUntil || 0, b.createdAt || Date.now(), b.updatedAt || Date.now(), b.executorAgentId || null, b.role === "supervisor" ? "supervisor" : "worker"]);
     for (const rt of state.routines || []) run("INSERT INTO routines VALUES (?,?,?,?,?)", [rt.id, rt.botId || "", rt.kind || "daily", JSON.stringify((({ botId, id, kind, ...rest }) => rest)(rt)), rt.updatedAt || Date.now()]);
     for (const t of state.botTurns || []) run("INSERT INTO bot_turns VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.botId, t.channel || "local", JSON.stringify(t.trigger || {}), t.input || "", JSON.stringify(t.injected || []), t.reply || "", t.decision || "silent", t.reason || "", t.runId || null, t.todoId || null, t.proposal ? JSON.stringify(t.proposal) : null, JSON.stringify(t.cost || {}), t.createdAt || Date.now()]);
     for (const tm of state.terminals || []) run("INSERT INTO terminals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [tm.id, tm.projectId || null, tm.todoId || null, tm.runId || null, tm.agentId || null, tm.cwd || "", tm.kind || "shell", tm.title || "", tm.status || "exited", tm.exitCode ?? null, tm.tail || "", tm.createdAt || Date.now(), tm.endedAt ?? null]);

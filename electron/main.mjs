@@ -1200,6 +1200,23 @@ async function startRun(run, todo, agent) {
       try { memory().markCited({ logId: injectLogId, text: runReplyText(run.id) }); } catch { /* 归因失败不影响 run */ }
     }
     store.addEvent("run.finished", `run.finished todo=${todo.key}`);
+    // bot 执行回流：这个任务如果是 bot 起的，就用它的口吻汇报一条
+    try {
+      // 监视者：所有 watching 这个任务的 bot 都回报一条
+      for (const w of (store.state.botTurns || []).filter((t) => t.todoId === todo.id && t.decision === "watching")) {
+        try {
+          bots().report({ botId: w.botId, todoId: todo.id, runId: run.id, text: `${todo.key} 有结果了：${todo.title}` });
+        } catch { /* 单个失败不影响其它 */ }
+      }
+      const botTurn = (store.state.botTurns || []).find((t) => t.todoId === todo.id && t.botId);
+      const bot = botTurn ? (store.state.bots || []).find((b) => b.id === botTurn.botId) : null;
+      if (bot && bot.capability === "work") {
+        const last = [...(store.state.messages || [])].reverse().find((m) => m.threadId === thread.id && m.role === "assistant");
+        const summary = String(last?.content || "").replace(/\s+/g, " ").slice(0, 200);
+        bots().report({ botId: bot.id, todoId: todo.id, runId: run.id, text: `${todo.key} 完成：${todo.title}${summary ? `\n${summary}` : ""}` });
+        broadcast();
+      }
+    } catch (err) { console.warn(`[bot] report failed: ${String(err?.message || err)}`); }
     pluginHost?.emit("run.completed", { runId: run.id, todoId: todo.id, status: run.status, title: todo.title });
     const delegation = delegationForChild(todo.id);
     if (delegation) {
@@ -2103,6 +2120,7 @@ function createMissionChild(mission, supervisorRun, step, agent, blockedBy = [])
     missingWriteback: false, lastRunFailed: false, confirmed: false,
     projectId: mission.projectId || null, cwd: mission.cwd || activeProjectPath(),
     kind: "task", missionState: null, createdAt: now(), updatedAt: now(),
+    botId: mission.botId || null,
   };
   const missionIndex = store.state.todos.findIndex((t) => t.id === mission.id);
   if (missionIndex >= 0) store.state.todos.splice(missionIndex + 1, 0, child);
@@ -2114,6 +2132,7 @@ function createMissionChild(mission, supervisorRun, step, agent, blockedBy = [])
     planStepKey: step.key || "", title: step.title, brief: step.brief || "",
     acceptance: step.acceptance || [], status: "proposed", resultSummary: "",
     artifacts: [], branch: null, createdAt: now(), updatedAt: now(), completedAt: null,
+    botId: mission.botId || null,
   };
   store.state.delegations.push(delegation);
   const run = queueRun(child, agent, "mission", null, "worker", delegation.id);
@@ -3687,7 +3706,48 @@ const actions = {
     }
   },
   /** 人格 bot：读快照 / 存档案 / 改状态 / 手动跑一次 tick */
-  botSnapshot: async () => { botUnread = 0; return bots().snapshot(); },
+  botSnapshot: async () => {
+    botUnread = 0;
+    const snap = bots().snapshot();
+    // bot 建过/跑过的任务（回合里带 todoId），给「任务」页签用
+    const ids = new Set((store.state.botTurns || []).map((t) => t.todoId).filter(Boolean));
+    snap.tasks = (store.state.todos || []).filter((t) => ids.has(t.id)).map((t) => ({
+      id: t.id, key: t.key, title: t.title, status: t.status, missionState: t.missionState || null, agentId: t.agentId || null,
+    }));
+    // 可监视的任务：最近 30 条（供「任务」页签里的选择器用）
+    snap.recentTodos = [...(store.state.todos || [])]
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      .slice(0, 30)
+      .map((t) => ({ id: t.id, key: t.key, title: t.title, status: t.status, missionState: t.missionState || null }));
+    return snap;
+  },
+  /** 清理 bot 回合记录：decision 省略 = 只清沉默/被拦；"all" = 清空该 bot 全部 */
+  botTurnsClear: async ({ botId, decision } = {}) => {
+    const before = (store.state.botTurns || []).length;
+    store.state.botTurns = (store.state.botTurns || []).filter((t) => {
+      if (String(t.botId) !== String(botId || "")) return true;
+      if (decision === "all") return false;
+      return !["silent", "blocked"].includes(t.decision);
+    });
+    store.persist();
+    broadcast();
+    return { ok: true, removed: before - store.state.botTurns.length };
+  },
+  /** 让某个 bot 监视一个任务：写一条 decision=watching 的回合，之后状态变化会回报 */
+  botWatchTask: async ({ todoId, botId } = {}) => {
+    const todo = (store.state.todos || []).find((t) => t.id === String(todoId || ""));
+    if (!todo) throw new Error("任务不存在");
+    const bot = (store.state.bots || []).find((b) => b.id === String(botId || "")) || (store.state.bots || [])[0];
+    if (!bot) throw new Error("还没有 bot");
+    const turn = bots().watch({ botId: bot.id, todoId: todo.id, title: `${todo.key} ${todo.title}` });
+    broadcast();
+    return { ok: true, turnId: turn.id, botId: bot.id, todoId: todo.id };
+  },
+  botUnwatchTask: async ({ todoId, botId } = {}) => {
+    const r = bots().unwatch({ botId: String(botId || ""), todoId: String(todoId || "") });
+    broadcast();
+    return r;
+  },
   botRoutineSave: async (patch = {}) => bots().saveRoutine(patch || {}),
   botRoutineRemove: async ({ id } = {}) => { bots().removeRoutine(String(id || "")); return { ok: true }; },
   botRoutineStatus: async ({ botId } = {}) => bots().routineStatus(String(botId || "")),
@@ -3738,13 +3798,24 @@ const actions = {
     if (!turn?.proposal) throw new Error("这一轮没有建议");
     if (turn.todoId) throw new Error("这条建议已经建过任务");
     const bot = (store.state.bots || []).find((b) => b.id === turn.botId);
-    if (bot?.capability !== "dispatch") throw new Error("当前 bot 是只读档，不能建任务");
-    const todo = actions.createTodo({ title: turn.proposal.title, desc: turn.proposal.desc });
+    if (!["dispatch", "work"].includes(bot?.capability || "")) throw new Error("当前 bot 是只读档，不能建任务");
+    const work = bot?.capability === "work" && bot?.executorAgentId;
+    const todo = actions.createTodo({
+      title: turn.proposal.title,
+      desc: turn.proposal.desc,
+      botId: bot.id,
+      ...(work ? { agentId: bot.executorAgentId } : {}),
+    });
     turn.todoId = todo.id;
     turn.proposal = { ...turn.proposal, acceptedAt: Date.now() };
     store.persist();
     broadcast();
-    return { ok: true, todoId: todo.id, key: todo.key };
+    // work 档位：确认即开跑（点「起任务」就是人的那一次授权）
+    if (work) {
+      try { actions.run({ id: todo.id, agentId: bot.executorAgentId }); }
+      catch (err) { console.warn(`[bot] run failed: ${String(err?.message || err)}`); }
+    }
+    return { ok: true, todoId: todo.id, key: todo.key, started: Boolean(work) };
   },
   botDismissProposal: async ({ turnId } = {}) => {
     const turn = (store.state.botTurns || []).find((t) => t.id === String(turnId || ""));
@@ -4639,7 +4710,7 @@ const actions = {
     }
     store.addEvent("todo.created", `todo.created count=3 source=template`);
   },
-  createTodo: ({ title, desc = "", agentId = null, cwd = "", priority = "P2" }) => {
+  createTodo: ({ title, desc = "", agentId = null, cwd = "", priority = "P2", botId = null }) => {
     if (!title) throw new Error("title required");
     const project = activeProject();
     const id = store.nextId("t");
@@ -4648,6 +4719,8 @@ const actions = {
       priority, due: "今天", parentId: null, tags: [], subtasks: [], blockedBy: [],
       missingWriteback: false, lastRunFailed: false, confirmed: false, projectId: project?.id || null,
       cwd: cwd || project?.path || workspaceRoot, createdAt: now(), updatedAt: now(),
+      // 派单链记住是谁派的：机器人建的任务挂回机器人（没有 bot 的路径仍是 null）
+      botId: botId || null,
     };
     store.state.todos.unshift(todo);
     threadForTodo(todo);
@@ -6808,6 +6881,8 @@ app.whenReady().then(async () => {
     console.warn(`[plugins] host start failed: ${String(err?.message || err)}`);
   }
   try { startImGateway(); } catch (err) { console.warn(`[im] start failed: ${String(err?.message || err)}`); }
+  // 机器人现在是工作区左栏的一段（没有独立页面），启动时就要落种子，不能等打开 Bot 页才创建
+  try { bots(); } catch (err) { console.warn(`[bot] seed failed: ${String(err?.message || err)}`); }
   try { startBotTick(); } catch (err) { console.warn(`[bot] tick start failed: ${String(err?.message || err)}`); }
   // 空闲整理：没有 run 在跑、且人一段时间没操作时跑一轮 Dream（配置在记忆页，0 = 只手动）
   dreamIdleTimer = setInterval(() => { void dreamIdleTick(); }, DREAM_IDLE_TICK_MS);

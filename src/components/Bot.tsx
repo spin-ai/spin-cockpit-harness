@@ -20,7 +20,8 @@ type Routine = {
 type Policy = { maxTurnsPerHour?: number; minGapMs?: number; quietHours?: [number, number]; escalate?: string };
 type Bot = {
   id: string; name: string; avatar?: string; avatarClass?: string;
-  persona?: Persona; capability?: "read" | "dispatch" | "work"; executorAgentId?: string | null; channels?: string[];
+  persona?: Persona; capability?: "read" | "dispatch" | "work"; role?: "supervisor" | "worker";
+  executorAgentId?: string | null; channels?: string[];
   policy?: Policy; budget?: { tokensPerTurn?: number; tokensPerHour?: number };
   status?: "active" | "paused"; mutedUntil?: number;
 };
@@ -28,7 +29,7 @@ type Turn = {
   id: string; botId: string; channel?: string;
   trigger?: { kind?: string; ref?: string }; input?: string;
   injected?: { layer: string; id: string; title: string }[];
-  reply?: string; decision?: "answered" | "replied" | "reported" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted";
+  reply?: string; decision?: "answered" | "replied" | "reported" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted" | "watching";
   todoId?: string | null;
   runId?: string | null;
   proposal?: { title: string; desc: string; dismissed?: boolean; acceptedAt?: number } | null;
@@ -41,9 +42,11 @@ type Snapshot = {
   botThreads?: Record<string, string>;
   recent?: { answeredHour?: number; blockedHour?: number; silentHour?: number };
   agents?: { id: string; name: string; alias: string; cli: string; role: string }[];
+  tasks?: { id: string; key: string; title: string; status: string; missionState: string | null; agentId: string | null }[];
+  recentTodos?: { id: string; key: string; title: string; status: string; missionState: string | null }[];
 };
 
-const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "汇报", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工" };
+const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "汇报", watching: "监视中", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工" };
 const GLYPH: Record<string, string> = { asked: "?", streaming: "…", interrupted: "⏸", silent: "·", blocked: "✕", escalated: "↗" };
 const CAP_LABEL: Record<string, string> = { read: "只读", dispatch: "可起任务", work: "能执行" };
 
@@ -73,7 +76,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [memoryOverview, setMemoryOverview] = useState<{ byLayer?: Record<string, number>; notes?: number; injectable?: number } | null>(null);
   const [botId, setBotId] = useState("");
-  const [tab, setTab] = useState<"persona" | "memory" | "routines" | "policy">("persona");
+  const [tab, setTab] = useState<"persona" | "memory" | "tasks" | "routines" | "policy">("persona");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   // 「分配到的任务」：Bot.executorAgentId → Agent，任务来自 state.todos（与场景同一投影）
@@ -218,6 +221,17 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
     });
   };
 
+  const clearTurns = async (decision: "silent" | "all") => {
+    if (!bot) return;
+    try {
+      const res = (await act("botTurnsClear", { botId: bot.id, decision })) as { removed?: number } | null;
+      notify(`已清理 ${res?.removed ?? 0} 条记录`);
+      await load();
+    } catch (err) {
+      notify(String((err as Error)?.message || err));
+    }
+  };
+
   const cancel = async () => {
     try { await act("botCancel", { botId: bot?.id }); notify("已取消这次回复"); }
     catch (err) { notify(String((err as Error)?.message || err)); }
@@ -267,7 +281,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
   if (!snapshot) {
     return (
       <div className="page bot-page">
-        <PageHeader kicker="Bot" title="人格 bot" />
+        <PageHeader kicker="机器人" title="机器人" />
         <div className="bot-loading"><EmptyState compact title="正在读取 bot…" desc={error || "稍等一下"} /></div>
       </div>
     );
@@ -276,8 +290,8 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
   if (!snapshot.bots.length) {
     return (
       <div className="page bot-page">
-        <PageHeader kicker="Bot" title="人格 bot" />
-        <EmptyState mark="◇" title="还没有 bot" desc="建一个 bot 需要人格卡、出场策略和配额；先给个名字，其余用默认值。" action={<button className="btn primary" onClick={create}>新建 bot</button>} />
+        <PageHeader kicker="机器人" title="机器人" />
+        <EmptyState mark="◇" title="还没有机器人" desc="建一个机器人需要人格卡、出场策略和配额；先给个名字，其余用默认值。" action={<button className="btn primary" onClick={create}>新建机器人</button>} />
       </div>
     );
   }
@@ -285,11 +299,13 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
   return (
     <div className="page bot-page">
       <PageHeader
-        kicker="Bot"
-        title={bot?.name || "人格 bot"}
+        kicker="机器人"
+        title={bot?.name || "机器人"}
         subtitle={(
           <>
             <span className={`tag ${bot?.status === "active" ? "ok" : ""}`}>{bot?.status === "active" ? "主动" : "已暂停"}</span>
+            <span>{bot?.role === "supervisor" ? "主管" : "员工"}</span>
+            <span className="faint">·</span>
             <span>{CAP_LABEL[bot?.capability || "read"]}</span>
             <span className="faint">·</span>
             <span className="faint">本小时 {snapshot.recent?.answeredHour ?? 0} 条已说 / {snapshot.recent?.blockedHour ?? 0} 条被拦</span>
@@ -302,7 +318,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
             <button className="btn" disabled={Boolean(busy)} onClick={() => void (muted ? unmute() : mute())}>{muted ? "取消静音" : "静音 1h"}</button>
             <button
               className="btn"
-              title="这个 bot 的持续会话与 Chat 共用一条 thread"
+              title="这个机器人的持续会话与 Chat 共用一条 thread"
               onClick={() => void run("thread", async () => {
                 const res = (await act("botThread", { botId: bot?.id })) as { threadId?: string } | null;
                 if (res?.threadId) onOpenThread(res.threadId);
@@ -311,11 +327,13 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
             >
               打开会话
             </button>
-            <RowMenu title="bot 操作">
-              <button onClick={create}>新建 bot</button>
+            <RowMenu title="机器人操作">
+              <button onClick={create}>新建机器人</button>
               <button onClick={() => { setTab("persona"); setRenameFocus((n) => n + 1); }}>重命名</button>
               <button onClick={migrateThreads}>迁移历史到会话</button>
-              <button className="danger" onClick={remove}>删除当前 bot</button>
+              <button onClick={() => void clearTurns("silent")}>清空沉默/被拦记录</button>
+              <button className="danger" onClick={() => { if (window.confirm("清空这个机器人的全部回合记录？")) void clearTurns("all"); }}>清空全部回合</button>
+              <button className="danger" onClick={remove}>删除当前机器人</button>
             </RowMenu>
             <button className="btn primary" disabled={Boolean(busy)} onClick={() => void tick()}>{busy === "tick" ? "决策中…" : "跑一次决策"}</button>
           </>
@@ -326,7 +344,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
 
       <div className="bot-grid">
         <aside className="bot-side">
-          <div className="bot-label">Bots</div>
+          <div className="bot-label">机器人</div>
           <div className="bot-list">
             {snapshot.bots.map((item) => {
               const on = item.id === bot?.id;
@@ -356,6 +374,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
               </div>
             )}
             {turns.map((turn) => {
+              if (turn.decision === "watching") return null; // 监视记录只在「任务」页签展示，不占回合流
               if (turn.decision === "reported") {
                 return (
                   <div className="bot-turn" key={turn.id}>
@@ -547,14 +566,20 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
           </div>
 
           <div className="bot-foot">
-            <span>P0 只有只读能力：不会建任务、不会起 run；要开任务请在 Chat 里派活。</span>
+            <span>
+              {bot?.capability === "work"
+                ? `能执行：点「开跑」会用 ${(snapshot.agents || []).find((a) => a.id === bot?.executorAgentId)?.name || "未绑定的 Agent"} 起一次 run，跑完回流一条汇报。`
+                : bot?.capability === "dispatch"
+                  ? "可起任务：只建 todo，不起 run；跑不跑由你在桌面决定。"
+                  : "只读：不会建任务、不会起 run；要在 Chat 里派活。"}
+            </span>
             <button className="btn tiny" onClick={onOpenMemory}>打开记忆</button>
           </div>
         </main>
 
         <aside className="bot-aside">
           <div className="bot-tabs">
-            {([["persona", "人格卡"], ["memory", "记忆"], ["routines", "日程"], ["policy", "策略"]] as const).map(([id, label]) => (
+            {([["persona", "人格卡"], ["memory", "记忆"], ["tasks", "任务"], ["routines", "日程"], ["policy", "策略"]] as const).map(([id, label]) => (
               <button key={id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>{label}</button>
             ))}
           </div>
@@ -597,6 +622,16 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
             {tab === "persona" && (
               <>
                 <div className="bot-label">人格卡（结构化，失焦保存）</div>
+                <div className="bot-field">
+                  <span>角色</span>
+                  <div className="bot-seg">
+                    {(["supervisor", "worker"] as const).map((r) => (
+                      <button key={r} className={bot?.role === r ? "on" : ""} disabled={Boolean(busy)} onClick={() => void run("role", () => act("botSave", { id: bot?.id, role: r }))}>
+                        {r === "supervisor" ? "主管" : "员工"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <BotField
                   key={`name-${renameFocus}`}
                   label="名字"
@@ -740,6 +775,52 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
                 )}
                 <p className="bot-note">日程只决定「什么时候开口」，不会自己起 Agent 任务；要动手仍然走 Chat 派活或 dispatch 建议。</p>
                 {bot?.policy?.escalate && <p className="bot-note">必须转人工：{bot.policy.escalate}</p>}
+              </>
+            )}
+            {tab === "tasks" && (
+              <>
+                <div className="bot-label">监视任务</div>
+                <div className="bot-watch">
+                  <select
+                    className="bot-exec"
+                    value=""
+                    onChange={(event) => { if (event.target.value) void run("watch", () => act("botWatchTask", { todoId: event.target.value, botId: bot?.id })); }}
+                  >
+                    <option value="">选择一个任务交给它监视…</option>
+                    {(snapshot.recentTodos || []).map((t) => (
+                      <option key={t.id} value={t.id}>{t.key} · {t.title.slice(0, 24)} · {t.missionState || t.status}</option>
+                    ))}
+                  </select>
+                </div>
+                {(snapshot.turns || []).filter((t) => t.botId === bot?.id && t.decision === "watching").map((t) => {
+                  const todo = (snapshot.recentTodos || []).find((x) => x.id === t.todoId);
+                  return (
+                    <div className="bot-mem-row" key={t.id}>
+                      <span className="mono">{todo?.key || "—"}</span>
+                      <span>
+                        {todo?.title || t.reply}
+                        <em className="faint"> · {todo?.missionState || todo?.status || "未知"}</em>
+                        <button className="bot-link" onClick={() => void run("unwatch", () => act("botUnwatchTask", { todoId: t.todoId, botId: bot?.id }))}>取消监视</button>
+                      </span>
+                    </div>
+                  );
+                })}
+                <div className="bot-label" style={{ marginTop: 12 }}>bot 经手的任务</div>
+                <p className="bot-note">这里只列「bot 提议后建的 / bot 起过 run 的」任务；别人（或主管）建的任务不会出现在这里。</p>
+                {(snapshot.tasks || []).filter((t) => (snapshot.turns || []).some((x) => x.todoId === t.id && x.botId === bot?.id && x.decision !== "watching")).length === 0 && (
+                  <p className="bot-note">还没有。等它主动提议、你点「开跑」之后，这里会出现对应的任务与状态。</p>
+                )}
+                {(snapshot.tasks || [])
+                  .filter((t) => (snapshot.turns || []).some((x) => x.todoId === t.id && x.botId === bot?.id && x.decision !== "watching"))
+                  .map((t) => (
+                    <div className="bot-mem-row" key={t.id}>
+                      <span className="mono">{t.key}</span>
+                      <span>
+                        {t.title}
+                        <em className="faint"> · {t.missionState || t.status}</em>
+                      </span>
+                    </div>
+                  ))}
               </>
             )}
             {tab === "policy" && (

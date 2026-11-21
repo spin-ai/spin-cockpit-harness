@@ -204,12 +204,12 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
   }), [state, now, cast]);
 
   const subtitle = tab === "gallery"
-    ? "多 Agent 协作的拟人化配置。办公室只是其中一种舞台。"
+    ? "多个机器人协作的拟人化配置。办公室只是其中一种舞台。"
     : tab === "live"
       ? "舞台只从真实状态取位置和姿态。这里回放最近 15 分钟内记录到的走位、核对触发条件，并当场调参。"
       : tab === "lights"
         ? "同一时刻、同一批状态，只换光照；点任意一张切到实况并固定该时段。"
-        : "执行配置只决定单个任务怎么跑；协作场景决定多 Agent 如何协作与呈现。";
+        : "执行配置只决定单个任务怎么跑；协作场景决定多个机器人如何协作与呈现。";
 
   const staged = tab === "live" || tab === "lights";
   const clock = new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });

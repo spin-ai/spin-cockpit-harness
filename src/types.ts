@@ -33,7 +33,7 @@ export interface Thread {
 }
 export interface Todo {
   id: string; key: string; title: string; desc: string; acceptance: string[]; status: TodoStatus;
-  agentId: string | null; priority: string; due: string; parentId: string | null; tags: string[];
+  agentId: string | null; /** 谁派/谁的活：机器人 id（派单链把活挂回 bot 用；老任务为空） */ botId?: string | null; priority: string; due: string; parentId: string | null; tags: string[];
   subtasks: Subtask[]; blockedBy: string[]; missingWriteback: boolean; lastRunFailed: boolean; confirmed: boolean; projectId?: string;
   cwd: string; createdAt: number; updatedAt: number;
   kind?: "task" | "mission" | "chat";
@@ -57,6 +57,8 @@ export interface Delegation {
   planStepKey: string; title: string; brief: string; acceptance: string[];
   status: DelegationStatus; resultSummary: string; artifacts: string[]; branch: string | null;
   createdAt: number; updatedAt: number; completedAt: number | null;
+  /** 派这条活的机器人；老数据为空（只有 agentId） */
+  botId?: string | null;
 }
 export type WorktreeMode = "auto" | "always" | "never";
 export interface SceneConfig {
@@ -68,7 +70,51 @@ export interface SceneConfig {
   notes: string;
 }
 export interface Scene { projectId: string; text: string; config: SceneConfig; updatedAt: number; }
-/** 多 Agent 协作场景：与执行配置 Scene 分离；config 里是阵容 / 呈现偏好。 */
+
+/* ── 人格 bot ─────────────────────────────────────────────────────────
+ * 舞台上的「人」是 bot：有名字、人格、记忆、会主动开口。
+ * Agent（执行体）是它此刻借的身体；bot 可以换执行体，形象不变。 */
+export interface BotPersona { mission?: string; tone?: string; address?: string; length?: string; boundary?: string; habit?: string }
+export interface BotPolicy { maxTurnsPerHour?: number; minGapMs?: number; quietHours?: [number, number]; escalate?: string }
+export interface Bot {
+  id: string;
+  name: string;
+  avatar?: string;
+  avatarClass?: string;
+  persona?: BotPersona;
+  /** read 只读 / dispatch 可起任务 / work 绑执行体能执行 */
+  capability?: "read" | "dispatch" | "work";
+  /** supervisor 主管（拆解/分派）/ worker 员工（接任务） */
+  role?: "supervisor" | "worker";
+  /** 它此刻借的执行体；null = 还没绑定 */
+  executorAgentId?: string | null;
+  channels?: string[];
+  policy?: BotPolicy;
+  budget?: { tokensPerTurn?: number; tokensPerHour?: number };
+  status?: "active" | "paused";
+  /** 静音到什么时候（epoch ms） */
+  mutedUntil?: number;
+  createdAt?: number;
+  updatedAt?: number;
+}
+export type BotDecision = "answered" | "replied" | "reported" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted" | "watching";
+/** 一条 bot 回合：说了什么 / 为什么沉默，两者都进审计。 */
+export interface BotTurn {
+  id: string;
+  botId: string;
+  channel?: string;
+  trigger?: { kind?: string; ref?: string };
+  input?: string;
+  reply?: string;
+  decision?: BotDecision;
+  reason?: string;
+  runId?: string | null;
+  todoId?: string | null;
+  cost?: { tokens?: number | null; ms?: number };
+  createdAt: number;
+}
+
+/** 多 bot 协作场景：与执行配置 Scene 分离；config 里是阵容 / 呈现偏好。 */
 export type CoordinationTemplate = "office" | "warroom" | "carrier";
 export type CoordinationLight = "auto" | "dawn" | "day" | "dusk" | "night";
 export interface CoordinationMotion {
@@ -78,7 +124,10 @@ export interface CoordinationMotion {
   typing: boolean;
 }
 export interface CoordinationCastMember {
-  agentId: string;
+  /** 座位上是谁：机器人。新数据只写这个。 */
+  botId?: string;
+  /** 老数据：按执行体登记的阵容；读到时用 bots.executor_agent_id 反查成 botId。 */
+  agentId?: string;
   role: "lead" | "worker" | "reviewer";
   seat: number | null;
   displayName?: string;
@@ -193,7 +242,8 @@ export interface Event { id: string; ts: number; type: string; text: string; }
 export interface ContextState { dataset?: string; selection?: string[]; figure?: string; canvasElement?: string; activeFile?: string; updatedAt?: number; stale?: boolean; source?: string; }
 export type ThemeMode = "system" | "light" | "paper" | "vslight" | "dark" | "vsdark" | "midnight" | "forest" | "graphite" | "monokai" | "onedark" | "solarized" | "dracula";
 export interface Settings {
-  defaultView: "workspace" | "projects" | "stats" | "hosts";
+  /** 启动视图：统计 / 主机已收进设置，老值 stats|hosts 读到时落成 settings */
+  defaultView: "workspace" | "projects" | "settings";
   theme: ThemeMode;
   /** 整窗缩放：0 = 自动（跟随屏幕分辨率），80–150 = 手动固定百分比 */
   uiScale: number;
@@ -265,6 +315,8 @@ export interface State {
   projects: Project[];
   scenes?: Scene[];
   coordinationScenes?: CoordinationScene[];
+  bots?: Bot[];
+  botTurns?: BotTurn[];
   terminals?: TerminalRecord[];
   runtimes?: RuntimeView[];
   cliCapabilities: string[];

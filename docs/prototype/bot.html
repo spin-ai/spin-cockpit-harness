@@ -8,6 +8,9 @@
   人格 bot 原型（多 bot · 主打主动 · 能起 Agent 任务 · 可读四层记忆）
   ──────────────────────────────────────────────────────────────
   为什么做这一页：
+  0. 落脚点：机器人不是 rail 上的一页。它在工作区左栏、项目列表上面（参考 Orca 的 sidebar bots
+     split：两段各带折叠、中间一条可分缝，机器人 min 88px、项目至少留 3 行 ≈ 120px）。点一个 bot，
+     中间换成它那条回合流；项目仍然在下面，切项目不用离开这一屏。
   1. 多 bot：人格、记忆视图、配额、频道 allowlist 按 botId 隔离——左栏是 bot 列表，不是会话列表。
   2. 主打主动：中间是「回合流」，主动消息与「沉默 / 被拦 / 转人工」并排出现；
      每条都能展开「为什么说」（触发源 / 注入的记忆 / 过闸结果 / 成本），沉默也要有原因。
@@ -60,12 +63,26 @@ button{cursor:pointer}
 .rail-btn:hover{background:var(--surface-hover);color:var(--fg)}
 .rail-spacer{flex:1}
 
-/* 左：bot 列表 */
-.bots{border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-height:0}
-.bots-head{padding:12px 12px 8px;border-bottom:1px solid var(--border)}
-.bots-head h2{margin:0 0 2px;font-size:12px;letter-spacing:.08em;color:var(--muted);font-weight:600}
-.bots-head .hint{font-size:11.5px;color:var(--faint)}
-.bot-list{overflow:auto;padding:8px 8px 12px;display:flex;flex-direction:column;gap:2px}
+/* 左：机器人（上）+ 项目（下）。机器人不单独占一页，参考 Orca 的 sidebar bots split：
+   两段各可折叠，中间一条可分缝；Orca 常量 SIDEBAR_BOTS_MIN_HEIGHT=88 / SIDEBAR_PROJECTS_MIN_LIST_HEIGHT=120 */
+.col{border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-height:0}
+.sec{display:flex;flex-direction:column;min-height:0}
+.bots-sec{flex:0 1 auto;min-height:88px;max-height:40%}
+.proj-sec{flex:1 1 auto;min-height:120px}
+.sec-head{display:flex;align-items:center;gap:6px;padding:11px 8px 7px 8px;color:var(--muted)}
+.sec-head h2{margin:0;font-size:11.5px;font-weight:600;letter-spacing:.02em}
+.sec-head em{font-style:normal;font-family:var(--mono);font-size:10.5px;font-weight:500;color:var(--faint)}
+.sec-head .spacer{flex:1}
+.fold{width:18px;height:18px;flex:none;border:0;background:transparent;border-radius:4px;color:var(--faint);display:grid;place-items:center}
+.fold:hover{background:var(--surface-hover);color:var(--fg-2)}
+.fold svg{transition:transform .12s ease}
+.sec.folded .fold svg{transform:rotate(-90deg)}
+.sec.folded .bot-list,.sec.folded .proj-list,.sec.folded .sec-hint{display:none}
+.sec.folded .sec-head{padding-bottom:8px}
+.icon-btn{width:20px;height:20px;flex:none;border:0;background:transparent;border-radius:4px;color:var(--faint);font-size:13px;line-height:1}
+.icon-btn:hover{background:var(--surface-hover);color:var(--fg-2)}
+.sec-hint{padding:0 10px 6px 32px;font-size:11px;color:var(--faint)}
+.bot-list{overflow:auto;padding:0 8px 8px;display:flex;flex-direction:column;gap:2px}
 .bot{display:grid;grid-template-columns:26px minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px;border:0;background:transparent;border-radius:8px;text-align:left;color:var(--fg-2)}
 .bot:hover{background:var(--surface-hover)}
 .bot.on{background:var(--surface-selected);box-shadow:inset 2px 0 0 var(--brand)}
@@ -77,7 +94,21 @@ button{cursor:pointer}
 .dot{width:6px;height:6px;border-radius:999px;background:var(--green)}
 .dot.paused{background:var(--faint)}
 .dot.quiet{background:var(--amber)}
-.bot-new{margin:8px;padding:7px 8px;border:1px dashed var(--border-strong);border-radius:8px;background:transparent;color:var(--muted);font-size:12px;text-align:center}
+/* 分缝：1px hairline，上面 8px 是拓开的抓手；拖动时只换高度，不换颜色块 */
+.seam{flex:none;height:1px;background:var(--border);position:relative;cursor:row-resize;touch-action:none}
+.seam::after{content:"";position:absolute;left:0;right:0;top:-4px;bottom:-4px}
+.seam:hover,.seam:focus-visible{background:var(--border-strong);outline:none}
+.seam[hidden]{display:none}
+/* 项目在上面机器人下面：每行一个紧奏的列表项，不叠卡片 */
+.proj-list{overflow:auto;padding:0 6px 8px;display:flex;flex-direction:column;gap:1px}
+.proj{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:7px;
+  padding:5px 6px;border:1px solid transparent;border-radius:6px;background:transparent;text-align:left;font-size:12px;color:var(--fg-2)}
+.proj:hover{background:var(--surface-hover)}
+.proj.on{background:var(--surface-selected);border-color:var(--border);color:var(--fg)}
+.proj-mark{width:18px;height:18px;flex:none;border-radius:5px;display:grid;place-items:center;font-size:10px;font-weight:600;
+  background:var(--surface-hover);border:1px solid var(--border);color:var(--muted)}
+.proj .count{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+.ellipsis{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* 中：回合流 */
 .main{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--page-canvas)}
@@ -202,28 +233,44 @@ button{cursor:pointer}
 <body>
 <div class="app">
   <nav class="rail" aria-label="主导航">
-    <button class="rail-btn"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M3 10h6"/></svg><span>工作区</span></button>
+    <button class="rail-btn on" aria-current="page"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M3 10h6"/></svg><span>工作区</span></button>
     <button class="rail-btn"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg><span>项目</span></button>
-    <button class="rail-btn on" aria-current="page"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="3.2"/><path d="M5 20a7 7 0 0 1 14 0"/><path d="M17.5 5.5 19 4"/></svg><span>Bot</span></button>
     <button class="rail-btn"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z"/></svg><span>知识库</span></button>
     <button class="rail-btn"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3v18M5 7v10M19 7v10M8.5 5v14M15.5 5v14"/></svg><span>记忆</span></button>
     <div class="rail-spacer"></div>
     <button class="rail-btn"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9 2 2 0 1 1-2.8 2.8 1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0 1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3 2 2 0 1 1-2.8-2.8 1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9 2 2 0 1 1 2.8-2.8 1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0 1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4"/></svg><span>设置</span></button>
   </nav>
 
-  <aside class="bots" aria-label="Bot 列表">
-    <div class="bots-head">
-      <h2>BOTS</h2>
-      <div class="hint">3 个在跑 · 2 个主动</div>
-    </div>
-    <div class="bot-list" id="botList"></div>
-    <button class="bot-new">＋ 新建 bot</button>
+  <!-- 左栏：机器人（上）→ 分缝 → 项目（下）。机器人不是一个页面，它只是这一列的第一段 -->
+  <aside class="col" aria-label="机器人 / 项目">
+    <section class="sec bots-sec" aria-label="机器人">
+      <div class="sec-head">
+        <button class="fold" data-fold aria-expanded="true" title="收起机器人"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+        <h2>机器人</h2><em id="botCount">3</em>
+        <span class="spacer"></span>
+        <button class="icon-btn" title="新建 bot" aria-label="新建 bot">＋</button>
+      </div>
+      <div class="sec-hint" id="botHint">3 个在跑 · 2 个主动</div>
+      <div class="bot-list" id="botList"></div>
+    </section>
+
+    <div class="seam" id="seam" role="separator" aria-orientation="horizontal" aria-label="拖动调整机器人与项目的高度" tabindex="0" title="拖动调整高度（⌥↑↓ 也可）"></div>
+
+    <section class="sec proj-sec" aria-label="项目">
+      <div class="sec-head">
+        <button class="fold" data-fold aria-expanded="true" title="收起项目"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+        <h2>项目</h2><em id="projCount">2</em>
+        <span class="spacer"></span>
+        <button class="icon-btn" title="添加项目" aria-label="添加项目">＋</button>
+      </div>
+      <div class="proj-list" id="projList"></div>
+    </section>
   </aside>
 
   <main class="main">
     <header class="head">
       <div class="head-copy">
-        <div class="kicker">Bot</div>
+        <div class="kicker">机器人</div>
         <h1 id="botName">戈洛</h1>
         <div class="sub">
           <span class="tag" id="botMode">主动</span>
@@ -346,7 +393,14 @@ const BOTS = [
   },
 ];
 
-const state = { botId: "golo", tab: "persona", paused: {}, muted: {} };
+/* 项目：与机器人同列、在它下面。切换项目不离开这一屏 */
+const PROJECTS = [
+  { id: "spin", name: "spin-cockpit-harness", mark: "S", count: 6 },
+  { id: "ddat", name: "ddat-parser", mark: "D", count: 2 },
+  { id: "article", name: "对外文章", mark: "文", count: 0 },
+];
+
+const state = { botId: "golo", tab: "persona", paused: {}, muted: {}, projId: "spin" };
 const $ = (sel) => document.querySelector(sel);
 
 const glyph = (kind) => kind === "blocked" ? "✕" : kind === "escalated" ? "↗" : "·";
@@ -426,6 +480,26 @@ function renderBots() {
     btn.addEventListener("click", () => { state.botId = bot.id; renderAll(); });
     list.appendChild(btn);
   }
+  $("#botCount").textContent = String(BOTS.length);
+  const pausedCount = BOTS.filter((b) => state.paused[b.id]).length;
+  $("#botHint").textContent = `${BOTS.length - pausedCount} 个在跑 · ${BOTS.filter((b) => b.mode === "主动" && !state.paused[b.id]).length} 个主动`;
+}
+
+/* 项目列表：一行一个，不叠卡片；当前项目只占一个 1px 选中态 */
+function renderProjects() {
+  const list = $("#projList");
+  list.innerHTML = "";
+  for (const p of PROJECTS) {
+    const btn = document.createElement("button");
+    btn.className = `proj ${p.id === state.projId ? "on" : ""}`;
+    btn.innerHTML = `
+      <span class="proj-mark">${p.mark}</span>
+      <span class="ellipsis" title="${p.name}">${p.name}</span>
+      <span class="count">${p.count || ""}</span>`;
+    btn.addEventListener("click", () => { state.projId = p.id; renderProjects(); });
+    list.appendChild(btn);
+  }
+  $("#projCount").textContent = String(PROJECTS.length);
 }
 
 function renderHead() {
@@ -515,10 +589,83 @@ function renderSide() {
 
 function renderAll() {
   renderBots();
+  renderProjects();
   renderHead();
   renderStream();
   renderSide();
 }
+
+/* ---------------- 左栏分缝 / 折叠 ---------------- */
+/* Orca 常量：机器人才留 header + 一行 bot + 分缝 = 88px；项目下面至少留 3 行 = 120px。
+   拖动只改高度，上限 = 当前机器人 + 当前项目列表 - 120，永远不会把项目挤没。 */
+const BOTS_MIN = 88, PROJ_MIN = 120;
+const botsSec = () => document.querySelector(".bots-sec");
+const projSec = () => document.querySelector(".proj-sec");
+
+let botsHeight = null;   // null = 内容高度，最多 40%（Orca 的默认 cap）
+function setBotsHeight(px) {
+  botsHeight = px == null ? null : Math.round(px);
+  applyBotsHeight();
+}
+function applyBotsHeight() {
+  const sec = botsSec();
+  if (botsHeight == null) { sec.style.height = ""; sec.style.maxHeight = "40%"; return; }
+  sec.style.maxHeight = "none";
+  sec.style.height = `${botsHeight}px`;
+}
+
+function syncSeam() {
+  const bots = botsSec(), proj = projSec();
+  const foldedBots = bots.classList.contains("folded");
+  const foldedProj = proj.classList.contains("folded");
+  // 折叠了就没有分缝可拖：剩下一段自己占满（Orca：projectsCollapsed 时 Bots 拿整列高度）
+  $("#seam").hidden = foldedBots || foldedProj;
+  bots.style.flex = foldedBots ? "0 0 auto" : foldedProj ? "1 1 auto" : "0 1 auto";
+  bots.style.minHeight = foldedBots || foldedProj ? "0px" : `${BOTS_MIN}px`;
+  proj.style.flex = foldedProj ? "0 0 auto" : "1 1 auto";
+  proj.style.minHeight = foldedProj ? "0px" : `${PROJ_MIN}px`;
+  if (foldedBots || foldedProj) { bots.style.height = ""; bots.style.maxHeight = "none"; }
+  else applyBotsHeight();
+}
+
+document.querySelectorAll("[data-fold]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const sec = btn.closest(".sec");
+    const folded = sec.classList.toggle("folded");
+    btn.setAttribute("aria-expanded", String(!folded));
+    btn.title = folded ? "展开" : "收起";
+    syncSeam();
+  });
+});
+
+let drag = null;
+$("#seam").addEventListener("pointerdown", (e) => {
+  const sec = botsSec();
+  drag = { y: e.clientY, h: sec.offsetHeight, max: sec.offsetHeight + $("#projList").offsetHeight - PROJ_MIN };
+  $("#seam").setPointerCapture(e.pointerId);
+  document.body.style.userSelect = "none";
+});
+$("#seam").addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  setBotsHeight(Math.min(Math.max(drag.h + (e.clientY - drag.y), BOTS_MIN), Math.max(BOTS_MIN, drag.max)));
+});
+const endDrag = (e) => {
+  if (!drag) return;
+  drag = null;
+  document.body.style.userSelect = "";
+  try { $("#seam").releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+};
+$("#seam").addEventListener("pointerup", endDrag);
+$("#seam").addEventListener("pointercancel", endDrag);
+/* 键盘等价：聚焦分缝后 ↑↓ 每次 16px */
+$("#seam").addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+  e.preventDefault();
+  const sec = botsSec();
+  const step = (e.key === "ArrowDown" ? 16 : -16) * (e.altKey ? 4 : 1);
+  const max = sec.offsetHeight + $("#projList").offsetHeight - PROJ_MIN;
+  setBotsHeight(Math.min(Math.max(sec.offsetHeight + step, BOTS_MIN), Math.max(BOTS_MIN, max)));
+});
 
 /* ---------------- 交互 ---------------- */
 $("#theme").addEventListener("click", () => {
@@ -597,8 +744,17 @@ const params = new URLSearchParams(location.search);
 if (params.get("theme") === "light" || params.get("theme") === "dark") document.documentElement.dataset.theme = params.get("theme");
 const wantBot = params.get("bot");
 if (wantBot && BOTS.some((b) => b.id === wantBot)) state.botId = wantBot;
-
+const wantProj = params.get("proj");
+if (wantProj && PROJECTS.some((p) => p.id === wantProj)) state.projId = wantProj;
 renderAll();
+/* 定格参数：?fold=bots|projects（可逗号叠加）、?h=<机器段像素高>，方便截图 */
+for (const key of (params.get("fold") || "").split(",").filter(Boolean)) {
+  const btn = document.querySelector(`${key === "projects" ? ".proj-sec" : ".bots-sec"} [data-fold]`);
+  if (btn) btn.click();
+}
+const wantHeight = Number(params.get("h"));
+if (wantHeight > 0) setBotsHeight(Math.max(BOTS_MIN, wantHeight));
+syncSeam();
 </script>
 </body>
 </html>

@@ -6,13 +6,13 @@ import { TaskChat } from "./components/TaskChat";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { FilePanel } from "./components/FilePanel";
 import { GitView } from "./components/GitView";
-import { Hosts, Projects, Stats } from "./components/Views";
+import { Projects } from "./components/Views";
 import { ApprovalModal } from "./components/ApprovalModal";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { Splitter, useStoredSize } from "./components/Splitter";
 import { CollapsedPane } from "./components/CollapsedPane";
 import { ChatIcon, FilesIcon, ListIcon, TerminalIcon } from "./components/Icons";
-import { Settings } from "./components/Settings";
+import { Settings, type SettingsSection } from "./components/Settings";
 import { Guide } from "./components/Guide";
 import { Notes } from "./components/Notes";
 import { Zhulong } from "./components/Zhulong";
@@ -23,7 +23,7 @@ import { SceneWorkspace } from "./components/SceneWorkspace";
 import { requestTerminalAdopt, requestTerminalAt } from "./terminal-events";
 import { THEMES, isDarkTheme, resolveTheme } from "./themes";
 
-type View = "workspace" | "scene" | "projects" | "stats" | "hosts" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "bot";
+type View = "workspace" | "scene" | "projects" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "bot";
 type PaneId = "todo" | "chat" | "terminal" | "files";
 const COLLAPSED_PANE_W = 34;
 
@@ -42,6 +42,8 @@ export default function App() {
   const [guidePage, setGuidePage] = useState("home");
   const [now, setNow] = useState(Date.now());
   const [botUnread, setBotUnread] = useState(0);
+  /** 打开设置时落到哪个分区（主机 / 统计已经从 rail 收进设置） */
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
   const [todoW, setTodoW] = useStoredSize("cmh.layout.todoW", 220, 180, 520);
   const [chatW, setChatW] = useStoredSize("cmh.layout.chatW", 300, 220, 700);
   const [filesW, setFilesW] = useStoredSize("cmh.layout.filesW", 280, 180, 640);
@@ -157,8 +159,10 @@ export default function App() {
     window.harness.getState().then((s) => {
       setState(s);
       setThreadId((prev) => prev ?? s.threads.find((t) => !t.todoId && t.kind !== "bot")?.id ?? s.threads[0]?.id ?? null);
-      const dv = s.settings?.defaultView;
-      if (dv === "workspace" || dv === "projects" || dv === "stats" || dv === "hosts") setView(dv);
+      const dv = String(s.settings?.defaultView || "");
+      if (dv === "workspace" || dv === "projects" || dv === "settings") setView(dv);
+      // 老库的 defaultView 可能还是 stats / hosts：落到设置里对应的分区
+      else if (dv === "stats" || dv === "hosts") { setView("settings"); setSettingsSection(dv); }
     });
     const off = window.harness.onState(setState);
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -356,6 +360,8 @@ export default function App() {
       const next = typeof detail === "string" ? detail : detail?.view;
       if (!next || !["workspace", "scene", "projects", "stats", "hosts", "settings", "guide", "notes", "knowledge", "memory", "persona", "zhulong", "bot"].includes(next)) return;
       if (next === "guide" && typeof detail === "object" && detail?.page) setGuidePage(detail.page);
+      // 统计 / 主机已收进设置：保留旧入口，落到设置对应分区
+      if (next === "stats" || next === "hosts") { setSettingsSection(next); setView("settings"); return; }
       setView(next as View);
     };
     window.addEventListener("harness:view", onView);
@@ -408,6 +414,17 @@ export default function App() {
     setView("workspace");
   }, [state, act]);
 
+  /** 点机器人 = 打开它那条会话（同一个 Chat）；管理仍进机器人控制台 */
+  const openBotConversation = useCallback(async (botId: string) => {
+    setBotUnread(0);
+    try {
+      const res = (await act("botThread", { botId })) as { threadId?: string } | null;
+      if (res?.threadId) { setThreadId(res.threadId); setView("workspace"); }
+    } catch (err) {
+      notify(String((err as Error)?.message || err));
+    }
+  }, [act, notify]);
+
   const openThreadFromPalette = useCallback(async (threadId: string) => {
     const thread = state?.threads.find((t) => t.id === threadId);
     if (!thread) return;
@@ -418,14 +435,20 @@ export default function App() {
     setView("workspace");
   }, [state, act]);
 
+  /** 打开设置并落到某个分区；rail 直接点「设置」时不带分区（回到通用） */
+  const openSettingsSection = useCallback((section: SettingsSection) => {
+    setSettingsSection(section);
+    setView("settings");
+  }, []);
+
   const commands: Command[] = useMemo(() => {
     if (!state) return [];
     const list: Command[] = [
       { id: "view-workspace", label: "工作区", hint: "⌘1", group: "导航", run: () => setView("workspace") },
       { id: "view-scene", label: "场景", group: "导航", run: () => setView("scene") },
       { id: "view-projects", label: "项目", group: "导航", run: () => setView("projects") },
-      { id: "view-stats", label: "统计", group: "导航", run: () => setView("stats") },
-      { id: "view-hosts", label: "主机", group: "导航", run: () => setView("hosts") },
+      { id: "view-stats", label: "统计", group: "导航", hint: "设置 → 统计", run: () => openSettingsSection("stats") },
+      { id: "view-hosts", label: "主机", group: "导航", hint: "设置 → 主机", run: () => openSettingsSection("hosts") },
       { id: "view-git", label: "Git / 源码管理", group: "导航", run: () => setView("git") },
       { id: "view-knowledge", label: "资料（知识库 → 文档）", group: "导航", run: () => setView("knowledge") },
       { id: "view-memory", label: "记忆（四层 / Dream）", group: "导航", run: () => setView("memory") },
@@ -565,8 +588,8 @@ export default function App() {
 
   const railBadges = {
     workspace: state.runs.filter((r) => ["queued", "running", "waiting_input"].includes(r.status)).length,
-    hosts: state.hosts.filter((h) => h.status === "offline").length,
-    bot: botUnread,
+    // 主机离线提示挂在「设置」上：主机/统计已经是设置里的分区，rail 不再单独占位
+    settings: state.hosts.filter((h) => h.status === "offline").length,
   };
 
   // 终端默认吃掉剩余宽度；终端收起时，由仍展开的最右侧面板吃掉剩余宽度。
@@ -591,8 +614,8 @@ export default function App() {
   return (
     <div className="app">
       <div className={`main pane-focus-${focusedPane ?? "none"}${maximized ? " pane-max" : ""}`} style={{ gridTemplateColumns: gridCols }} onPointerDownCapture={markFocusedPane} onFocusCapture={markFocusedPane}>
-        <Rail view={view} notesEnabled={notesEnabled} zhulongAvailable={zhulongAvailable} badges={railBadges} onChange={(v) => setView(v)} />
-        {/* 工作区始终挂载、只切显隐：切到项目/统计再回来时，终端 pty、标签、滚动位置都不能丢 */}
+        <Rail view={view} notesEnabled={notesEnabled} zhulongAvailable={zhulongAvailable} badges={railBadges} onChange={(v) => { if (v === "settings") setSettingsSection(undefined); setView(v); }} />
+        {/* 工作区始终挂载、只切显隐：切到项目 / 设置再回来时，终端 pty、标签、滚动位置都不能丢 */}
         {scoped && (
           <div className="workspace-view" style={{ display: view === "workspace" ? "contents" : "none" }}>
           <>
@@ -615,6 +638,10 @@ export default function App() {
                 confirmStop={state.settings?.confirmStop}
                 allProjects={todoAll}
                 onToggleScope={() => setTodoAll((v) => !v)}
+                onOpenBot={(id) => void openBotConversation(id)}
+                onManageBots={() => setView("bot")}
+                botUnread={botUnread}
+                activeBotId={thread?.kind === "bot" ? thread.botId ?? null : null}
               />
             )}
             {sep1 === "6px" ? <Splitter onDelta={resizeTodo} /> : <div className="splitter-off" />}
@@ -673,10 +700,8 @@ export default function App() {
           </div>
         )}
         {view === "projects" && <div className="wide"><Projects state={state} now={now} act={act} notify={notify} onAdd={() => void addProject()} onSwitch={(id) => void switchProject(id)} onNewTask={(id) => void newTaskInProject(id)} /></div>}
-        {view === "stats" && scoped && <div className="wide"><Stats state={state} onOpen={(id) => void openTodoFromPalette(id)} /></div>}
-        {view === "hosts" && <div className="wide"><Hosts state={state} act={act} notify={notify} now={now} /></div>}
         {view === "git" && <div className="wide"><GitView state={state} notify={notify} /></div>}
-        {view === "settings" && <div className="wide settings-wide"><Settings state={state} act={act} notify={notify} /></div>}
+        {view === "settings" && <div className="wide settings-wide"><Settings state={state} act={act} notify={notify} now={now} onOpenTodo={(id) => void openTodoFromPalette(id)} initialSection={settingsSection} /></div>}
         {view === "guide" && <div className="wide guide-wiki-wide"><Guide pageId={guidePage} /></div>}
         {view === "notes" && <div className="wide"><Notes state={state} act={act} onOpenTodo={selectTodo} openRequest={notesOpenReq} /></div>}
         {view === "knowledge" && <div className="wide"><Notes state={state} act={act} onOpenTodo={selectTodo} openRequest={notesOpenReq} initialTab="docs" /></div>}

@@ -161,13 +161,16 @@ export function SceneGallery({ state, model, scenes, activeSceneId, onSelectScen
   const sceneCast = (scene: CoordinationScene) => {
     const members = scene.config.cast ?? [];
     if (!members.length) {
-      const lead = model.lead ? [{ id: model.lead.agent.id, name: model.lead.displayName, accent: model.lead.accent }] : [];
-      return [...lead, ...model.actors.filter((a) => a.agent.id !== model.lead?.agent.id).map((a) => ({ id: a.agent.id, name: a.displayName, accent: a.accent }))];
+      const lead = model.lead ? [{ id: model.lead.id, name: model.lead.displayName, accent: model.lead.accent }] : [];
+      return [...lead, ...model.actors.filter((a) => a.id !== model.lead?.id).map((a) => ({ id: a.id, name: a.displayName, accent: a.accent }))];
     }
+    // 阵容是机器人的；老数据只有 agentId 时按执行体反查回机器人
     return members.map((c) => {
-      const agent = state.agents.find((a) => a.id === c.agentId);
-      const actor = model.actors.find((a) => a.agent.id === c.agentId);
-      return { id: c.agentId, name: c.displayName || actor?.displayName || agent?.name || c.agentId, accent: actor?.accent || agent?.color || "slate", role: c.role };
+      const botId = c.botId ?? state.bots?.find((b) => b.executorAgentId === c.agentId)?.id ?? null;
+      const actor = model.actors.find((a) => a.id === (botId ?? c.agentId));
+      const agent = c.agentId ? state.agents.find((a) => a.id === c.agentId) : undefined;
+      const name = c.displayName || actor?.displayName || agent?.name || "未绑定";
+      return { id: botId ?? c.agentId ?? name, name, accent: actor?.accent || agent?.color || "slate", role: c.role };
     });
   };
 
@@ -204,7 +207,7 @@ export function SceneGallery({ state, model, scenes, activeSceneId, onSelectScen
     <div className="off-gallery">
       <div className="off-gal-summary">
         <span><b>{scenes.length}</b> 个协作场景</span>
-        <span><b>{stats.agents}</b> 位 Agent</span>
+        <span><b>{stats.bots || stats.agents}</b> 位机器人{stats.unbound ? ` · ${stats.unbound} 未绑定执行体` : ""}</span>
         <span><b>{stats.running}</b> 运行中</span>
         <span><b>{stats.waiting}</b> 待确认</span>
         <span><b>{stats.review}</b> 待验收</span>
@@ -303,10 +306,10 @@ export function SceneGallery({ state, model, scenes, activeSceneId, onSelectScen
                 <p className="off-scene-desc">{project ? `${project.name} · ${project.alias}` : "全局"} · {desc}</p>
                 <div className="off-gal-cast">
                   <div className="off-avatars">
-                    {cast.slice(0, 5).map((a) => <span key={a.id} className={`off-avatar-mini accent-${a.accent}`} title={a.name}>{a.name.slice(0, 1)}</span>)}
+                    {cast.slice(0, 5).map((a) => <span key={a.id} className={`off-avatar-mini accent-${a.accent}`} title={a.name}>{(a.name || "·").slice(0, 1)}</span>)}
                     {cast.length > 5 ? <span className="off-avatar-more">+{cast.length - 5}</span> : null}
                   </div>
-                  <span className="off-gal-cast-label">{cast.length || stats.agents} 位 · {model.standby.length ? `${model.standby.length} 待命` : "全部就位"}</span>
+                  <span className="off-gal-cast-label">{cast.length || stats.bots || stats.agents} 位 · {model.standby.length ? `${model.standby.length} 待命` : "全部就位"}</span>
                 </div>
                 <div className="off-scene-meta">
                   <span title={scene.updatedAt ? new Date(scene.updatedAt).toLocaleString() : undefined}>更新 {relTime(scene.updatedAt)}</span>

@@ -80,7 +80,9 @@ CREATE TABLE IF NOT EXISTS delegations (
   branch TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  completed_at INTEGER
+  completed_at INTEGER,
+  -- 派这条活的机器人（todos.bot_id 同理）；老数据为空，只有 agent_id
+  bot_id TEXT
 );
 
 -- ---------------------------------------------------------------------------

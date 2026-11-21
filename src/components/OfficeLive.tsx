@@ -162,7 +162,7 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
   /* ── 状态变化的只读记录：只记真实 zone / tone / pose 变化，不编造事件 ── */
   useEffect(() => {
     const signature = model.actors
-      .map((a) => `${a.agent.id}:${a.zone}:${a.seat ?? "-"}:${a.tone}:${a.pose}:${a.statusLabel}`)
+      .map((a) => `${a.id}:${a.zone}:${a.seat ?? "-"}:${a.tone}:${a.pose}:${a.statusLabel}`)
       .join("|");
     if (!signatureRef.current) {
       signatureRef.current = signature;
@@ -176,13 +176,13 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
     const nextEvents: ChangeEvent[] = [];
     if (prev) {
       for (const actor of model.actors) {
-        const before = prev.actors.find((a) => a.agent.id === actor.agent.id);
+        const before = prev.actors.find((a) => a.id === actor.id);
         if (!before) continue;
         if (before.zone === actor.zone && before.tone === actor.tone && before.pose === actor.pose && before.statusLabel === actor.statusLabel) continue;
         nextEvents.push({
-          id: `${actor.agent.id}-${at}`,
+          id: `${actor.id}-${at}`,
           at,
-          actorId: actor.agent.id,
+          actorId: actor.id,
           name: actor.displayName,
           tone: actor.tone,
           fromZone: before.zone,
@@ -275,7 +275,7 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
 
   useEffect(() => {
     if (!selectedId) return;
-    if (!model.actors.some((a) => a.agent.id === selectedId)) {
+    if (!model.actors.some((a) => a.id === selectedId)) {
       setSelectedId(null);
       setDetailOpen(false);
     }
@@ -309,7 +309,7 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
   }, [cursor, model, replayEnd, snapshots]);
 
   const displayNow = replayEnd === null ? now : cursor;
-  const selected = displayModel.actors.find((a) => a.agent.id === selectedId) ?? null;
+  const selected = displayModel.actors.find((a) => a.id === selectedId) ?? null;
 
   const windowEnd = replayEnd ?? now;
   const windowStart = windowEnd - HISTORY_MS;
@@ -390,7 +390,9 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
   }
 
   const stats = {
-    agents: displayModel.actors.length,
+    agents: displayModel.stats.agents,
+    bots: displayModel.stats.bots,
+    unbound: displayModel.stats.unbound,
     running: displayModel.actors.filter((a) => a.tone === "run" || a.tone === "lead").length,
     waiting: displayModel.actors.filter((a) => a.tone === "wait").length,
     review: displayModel.actors.filter((a) => a.tone === "review").length,
@@ -401,7 +403,7 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
   const isWarRoom = prefs.template === "warroom";
   const isCarrier = prefs.template === "carrier";
   const is3D = isWarRoom || isCarrier;
-  const lastWalk = selected ? lastWalkOf(selected.agent.id) : null;
+  const lastWalk = selected ? lastWalkOf(selected.id) : null;
   const riskCount = displayModel.actors.filter((a) => a11yChecks(a).some((row) => !row.ok)).length;
 
   return (
@@ -420,7 +422,7 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
               <span className="sub">{prefs.name} · {templateName} · @{displayModel.projectAlias}</span>
               <span className="sub" title="动效档位与走位时长">动效 {motion.tier === "calm" ? "克制" : motion.tier === "full" ? "完整" : "关闭"} · 走位 {(motion.walk / 1000).toFixed(1)}s</span>
               <div className="scene-stats">
-                <span><b>{stats.agents}</b>人</span>
+                <span title={`${stats.agents} 个执行体 · ${stats.bots} 个机器人`}><b>{stats.bots || stats.agents}</b>人</span>
                 <span className="run"><b>{stats.running}</b>运行</span>
                 <span className="wait"><b>{stats.waiting}</b>待确认</span>
                 <span className="review"><b>{stats.review}</b>待验收</span>
@@ -514,7 +516,7 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
                   onMotion={setMotion}
                   onResetMotion={() => onPrefs({ motion: { ...DEFAULT_MOTION } })}
                   lastWalk={lastWalk ? { at: lastWalk.at, from: ZONE_LABEL[lastWalk.fromZone], to: ZONE_LABEL[lastWalk.toZone] } : null}
-                  onLocate={(at) => { stopPlay(); setReplayEnd(replayEnd ?? now); setCursor(at); setSelectedEventId(sortedChanges.find((e) => e.at === at && e.walked && selected && e.actorId === selected.agent.id)?.id ?? null); }}
+                  onLocate={(at) => { stopPlay(); setReplayEnd(replayEnd ?? now); setCursor(at); setSelectedEventId(sortedChanges.find((e) => e.at === at && e.walked && selected && e.actorId === selected.id)?.id ?? null); }}
                 />
               ) : detailOpen ? (
                 <aside className="inspector" aria-label="动效检查器">
@@ -540,7 +542,7 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
                       </div>
                       <div className="overview-list">
                         {displayModel.actors.map((x) => (
-                          <button key={x.agent.id} type="button" onClick={() => select(x.agent.id)}>
+                          <button key={x.id} type="button" onClick={() => select(x.id)}>
                             <i className={`dot ${x.tone === "lead" ? "lead" : x.tone}`} />{x.displayName}
                           </button>
                         ))}

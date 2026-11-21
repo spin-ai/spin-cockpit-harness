@@ -4,6 +4,7 @@ import { STATUS, activeRun, agentOf, duration, lastRun, timeAgo } from "../ui";
 import { Splitter, useStoredSize } from "./Splitter";
 import { ChevronDownIcon, PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon } from "./Icons";
 import { requestTerminalAdopt } from "../terminal-events";
+import { assignmentsForBot } from "../selectors/assignments";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 type Filter = "all" | "needs" | "active" | "review" | "confirmed";
@@ -39,7 +40,7 @@ function TaskPlan({ items, expanded }: { items: Todo["subtasks"]; expanded: bool
   );
 }
 
-export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts, onAddProject, onManageProjects, onSwitchProject, onCollapse, confirmStop = false, allProjects = false, onToggleScope, maximized = false, onToggleMaximize }: {
+export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts, onAddProject, onManageProjects, onSwitchProject, onCollapse, confirmStop = false, allProjects = false, onToggleScope, maximized = false, onToggleMaximize, onOpenBot, onManageBots, botUnread = 0, activeBotId = null }: {
   state: State; selectedId: string | null; now: number; act: Act; onSelect: (id: string) => void;
   projectCounts: Record<string, number>;
   onAddProject: () => void; onManageProjects: () => void; onSwitchProject: (id: string) => void;
@@ -49,6 +50,11 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
   confirmStop?: boolean;
   allProjects?: boolean;
   onToggleScope?: () => void;
+  /** 机器人：点一行 = 在 Chat 里打开它那条会话；管理进机器人控制台 */
+  onOpenBot?: (botId: string) => void;
+  onManageBots?: () => void;
+  botUnread?: number;
+  activeBotId?: string | null;
 }) {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<{ id: string; title: string; desc: string; acceptance: string; priority: string; due: string; tags: string } | null>(null);
@@ -68,6 +74,11 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
   const [projectCollapsed, setProjectCollapsed] = useState(() => {
     try { return localStorage.getItem("cmh.layout.projectCollapsed") === "1"; } catch { return false; }
   });
+  // 机器人段：项目上面，可折叠（和项目区一样记住上次状态）
+  const [botsCollapsed, setBotsCollapsed] = useState(() => {
+    try { return localStorage.getItem("cmh.layout.botsCollapsed") === "1"; } catch { return false; }
+  });
+  useEffect(() => { try { localStorage.setItem("cmh.layout.botsCollapsed", botsCollapsed ? "1" : "0"); } catch { /* ignore */ } }, [botsCollapsed]);
   useEffect(() => {
     try { localStorage.setItem("cmh.layout.projectCollapsed", projectCollapsed ? "1" : "0"); } catch { /* ignore */ }
   }, [projectCollapsed]);
@@ -425,6 +436,42 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
           </div>
         )}
       </div>
+      {(state.bots?.length ?? 0) > 0 && (
+        <section className={`bot-panel ${botsCollapsed ? "collapsed" : ""}`}>
+          <div className="bot-panel-head">
+            <button className="bot-panel-title" aria-expanded={!botsCollapsed} title={botsCollapsed ? "展开机器人" : "收起机器人"} onClick={() => setBotsCollapsed((v) => !v)}>
+              <ChevronDownIcon size={12} className={botsCollapsed ? "" : "rot-180"} />
+              <span>机器人 <em>{state.bots!.length}</em></span>
+              {botUnread > 0 && <span className="bot-panel-badge">{botUnread > 99 ? "99+" : botUnread}</span>}
+            </button>
+            <div className="row gap8">
+              {!botsCollapsed && <button className="link" onClick={onManageBots}>管理</button>}
+              <button className="icon-btn" title={botsCollapsed ? "展开机器人" : "收起机器人"} aria-label={botsCollapsed ? "展开机器人" : "收起机器人"} onClick={() => setBotsCollapsed((v) => !v)}>
+                <ChevronDownIcon size={12} className={botsCollapsed ? "" : "rot-180"} />
+              </button>
+            </div>
+          </div>
+          {!botsCollapsed && (
+            <div className="bot-panel-list">
+              {state.bots!.map((b) => {
+                const open = assignmentsForBot(state.todos, state.delegations, b).rows.length;
+                const muted = Boolean(b.mutedUntil && b.mutedUntil > now);
+                const dot = b.status !== "active" ? "paused" : muted ? "quiet" : "";
+                return (
+                  <button key={b.id} className={`bot-compact ${activeBotId === b.id ? "on" : ""}`} onClick={() => onOpenBot?.(b.id)} title={`${b.name} · 打开会话`}>
+                    <span className={`bot-avatar ${b.avatarClass || "a"}`}>{b.avatar || b.name.slice(0, 1)}</span>
+                    <span className="bot-compact-main">
+                      <b className="ellipsis">{b.name}</b>
+                      <span>{b.role === "supervisor" ? "主管" : "员工"}{open ? ` · ${open} 个任务` : ""}</span>
+                    </span>
+                    <span className={`bot-dot ${dot}`} title={dot === "paused" ? "已暂停" : dot === "quiet" ? "静音中" : "运行中"} />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
       {!projectCollapsed && <Splitter orientation="horizontal" onDelta={(d) => setProjectH((h) => h - d)} />}
       <section className={`project-panel ${projectCollapsed ? "collapsed" : ""}`} style={projectCollapsed ? undefined : { height: projectH }}>
         <div className="project-panel-head">

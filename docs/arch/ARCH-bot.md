@@ -32,6 +32,9 @@
 | **可编辑**：名字 / 语气 / 称呼 / 长短 / 边界 / 习惯（失焦或 Enter 保存）、每小时上限 / 最小间隔 / 静音时段（数字输入）、能力档位（只读 / 可起任务） | 同上，写 `bots.persona` / `bots.policy` |
 | 记忆 tab 读**真实四层计数**（`memoryOverview.byLayer`）与可注入字符数；L1 标「只回查，不注入」 | `memoryOverview` |
 | 能力档位只有 `read`：不建 todo、不起 run | `collectCandidates` / `speak` 不碰 actions |
+| **监视任务**：任务交给 bot 后写一条 `decision=watching` 的回合（不进对话流），run 结束/状态变化时回报；「任务」页签可取消监视 | `botWatchTask` / `bots().watch` |
+| **回合清理 + 沉默节流**：清空沉默/被拦记录；同类沉默 30 分钟最多记一条 | `botTurnsClear` / `tickBot` |
+| **work 档位（绑定执行体）**：bot 绑定一个 worker Agent；「开跑」= 建 todo + 起 run，跑完回流一条 `decision=reported` 的汇报（带 runId） | `bots.executor_agent_id` / `botAcceptProposal` / `bots().report` |
 | **dispatch 档位（可切换）**：主动开口时附一条 `proposal`；「起任务」只建 todo（`confirmed=false`），不起 run，审批仍在桌面 | `bot_turns.proposal` / `botAcceptProposal` / `Bot.tsx` |
 | **取消流式**：`botCancel` → AbortController → `chatStream(signal)`；取消不落回合 | `electron/main.mjs` / `ark.chatStream` |
 | **主动消息可见**：tick 出 `harness:bot-message` → toast + Rail 「Bot」未读徽标（进页面清零） | `src/App.tsx` |
@@ -87,6 +90,16 @@ type Bot = {
 ```
 
 多个 bot 的隔离边界：**人格、记忆读写视图、配额、频道 allowlist 全部按 botId 分开**；同一个 thread 里不混两个 bot 的记忆。
+
+**派单链（2026-11-21）**：`todos.bot_id` / `delegations.bot_id` 记住「这条活是谁派的」，`agent_id` 仍然是「谁去干」。`botAcceptProposal` 建的 todo 和 `createMissionChild` 派下去的子任务都会带上它（Mission 自己带 botId 时继承）。协调台回答「谁在干」，所以先认执行体所在的座位，执行体没上场才退回派活的机器人——不再出现「派了活却查不到人」。
+
+**Bot 与 Agent 的关系（2026-11-21 明确）**：bot 是**人**（名字、人格、记忆、主动开口），Agent 是它**此刻借的执行体**。`bots.executor_agent_id` 指向当前借的那个 worker Agent，可以换（换 CLI / 换模型 / 换机器），**换执行体不换人**。
+
+这条关系现在贯穿到舞台：`coordination_scenes.config.cast[]` 存的是 `botId`（老数据 `agentId` 在读的时候按 `executor_agent_id` 反查），`buildOfficeModel` 的人口也从 `state.agents` 换成了 `state.bots`。所以：
+
+- 没绑执行体的 bot 照样上台（待命位，状态「待绑定执行体」），不会静默消失
+- 同一个执行体被两个 bot 借用时，舞台上是两个人（各占一席）
+- 舞台状态 = 机器状态（run / todo）+ 机器人最近一条回合（`turn / silent / blocked / escalated / watching`），「转人工 / 被拦 / 沉默」与「等待确认」平级——这正是 `bot_turns` 存在的理由
 
 ### 2.2 Trigger（主动为主）
 
@@ -262,7 +275,8 @@ CREATE TABLE bot_turns(id TEXT PRIMARY KEY, bot_id TEXT, channel TEXT,
 
 ## 10. 明确未做
 
-- **dispatch 只做到「建 todo」**：不会自己起 run；「一句话确认」用的是 UI 卡片 + 人在桌面确认，而不是模型生成确认话术。
+- **work 档位能起 run，但仍需一次人工点击**：「开跑」按钮就是那次授权；模型不能自己触发 run。
+- **执行回流是摘要不是改稿**：run 结束后只回一条 200 字内的汇报，不重写 agent 的产出。
 - **飞书（P2）**：bot 只出本地回合流；群里 @ 触发依赖 `ARCH-im-gateway.md` §3 的长连接。
 - **多 bot 并发抢占**：tick 按 bot 顺序串行跑，没有「同一事件两个 bot 都想说」的去重与协商。
 - **人格模块打通**：`persona` 还没有 `subject=self`，人格卡暂时只存在 bot 档案里。

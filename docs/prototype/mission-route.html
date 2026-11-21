@@ -14,21 +14,26 @@
     · 亮暗同构，底部右侧 ◐ 切；语义色只表达状态，主色保持中性
     · 原型自己的东西（A/B/C、步骤、说明）全部收进底部 dock，不混进应用界面
 
+  工作区左栏是一个 pane：TODO / 机器人 / 项目 三段，各自可以折叠（点段头）。
+  机器人 = 主管 小Z + 员工 小A/小B/小C（分别对应分派出去的 T-016/17/18）。
+  机器人不再占 rail 上的一页；点左栏里的员工，中间就换成它那条会话。
+
   三条动线要解决的割裂（来自代码，不是猜测）：
     · TaskPane   用 state.todos，含 mission 子任务（parentId 缩进）              → 能看见
     · 场景        buildOfficeModel：members 用 actors.find(agentId)，
                   cast 里没有该 agent 就整条被 filter(Boolean) 丢掉               → 静默消失
-    · Bot 页      Snapshot 只有 bots/turns/asks/recent，没有 todos/missions        → 结构上没有位置
-    · 根因        bot_turns.botId 与 todos.agentId 是两个命名空间，没有映射
-                  （现已补 bot.executorAgentId，原型按这个字段画）
+    · 机器人      现在占 rail 上一个独立页面；工作区左栏只有任务 + 项目，
+                  同一件事要跨页看（本原型把它挪到项目上面）
+    · 根因        机器人是人格、agent 是执行体：bot_turns.botId / todos.agentId 两套命名空间
+                  （bot.executorAgentId 已补；原型按这个字段画）
 
   三条动线把「事实源」放在不同位置：
-    A 一处派单 · 三处同影   事实源 = 任务；Bot 页只回汇报 + 指回 todoId，场景只画 delegation（推荐）
+    A 一处派单 · 三处同影   事实源 = 任务；工作区的机器人只回汇报 + 指回 todoId，场景只画 delegation（推荐）
     B 人物卡：先点人再看任务 事实源 = 执行体；任务挂在人身上
     C Mission 时间轴为中心   事实源 = Mission；其余都是它的投影
 
   交互：底部步骤条 / 页面里带 hover 的行（可点）都能前进；← → 也走。
-  ?v=A|B|C&s=3&theme=light|dark 定格。
+  ?v=A|B|C&s=3&theme=light|dark 定格；?fold=bots,projects 预折叠某几段。
 -->
 <style>
 :root{
@@ -138,7 +143,8 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .pane-body{padding:10px 12px 12px;overflow:auto;min-height:0}
 .pane-body.tight{padding:8px}
 .ws{display:grid;grid-template-columns:264px minmax(0,1fr);gap:12px;min-height:0;flex:1}
-.bot{display:grid;grid-template-columns:216px minmax(0,1fr) 292px;gap:12px;min-height:0;flex:1}
+.ws3{display:grid;grid-template-columns:272px minmax(0,1fr) 288px;gap:12px;min-height:0;flex:1}
+.pane-col>.pane-body{flex:1;min-height:0}
 .scene{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-height:0;flex:1}
 .scene.split{grid-template-columns:minmax(0,1fr) 320px}
 
@@ -171,6 +177,10 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .avatar.b{background:color-mix(in srgb,var(--purple) 72%,var(--fg) 28%);color:var(--page-canvas)}
 .avatar.c{background:color-mix(in srgb,var(--amber) 76%,var(--fg) 24%);color:var(--page-canvas)}
 .avatar.d{background:color-mix(in srgb,var(--fg) 70%,transparent);color:var(--page-canvas)}
+.pin{width:6px;height:6px;border-radius:50%;flex:none;background:var(--faint)}
+.pin.a{background:color-mix(in srgb,var(--green) 76%,var(--fg) 24%)}
+.pin.b{background:color-mix(in srgb,var(--purple) 72%,var(--fg) 28%)}
+.pin.c{background:color-mix(in srgb,var(--amber) 76%,var(--fg) 24%)}
 
 /* ── Mission 面板 ───────────────────────────────────────── */
 .mission-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding-bottom:10px;border-bottom:1px solid var(--border)}
@@ -198,27 +208,62 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .delegation-main .spacer{flex:1}
 .delegation-result{margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:11.5px;line-height:1.55;color:var(--muted)}
 
-/* ── Bot 页 ─────────────────────────────────────────────── */
-.bot-item{display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;
-  padding:7px 8px;border:1px solid transparent;border-radius:8px;text-align:left;color:var(--fg-2);margin-bottom:2px}
-.bot-item:hover{background:var(--surface-hover)}
-.bot-item.on{background:var(--surface-selected);border-color:var(--border)}
-.bot-item-main{display:flex;flex-direction:column;min-width:0}
-.bot-item-main b{font-size:12px;font-weight:600;color:var(--fg)}
-.bot-item-main span{font-size:10.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bot-item em{font-style:normal;font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+/* ── 机器人（工作区左栏）─────────────────────────────────── */
+/* 左栏：TODO / 机器人 / 项目，三段各自可折叠 */
+.fold{display:flex;flex-direction:column;min-height:0;border-top:1px solid var(--border)}
+.fold:first-child{border-top:0}
+.fold-head{flex:none;height:30px;display:flex;align-items:center;gap:4px;padding:0 6px 0 4px}
+.fold-name{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 5px;border-radius:5px;
+  font-size:11.5px;font-weight:600;letter-spacing:.06em;color:var(--muted)}
+.fold-name:hover{background:var(--surface-hover);color:var(--fg)}
+.fold-name em{font-style:normal;font-weight:500;letter-spacing:0;font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+.fold-chev{width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;
+  color:var(--faint);transition:transform .12s}
+.fold.collapsed .fold-chev{transform:rotate(-90deg)}
+.fold-body{min-height:0;overflow:auto;padding:0 8px 8px}
+.fold.collapsed>.fold-body{display:none}
+.fold.todo{flex:1;min-height:0}
+.fold.todo.collapsed,.fold.bots,.fold.projects{flex:none}
+.fold.todo>.fold-body{flex:1;min-height:0}
+.fold.projects>.fold-body{max-height:150px}
+.fold .bot-dot{margin-right:4px}
+.bot-chip{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center;gap:7px;width:100%;
+  padding:5px 6px;border:1px solid transparent;border-radius:6px;text-align:left;color:var(--fg-2)}
+.bot-chip:hover{background:var(--surface-hover)}
+.bot-chip.on{background:var(--surface-selected);border-color:var(--border)}
+.bot-chip .avatar{width:20px;height:20px;font-size:10px}
+.bot-chip-main{display:flex;flex-direction:column;min-width:0;line-height:1.3}
+.bot-chip-main b{font-size:12px;font-weight:500;color:var(--fg)}
+.bot-chip-main span{font-size:10.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* 项目行 */
+.project-list{display:flex;flex-direction:column;gap:1px}
+.project-row{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:7px;width:100%;
+  padding:4px 6px;border:1px solid transparent;border-radius:6px;text-align:left;font-size:12px;color:var(--fg-2)}
+.project-row:hover{background:var(--surface-hover)}
+.project-row.on{background:var(--surface-selected);border-color:var(--border);color:var(--fg)}
+.project-mark{width:18px;height:18px;flex:none;border-radius:5px;display:grid;place-items:center;font-size:10px;font-weight:600;
+  background:var(--surface-hover);border:1px solid var(--border);color:var(--muted)}
+.project-row .count{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
 .stream{display:flex;flex-direction:column;gap:12px}
 .bot-main{display:flex;flex-direction:column;min-height:0}
 .bot-main>.pane-body{flex:1;min-height:0}
+.bot-right>.pane-body{flex:1;min-height:0}
 .bot-dot{width:6px;height:6px;border-radius:50%;background:var(--green);flex:none}
 .bot-dot.paused{background:var(--faint)}
 .bot-dot.quiet{background:var(--amber)}
-.bot-new{margin-top:4px;width:100%;padding:7px 8px;border:1px dashed var(--border-strong);border-radius:8px;
-  background:transparent;color:var(--muted);font-size:11.5px;text-align:center}
 .bot-tabs{display:flex;gap:2px;flex:none;padding:6px 10px 0;border-bottom:1px solid var(--border)}
 .bot-tabs button{height:26px;padding:0 8px;border:0;border-radius:6px 6px 0 0;background:transparent;
   color:var(--muted);font-size:11.5px}
 .bot-tabs button.on{background:var(--surface-hover);color:var(--fg);box-shadow:inset 0 -2px 0 var(--brand)}
+.bot-assign{flex:none;padding:8px 10px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:5px}
+.bot-assign .assign-head{display:flex;align-items:center;gap:6px;font-size:11px;letter-spacing:.04em;color:var(--faint)}
+.bot-assign .assign-head b{font-size:11.5px;font-weight:600;color:var(--fg-2)}
+.assign-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;
+  padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--surface);text-align:left;font-size:12px;color:var(--fg-2)}
+.assign-row:hover{border-color:var(--border-strong)}
+.assign-row .s{font-size:11px;color:var(--faint);white-space:nowrap}
+.assign-row .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .day{display:flex;align-items:center;gap:10px;font-size:10.5px;letter-spacing:.06em;color:var(--faint)}
 .day::after{content:"";flex:1;height:1px;background:var(--border)}
 .turn{display:flex;gap:9px;min-width:0}
@@ -358,8 +403,8 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .dock-cell.claim{border-left:2px solid var(--brand-line);padding-left:9px}
 
 @media (max-width:1180px){
-  .bot{grid-template-columns:196px minmax(0,1fr)}
-  .bot .bot-right{display:none}
+  .ws3{grid-template-columns:272px minmax(0,1fr)}
+  .ws3 .bot-right{display:none}
   .dock-notes{grid-template-columns:1fr 1fr}
 }
 @media (max-width:980px){
@@ -453,13 +498,12 @@ const ICONS = {
   git: `<circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="9" r="2.4"/><path d="M6 8.4v7.2M8.3 6h4.3a3 3 0 0 1 3 3v.2"/>`,
   memory: `<path d="M12 3v18M5 7v10M19 7v10M8.5 5v14M15.5 5v14"/>`,
   persona: `<circle cx="12" cy="8" r="3.4"/><path d="M5 20a7 7 0 0 1 14 0"/>`,
-  bot: `<rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V5M9 13h.01M15 13h.01M9 16.5h6"/>`,
   guide: `<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.4 2.3c-.7.3-.9.9-.9 1.7M12 17h.01"/>`,
   settings: `<circle cx="12" cy="12" r="3.2"/><path d="M12 3v2.2M12 18.8V21M4.2 7.5l1.9 1.1M17.9 15.4l1.9 1.1M4.2 16.5l1.9-1.1M17.9 8.6l1.9-1.1"/>`,
 };
 $rail.innerHTML = [
   ["workspace", "工作区"], ["scene", "场景"], ["projects", "项目"], ["stats", "统计"],
-  ["git", "Git"], ["memory", "记忆"], ["persona", "人物"], ["bot", "Bot"],
+  ["git", "Git"], ["memory", "记忆"], ["persona", "人物"],
 ].map(([id, label]) => `
   <button class="rail-btn" data-view="${id}" title="${label}">
     <svg viewBox="0 0 24 24">${ICONS[id]}</svg><span>${label}</span>
@@ -471,16 +515,61 @@ $rail.innerHTML = [
 /* ============================ 三条动线 ============================ */
 
 /* ---------- 共用片段 ---------- */
-const todoPane = (groups, { jump = null, head: paneTitle = "任务", meta = "" } = {}) => `
-  <section class="pane">
-    <div class="pane-head"><span>${paneTitle}</span><span class="spacer"></span>${meta ? `<span class="tiny faint">${meta}</span>` : ""}</div>
-    <div class="pane-body tight">
+/* 左栏三段：TODO / 机器人 / 项目 —— 每段都能收起来 */
+const foldState = { todo: true, bots: true, projects: true };
+if (qs.get("fold")) for (const id of qs.get("fold").split(",")) if (id in foldState) foldState[id] = false;
+
+const fold = (id, label, count, body, actions = "") => `
+  <section class="fold ${id}" data-fold="${id}">
+    <div class="fold-head">
+      <button class="fold-name" aria-expanded="true">
+        <svg class="fold-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+        <span>${label}</span>${count != null ? `<em>${count}</em>` : ""}
+      </button>
+      <span class="spacer"></span>${actions}
+    </div>
+    <div class="fold-body">${body}</div>
+  </section>`;
+
+/* 折叠状态的唯一来源：换步骤时把 foldState 重新套回新 DOM */
+const applyFolds = () => {
+  $wide.querySelectorAll(".fold").forEach((el) => {
+    const open = foldState[el.dataset.fold] !== false;
+    el.classList.toggle("collapsed", !open);
+    el.querySelector(".fold-name")?.setAttribute("aria-expanded", String(open));
+  });
+};
+
+const leftPane = (groups, { jump = null, bot = "" } = {}) => `
+  <section class="pane left-pane">
+    ${fold("todo", "TODO", groups.reduce((n, g) => n + g.count, 0), `
       ${groups.map((g) => `
         <div class="group-head ${g.cls || ""}"><span>${g.name}</span><span>${g.count}</span></div>
         ${g.rows.map((r) => taskRow({ ...r, jump: r.jump ?? jump })).join("")}
-      `).join("")}
-    </div>
+      `).join("")}`,
+      `<button class="link tiny" title="切换 TODO 范围">当前项目</button><button class="link" title="新建任务">＋</button>`)}
+    ${fold("bots", "机器人", 4, botChips(bot), `<button class="link" title="新建机器人">＋</button>`)}
+    ${fold("projects", "项目", 2, projectRows(), `<button class="link" title="添加项目">＋ 添加</button>`)}
   </section>`;
+
+const botChips = (active = "") => `
+  ${[
+    { id: "z", name: "小Z", letter: "Z", cls: "d", note: "主管 · 拆解与分派", dot: "" },
+    { id: "a", name: "小A", letter: "A", cls: "a", note: "T-016 打通链路", dot: "" },
+    { id: "b", name: "小B", letter: "B", cls: "b", note: "T-017 补箭头关系", dot: "" },
+    { id: "c", name: "小C", letter: "C", cls: "c", note: "T-018 出评测报告", dot: "quiet" },
+  ].map((b) => `
+    <button class="bot-chip ${b.id === active ? "on" : ""}" title="${b.name}">
+      <span class="avatar ${b.cls}">${b.letter}</span>
+      <span class="bot-chip-main"><b>${b.name}</b><span>${b.note}</span></span>
+      <span class="bot-dot ${b.dot}"></span>
+    </button>`).join("")}`;
+
+const projectRows = () => `
+  <div class="project-list">
+    <button class="project-row on"><span class="project-mark">S</span><span class="ellipsis">spin-cockpit-harness</span><span class="count">6</span></button>
+    <button class="project-row"><span class="project-mark">D</span><span class="ellipsis">ddat-parser</span><span class="count">2</span></button>
+  </div>`;
 
 const missionHead = (stateCls, stateLabel, done, total, actions = "") => `
   <div class="mission-head">
@@ -499,9 +588,9 @@ const planBlock = () => `
     </div>
     <p class="mission-summary">三步按依赖顺序执行：先打通链路，再补箭头关系，最后出评测报告。</p>
     <ol class="mission-steps">
-      <li><span class="mission-step-key">①</span><span class="mission-step-title">打通链路</span><span class="tiny muted">vega</span><span class="mission-step-accept">验收：sample.stdf 能解析出 12 组量测</span></li>
-      <li><span class="mission-step-key">②</span><span class="mission-step-title">补箭头关系</span><span class="tiny muted">golo</span><span class="mission-step-accept">验收：依赖 ①；箭头指向与 spec 一致</span></li>
-      <li><span class="mission-step-key">③</span><span class="mission-step-title">出评测报告</span><span class="tiny muted">lumi</span><span class="mission-step-accept">验收：依赖 ①②；3 个样本全绿</span></li>
+      <li><span class="mission-step-key">①</span><span class="mission-step-title">打通链路</span><span class="tiny muted">小A</span><span class="mission-step-accept">验收：sample.stdf 能解析出 12 组量测</span></li>
+      <li><span class="mission-step-key">②</span><span class="mission-step-title">补箭头关系</span><span class="tiny muted">小B</span><span class="mission-step-accept">验收：依赖 ①；箭头指向与 spec 一致</span></li>
+      <li><span class="mission-step-key">③</span><span class="mission-step-title">出评测报告</span><span class="tiny muted">小C</span><span class="mission-step-accept">验收：依赖 ①②；3 个样本全绿</span></li>
     </ol>
     <div class="mission-risks"><b>风险</b><span>样本还有 2 种格式变体未覆盖</span></div>
   </div>`;
@@ -521,26 +610,16 @@ const delegation = ({ key, title, statusCls, statusLabel, who, run, jump = null,
     ${result ? `<div class="delegation-result">${result}</div>` : ""}
   </div>`;
 
-const CAP = { read: "只读", dispatch: "可起任务", work: "能执行" };
-
-/* 左：bot 列表（不是会话列表）——能力档位 + 说过几条 + 状态点 */
-const botList = (active = "shouye") => `
-  <section class="pane">
-    <div class="pane-head"><span>Bots</span><span class="spacer"></span><span class="tiny faint">3</span></div>
-    <div class="pane-body tight">
-      ${[
-        { id: "shouye", name: "守夜", letter: "守", cls: "a", cap: "work", n: 12, dot: "" },
-        { id: "nan", name: "南", letter: "南", cls: "b", cap: "dispatch", n: 4, dot: "quiet" },
-        { id: "draft", name: "草稿", letter: "草", cls: "d", cap: "read", n: 0, dot: "paused" },
-      ].map((b) => `
-        <button class="bot-item ${b.id === active ? "on" : ""}">
-          <span class="avatar ${b.cls}">${b.letter}</span>
-          <span class="bot-item-main"><b>${b.name}</b><span>${CAP[b.cap]} · ${b.n} 条已说</span></span>
-          <span class="bot-dot ${b.dot}" title="${b.dot === "paused" ? "已暂停" : b.dot === "quiet" ? "静音中" : "运行中"}"></span>
-        </button>`).join("")}
-      <button class="bot-new">＋ 新建 bot</button>
-    </div>
-  </section>`;
+const botTaskGroups = ({ jump = null } = {}) => [
+  { name: "执行中", count: 3, cls: "active", rows: [
+    { title: "✦ 把 STDF 解析器接进管线", tone: "running", who: "小Z", key: "M-04" },
+    { title: "打通链路", tone: "running", who: "小A", key: "T-016", cls: "child", jump },
+    { title: "补箭头关系", tone: "running", who: "小B", key: "T-017", cls: "child", jump },
+  ] },
+  { name: "排队", count: 1, cls: "waiting", rows: [
+    { title: "出评测报告", tone: "queued", who: "小C", key: "T-018", cls: "child", jump },
+  ] },
+];
 
 /* 「为什么说 / 为什么沉默」四行：触发源 / 注入 / 过闸 / 成本 —— 沉默也要可审计 */
 const why = (rows, title = "为什么说") => `
@@ -601,13 +680,23 @@ const composer = (name, hint = "说过的话进同一个会话；沉默与被拦
     <div class="composer-hint"><span>⌘↵ 发送</span><span>·</span><span>${hint}</span></div>
   </div>`;
 
+const botAssign = (rows, mission) => `
+  <div class="bot-assign">
+    <div class="assign-head"><b>分配到的任务</b><span>${rows.length}</span></div>
+    ${rows.map((r) => `
+      <button class="assign-row" data-jump="${r.jump}">
+        <span class="mono k">${r.key}</span><span class="t">${r.title}</span><span class="s">${r.stage}</span>
+      </button>`).join("")}
+    ${mission ? `<div class="hint-line">来自 Mission：${mission}</div>` : ""}
+  </div>`;
+
 const botTabs = (active = "人格卡") => `
-  <div class="bot-tabs">${["人格卡", "记忆", "策略"].map((t) => `<button class="${t === active ? "on" : ""}">${t}</button>`).join("")}</div>`;
+  <div class="bot-tabs">${["人格卡", "记忆", "任务", "日程", "策略"].map((t) => `<button class="${t === active ? "on" : ""}">${t}</button>`).join("")}</div>`;
 
 const desk = ({ name, letter, cls, role, task, key, busy = true, on = false, empty = false }) => `
   <div class="desk-unit ${busy ? "busy" : ""} ${on ? "on" : ""} ${empty ? "empty" : ""}">
     <div class="nameplate">
-      <span class="avatar xs ${cls || "d"}">${letter}</span>
+      <i class="pin ${empty ? "" : cls || ""}"></i>
       <div><b>${name}</b><span>${role}</span></div>
     </div>
     <div class="desk"></div>
@@ -632,20 +721,20 @@ const stage = ({ coord, desks, foot = "" }) => `
 /* ---------- A 一处派单 · 三处同影 ---------- */
 const A = {
   name: "A · 一处派单，三处同影",
-  claim: `<b>事实源 = 任务</b>。Mission 派单只写一次库；Bot 页不复制任务列表，只用汇报回合里那条 todo 指回它；场景只画 delegation。同一个 <span class="mono">todo.id</span> 在三处可点、可跳。`,
+  claim: `<b>事实源 = 任务</b>。Mission 派单只写一次库；机器人在工作区左栏（项目上面），不复制任务列表，只用汇报回合里那条 todo 指回它；场景只画 delegation。同一个 <span class="mono">todo.id</span> 在三处可点、可跳。`,
   steps: [
     {
       nav: "workspace",
       head: {
-        kicker: "Mission · M-31",
+        kicker: "Mission · M-04",
         title: "把 STDF 解析器接进管线",
-        sub: `${pill("review", "计划待审批")}<span>主管 北 · 拆成 3 步</span><span class="faint">·</span><span>批准前不会派单</span>`,
+        sub: `${pill("review", "计划待审批")}<span>主管 小Z · 拆成 3 步</span><span class="faint">·</span><span>批准前不会派单</span>`,
         actions: `<button class="btn">详情</button><button class="btn icon">⋯</button>`,
       },
       body: `<div class="ws">
-        ${todoPane([{ name: "计划待审批", count: 1, cls: "review", rows: [
-          { title: "✦ 把 STDF 解析器接进管线", tone: "review", who: "主管 · 北", key: "M-31", cls: "on", jump: 0 },
-        ] }], { meta: "M-31" })}
+        ${leftPane([{ name: "计划待审批", count: 1, cls: "review", rows: [
+          { title: "✦ 把 STDF 解析器接进管线", tone: "review", who: "小Z", key: "M-04", cls: "on", jump: 0 },
+        ] }])}
         <section class="pane">
           <div class="pane-head"><span>任务详情</span><span class="spacer"></span><span class="tiny faint">对话</span></div>
           <div class="pane-body">
@@ -653,7 +742,7 @@ const A = {
             ${planBlock()}
             ${threadStrip([
               ["你", "先打通链路，样本用 sample.stdf；箭头关系等解析字段定下来再补。"],
-              ["主管 北", "三步已拆好，验收条件写在每一步下面；你批准我就派单。"],
+              ["小Z", "三步已拆好，验收条件写在每一步下面；你批准我就派单。"],
             ])}
           </div>
         </section>
@@ -666,105 +755,106 @@ const A = {
     {
       nav: "workspace",
       head: {
-        kicker: "Mission · M-31",
+        kicker: "Mission · M-04",
         title: "把 STDF 解析器接进管线",
         sub: `${pill("running", "执行中")}<span>3 个子任务 · 1 个在跑</span>`,
         actions: `<button class="btn">汇总进度</button><button class="btn icon">⋯</button>`,
       },
       body: `<div class="ws">
-        ${todoPane([
+        ${leftPane([
           { name: "执行中", count: 3, cls: "active", rows: [
-            { title: "✦ 把 STDF 解析器接进管线", tone: "running", who: "主管 · 北", key: "M-31", cls: "on" },
-            { title: "打通链路", tone: "running", who: "vega", key: "T-311", cls: "child", jump: 2 },
-            { title: "补箭头关系", tone: "running", who: "golo", key: "T-312", cls: "child", jump: 4 },
+            { title: "✦ 把 STDF 解析器接进管线", tone: "running", who: "小Z", key: "M-04", cls: "on" },
+            { title: "打通链路", tone: "running", who: "小A", key: "T-016", cls: "child", jump: 2 },
+            { title: "补箭头关系", tone: "running", who: "小B", key: "T-017", cls: "child", jump: 4 },
           ] },
           { name: "排队", count: 1, cls: "waiting", rows: [
-            { title: "出评测报告", tone: "queued", who: "lumi", key: "T-313", cls: "child", jump: 4 },
+            { title: "出评测报告", tone: "queued", who: "小C", key: "T-018", cls: "child", jump: 4 },
           ] },
-        ], { meta: "3 条新任务" })}
+        ])}
         <section class="pane">
           <div class="pane-head"><span>任务详情</span><span class="spacer"></span><span class="tiny faint">3 个子任务</span></div>
           <div class="pane-body">
             ${missionHead("running", "执行中", 0, 3, `<button class="link danger">取消 Mission</button>`)}
             <div class="mission-approved">计划已批准 · 3 个子任务</div>
             <div class="delegation-list">
-              ${delegation({ key: "T-311", title: "打通链路", statusCls: "running", statusLabel: "执行中", who: "vega", run: "run-8836", jump: 2 })}
-              ${delegation({ key: "T-312", title: "补箭头关系", statusCls: "queued", statusLabel: "排队", who: "golo", run: "run-8841" })}
-              ${delegation({ key: "T-313", title: "出评测报告", statusCls: "queued", statusLabel: "排队", who: "lumi", jump: 4 })}
+              ${delegation({ key: "T-016", title: "打通链路", statusCls: "running", statusLabel: "执行中", who: "小A", run: "r31", jump: 2 })}
+              ${delegation({ key: "T-017", title: "补箭头关系", statusCls: "queued", statusLabel: "排队", who: "小B", run: "r32" })}
+              ${delegation({ key: "T-018", title: "出评测报告", statusCls: "queued", statusLabel: "排队", who: "小C", jump: 4 })}
             </div>
             ${threadStrip([
               ["你", "批了，按计划跑。"],
-              ["主管 北", `已派单：<span class="mono">T-311</span> / <span class="mono">T-312</span> / <span class="mono">T-313</span>，有变化我在这里说。`],
+              ["小Z", `已派单：<span class="mono">T-016</span> / <span class="mono">T-017</span> / <span class="mono">T-018</span>，有变化我在这里说。`],
             ])}
           </div>
         </section>
       </div>`,
       notes: {
         note: { head: "这一步发生什么", body: "三条 todo 一次写入：<span class='mono'>parentId</span> 指向 mission、<span class='mono'>agentId</span> 指向执行体、<span class='mono'>kind='task'</span>。" },
-        good: { head: "为什么这样切", body: "从这一秒起任务就是唯一事实源；Bot 页和场景不再各自 filter 一遍。" },
+        good: { head: "为什么这样切", body: "左栏三段 TODO / 机器人 / 项目都能收；从这一秒起任务就是唯一事实源，机器人和场景不再各自 filter 一遍。" },
       },
     },
     {
-      nav: "bot",
+      nav: "workspace",
       head: {
-        kicker: "Bot",
-        title: "守夜",
-        sub: `${tag("ok", "主动")}<span>能执行 · 执行体 vega</span><span class="faint">·</span><span class="faint">本小时 1 条已说 / 0 条被拦</span>`,
-        actions: `<button class="btn">暂停</button><button class="btn">静音 1h</button><button class="btn">打开会话</button><button class="btn icon">⋯</button><button class="btn primary">跑一次决策</button>`,
+        kicker: "工作区 · 机器人",
+        title: "小A",
+        sub: `${tag("ok", "主动")}<span>员工 · 手头 T-016</span><span class="faint">·</span><span class="faint">本小时 1 条已说 / 0 条被拦</span>`,
+        actions: `<button class="btn">暂停</button><button class="btn">静音 1h</button><button class="btn icon">⋯</button><button class="btn primary">跑一次决策</button>`,
       },
-      body: `<div class="bot">
-        ${botList("shouye")}
+      body: `<div class="ws3">
+        ${leftPane(botTaskGroups({ jump: 1 }), { bot: "a" })}
         <section class="pane bot-main">
-          <div class="pane-head"><span>回合流</span><span class="spacer"></span>${tag("ai", "主动")}</div>
+          <div class="pane-head"><span>小A · 会话</span><span class="spacer"></span><span class="tag">机器人</span></div>
           <div class="pane-body stream">
             <div class="day">今天</div>
             ${turnReported({
-              name: "守夜", letter: "守", cls: "a", time: "12:04", run: "run 8836",
-              text: "「打通链路」跑完了：sample.stdf 解析出 12 组量测，产物在 runs/detect/run-8836/best.pt。② 可以接了。",
-              taskKey: "T-311", taskTitle: "打通链路", jump: 1,
+              name: "小A", letter: "A", cls: "a", time: "12:04", run: "run r31",
+              text: "「打通链路」跑完了：sample.stdf 解析出 12 组量测，产物在 runs/detect/r31/best.pt。② 可以接了。",
+              taskKey: "T-016", taskTitle: "打通链路", jump: 1,
               whyRows: {
-                trigger: "run.finished · run-8836",
+                trigger: "run.finished · r31",
                 memory: "3 条（L3 项目 · L2 事实 ×2）",
                 gates: "通过 · 本小时第 1 条，不在静音时段",
                 cost: "1 280 tokens · 4.2s",
               },
             })}
             ${turnProactive({
-              name: "守夜", letter: "守", cls: "a", time: "11:58",
-              text: "② 我不自己开：① 的产物还没落盘，现在开只会空跑。",
-              title: "我理解的是把 STDF 解析器接进管线分三步，先跑 ① 打通链路？",
-              desc: "开跑会用执行体 vega 起一次 run，产物落到 runs/detect/。",
+              name: "小A", letter: "A", cls: "a", time: "11:58",
+              text: "② 别急着开：我的 ① 还没落盘，现在开会空跑。",
+              title: "我先把 ① 打通链路跑完，再让 小B 接 ②？",
+              desc: "开跑会以小A 起一次 run，产物落到 runs/detect/。",
               action: "开跑", note: "会立即起一次 run（点这个就是授权）",
             })}
             ${turnQuiet({
               time: "11:40", label: "沉默", text: "配额还够，但这一轮没有新事实",
               whyRows: {
-                trigger: "todo.changed · T-311",
+                trigger: "todo.changed · T-016",
                 memory: "没注入（不开口就不调模型）",
                 gates: "跳过 · 与上一条近重复 0.83",
                 cost: "没调用模型",
               },
             })}
           </div>
-          ${composer("守夜")}
+          ${composer("小A")}
         </section>
         <section class="pane bot-right">
           ${botTabs("人格卡")}
+          ${botAssign([{ key: "T-016", title: "打通链路", stage: "执行中", jump: 1 }], "M-04")}
           <div class="pane-body">
             <div class="field"><span>语气</span><b>简短，先给结论</b></div>
             <div class="field"><span>称呼</span><b>你</b></div>
             <div class="field"><span>边界</span><b>不替人点审批</b></div>
             <div class="field"><span>能力档位</span><div class="select-like">能执行<i>▾</i></div></div>
-            <div class="field"><span>执行体（work 档位起 run 用）</span><div class="select-like"><span class="avatar xs a">V</span>vega · 技术执行<i>▾</i></div></div>
+            <div class="field"><span>角色</span><b>员工 · 主管 小Z</b></div>
             <div class="field"><span>配额</span><b>8 条 / 小时 · 最小间隔 5 分钟</b></div>
-            <div class="hint-line">任务不在这里再列一遍：汇报的 <span class="mono">trigger.ref</span> 里带 todo，点回任务面板的同一行。</div>
+            <div class="hint-line">左栏选中员工，中间就是它那条会话；右栏「分配到的任务」和任务面板同源。</div>
           </div>
         </section>
       </div>`,
       notes: {
-        note: { head: "这一步发生什么", body: "run 结束回流一条 ≤200 字汇报：<span class='mono'>trigger.kind=run.finished</span>、<span class='mono'>trigger.ref=todo:&lt;id&gt;</span>；任务本体仍在任务面板。" },
-        bad: { head: "之前的样子", body: "回合里只有自然语言 + runId：说了「跑完了」，点不回是哪一条任务，进展只能自己去任务面板翻。" },
-        good: { head: "动线要点", body: "把 <span class='mono'>trigger.ref</span> 渲染成一行：点「对应 T-311」= 任务面板同一行 → 同一个 TaskDetail。Bot 页不复制任务列表。" },
+        note: { head: "这一步发生什么", body: "机器人 = 主管 小Z + 员工 小A/小B/小C，员工各自挂一条子任务。左栏选中员工，中间就是它那条 thread；run 结束回流一条 ≤200 字汇报（<span class='mono'>trigger.ref=todo:&lt;id&gt;</span>）。" },
+        bad: { head: "之前的样子", body: "机器人独占一个页面：主管和三个员工、任务、项目、会话分散在四处，来回跳。" },
+        good: { head: "动线要点", body: "左栏的机器人和任务面板、场景读同一批 todo；点「对应 T-016」落到同一个 TaskDetail。" },
       },
     },
     {
@@ -772,23 +862,23 @@ const A = {
       head: {
         kicker: "场景",
         title: "办公室",
-        sub: `${pill("running", "实况")}<span>3 人协作中</span><span class="faint">·</span><span>office · template</span>`,
+        sub: `${pill("running", "实况")}<span>3 人协作中</span><span class="faint">·</span><span>6 个工位</span>`,
         actions: `<button class="btn">详情</button><button class="btn">配置</button><button class="btn icon">⋯</button>`,
       },
       body: `<div class="scene">
         ${stage({
           coord: {
-            key: "M-31", title: "把 STDF 解析器接进管线", cls: "running", label: "并行执行中", done: 0, total: 3,
+            key: "M-04", title: "把 STDF 解析器接进管线", cls: "running", label: "并行执行中", done: 0, total: 3,
             members: [
-              { name: "vega", task: "T-311", tone: "running" },
-              { name: "golo", task: "T-312", tone: "running" },
-              { name: "lumi", task: "T-313", tone: "queued" },
+              { name: "小A", task: "T-016", tone: "running" },
+              { name: "小B", task: "T-017", tone: "running" },
+              { name: "小C", task: "T-018", tone: "queued" },
             ],
           },
           desks: [
-            { name: "vega", letter: "V", cls: "a", role: "worker · 执行中", key: "T-311", task: "打通链路", on: true },
-            { name: "golo", letter: "G", cls: "b", role: "worker · 执行中", key: "T-312", task: "补箭头关系" },
-            { name: "lumi", letter: "L", cls: "c", role: "worker · 排队", key: "T-313", task: "出评测报告" },
+            { name: "小A", letter: "小A", cls: "a", role: "执行中", key: "T-016", task: "打通链路", on: true },
+            { name: "小B", letter: "小B", cls: "b", role: "执行中", key: "T-017", task: "补箭头关系" },
+            { name: "小C", letter: "小C", cls: "c", role: "排队", key: "T-018", task: "出评测报告" },
             { name: "空位", letter: "·", cls: "d", role: "未上场", empty: true },
             { name: "空位", letter: "·", cls: "d", role: "未上场", empty: true },
             { name: "空位", letter: "·", cls: "d", role: "未上场", empty: true },
@@ -807,34 +897,34 @@ const A = {
       head: {
         kicker: "场景",
         title: "办公室",
-        sub: `${pill("running", "实况")}<span>已选中 lumi · T-313</span>`,
+        sub: `${pill("running", "实况")}<span>已选中 小C · T-018</span>`,
         actions: `<button class="btn">详情</button><button class="btn">配置</button><button class="btn icon">⋯</button>`,
       },
       body: `<div class="scene split">
         ${stage({
           coord: {
-            key: "M-31", title: "把 STDF 解析器接进管线", cls: "running", label: "并行执行中", done: 0, total: 3,
+            key: "M-04", title: "把 STDF 解析器接进管线", cls: "running", label: "并行执行中", done: 0, total: 3,
             members: [
-              { name: "vega", task: "T-311", tone: "running" },
-              { name: "golo", task: "T-312", tone: "running" },
-              { name: "lumi", task: "T-313", tone: "queued" },
+              { name: "小A", task: "T-016", tone: "running" },
+              { name: "小B", task: "T-017", tone: "running" },
+              { name: "小C", task: "T-018", tone: "queued" },
             ],
           },
           desks: [
-            { name: "vega", letter: "V", cls: "a", role: "worker · 执行中", key: "T-311", task: "打通链路" },
-            { name: "golo", letter: "G", cls: "b", role: "worker · 执行中", key: "T-312", task: "补箭头关系" },
-            { name: "lumi", letter: "L", cls: "c", role: "worker · 排队", key: "T-313", task: "出评测报告", on: true },
+            { name: "小A", letter: "小A", cls: "a", role: "执行中", key: "T-016", task: "打通链路" },
+            { name: "小B", letter: "小B", cls: "b", role: "执行中", key: "T-017", task: "补箭头关系" },
+            { name: "小C", letter: "小C", cls: "c", role: "排队", key: "T-018", task: "出评测报告", on: true },
           ],
           foot: `点工位 = 打开同一个任务抽屉（只吃 todoId）。`,
         })}
         <section class="pane" style="grid-column:2;grid-row:1">
           <div class="pane-head"><span>任务</span><span class="spacer"></span>${pill("queued", "排队")}</div>
           <div class="pane-body">
-            <div class="drawer-head"><span class="mission-mark">✦</span><b>T-313 出评测报告</b></div>
+            <div class="drawer-head"><span class="mission-mark">✦</span><b>T-018 出评测报告</b></div>
             <dl class="kv" style="margin-top:10px">
-              <dt>来自 Mission</dt><dd>M-31 把 STDF 解析器接进管线</dd>
-              <dt>执行体</dt><dd>lumi · 场景 3 号工位</dd>
-              <dt>状态</dt><dd>排队 · 等 T-311 完成</dd>
+              <dt>来自 Mission</dt><dd>M-04 把 STDF 解析器接进管线</dd>
+              <dt>执行体</dt><dd>小C · 场景 3 号工位</dd>
+              <dt>状态</dt><dd>排队 · 等 T-016 完成</dd>
               <dt>当前 run</dt><dd>—</dd>
               <dt>产物</dt><dd class="faint">—</dd>
             </dl>
@@ -844,37 +934,37 @@ const A = {
       </div>`,
       notes: {
         note: { head: "这一步发生什么", body: "抽屉是同一个组件，只吃 <span class='mono'>todoId</span>；不管从哪个入口打开，内容一致。" },
-        good: { head: "动线要点", body: "三个面共享一次查询，不再出现「Bot 页看到 A、场景看到 B」。" },
+        good: { head: "动线要点", body: "三个面共享一次查询，不再出现「机器人看到 A、场景看到 B」。" },
       },
     },
     {
       nav: "workspace",
       head: {
-        kicker: "Mission · M-31",
+        kicker: "Mission · M-04",
         title: "把 STDF 解析器接进管线",
         sub: `${pill("review", "待确认")}<span>3 个子任务已完成</span><span class="faint">·</span><span>验收只在这里做一次</span>`,
         actions: `<button class="btn">退回修改</button><button class="btn icon">⋯</button>`,
       },
       body: `<div class="ws">
-        ${todoPane([
+        ${leftPane([
           { name: "待验收", count: 4, cls: "review", rows: [
-            { title: "✦ 把 STDF 解析器接进管线", tone: "review", who: "主管 · 北", key: "M-31", cls: "on" },
-            { title: "打通链路", tone: "running", who: "vega", key: "T-311", cls: "child" },
-            { title: "补箭头关系", tone: "running", who: "golo", key: "T-312", cls: "child" },
-            { title: "出评测报告", tone: "running", who: "lumi", key: "T-313", cls: "child" },
+            { title: "✦ 把 STDF 解析器接进管线", tone: "review", who: "小Z", key: "M-04", cls: "on" },
+            { title: "打通链路", tone: "running", who: "小A", key: "T-016", cls: "child" },
+            { title: "补箭头关系", tone: "running", who: "小B", key: "T-017", cls: "child" },
+            { title: "出评测报告", tone: "running", who: "小C", key: "T-018", cls: "child" },
           ] },
-        ], { meta: "等你验收" })}
+        ])}
         <section class="pane">
           <div class="pane-head"><span>任务详情</span><span class="spacer"></span><span class="tiny faint">3 个子任务</span></div>
           <div class="pane-body">
             ${missionHead("review", "待确认", 3, 3, `<button class="btn primary tiny">确认完成</button>`)}
             <div class="delegation-list">
-              ${delegation({ key: "T-311", title: "打通链路", statusCls: "done", statusLabel: "已完成", who: "vega", run: "run-8836", result: "解析出 12 组量测；产物 runs/detect/run-8836/best.pt" })}
-              ${delegation({ key: "T-312", title: "补箭头关系", statusCls: "done", statusLabel: "已完成", who: "golo", run: "run-8841", result: "箭头 8 条全部对齐 spec；改动 2 个文件" })}
-              ${delegation({ key: "T-313", title: "出评测报告", statusCls: "done", statusLabel: "已完成", who: "lumi", run: "run-8847", result: "3 个样本全绿；报告 eval-0930.html" })}
+              ${delegation({ key: "T-016", title: "打通链路", statusCls: "done", statusLabel: "已完成", who: "小A", run: "r31", result: "解析出 12 组量测；产物 runs/detect/r31/best.pt" })}
+              ${delegation({ key: "T-017", title: "补箭头关系", statusCls: "done", statusLabel: "已完成", who: "小B", run: "r32", result: "箭头 8 条全部对齐 spec；改动 2 个文件" })}
+              ${delegation({ key: "T-018", title: "出评测报告", statusCls: "done", statusLabel: "已完成", who: "小C", run: "r33", result: "3 个样本全绿；报告 eval-r33.html" })}
             </div>
             ${threadStrip([
-              ["主管 北", "3 条都回来了，产物链接在各自卡片里。"],
+              ["小Z", "3 条都回来了，产物链接在各自卡片里。"],
               ["你", "我来验收。"],
             ])}
           </div>
@@ -889,49 +979,49 @@ const A = {
 };
 
 /* ---------- B 人物卡 ---------- */
-const personCard = (name, letter, cls, rows) => `
+const personCard = (name, cls, rows) => `
   <div class="pane-head"><span>人物</span><span class="spacer"></span><button class="btn tiny ghost">⋯</button></div>
   <div class="pane-body">
-    <div class="drawer-head"><span class="avatar ${cls}">${letter}</span><b>${name}</b>${pill("running", "进行中")}</div>
+    <div class="drawer-head"><i class="pin ${cls}"></i><b>${name}</b>${pill("running", "进行中")}</div>
     <dl class="kv" style="margin-top:10px">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
     <button class="link" data-jump="2" style="margin-top:12px">查看 Mission →</button>
   </div>`;
 
 const B = {
   name: "B · 人物卡，先点人再看活",
-  claim: `<b>事实源 = 执行体</b>。任务挂在人身上：点场景里的 NPC 或 Bot 页的人格卡，打开的是同一张人物卡（任务 / Mission / 最近 run / 产物），适合「先找人再找活」。`,
+  claim: `<b>事实源 = 执行体</b>。任务挂在人身上：场景里的员工和左栏机器人是同一批人（小A/小B/小C），点哪边都打开同一张人物卡（任务 / Mission / 最近 run / 产物）。`,
   steps: [
     {
       nav: "scene",
       head: {
         kicker: "场景",
         title: "办公室",
-        sub: `${pill("running", "实况")}<span>已选中 golo</span><span class="faint">·</span><span>抽屉从右侧打开，不跳页</span>`,
+        sub: `${pill("running", "实况")}<span>已选中 小B</span><span class="faint">·</span><span>抽屉从右侧打开，不跳页</span>`,
         actions: `<button class="btn">详情</button><button class="btn">配置</button>`,
       },
       body: `<div class="scene split">
         ${stage({
           coord: {
-            key: "M-31", title: "把 STDF 解析器接进管线", cls: "running", label: "并行执行中", done: 0, total: 3,
+            key: "M-04", title: "把 STDF 解析器接进管线", cls: "running", label: "并行执行中", done: 0, total: 3,
             members: [
-              { name: "vega", task: "T-311", tone: "running" },
-              { name: "golo", task: "T-312", tone: "running" },
-              { name: "lumi", task: "T-313", tone: "queued" },
+              { name: "小A", task: "T-016", tone: "running" },
+              { name: "小B", task: "T-017", tone: "running" },
+              { name: "小C", task: "T-018", tone: "queued" },
             ],
           },
           desks: [
-            { name: "vega", letter: "V", cls: "a", role: "worker · 执行中", key: "T-311", task: "打通链路" },
-            { name: "golo", letter: "G", cls: "b", role: "worker · 执行中", key: "T-312", task: "补箭头关系", on: true },
-            { name: "lumi", letter: "L", cls: "c", role: "worker · 排队", key: "T-313", task: "出评测报告" },
+            { name: "小A", letter: "小A", cls: "a", role: "执行中", key: "T-016", task: "打通链路" },
+            { name: "小B", letter: "小B", cls: "b", role: "执行中", key: "T-017", task: "补箭头关系", on: true },
+            { name: "小C", letter: "小C", cls: "c", role: "排队", key: "T-018", task: "出评测报告" },
           ],
         })}
         <section class="pane" style="grid-column:2;grid-row:1">
-          ${personCard("golo", "G", "b", [
-            ["当前任务", "T-312 补箭头关系"],
-            ["所属 Mission", "M-31 把 STDF 解析器接进管线"],
-            ["最近 run", mono("run-8841", "tiny") + " · waiting_children"],
+          ${personCard("小B", "b", [
+            ["当前任务", "T-017 补箭头关系"],
+            ["所属 Mission", "M-04 把 STDF 解析器接进管线"],
+            ["最近 run", mono("r32", "tiny") + " · waiting_children"],
             ["今日", "完成 2 / 进行 1"],
-            ["产物", "runs/detect/run-8841/"],
+            ["产物", "runs/detect/r32/"],
           ])}
         </section>
       </div>`,
@@ -941,81 +1031,81 @@ const B = {
       },
     },
     {
-      nav: "bot",
+      nav: "workspace",
       head: {
-        kicker: "Bot",
-        title: "守夜",
-        sub: `${tag("ok", "主动")}<span>人格卡 → 执行体 vega</span><span class="faint">·</span><span>点开是同一张人物卡</span>`,
+        kicker: "工作区 · 机器人",
+        title: "小A",
+        sub: `${tag("ok", "主动")}<span>员工 · 手头 T-016</span><span class="faint">·</span><span>点开是同一张人物卡</span>`,
         actions: `<button class="btn">暂停</button><button class="btn">静音 1h</button><button class="btn icon">⋯</button><button class="btn primary">跑一次决策</button>`,
       },
-      body: `<div class="bot">
-        ${botList("shouye")}
+      body: `<div class="ws3">
+        ${leftPane(botTaskGroups({ jump: 2 }), { bot: "a" })}
         <section class="pane bot-main">
-          <div class="pane-head"><span>回合流</span><span class="spacer"></span>${tag("ai", "主动")}</div>
+          <div class="pane-head"><span>小A · 会话</span><span class="spacer"></span><span class="tag">机器人</span></div>
           <div class="pane-body stream">
             <div class="day">今天</div>
             ${turnReported({
-              name: "守夜", letter: "守", cls: "a", time: "12:04", run: "run 8836",
-              text: "链路已经通了，12 组量测；② 要的字段我顺手留在产物里，golo 可以直接接。",
-              taskKey: "T-311", taskTitle: "打通链路", jump: 2,
+              name: "小A", letter: "A", cls: "a", time: "12:04", run: "run r31",
+              text: "链路已经通了，12 组量测；② 要的字段我顺手留在产物里，小B可以直接接。",
+              taskKey: "T-016", taskTitle: "打通链路", jump: 2,
             })}
             ${turnQuiet({ time: "11:40", label: "沉默", text: "配额还够，但没新事实" })}
           </div>
-          ${composer("守夜")}
+          ${composer("小A")}
         </section>
         <section class="pane bot-right">
-          <div class="pane-head"><span>人物</span><span class="spacer"></span><span class="tiny faint">从人格卡 · 执行体点进来</span></div>
+          <div class="pane-head"><span>人物</span><span class="spacer"></span><span class="tiny faint">机器人 · 人物卡</span></div>
           <div class="pane-body">
-            <div class="drawer-head"><span class="avatar a">V</span><b>vega</b>${pill("running", "进行中")}</div>
+            <div class="drawer-head"><i class="pin a"></i><b>小A</b>${pill("running", "进行中")}</div>
             <dl class="kv" style="margin-top:10px">
-              <dt>当前任务</dt><dd>T-311 打通链路</dd>
-              <dt>所属 Mission</dt><dd>M-31 把 STDF 解析器接进管线</dd>
-              <dt>最近 run</dt><dd>${mono("run-8836", "tiny")} · running</dd>
-              <dt>人格</dt><dd>守夜（bot）→ 执行体 vega</dd>
+              <dt>当前任务</dt><dd>T-016 打通链路</dd>
+              <dt>所属 Mission</dt><dd>M-04 把 STDF 解析器接进管线</dd>
+              <dt>最近 run</dt><dd>${mono("r31", "tiny")} · running</dd>
+              <dt>角色</dt><dd>员工 · 主管 小Z</dd>
               <dt>今日</dt><dd>完成 1 / 进行 1</dd>
             </dl>
             <button class="link" data-jump="2" style="margin-top:12px">查看 Mission →</button>
-            <div class="hint-line" style="margin-top:10px">场景里点 golo 的工位，打开的是同一张卡。</div>
+            <div class="hint-line" style="margin-top:10px">同一张卡也在场景里：点小A 的工位打开的是它。</div>
           </div>
         </section>
       </div>`,
       notes: {
-        note: { head: "这一步发生什么", body: "人格卡上的「执行体」不是另一份数据：点它打开的就是场景抽屉那张人物卡。" },
-        bad: { head: "之前的样子", body: "bot 与 agent 是两套 id，人格页看不出这些回合是谁在替它干活。" },
-        good: { head: "动线要点", body: "字段只加一个 <span class='mono'>executorAgentId</span>，两个入口读同一张卡。" },
+        note: { head: "这一步发生什么", body: "机器人 小A 和场景里的小A 是同一个 Agent 的两层：会话 / 人格一层，任务 / 产物一层，不用两套 id。" },
+        bad: { head: "之前的样子", body: "机器人一套 id、agent 一套 id，人得先记住小A 在任务面板里对应谁。" },
+        good: { head: "动线要点", body: "工作区和场景读同一张人物卡；机器人只是它的会话 / 人格那一层。" },
       },
     },
     {
       nav: "workspace",
       head: {
-        kicker: "Mission · M-31",
+        kicker: "Mission · M-04",
         title: "把 STDF 解析器接进管线",
-        sub: `${pill("running", "执行中")}<span>从 golo 的人物卡跳过来</span><span class="faint">·</span><span>同一批 delegation，换个分组</span>`,
+        sub: `${pill("running", "执行中")}<span>从小B的人物卡跳过来</span><span class="faint">·</span><span>同一批 delegation，换个分组</span>`,
         actions: `<button class="btn">汇总进度</button><button class="btn icon">⋯</button>`,
       },
       body: `<div class="ws">
-        ${todoPane([
+        ${leftPane([
           { name: "执行中", count: 3, cls: "active", rows: [
-            { title: "✦ 把 STDF 解析器接进管线", tone: "running", who: "主管 · 北", key: "M-31", cls: "on" },
-            { title: "打通链路", tone: "running", who: "vega", key: "T-311", cls: "child", jump: 3 },
-            { title: "补箭头关系", tone: "running", who: "golo", key: "T-312", cls: "child", jump: 3 },
+            { title: "✦ 把 STDF 解析器接进管线", tone: "running", who: "小Z", key: "M-04", cls: "on" },
+            { title: "打通链路", tone: "running", who: "小A", key: "T-016", cls: "child", jump: 3 },
+            { title: "补箭头关系", tone: "running", who: "小B", key: "T-017", cls: "child", jump: 3 },
           ] },
           { name: "排队", count: 1, cls: "waiting", rows: [
-            { title: "出评测报告", tone: "queued", who: "lumi", key: "T-313", cls: "child", jump: 3 },
+            { title: "出评测报告", tone: "queued", who: "小C", key: "T-018", cls: "child", jump: 3 },
           ] },
-        ], { meta: "按执行体分组也成立" })}
+        ])}
         <section class="pane">
           <div class="pane-head"><span>任务详情</span><span class="spacer"></span><span class="tiny faint">3 个子任务</span></div>
           <div class="pane-body">
             ${missionHead("running", "执行中", 0, 3)}
             <div class="delegation-list">
-              ${delegation({ key: "T-311", title: "打通链路", statusCls: "running", statusLabel: "执行中", who: "vega", run: "run-8836" })}
-              ${delegation({ key: "T-312", title: "补箭头关系", statusCls: "running", statusLabel: "执行中", who: "golo", run: "run-8841", jump: 3 })}
-              ${delegation({ key: "T-313", title: "出评测报告", statusCls: "queued", statusLabel: "排队", who: "lumi" })}
+              ${delegation({ key: "T-016", title: "打通链路", statusCls: "running", statusLabel: "执行中", who: "小A", run: "r31" })}
+              ${delegation({ key: "T-017", title: "补箭头关系", statusCls: "running", statusLabel: "执行中", who: "小B", run: "r32", jump: 3 })}
+              ${delegation({ key: "T-018", title: "出评测报告", statusCls: "queued", statusLabel: "排队", who: "小C" })}
             </div>
             <div class="hint-line" style="margin-top:10px">「人 → 活」和「活 → 人」双向都能走通，不用回主页找。</div>
             ${threadStrip([
-              ["主管 北", `② 的产物在 <span class="mono">runs/detect/run-8841</span>；golo 说箭头还剩 3 条等 ① 的字段。`],
+              ["小Z", `② 的产物在 <span class="mono">runs/detect/r32</span>；小B 说箭头还剩 3 条等 ① 的字段。`],
             ])}
           </div>
         </section>
@@ -1030,30 +1120,30 @@ const B = {
       head: {
         kicker: "场景",
         title: "办公室",
-        sub: `${pill("running", "实况")}<span>已定位 lumi · T-313</span><span class="faint">·</span><span>选行 → 舞台对位</span>`,
+        sub: `${pill("running", "实况")}<span>已定位 小C · T-018</span><span class="faint">·</span><span>选行 → 舞台对位</span>`,
         actions: `<button class="btn">详情</button><button class="btn">配置</button>`,
       },
       body: `<div class="scene split">
         ${stage({
           coord: {
-            key: "M-31", title: "把 STDF 解析器接进管线", cls: "running", label: "并行执行中", done: 0, total: 3,
+            key: "M-04", title: "把 STDF 解析器接进管线", cls: "running", label: "并行执行中", done: 0, total: 3,
             members: [
-              { name: "vega", task: "T-311", tone: "running" },
-              { name: "golo", task: "T-312", tone: "running" },
-              { name: "lumi", task: "T-313", tone: "queued", quiet: false },
+              { name: "小A", task: "T-016", tone: "running" },
+              { name: "小B", task: "T-017", tone: "running" },
+              { name: "小C", task: "T-018", tone: "queued", quiet: false },
             ],
           },
           desks: [
-            { name: "vega", letter: "V", cls: "a", role: "worker · 执行中", key: "T-311", task: "打通链路" },
-            { name: "golo", letter: "G", cls: "b", role: "worker · 执行中", key: "T-312", task: "补箭头关系" },
-            { name: "lumi", letter: "L", cls: "c", role: "worker · 排队", key: "T-313", task: "出评测报告", on: true },
+            { name: "小A", letter: "小A", cls: "a", role: "执行中", key: "T-016", task: "打通链路" },
+            { name: "小B", letter: "小B", cls: "b", role: "执行中", key: "T-017", task: "补箭头关系" },
+            { name: "小C", letter: "小C", cls: "c", role: "排队", key: "T-018", task: "出评测报告", on: true },
           ],
         })}
         <section class="pane" style="grid-column:2;grid-row:1">
           <div class="pane-head"><span>Mission 行</span><span class="spacer"></span>${pill("review", "已选中")}</div>
           <div class="pane-body">
             <dl class="kv">
-              <dt>行</dt><dd>③ 出评测报告 · lumi</dd>
+              <dt>行</dt><dd>③ 出评测报告 · 小C</dd>
               <dt>状态</dt><dd>排队 · 等 ①②</dd>
               <dt>舞台</dt><dd>3 号工位（已高亮）</dd>
             </dl>
@@ -1072,27 +1162,27 @@ const B = {
 /* ---------- C Mission 时间轴 ---------- */
 const C = {
   name: "C · Mission 时间轴为中心",
-  claim: `<b>事实源 = Mission</b>。以一条 Mission 的时间轴为主面：左列 plan steps、右列 delegations 实时状态；Bot 页与场景都只是它的投影，适合「盯一条长任务」。`,
+  claim: `<b>事实源 = Mission</b>。以一条 Mission 的时间轴为主面：左列 plan steps、右列 delegations 实时状态；工作区的机器人与场景都只是它的投影，适合「盯一条长任务」。`,
   steps: [
     {
       nav: "workspace",
       head: {
-        kicker: "Mission · M-31",
+        kicker: "Mission · M-04",
         title: "把 STDF 解析器接进管线",
         sub: `${pill("waiting", "等待子任务")}<span>计划 3 步 · 实际 2 步在跑</span>`,
         actions: `<button class="btn">汇总进度</button><button class="btn icon">⋯</button>`,
       },
       body: `<div class="ws">
-        ${todoPane([
+        ${leftPane([
           { name: "执行中", count: 3, cls: "active", rows: [
-            { title: "✦ 把 STDF 解析器接进管线", tone: "running", who: "主管 · 北", key: "M-31", cls: "on" },
-            { title: "打通链路", tone: "running", who: "vega", key: "T-311", cls: "child" },
-            { title: "补箭头关系", tone: "running", who: "golo", key: "T-312", cls: "child", jump: 1 },
+            { title: "✦ 把 STDF 解析器接进管线", tone: "running", who: "小Z", key: "M-04", cls: "on" },
+            { title: "打通链路", tone: "running", who: "小A", key: "T-016", cls: "child" },
+            { title: "补箭头关系", tone: "running", who: "小B", key: "T-017", cls: "child", jump: 1 },
           ] },
           { name: "排队", count: 1, cls: "waiting", rows: [
-            { title: "出评测报告", tone: "queued", who: "lumi", key: "T-313", cls: "child" },
+            { title: "出评测报告", tone: "queued", who: "小C", key: "T-018", cls: "child" },
           ] },
-        ], { meta: "时间轴是主面" })}
+        ])}
         <section class="pane">
           <div class="pane-head"><span>Mission 时间轴</span><span class="spacer"></span>${tag("warn", "计划 vs 实际")}</div>
           <div class="pane-body">
@@ -1100,11 +1190,11 @@ const C = {
             <div class="tl" style="margin-top:10px">
               <div class="tl-row">
                 <div class="tl-plan"><span class="mission-step-key">①</span>打通链路 <span class="tiny faint">rev 1</span></div>
-                <div class="tl-exec">${dot("running")}<b>T-311</b>${pill("running", "执行中")}<span class="tiny muted">vega</span>${spacer}${mono("run-8836", "tiny faint")}</div>
+                <div class="tl-exec">${dot("running")}<b>T-016</b>${pill("running", "执行中")}<span class="tiny muted">小A</span>${spacer}${mono("r31", "tiny faint")}</div>
               </div>
               <div class="tl-row">
                 <div class="tl-plan"><span class="mission-step-key">②</span>补箭头关系 <span class="tiny faint">rev 1</span></div>
-                <div class="tl-exec jumpable" data-jump="1">${dot("running")}<b>T-312</b>${pill("running", "执行中")}<span class="tiny muted">golo</span>${spacer}${mono("run-8841", "tiny faint")}</div>
+                <div class="tl-exec jumpable" data-jump="1">${dot("running")}<b>T-017</b>${pill("running", "执行中")}<span class="tiny muted">小B</span>${spacer}${mono("r32", "tiny faint")}</div>
               </div>
               <div class="tl-row">
                 <div class="tl-plan"><span class="mission-step-key">③</span>出评测报告 <span class="tiny faint">rev 1</span></div>
@@ -1113,7 +1203,7 @@ const C = {
             </div>
             <div class="hint-line" style="margin-top:10px">左列是批准过的计划，右列是实际 delegation；卡在哪一眼能看出来。</div>
             ${threadStrip([
-              ["主管 北", "② 还在跑；③ 等 ①② 的产物，不提前开。"],
+              ["小Z", "② 还在跑；③ 等 ①② 的产物，不提前开。"],
             ])}
           </div>
         </section>
@@ -1126,22 +1216,22 @@ const C = {
     {
       nav: "workspace",
       head: {
-        kicker: "Mission · M-31",
+        kicker: "Mission · M-04",
         title: "把 STDF 解析器接进管线",
         sub: `${pill("waiting", "等待子任务")}<span>② 已展开</span>`,
         actions: `<button class="btn">汇总进度</button><button class="btn icon">⋯</button>`,
       },
       body: `<div class="ws">
-        ${todoPane([
+        ${leftPane([
           { name: "执行中", count: 3, cls: "active", rows: [
-            { title: "✦ 把 STDF 解析器接进管线", tone: "running", who: "主管 · 北", key: "M-31", cls: "on" },
-            { title: "打通链路", tone: "running", who: "vega", key: "T-311", cls: "child" },
-            { title: "补箭头关系", tone: "running", who: "golo", key: "T-312", cls: "child", jump: 2 },
+            { title: "✦ 把 STDF 解析器接进管线", tone: "running", who: "小Z", key: "M-04", cls: "on" },
+            { title: "打通链路", tone: "running", who: "小A", key: "T-016", cls: "child" },
+            { title: "补箭头关系", tone: "running", who: "小B", key: "T-017", cls: "child", jump: 2 },
           ] },
           { name: "排队", count: 1, cls: "waiting", rows: [
-            { title: "出评测报告", tone: "queued", who: "lumi", key: "T-313", cls: "child" },
+            { title: "出评测报告", tone: "queued", who: "小C", key: "T-018", cls: "child" },
           ] },
-        ], { meta: "行内展开" })}
+        ])}
         <section class="pane">
           <div class="pane-head"><span>Mission 时间轴</span><span class="spacer"></span>${tag("warn", "② 展开")}</div>
           <div class="pane-body">
@@ -1149,15 +1239,15 @@ const C = {
             <div class="tl" style="margin-top:10px">
               <div class="tl-row">
                 <div class="tl-plan"><span class="mission-step-key">①</span>打通链路</div>
-                <div class="tl-exec">${dot("running")}<b>T-311</b>${pill("running", "执行中")}<span class="tiny muted">vega</span></div>
+                <div class="tl-exec">${dot("running")}<b>T-016</b>${pill("running", "执行中")}<span class="tiny muted">小A</span></div>
               </div>
               <div class="tl-row">
                 <div class="tl-plan"><span class="mission-step-key">②</span>补箭头关系</div>
-                <div class="tl-exec">${dot("running")}<b>T-312</b>${pill("running", "执行中")}<span class="tiny muted">golo</span>${spacer}${mono("run-8841", "tiny faint")}</div>
+                <div class="tl-exec">${dot("running")}<b>T-017</b>${pill("running", "执行中")}<span class="tiny muted">小B</span>${spacer}${mono("r32", "tiny faint")}</div>
                 <div class="tl-expand">
                   <dl class="kv">
                     <dt>在哪</dt><dd>场景 · 2 号工位 <button class="link">去舞台上定位 →</button></dd>
-                    <dt>产物</dt><dd>runs/detect/run-8841 · arrows.json</dd>
+                    <dt>产物</dt><dd>runs/detect/r32 · arrows.json</dd>
                     <dt>验收</dt><dd>等 ① 完成后一起验收（不是现在逐条点）</dd>
                   </dl>
                 </div>
@@ -1176,48 +1266,49 @@ const C = {
       },
     },
     {
-      nav: "bot",
+      nav: "workspace",
       head: {
-        kicker: "Bot",
-        title: "守夜",
-        sub: `${tag("ok", "主动")}<span>能执行 · 执行体 vega</span><span class="faint">·</span><span class="faint">与 M-31 相关 1 条</span>`,
+        kicker: "工作区 · 机器人",
+        title: "小A",
+        sub: `${tag("ok", "主动")}<span>员工 · 手头 T-016</span><span class="faint">·</span><span class="faint">与 M-04 相关 1 条</span>`,
         actions: `<button class="btn">暂停</button><button class="btn">静音 1h</button><button class="btn icon">⋯</button><button class="btn primary">跑一次决策</button>`,
       },
-      body: `<div class="bot">
-        ${botList("shouye")}
+      body: `<div class="ws3">
+        ${leftPane(botTaskGroups({ jump: 1 }), { bot: "a" })}
         <section class="pane bot-main">
-          <div class="pane-head"><span>回合流</span><span class="spacer"></span>${tag("ai", "主动")}</div>
+          <div class="pane-head"><span>小A · 会话</span><span class="spacer"></span><span class="tag">机器人</span></div>
           <div class="pane-body stream">
             <div class="day">今天</div>
             <button class="ghost-row jumpable" data-jump="0">
-              ${mono("M-31", "tiny faint")}<b style="font-weight:500">你参与的任务在 ② 步进行中</b>${spacer}<span class="tiny faint">去 Mission →</span>
+              ${mono("M-04", "tiny faint")}<b style="font-weight:500">你参与的 ① 步在跑，② ③ 还等着</b>${spacer}<span class="tiny faint">去 Mission →</span>
             </button>
-            <div class="hint-line">Bot 页不做第二份任务列表，只给一句 + 指路；状态以 Mission 为准。</div>
+            <div class="hint-line">会话不做第二份任务列表，只给一句 + 指路；任务本身在左栏和右栏那条投影里。</div>
             ${turnQuiet({
-              time: "11:40", label: "沉默", text: "没有新事实；② 的进展在 Mission 里",
+              time: "11:40", label: "沉默", text: "没有新事实；① 的进展在 Mission 里",
               whyRows: {
-                trigger: "todo.changed · T-312",
+                trigger: "todo.changed · T-016",
                 memory: "没注入（不开口就不调模型）",
                 gates: "跳过 · 事件分低于阈值",
                 cost: "没调用模型",
               },
             })}
           </div>
-          ${composer("守夜")}
+          ${composer("小A")}
         </section>
         <section class="pane bot-right">
           ${botTabs("人格卡")}
+          ${botAssign([{ key: "T-016", title: "打通链路", stage: "执行中", jump: 1 }], "M-04")}
           <div class="pane-body">
             <div class="field"><span>语气</span><b>简短，先给结论</b></div>
             <div class="field"><span>能力档位</span><div class="select-like">能执行<i>▾</i></div></div>
-            <div class="field"><span>执行体</span><div class="select-like"><span class="avatar xs a">V</span>vega · 技术执行<i>▾</i></div></div>
-            <div class="hint-line">人格页只说「我知道你在哪」，不重复状态。</div>
+            <div class="field"><span>角色</span><b>员工 · 主管 小Z</b></div>
+            <div class="hint-line">机器人在左栏、项目上面；它只说「我知道你在哪」，不重复状态。</div>
           </div>
         </section>
       </div>`,
       notes: {
-        note: { head: "消除了什么", body: "Bot 页不做第二份任务列表，避免两处状态不一致。" },
-        good: { head: "动线要点", body: "三处不是三个列表，而是「主面 + 指路」。" },
+        note: { head: "消除了什么", body: "机器人回到工作区后，会话不再自带第二份任务列表，避免两处状态不一致。" },
+        good: { head: "动线要点", body: "三处不是三个页面，而是「任务面板 + 左栏机器人 + 舞台」。" },
       },
     },
   ],
@@ -1226,7 +1317,7 @@ const C = {
 const ROUTES = { A, B, C };
 /* 步骤条上的短标签（页面标题太长，放不下） */
 const SHORT = {
-  A: ["计划待批", "批准落库", "Bot 汇报", "场景亮起", "同一个抽屉", "验收同步"],
+  A: ["计划待批", "批准落库", "机器人汇报", "场景亮起", "同一个抽屉", "验收同步"],
   B: ["点工位", "点人格卡", "跳 Mission", "回舞台"],
   C: ["两列对照", "展开一行", "只留指路"],
 };
@@ -1267,6 +1358,7 @@ function render() {
   if (step.notes.good) notes.push(`<div class="dock-cell good"><h4>${step.notes.good.head}</h4>${step.notes.good.body}</div>`);
   $notes.innerHTML = notes.join("");
 
+  applyFolds();
   document.getElementById("prev").disabled = stepIndex === 0;
   document.getElementById("next").disabled = stepIndex === maxIndex();
   document.getElementById("prev").style.opacity = stepIndex === 0 ? ".45" : "";
@@ -1286,6 +1378,15 @@ $steps.addEventListener("click", (e) => {
   go(Number(btn.dataset.step));
 });
 $wide.addEventListener("click", (e) => {
+  const name = e.target.closest(".fold-name");
+  if (name) {
+    const foldEl = name.closest(".fold");
+    const id = foldEl.dataset.fold;
+    foldState[id] = foldState[id] === false;
+    foldEl.classList.toggle("collapsed", !foldState[id]);
+    name.setAttribute("aria-expanded", String(foldState[id]));
+    return;
+  }
   const target = e.target.closest("[data-jump]");
   if (!target) return;
   go(Number(target.dataset.jump));

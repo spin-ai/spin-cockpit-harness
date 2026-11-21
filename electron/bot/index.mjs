@@ -55,17 +55,31 @@ const clip = (s, n) => {
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 };
 
-/** 首次启动时的内置 bot（可改名/删除，和 Notes 一样是 first-party 默认值） */
+/**
+ * 首次启动时的内置机器人（可改名/删除，和 Notes 一样是 first-party 默认值）：
+ * 主管小Z + 员工小A/小B/小C。员工先不绑执行体，绑上 Agent 之后才能起 run。
+ */
 export function seedBots() {
   const now = Date.now();
-  return [{
-    id: "bot-golo", name: "戈洛", avatar: "戈", avatarClass: "a",
-    persona: { ...DEFAULT_PERSONA },
-    capability: "read", channels: ["local"], intro: true,
+  const base = (over) => ({
+    id: over.id, name: over.name, avatar: over.avatar, avatarClass: over.avatarClass,
+    role: over.role, capability: over.capability,
+    persona: { ...DEFAULT_PERSONA, ...(over.persona || {}) },
+    channels: ["local"], intro: Boolean(over.intro),
     policy: { ...DEFAULT_POLICY },
     budget: { ...DEFAULT_BUDGET },
-    status: "active", mutedUntil: 0, createdAt: now, updatedAt: now,
-  }];
+    status: "active", mutedUntil: 0, executorAgentId: null, createdAt: now, updatedAt: now,
+  });
+  return [
+    base({ id: "bot-xiaoz", name: "小Z", avatar: "Z", avatarClass: "d", role: "supervisor", capability: "dispatch", intro: true,
+      persona: { mission: "拆解目标、分派任务、汇总结果", tone: "先给结论，再给依据" } }),
+    base({ id: "bot-xiaoa", name: "小A", avatar: "A", avatarClass: "a", role: "worker", capability: "read",
+      persona: { mission: "负责具体执行；被分派到哪条任务就汇报哪条", tone: "简短" } }),
+    base({ id: "bot-xiaob", name: "小B", avatar: "B", avatarClass: "b", role: "worker", capability: "read",
+      persona: { mission: "负责具体执行；被分派到哪条任务就汇报哪条", tone: "简短" } }),
+    base({ id: "bot-xiaoc", name: "小C", avatar: "C", avatarClass: "c", role: "worker", capability: "read",
+      persona: { mission: "负责具体执行；被分派到哪条任务就汇报哪条", tone: "简短" } }),
+  ];
 }
 
 /* ------------------------------------------------------------------ 纯函数 */
@@ -319,7 +333,9 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
       avatar: String(patch.avatar || existing?.avatar || "B").slice(0, 2),
       avatarClass: String(patch.avatarClass || existing?.avatarClass || "a"),
       persona: { ...DEFAULT_PERSONA, ...(existing?.persona || {}), ...(patch.persona || {}) },
-      capability: patch.capability === "dispatch" ? "dispatch" : "read",
+      capability: ["work", "dispatch", "read"].includes(patch.capability) ? patch.capability : (existing?.capability || "read"),
+      role: patch.role === "supervisor" || patch.role === "worker" ? patch.role : (existing?.role || "worker"),
+      executorAgentId: String(patch.executorAgentId ?? existing?.executorAgentId ?? "") || null,
       channels: Array.isArray(patch.channels) ? patch.channels : (existing?.channels || ["local"]),
       policy: { ...DEFAULT_POLICY, ...(existing?.policy || {}), ...(patch.policy || {}) },
       budget: { ...DEFAULT_BUDGET, ...(existing?.budget || {}), ...(patch.budget || {}) },
@@ -397,6 +413,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
     const turns = turnsOf();
     return {
       bots: bots(),
+      agents: (stateOf().agents || []).map((a) => ({ id: a.id, name: a.name, alias: a.alias || "", cli: a.cli, role: a.role || "worker" })),
       turns: turns.slice(-limit),
       routines: listRoutines(),
       routineStatus: routineStatus(),
@@ -519,8 +536,8 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
     let due = dueRoutineFor(bot);
     const gate = gatesFor(bot, { now: now(), turns, force, ignoreGap: Boolean(due) });
     if (!gate.ok) {
-      const last = [...turns].reverse().find((t) => t.botId === bot.id);
-      if (last && now() - last.createdAt < 5 * MINUTE) return null; // 静音期不刷屏记账
+      const lastSilent = [...turns].reverse().find((t) => t.botId === bot.id && (t.decision === "silent" || t.decision === "blocked"));
+      if (lastSilent && now() - lastSilent.createdAt < 30 * MINUTE) return null; // 沉默/被拦 30 分钟最多记一条
       return record({ id: turnId, botId: bot.id, trigger: { kind: "tick", ref: "" }, decision: gate.decision, reason: gate.reason, injected: [], reply: "", cost: {} });
     }
 
@@ -541,8 +558,8 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
     // 日程是"已经判定该跑"，不参与事件打分（否则会被 0 分当成不值得说）
     const score = due ? 1 : (candidate?.score ?? 0);
     if (!candidate || score < 0.5) {
-      const last = [...turns].reverse().find((t) => t.botId === bot.id);
-      if (last && now() - last.createdAt < 10 * MINUTE) return null;
+      const lastSilent = [...turns].reverse().find((t) => t.botId === bot.id && (t.decision === "silent" || t.decision === "blocked"));
+      if (lastSilent && now() - lastSilent.createdAt < 30 * MINUTE) return null;
       return record({
         id: turnId,
         botId: bot.id, trigger: candidate ? { kind: candidate.kind, ref: candidate.ref } : { kind: "tick", ref: "" },
@@ -747,6 +764,32 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
     return counts;
   }
 
+  /** 监视：把某个任务挂到这个 bot 名下，状态变化时用它口吻汇报 */
+  function watch({ botId, todoId, title }) {
+    const already = turnsOf().find((t) => t.botId === botId && t.todoId === todoId && t.decision === "watching");
+    if (already) return already;
+    return record({
+      botId, trigger: { kind: "todo.watch", ref: `todo:${todoId}` },
+      decision: "watching", todoId, reply: `开始监视 ${title || todoId}`, injected: [], cost: {},
+    });
+  }
+
+  function unwatch({ botId, todoId }) {
+    const before = turnsOf().length;
+    stateOf().botTurns = turnsOf().filter((t) => !(t.botId === botId && t.todoId === todoId && t.decision === "watching"));
+    if (stateOf().botTurns.length !== before) store.persist();
+    return { ok: true, removed: before - stateOf().botTurns.length };
+  }
+
+  /** 执行回流：bot 起的 run 结束后，用它自己的口吻汇报一条（decision=reported） */
+  function report({ botId, todoId, runId, text }) {
+    return record({
+      botId, trigger: { kind: "run.finished", ref: `todo:${todoId}` },
+      decision: "reported", reply: String(text || "").slice(0, 400),
+      runId: runId || null, injected: [], cost: {},
+    });
+  }
+
   async function tick({ botId = "", force = false } = {}) {
     const list = botId ? bots().filter((b) => b.id === botId) : bots();
     const out = [];
@@ -761,6 +804,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
 
   return {
     ensureSeed, list: bots, snapshot, turns: turnsOf, save, setStatus, remove, tick, reply,
+    report, watch, unwatch,
     listRoutines, saveRoutine, removeRoutine, routineStatus,
     openAsks,
     settleAsks,

@@ -251,7 +251,7 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask }
 
 const HOST_STATUS: Record<string, string> = { online: "在线", offline: "离线", probing: "检测中" };
 
-export function Hosts({ state, act, notify, now }: { state: State; act: Act; notify: (m: string) => void; now: number }) {
+export function Hosts({ state, act, notify, now, embedded = false }: { state: State; act: Act; notify: (m: string) => void; now: number; embedded?: boolean }) {
   const [open, setOpen] = useState(false);
   const [probing, setProbing] = useState<Record<string, boolean>>({});
   const [probingAll, setProbingAll] = useState(false);
@@ -328,20 +328,28 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
     </>
   );
 
+  const toolbar = (
+    <div className="row gap8">
+      <div className="view-switch" role="group" aria-label="主机视图">
+        <button className={layout === "cards" ? "on" : ""} onClick={() => setLayout("cards")} title="卡片视图">▦ 卡片</button>
+        <button className={layout === "list" ? "on" : ""} onClick={() => setLayout("list")} title="列表视图">☰ 列表</button>
+      </div>
+      <button className="btn" disabled={probingAll} onClick={() => void probeAll()}>{probingAll ? "探测中…" : "全部探测"}</button>
+      <button className="btn primary" onClick={() => (open ? setOpen(false) : openAdd())}>＋ 添加主机</button>
+    </div>
+  );
+
   return (
-    <div className="page host-page">
-      <PageHeader
-        title="主机"
-        subtitle={`${online}/${state.hosts.length} 在线 · Agent 的运行位置；本机与 SSH 共用一套并发 / 审批 / 探测`}
-        actions={<div className="row gap8">
-          <div className="view-switch" role="group" aria-label="主机视图">
-            <button className={layout === "cards" ? "on" : ""} onClick={() => setLayout("cards")} title="卡片视图">▦ 卡片</button>
-            <button className={layout === "list" ? "on" : ""} onClick={() => setLayout("list")} title="列表视图">☰ 列表</button>
-          </div>
-          <button className="btn" disabled={probingAll} onClick={() => void probeAll()}>{probingAll ? "探测中…" : "全部探测"}</button>
-          <button className="btn primary" onClick={() => (open ? setOpen(false) : openAdd())}>＋ 添加主机</button>
-        </div>}
-      />
+    <div className={embedded ? "settings-embed" : "page host-page"}>
+      {embedded ? (
+        <div className="settings-embed-bar">{toolbar}</div>
+      ) : (
+        <PageHeader
+          title="主机"
+          subtitle={`${online}/${state.hosts.length} 在线 · Agent 的运行位置；本机与 SSH 共用一套并发 / 审批 / 探测`}
+          actions={toolbar}
+        />
+      )}
 
       <div className="project-overview host-overview-bar">
         <div className="project-overview-item"><b>{online}/{state.hosts.length}</b><span>在线主机</span></div>
@@ -550,7 +558,7 @@ function quarterLabel(now = Date.now()) {
   return `${d.getFullYear()} Q${Math.floor(d.getMonth() / 3) + 1}`;
 }
 
-export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string) => void }) {
+export function Stats({ state, onOpen, embedded = false }: { state: State; onOpen: (todoId: string) => void; embedded?: boolean }) {
   const [range, setRange] = useState("7d");
   const [scope, setScope] = useState("all");
   const [errFilter, setErrFilter] = useState<string | null>(null);
@@ -665,24 +673,32 @@ export function Stats({ state, onOpen }: { state: State; onOpen: (todoId: string
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   };
 
+  const toolbar = (
+    <div className="row gap6 stats-actions">
+      <select className="settings-control stats-scope" value={scope} onChange={(e) => setScope(e.target.value)} title="统计范围">
+        <option value="all">全部项目</option>
+        {state.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+      <div className="seg stats-range">
+        {RANGES.map((r) => (
+          <button key={r.id} className={`seg-btn ${range === r.id ? "on" : ""}`} onClick={() => setRange(r.id)}>{r.label}</button>
+        ))}
+      </div>
+      <button className="btn tiny-btn" onClick={exportCsv}>导出 CSV</button>
+    </div>
+  );
+
   return (
-    <div className="page stats-page">
-      <PageHeader
-        title="统计"
-        subtitle={`${scope === "all" ? "全部项目" : state.projects.find((p) => p.id === scope)?.name || "项目"}${isQuarter ? ` · ${quarterLabel()}` : ""} · ${runs.length} 次运行 / ${completed} 成功 / ${failed} 失败`}
-        actions={<div className="row gap6 stats-actions">
-          <select className="settings-control stats-scope" value={scope} onChange={(e) => setScope(e.target.value)} title="统计范围">
-            <option value="all">全部项目</option>
-            {state.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-          <div className="seg stats-range">
-            {RANGES.map((r) => (
-              <button key={r.id} className={`seg-btn ${range === r.id ? "on" : ""}`} onClick={() => setRange(r.id)}>{r.label}</button>
-            ))}
-          </div>
-          <button className="btn tiny-btn" onClick={exportCsv}>导出 CSV</button>
-        </div>}
-      />
+    <div className={embedded ? "settings-embed" : "page stats-page"}>
+      {embedded ? (
+        <div className="settings-embed-bar">{toolbar}</div>
+      ) : (
+        <PageHeader
+          title="统计"
+          subtitle={`${scope === "all" ? "全部项目" : state.projects.find((p) => p.id === scope)?.name || "项目"}${isQuarter ? ` · ${quarterLabel()}` : ""} · ${runs.length} 次运行 / ${completed} 成功 / ${failed} 失败`}
+          actions={toolbar}
+        />
+      )}
 
       <div className="stats-overview">
         <article className="stats-tile ok">

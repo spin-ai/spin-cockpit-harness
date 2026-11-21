@@ -65,7 +65,7 @@ export function OfficeActorView({ actor, selected, walking, onSelect }: {
       type="button"
       className={`off-actor zone-${actor.zone} seat-${actor.seat ?? "x"} slot-${actor.slot ?? "x"} pose-${actor.pose} tone-${actor.tone} accent-${actor.accent} ${selected ? "selected" : ""} ${walking ? "walking" : ""}`}
       style={style}
-      onClick={(e) => { e.stopPropagation(); onSelect(actor.agent.id); }}
+      onClick={(e) => { e.stopPropagation(); onSelect(actor.id); }}
       aria-label={`${actor.displayName}，${actor.statusLabel}，${actor.title}`}
       title={`${actor.displayName} · ${actor.statusLabel}`}
     >

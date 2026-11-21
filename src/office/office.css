@@ -626,8 +626,11 @@
 .off-cast-row{display:flex;align-items:center;gap:5px;padding:2px 3px;border-radius:5px;min-width:0}
 .off-cast-row:hover{background:var(--surface-hover)}
 .off-cast-row.lead{background:var(--brand-soft)}
+.off-cast-row.off .off-cast-name{color:var(--muted)}
 .off-cast-dot{width:7px;height:7px;border-radius:50%;background:var(--off-accent);flex:none}
 .off-cast-name{flex:1;min-width:0;font-size:11.5px;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 座号行里补一行小字：它借的是哪个执行体（未绑定直接写出来，不留白） */
+.off-cast-sub{display:block;font-style:normal;font-size:9.5px;line-height:1.3;color:var(--faint);overflow:hidden;text-overflow:ellipsis}
 .off-cast-row select{height:22px;border-color:transparent;background:transparent;color:var(--fg-2);font-size:10.5px;padding:0 2px;flex:none}
 .off-cast-row select:hover{border-color:var(--border);background:var(--surface)}
 .off-cast-role{width:64px}

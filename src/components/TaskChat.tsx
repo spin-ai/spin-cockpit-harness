@@ -28,6 +28,8 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   confirmStop?: boolean;
 }) {
   const todo = thread?.todoId ? state.todos.find((t) => t.id === thread.todoId) ?? null : null;
+  /** 机器人会话：走 botChat（它用自己的口吻回答），不走派活 / run */
+  const botThread = thread?.kind === "bot" && thread.botId ? thread.botId : null;
   const mission = todo?.kind === "mission" ? todo : null;
   const missionPlans = mission ? (state.missionPlans ?? []).filter((p) => p.missionId === mission.id) : [];
   const latestPlan = [...missionPlans].sort((a, b) => b.revision - a.revision)[0] ?? null;
@@ -320,6 +322,19 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   const send = async (override?: { text?: string; allocation?: { projectId: string | null; agentId: string } }) => {
     const value = (override?.text ?? text).trim();
     if (!value || sending || !thread) return;
+    if (botThread) {
+      setSending(true);
+      const res = await act("botChat", { botId: botThread, text: value });
+      setSending(false);
+      if (!res) { textRef.current?.focus(); return; } // 失败保留草稿
+      setText("");
+      drafts.current[thread.id] = "";
+      setInputHistoryIndex(null);
+      inputHistoryDraft.current = "";
+      stickRef.current = true;
+      atBottomRef.current = true;
+      return;
+    }
     if (!todo && !override && !chatOnly && previewAllocation) {
       setSending(true);
       const p = await act("proposeDispatch", { threadId: thread.id, text: value, agentId, projectId: scopeProjectId || undefined });
@@ -430,12 +445,14 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
             ? "queue"
             : "run";
   const terminalDispatch = !todo && dispatchAgent?.chatRuntime === "terminal";
-  const sendLabel = blocked ? "发送" : baseMode === "dispatch" ? (chatOnly ? "只聊" : previewAllocation ? "预览分配" : terminalDispatch ? "终端派活" : "派活") : baseMode === "steer" ? "纠偏" : baseMode === "run" ? "发送并运行" : "发送";
+  const sendLabel = botThread ? "发送" : blocked ? "发送" : baseMode === "dispatch" ? (chatOnly ? "只聊" : previewAllocation ? "预览分配" : terminalDispatch ? "终端派活" : "派活") : baseMode === "steer" ? "纠偏" : baseMode === "run" ? "发送并运行" : "发送";
   const blockedReason = blocked
     ? (dispatchAgent ? (dispatchAgent.chatRuntime === "terminal" ? `未检测到 ${dispatchAgent.cli}` : `「${dispatchAgent.cli}」仅终端可用`) : "没有可用的 Agent")
     : undefined;
 
-  const placeholder = context
+  const placeholder = botThread
+    ? "回复机器人（它会用自己的口吻回答）…"
+    : context
     ? "描述改动…"
     : !todo
       ? "描述要完成的事，发送后创建任务并派活…"

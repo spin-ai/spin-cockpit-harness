@@ -902,9 +902,9 @@ export function mountWarRoom3D(options: MountOptions): WarRoom3DApi {
     const label = doc.createElement("button");
     label.type = "button";
     label.className = "war3d-label";
-    label.addEventListener("click", () => onSelect(actor.agent.id));
+    label.addEventListener("click", () => onSelect(actor.id));
     labelLayer.appendChild(label);
-    labelById.set(actor.agent.id, label);
+    labelById.set(actor.id, label);
 
     const slot: ActorSlot = {
       group, body, head, band, visor, label,
@@ -945,18 +945,18 @@ export function mountWarRoom3D(options: MountOptions): WarRoom3DApi {
     slot.label.dataset.tone = actor.tone;
     slot.label.innerHTML = `<i></i><b>${escapeHtml(actor.displayName)}</b><em>${escapeHtml(actor.statusLabel)}</em>`;
     slot.label.title = `${actor.displayName} · ${ZONE_LABEL[actor.zone]} · ${actor.statusLabel}`;
-    slot.label.classList.toggle("sel", getSelected() === actor.agent.id);
+    slot.label.classList.toggle("sel", getSelected() === actor.id);
   }
 
   function syncActors() {
     const model = getModel();
     const seen = new Set<string>();
     model.actors.forEach((actor, index) => {
-      seen.add(actor.agent.id);
-      let slot = actors.get(actor.agent.id);
+      seen.add(actor.id);
+      let slot = actors.get(actor.id);
       if (!slot) {
         slot = createActor(actor);
-        actors.set(actor.agent.id, slot);
+        actors.set(actor.id, slot);
       }
       updateActor(slot, actor, index);
     });

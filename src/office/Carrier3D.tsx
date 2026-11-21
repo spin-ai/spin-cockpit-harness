@@ -45,7 +45,7 @@ export function Carrier3D({ model, now, selectedId, onSelect, motion, reduced, l
     model.board.key,
     model.board.progress,
     model.board.rows.map((r) => `${r.key}:${r.state}`).join(","),
-    model.actors.map((a) => `${a.agent.id}:${a.zone}:${a.tone}:${a.statusLabel}:${a.seat ?? "-"}`).join("|"),
+    model.actors.map((a) => `${a.id}:${a.zone}:${a.tone}:${a.statusLabel}:${a.seat ?? "-"}`).join("|"),
     Math.floor(now / 60_000),
   ].join("~");
   useEffect(() => {

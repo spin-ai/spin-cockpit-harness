@@ -1698,6 +1698,10 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
     prevCat: number;
     flight: { start: number; cat: number; mode: "auto" | "demo" } | null;
     airborne: boolean;
+    airStart: number;
+    airBase: { x: number; y: number; z: number };
+    dirX: number;
+    dirZ: number;
   }
   const entries = new Map<string, Entry>();
 
@@ -1777,8 +1781,8 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
       const crew = makeCrew(TONE_HEX.lead);
       crew.position.set(LEAD.x, 0, LEAD.z);
       ship.add(crew);
-      label.addEventListener("click", () => onSelect(actor.agent.id));
-      return { crew, ring: ringFor(tone, 1.2), label, line, dot, anchorX: 0, anchorY: 0, target: LEAD, cur: { x: LEAD.x, y: 0, z: LEAD.z, rot: 0 }, tone, prevTone: tone, prevCat: -1, flight: null, airborne: false };
+      label.addEventListener("click", () => onSelect(actor.id));
+      return { crew, ring: ringFor(tone, 1.2), label, line, dot, anchorX: 0, anchorY: 0, target: LEAD, cur: { x: LEAD.x, y: 0, z: LEAD.z, rot: 0 }, tone, prevTone: tone, prevCat: -1, flight: null, airborne: false, airStart: 0, airBase: { x: 0, y: 0, z: 0 }, dirX: 0, dirZ: 1 };
     }
     const kind = planeKind(actor, index);
     const mesh = makeJet(kind, false);
@@ -1801,8 +1805,8 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
     exhaust.scale.set(2.2, 2.2, 1);
     exhaust.position.set(0, 0, -3.6);
     mesh.add(exhaust);
-    label.addEventListener("click", () => onSelect(actor.agent.id));
-    return { plane: mesh, ring: ringFor(tone, 2.2), label, line, dot, exhaust, anchorX: 0, anchorY: 0, target: CAT[0], cur: { x: CAT[0].x, y: 0.74, z: CAT[0].z, rot: CAT[0].rot }, tone, prevTone: tone, prevCat: -1, flight: null, airborne: false };
+    label.addEventListener("click", () => onSelect(actor.id));
+    return { plane: mesh, ring: ringFor(tone, 2.2), label, line, dot, exhaust, anchorX: 0, anchorY: 0, target: CAT[0], cur: { x: CAT[0].x, y: 0.74, z: CAT[0].z, rot: CAT[0].rot }, tone, prevTone: tone, prevCat: -1, flight: null, airborne: false, airStart: 0, airBase: { x: 0, y: 0, z: 0 }, dirX: 0, dirZ: 1 };
   }
 
   let firstSync = true;
@@ -1812,6 +1816,9 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
     const base = CAT[catIdx] || CAT[0];
     entry.flight = { start: tFlight, cat: Math.max(0, catIdx), mode };
     entry.airborne = false;
+    entry.dirX = base.dx ?? 0;
+    entry.dirZ = base.dz ?? 1;
+    if (!cine) cine = { entry, start: tFlight };
     entry.cur.x = base.x;
     entry.cur.z = base.z;
     entry.cur.y = 0.74;
@@ -1848,11 +1855,11 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
     const counters: Record<string, number> = {};
     const seen = new Set<string>();
     model.actors.forEach((actor, index) => {
-      seen.add(actor.agent.id);
-      let entry = entries.get(actor.agent.id);
+      seen.add(actor.id);
+      let entry = entries.get(actor.id);
       if (!entry) {
         entry = createEntry(actor, index);
-        entries.set(actor.agent.id, entry);
+        entries.set(actor.id, entry);
       }
       const target = targetFor(actor, counters);
       entry.target = target;
@@ -1860,7 +1867,7 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
       entry.label.dataset.tone = actor.tone;
       entry.label.innerHTML = `<i></i><b>${escapeHtml(actor.displayName)}</b><em>${escapeHtml(actor.statusLabel)}</em>`;
       entry.label.title = `${actor.displayName} · ${ZONE_LABEL[actor.zone]} · ${actor.statusLabel}`;
-      entry.label.classList.toggle("sel", getSelected() === actor.agent.id);
+      entry.label.classList.toggle("sel", getSelected() === actor.id);
       (entry.ring.material as THREE.MeshBasicMaterial).color.setHex(TONE_HEX[actor.tone] ?? 0x8f9aa3);
       const catIdx = CAT.indexOf(target);
       if (entry.plane) {
@@ -2039,6 +2046,9 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
   let tAnim = 0;
   let tFlight = 0;
   let rafId = 0;
+  let cine: { entry: Entry; start: number } | null = null;
+  const camPos = new THREE.Vector3(52, 20, 64);
+  const camLook = new THREE.Vector3(1, 9, -5);
   let disposed = false;
   function animate() {
     if (disposed) return;
@@ -2061,9 +2071,8 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
       pointer.x = 0;
       pointer.y = 0;
     }
-    camera.position.x = 52 + Math.sin(tAnim * 0.11) * amp + pointer.x * 1.4;
-    camera.position.y = 20 + Math.sin(tAnim * 0.08 + 1.4) * amp * 0.35 - pointer.y * 0.8;
-    camera.lookAt(1, 9, -5);
+    const baseCamX = 52 + Math.sin(tAnim * 0.11) * amp + pointer.x * 1.4;
+    const baseCamY = 20 + Math.sin(tAnim * 0.08 + 1.4) * amp * 0.35 - pointer.y * 0.8;
     const mv = anim ? 1 : 0;
     ship.rotation.y = SHIP_YAW + Math.sin(tAnim * 0.05) * 0.006 * mv;
     ship.position.y = Math.sin(tAnim * 0.42) * 0.085 * mv;
@@ -2094,7 +2103,7 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
           launchingCats.add(flight.cat);
           const p = (el - 0.8) / 1.4;
           const e = p * p;
-          dist = e * 20;
+          dist = e * 14;
           y = 0.74 + e * 0.22;
           pitch = -0.04 * e;
           shake = Math.max(shake, (1 - p) * 0.9);
@@ -2105,8 +2114,8 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
         } else if (el < 3.4) {
           const p = (el - 2.2) / 1.2;
           const e = 1 - Math.pow(1 - p, 3);
-          dist = 20 + e * 5;
-          y = 0.74 + e * 2.6;
+          dist = 14 + e * 4;
+          y = 0.74 + e * 2.8;
           pitch = -0.04 - e * 0.22;
           if (entry.exhaust) {
             entry.exhaust.material.opacity = 0.9 * (1 - p) + 0.25;
@@ -2116,8 +2125,10 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
           if (flight.mode === "auto") {
             entry.airborne = true;
             entry.ring.visible = false;
-            dist = 25;
-            y = 3.34;
+            entry.airStart = tFlight;
+            entry.airBase = { x: base.x + dx * 18, y: 3.54, z: base.z + dz * 18 };
+            dist = 18;
+            y = 3.54;
             pitch = -0.26;
           } else {
             entry.flight = null;
@@ -2140,9 +2151,16 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
           if (el > 2.6) { entry.steam.removeFromParent(); entry.steam = undefined; }
         }
       } else if (entry.airborne) {
-        entry.cur.y = 3.34 + Math.sin(tAnim * 1.6 + entry.cur.x) * 0.08;
+        const ta = Math.max(0, tFlight - entry.airStart);
+        const climb = 1 - Math.pow(1 - Math.min(1, ta / 2.8), 3);
+        const sway = Math.sin(ta * 0.55) * 1.2;
+        const dx = entry.dirX;
+        const dz = entry.dirZ;
+        entry.cur.x = entry.airBase.x + dx * 4 * climb + dz * sway;
+        entry.cur.z = entry.airBase.z + dz * 4 * climb - dx * sway;
+        entry.cur.y = entry.airBase.y + 3.2 * climb + Math.sin(ta * 1.1) * 0.12;
         entry.plane.position.set(entry.cur.x, entry.cur.y, entry.cur.z);
-        entry.plane.rotation.x = -0.26;
+        entry.plane.rotation.set(-0.18, Math.PI + entry.cur.rot + Math.sin(ta * 0.55) * 0.03, Math.sin(ta * 0.55) * 0.12);
         entry.ring.visible = false;
         if (entry.exhaust) entry.exhaust.material.opacity = 0.16;
       } else {
@@ -2153,6 +2171,7 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
         entry.plane.position.set(entry.cur.x, entry.cur.y, entry.cur.z);
         entry.plane.rotation.y = Math.PI + entry.cur.rot;
         entry.plane.rotation.x += (0 - entry.plane.rotation.x) * speed;
+        entry.plane.rotation.z += (0 - entry.plane.rotation.z) * speed;
         entry.ring.visible = entry.cur.y < 1.4;
         if (entry.exhaust) entry.exhaust.material.opacity = 0;
       }
@@ -2163,10 +2182,39 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
       const up = launchingCats.has(i) ? -1.18 : -0.34;
       j.rotation.x += (up - j.rotation.x) * Math.min(1, dt * 7);
     });
+    scene.updateMatrixWorld(true);
+
+    /* 起飞镜头：先在侧面跟住弹射位，起飞后拉高、后撤，让航母留在画面里 */
+    if (cine) {
+      const alive = Boolean(cine.entry.flight || cine.entry.airborne) && tFlight - cine.start < 9;
+      if (!alive) cine = null;
+    }
+    const desiredPos = new THREE.Vector3(baseCamX, baseCamY, 64);
+    const desiredLook = new THREE.Vector3(1, 9, -5);
+    if (cine && cine.entry.plane) {
+      const p = new THREE.Vector3();
+      cine.entry.plane.getWorldPosition(p);
+      const dir = new THREE.Vector3(cine.entry.dirX, 0, cine.entry.dirZ).applyQuaternion(ship.quaternion).normalize();
+      const perp = new THREE.Vector3(dir.z, 0, -dir.x);
+      const air = cine.entry.airborne;
+      const targetCam = air
+        ? p.clone().addScaledVector(perp, 26).addScaledVector(dir, -10).add(new THREE.Vector3(0, 9, 0))
+        : p.clone().addScaledVector(dir, -16).addScaledVector(perp, 7).add(new THREE.Vector3(0, 5, 0));
+      const targetLook = air
+        ? p.clone().addScaledVector(dir, -5).add(new THREE.Vector3(0, 0.8, 0))
+        : p.clone().addScaledVector(dir, 6).add(new THREE.Vector3(0, 1, 0));
+      desiredPos.copy(targetCam);
+      desiredLook.copy(targetLook);
+    }
+    const ease = cine ? Math.min(1, dt * 4.4) : Math.min(1, dt * 2.2);
+    camPos.lerp(desiredPos, ease);
+    camLook.lerp(desiredLook, ease);
+    camera.position.copy(camPos);
     if (shake > 0) {
       camera.position.x += Math.sin(tAnim * 96) * 0.18 * shake;
       camera.position.y += Math.cos(tAnim * 83) * 0.12 * shake;
     }
+    camera.lookAt(camLook);
     scene.updateMatrixWorld(true);
     renderer.render(scene, camera);
     projectLabels();
@@ -2187,7 +2235,7 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
     setSelected() {
       const model = getModel();
       for (const actor of model.actors) {
-        entries.get(actor.agent.id)?.label.classList.toggle("sel", getSelected() === actor.agent.id);
+        entries.get(actor.id)?.label.classList.toggle("sel", getSelected() === actor.id);
       }
     },
     setTheme(next) {
