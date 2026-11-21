@@ -54,7 +54,8 @@ button{cursor:pointer}
 .main{display:grid;grid-template-columns:64px 232px minmax(0,1fr) 360px;min-height:0}
 
 /* app rail */
-.rail{background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:12px 0 8px;gap:2px}
+.rail{background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:12px 0 8px;gap:2px;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
+.rail::-webkit-scrollbar{width:0}
 .rail-btn{width:52px;height:48px;border:0;background:transparent;color:var(--muted);border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:11px;line-height:1}
 .rail-btn:hover{background:var(--sidebar-accent);color:var(--fg-2)}
 .rail-btn.on{background:var(--surface);color:var(--fg);box-shadow:0 1px 2px rgba(15,23,42,.08),0 0 0 1px var(--border)}
@@ -3792,3 +3793,26 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
 .im-quick-status{font-size:11.5px;line-height:1.5;padding:6px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);color:var(--muted)}
 .im-quick-status.ok{border-color:color-mix(in srgb,var(--green) 38%,var(--border));background:color-mix(in srgb,var(--green) 9%,var(--surface))}
 .im-quick-status.fail{border-color:color-mix(in srgb,var(--red) 38%,var(--border));background:color-mix(in srgb,var(--red) 9%,var(--surface))}
+
+.bot-exec{width:100%;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);padding:4px 6px;font-size:12px;color:var(--fg-2);outline:none}
+.bot-exec:focus{border-color:var(--border-strong)}
+
+/* ---------- Bot 页：分配到的任务（与场景/任务面板同一投影） ---------- */
+.bot-assign{padding:10px 12px;border-bottom:1px solid var(--line)}
+.bot-assign-count{margin-left:6px;font-size:10.5px;padding:0 5px;border-radius:999px;
+  border:1px solid var(--line2);color:var(--muted);font-weight:500}
+.bot-assign-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
+.bot-assign-row{display:flex;align-items:center;gap:7px;padding:5px 7px;border:1px solid var(--line);
+  border-radius:6px;font-size:11.5px;color:var(--muted);background:var(--panel-2,transparent)}
+.bot-assign-row .k{font-size:10px;color:var(--faint);flex:0 0 auto}
+.bot-assign-row .t{flex:1;min-width:0}
+.bot-assign-row .s{font-size:10.5px;flex:0 0 auto;color:var(--faint)}
+.bot-assign-row.st-running{border-color:rgba(79,191,135,.45);color:var(--fg)}
+.bot-assign-row.st-running .s{color:#3f9a68}
+.bot-assign-row.st-waiting{border-color:rgba(217,164,65,.45)}
+.bot-assign-row.st-waiting .s{color:#a97a2f}
+.bot-assign-row.st-review{border-color:rgba(88,166,255,.45)}
+.bot-assign-row.st-review .s{color:#3d7dd6}
+.bot-assign-row.st-failed .s{color:#cf5f5d}
+/* 会议室里「有任务但不在阵容」的成员：虚线椅 + 降透明度，避免看起来像已上场 */
+.mr-chair.off-stage{opacity:.55;border-style:dashed}

@@ -682,7 +682,7 @@ export default function App() {
         {view === "knowledge" && <div className="wide"><Notes state={state} act={act} onOpenTodo={selectTodo} openRequest={notesOpenReq} initialTab="docs" /></div>}
         {view === "memory" && <div className="wide"><Memory act={act} /></div>}
         {view === "persona" && <div className="wide"><Persona act={act} /></div>}
-        {view === "bot" && <div className="wide"><BotConsole act={act} notify={notify} onOpenMemory={() => setView("memory")} onOpenThread={(id) => void openThreadFromPalette(id)} /></div>}
+        {view === "bot" && <div className="wide"><BotConsole act={act} notify={notify} state={state} onOpenMemory={() => setView("memory")} onOpenThread={(id) => void openThreadFromPalette(id)} /></div>}
         {view === "zhulong" && <div className="wide"><Zhulong state={state} act={act} notify={notify} onOpenSettings={() => window.dispatchEvent(new CustomEvent("harness:open-settings", { detail: { section: "plugins" } }))} /></div>}
       </div>
 

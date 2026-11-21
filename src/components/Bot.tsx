@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EmptyState } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
 import { RowMenu } from "./RowMenu";
+import { assignmentsForBot } from "../selectors/assignments";
+import type { State } from "../types";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
@@ -18,7 +20,7 @@ type Routine = {
 type Policy = { maxTurnsPerHour?: number; minGapMs?: number; quietHours?: [number, number]; escalate?: string };
 type Bot = {
   id: string; name: string; avatar?: string; avatarClass?: string;
-  persona?: Persona; capability?: "read" | "dispatch"; channels?: string[];
+  persona?: Persona; capability?: "read" | "dispatch" | "work"; executorAgentId?: string | null; channels?: string[];
   policy?: Policy; budget?: { tokensPerTurn?: number; tokensPerHour?: number };
   status?: "active" | "paused"; mutedUntil?: number;
 };
@@ -26,8 +28,9 @@ type Turn = {
   id: string; botId: string; channel?: string;
   trigger?: { kind?: string; ref?: string }; input?: string;
   injected?: { layer: string; id: string; title: string }[];
-  reply?: string; decision?: "answered" | "replied" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted";
+  reply?: string; decision?: "answered" | "replied" | "reported" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted";
   todoId?: string | null;
+  runId?: string | null;
   proposal?: { title: string; desc: string; dismissed?: boolean; acceptedAt?: number } | null;
   reason?: string; cost?: { tokens?: number | null; ms?: number }; createdAt: number;
 };
@@ -37,11 +40,12 @@ type Snapshot = {
   asks?: Ask[];
   botThreads?: Record<string, string>;
   recent?: { answeredHour?: number; blockedHour?: number; silentHour?: number };
+  agents?: { id: string; name: string; alias: string; cli: string; role: string }[];
 };
 
-const DECISION_LABEL: Record<string, string> = { answered: "主动", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工" };
+const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "汇报", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工" };
 const GLYPH: Record<string, string> = { asked: "?", streaming: "…", interrupted: "⏸", silent: "·", blocked: "✕", escalated: "↗" };
-const CAP_LABEL: Record<string, string> = { read: "只读", dispatch: "可起任务" };
+const CAP_LABEL: Record<string, string> = { read: "只读", dispatch: "可起任务", work: "能执行" };
 
 const hm = (ts: number) => {
   const d = new Date(ts);
@@ -58,11 +62,13 @@ const hm = (ts: number) => {
  *
  * P0 只读能力：tick 只回答与记录，不建 todo、不起 run；dispatch 见 ARCH-bot §9。
  */
-export function BotConsole({ act, notify, onOpenMemory, onOpenThread }: {
+export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
   act: Act;
   notify: (message: string) => void;
   onOpenMemory: () => void;
   onOpenThread: (threadId: string) => void;
+  /** 任务投影需要它；缺省时「分配到的任务」区块只显示未绑定提示 */
+  state?: State | null;
 }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [memoryOverview, setMemoryOverview] = useState<{ byLayer?: Record<string, number>; notes?: number; injectable?: number } | null>(null);
@@ -70,6 +76,12 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread }: {
   const [tab, setTab] = useState<"persona" | "memory" | "routines" | "policy">("persona");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  // 「分配到的任务」：Bot.executorAgentId → Agent，任务来自 state.todos（与场景同一投影）
+  const botEntity = snapshot?.bots.find((b) => b.id === botId);
+  const assigned = useMemo(
+    () => assignmentsForBot(state?.todos ?? [], state?.delegations, { executorAgentId: botEntity?.executorAgentId ?? null }),
+    [state?.todos, state?.delegations, botEntity?.executorAgentId],
+  );
   const [draft, setDraft] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   /** 递增就重挂「名字」输入框并聚焦（新建 bot 后立刻改名，不用再找入口） */
@@ -344,6 +356,22 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread }: {
               </div>
             )}
             {turns.map((turn) => {
+              if (turn.decision === "reported") {
+                return (
+                  <div className="bot-turn" key={turn.id}>
+                    <span className={`bot-avatar ${bot?.avatarClass || "a"}`}>{bot?.avatar || bot?.name.slice(0, 1)}</span>
+                    <div className="bot-turn-body">
+                      <div className="bot-turn-meta">
+                        <b>{bot?.name}</b>
+                        <span>{hm(turn.createdAt)}</span>
+                        <span className="tag ok">汇报</span>
+                        {turn.runId && <span className="mono tiny faint">run {String(turn.runId).slice(0, 6)}</span>}
+                      </div>
+                      <div className="bot-bubble">{turn.reply}</div>
+                    </div>
+                  </div>
+                );
+              }
               if (turn.decision === "replied") {
                 return (
                   <div className="bot-exchange" key={turn.id}>
@@ -426,7 +454,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread }: {
                       <span className="tag ai">主动</span>
                     </div>
                     <div className="bot-bubble">{turn.reply}</div>
-                    {turn.proposal && !turn.proposal.dismissed && bot?.capability === "dispatch" && (
+                    {turn.proposal && !turn.proposal.dismissed && (bot?.capability === "dispatch" || bot?.capability === "work") && (
                       turn.todoId
                         ? <div className="bot-proposal done">已建任务（{turn.todoId.slice(0, 6)}…）· 等你在桌面确认后才会起 run</div>
                         : (
@@ -434,9 +462,9 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread }: {
                             <b>{turn.proposal.title}</b>
                             <p>{turn.proposal.desc.split("\n")[0]}</p>
                             <div className="row">
-                              <button className="btn tiny primary" disabled={Boolean(busy)} onClick={() => void acceptProposal(turn)}>起任务</button>
+                              <button className="btn tiny primary" disabled={Boolean(busy)} onClick={() => void acceptProposal(turn)}>{bot?.capability === "work" ? "开跑" : "起任务"}</button>
                               <button className="btn tiny" disabled={Boolean(busy)} onClick={() => void dismissProposal(turn)}>先别</button>
-                              <span className="tiny faint">只建 todo，不起 run；审批仍在你手里</span>
+                              <span className="tiny faint">{bot?.capability === "work" ? "会立即起一次 run（点这个就是授权）" : "只建 todo，不起 run；审批仍在你手里"}</span>
                             </div>
                           </div>
                         )
@@ -529,6 +557,41 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread }: {
             {([["persona", "人格卡"], ["memory", "记忆"], ["routines", "日程"], ["policy", "策略"]] as const).map(([id, label]) => (
               <button key={id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>{label}</button>
             ))}
+          </div>
+
+          {/* 分配到的任务：与场景、任务面板同一投影（src/selectors/assignments.ts）。
+              P0 只读——点行只做定位提示，真正派活仍走 Chat + 人工审批。 */}
+          <div className="bot-assign">
+            <div className="bot-label">
+              分配到的任务
+              {assigned.rows.length > 0 && <span className="bot-assign-count">{assigned.rows.length}</span>}
+            </div>
+            {!botEntity?.executorAgentId ? (
+              <p className="bot-note">
+                这个人格还没绑定执行体（<code>executorAgentId</code>）。Mission 派给 Agent 的任务，
+                只有绑定了执行体才会出现在这里和场景里。
+              </p>
+            ) : assigned.rows.length === 0 ? (
+              <p className="bot-note">当前没有分给它的未完成任务。</p>
+            ) : (
+              <ul className="bot-assign-list">
+                {assigned.rows.slice(0, 6).map((a) => (
+                  <li key={a.todo.id} className={`bot-assign-row st-${a.stage}`} title={a.todo.title}>
+                    <span className="k mono">{a.todo.key}</span>
+                    <span className="t ellipsis">{a.todo.title}</span>
+                    <span className="s">{a.stageLabel}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {assigned.rows.length > 6 && (
+              <p className="bot-note">还有 {assigned.rows.length - 6} 条，去任务面板看全部。</p>
+            )}
+            {botEntity?.executorAgentId && assigned.rows.some((a) => a.mission) && (
+              <p className="bot-note">
+                来自 Mission：{Array.from(new Set(assigned.rows.filter((a) => a.mission).map((a) => a.mission!.key))).join("、")}
+              </p>
+            )}
           </div>
           <div className="bot-aside-body">
             {tab === "persona" && (
@@ -683,18 +746,38 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread }: {
               <>
                 <div className="bot-label">能力档位</div>
                 <div className="bot-seg">
-                  {(["read", "dispatch"] as const).map((cap) => (
+                  {(["read", "dispatch", "work"] as const).map((cap) => (
                     <button
                       key={cap}
                       className={bot?.capability === cap ? "on" : ""}
                       disabled={Boolean(busy)}
-                      onClick={() => void run("cap", async () => { await act("botSave", { id: bot?.id, capability: cap }); notify(cap === "dispatch" ? "已开启：可以提议建任务（仍需你确认）" : "已切回只读"); })}
+                      onClick={() => void run("cap", async () => {
+                        await act("botSave", { id: bot?.id, capability: cap });
+                        notify(cap === "work" ? "已开启：可以直接起 run（点「开跑」即授权）" : cap === "dispatch" ? "已开启：可以提议建任务（仍需你确认）" : "已切回只读");
+                      })}
                     >
                       {CAP_LABEL[cap]}
                     </button>
                   ))}
                 </div>
-                <p className="bot-note">可起任务 ≠ 自己动手：bot 只能提议建 todo，起 run 仍要你在桌面确认。</p>
+                <div className="bot-field edu" style={{ marginTop: 8 }}>
+                  <span>执行体（work 档位起 run 用的 Agent）</span>
+                  <select
+                    className="bot-exec"
+                    value={bot?.executorAgentId || ""}
+                    onChange={(event) => void run("exec", () => act("botSave", { id: bot?.id, executorAgentId: event.target.value }))}
+                  >
+                    <option value="">未绑定</option>
+                    {(snapshot.agents || []).filter((a) => a.role !== "supervisor").map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}{a.alias ? ` · ${a.alias}` : ""}</option>
+                    ))}
+                  </select>
+                </div>
+                <p className="bot-note">
+                  {bot?.capability === "work"
+                    ? `能执行：点「开跑」会建任务并用 ${(snapshot.agents || []).find((a) => a.id === bot?.executorAgentId)?.name || "未绑定的 Agent"} 起一次 run；跑完回流一条汇报。`
+                    : "可起任务 ≠ 自己动手：bot 只能提议建 todo，起 run 仍要你在桌面确认。"}
+                </p>
                 <div className="bot-label" style={{ marginTop: 14 }}>出场规则</div>
                 <div className="bot-kv">
                   <span>群聊</span><b>只回 @（P2）</b>

@@ -95,7 +95,8 @@ export interface OfficeCoordination {
   title: string;
   done: number;
   total: number;
-  members: { agentId: string; name: string; accent: string; tone: OfficeTone; status: string }[];
+  /** onStage=false 表示有任务但该 agent 不在当前阵容（此前会被静默丢弃，见原型 A 第 4 步） */
+  members: { agentId: string; name: string; accent: string; tone: OfficeTone; status: string; onStage: boolean }[];
 }
 
 export interface OfficeModel {
@@ -387,12 +388,17 @@ export function buildOfficeModel(state: State, opts: { projectId?: string | null
   const liveMission = missionTodos.find((t) => !["done", "cancelled", "failed"].includes(t.status)) || missionTodos[0] || null;
   const missionChildren = liveMission ? state.todos.filter((t) => t.parentId === liveMission.id) : [];
   const childDone = missionChildren.filter((t) => t.status === "done").length;
-  const members = missionChildren
-    .map((t) => {
-      const a = actors.find((x) => x.agent.id === t.agentId);
-      return a ? { agentId: a.agent.id, name: a.displayName, accent: a.accent, tone: a.tone, status: a.statusLabel } : null;
-    })
-    .filter((x): x is NonNullable<typeof x> => Boolean(x));
+  const members = missionChildren.map((t) => {
+    const a = actors.find((x) => x.agent.id === t.agentId);
+    if (a) {
+      return { agentId: a.agent.id, name: a.displayName, accent: a.accent, tone: a.tone, status: a.statusLabel, onStage: true };
+    }
+    // 有任务但没在阵容里：保留一行并标注，避免「明明派了活，协调台却少一条」
+    const known = state.agents.find((x) => x.id === t.agentId);
+    const short = known?.name || (t.agentId ? t.agentId.slice(-4) : "未指派");
+    return { agentId: t.agentId || "", name: `${short}（未上场）`, accent: "slate", tone: "neutral" as OfficeTone,
+             status: t.status === "in_progress" ? "进行中" : t.status === "done" ? "完成" : "待办", onStage: false };
+  });
   const coordination: OfficeCoordination = {
     active: Boolean(liveMission && ["planning", "plan_review", "running", "waiting_children", "in_review"].includes(liveMission.missionState ?? "")),
     stage: liveMission?.missionState === "plan_review" ? "等你批准计划" : liveMission?.missionState === "planning" ? "拆解计划中" : liveMission?.missionState === "in_review" ? "等待汇总" : liveMission ? "并行执行中" : "空闲",

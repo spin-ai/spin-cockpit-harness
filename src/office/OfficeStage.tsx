@@ -241,7 +241,9 @@ export function OfficeStage({ model, now, selectedId, onSelect, onOpenTask, ligh
           {[0, 1, 2, 3].map((i) => {
             const m = model.coordination.members[i];
             return (
-              <span key={i} className={`mr-chair c${i + 1} ${m ? `tone-${m.tone}` : "empty"}`} title={m ? `${m.name} · ${m.status}` : "空位"}>
+              <span key={i}
+                className={`mr-chair c${i + 1} ${m ? `tone-${m.tone}` : "empty"} ${m && !m.onStage ? "off-stage" : ""}`}
+                title={m ? `${m.name} · ${m.status}${m.onStage ? "" : "（不在阵容）"}` : "空位"}>
                 {m ? m.name.slice(0, 1) : ""}
               </span>
             );

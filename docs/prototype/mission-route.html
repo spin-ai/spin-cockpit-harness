@@ -1,0 +1,1306 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mission 动线 · 原型</title>
+<!--
+  Mission 动线原型（三条备选）· 无构建、无依赖，双击打开
+  ─────────────────────────────────────────────────────────
+  为什么重做：上一版自己造了一套深色底（#0d0f13 / #58a6ff）和「模拟窗口」卡片，
+  跟 Cockpit Harness 的中性色、rail、PageHeader、hairline 面板没有关系。
+  这一版直接用应用的外壳和 token：
+    · 64px rail + 页面 canvas + PageHeader + 单一 surface（对齐 src/styles.css / design-system.css）
+    · 亮暗同构，底部右侧 ◐ 切；语义色只表达状态，主色保持中性
+    · 原型自己的东西（A/B/C、步骤、说明）全部收进底部 dock，不混进应用界面
+
+  三条动线要解决的割裂（来自代码，不是猜测）：
+    · TaskPane   用 state.todos，含 mission 子任务（parentId 缩进）              → 能看见
+    · 场景        buildOfficeModel：members 用 actors.find(agentId)，
+                  cast 里没有该 agent 就整条被 filter(Boolean) 丢掉               → 静默消失
+    · Bot 页      Snapshot 只有 bots/turns/asks/recent，没有 todos/missions        → 结构上没有位置
+    · 根因        bot_turns.botId 与 todos.agentId 是两个命名空间，没有映射
+                  （现已补 bot.executorAgentId，原型按这个字段画）
+
+  三条动线把「事实源」放在不同位置：
+    A 一处派单 · 三处同影   事实源 = 任务；Bot 页只回汇报 + 指回 todoId，场景只画 delegation（推荐）
+    B 人物卡：先点人再看任务 事实源 = 执行体；任务挂在人身上
+    C Mission 时间轴为中心   事实源 = Mission；其余都是它的投影
+
+  交互：底部步骤条 / 页面里带 hover 的行（可点）都能前进；← → 也走。
+  ?v=A|B|C&s=3&theme=light|dark 定格。
+-->
+<style>
+:root{
+  --font-sans:"Geist Variable","Geist",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:"Geist Mono Variable","Geist Mono","SF Mono",SFMono-Regular,ui-monospace,Menlo,Consolas,monospace;
+  --radius:10px;--radius-sm:6px;--radius-lg:14px;
+  --shadow-1:0 1px 2px rgba(10,10,10,.045);
+  --shadow-2:0 10px 24px rgba(0,0,0,.16);
+  --green:#3f9a68;--green-soft:#edf8f2;--green-line:#d5eedf;
+  --amber:#a97a2f;--amber-soft:#fdf8ee;--amber-line:#f2e3c4;
+  --red:#cf5f5d;--red-soft:#fdf2f2;--red-line:#f4d7d7;
+  --purple:#7d67d1;--purple-soft:#f4f2fd;--purple-line:#e3ddf8;
+}
+:root[data-theme="light"]{
+  --app-shell:#f5f5f5;--page-canvas:#fafafa;--surface:#ffffff;--surface-hover:#f5f5f5;--surface-selected:#ededed;
+  --sidebar:#fafafa;--sidebar-accent:#f0f0f0;--border:#e5e5e5;--border-strong:#d4d4d4;--input:#e5e5e5;
+  --fg:#0a0a0a;--fg-2:#404040;--muted:#525252;--faint:#6f6f6f;
+  --brand:#171717;--brand-soft:#f2f2f2;--brand-line:#dedede;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --app-shell:#0a0a0a;--page-canvas:#0a0a0a;--surface:#171717;--surface-hover:#262626;--surface-selected:#2e2e2e;
+  --sidebar:#111111;--sidebar-accent:#1f1f1f;
+  --border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.14);--input:rgba(255,255,255,.16);
+  --fg:#f0f0f0;--fg-2:#d4d4d4;--muted:#a3a3a3;--faint:#8a8a8a;
+  --brand:#e5e5e5;--brand-soft:#262626;--brand-line:#3a3a3a;
+  --green:#74cf9e;--green-soft:#15251c;--green-line:#294534;
+  --amber:#e3b76e;--amber-soft:#282113;--amber-line:#463a22;
+  --red:#ef8a86;--red-soft:#2a1717;--red-line:#4a2727;
+  --purple:#b7a1f7;--purple-soft:#231d38;--purple-line:#3a3059;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--app-shell);color:var(--fg);font:13px/1.56 var(--font-sans);letter-spacing:-.006em;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(128,128,128,.26);border-radius:8px;border:3px solid transparent;background-clip:content-box}
+:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in srgb,var(--fg) 16%,transparent);border-radius:var(--radius-sm)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.tiny{font-size:11.5px}.muted{color:var(--muted)}.faint{color:var(--faint)}.spacer{flex:1}
+.k{color:var(--faint);font-size:11px}
+.ellipsis{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── 外壳：rail + 页面 ───────────────────────────────────── */
+.app{height:100%;display:grid;grid-template-rows:minmax(0,1fr) auto;background:var(--app-shell)}
+.shell{display:grid;grid-template-columns:64px minmax(0,1fr);min-height:0}
+.rail{background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;gap:2px;padding:12px 0 8px}
+.rail-btn{width:52px;height:46px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  border-radius:var(--radius);color:var(--muted);font-size:11px;line-height:1}
+.rail-btn:hover{background:var(--sidebar-accent);color:var(--fg-2)}
+.rail-btn.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow-1),0 0 0 1px var(--border)}
+.rail-btn svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.rail-spacer{flex:1}
+
+.wide{min-height:0;overflow:auto;background:var(--page-canvas);padding:18px 24px 26px}
+.page{width:100%;max-width:1280px;min-height:100%;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+
+/* ── PageHeader ─────────────────────────────────────────── */
+.page-header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 20px;align-items:end;padding-bottom:2px}
+.page-header-copy{min-width:0;display:flex;flex-direction:column;gap:2px}
+.page-header-kicker{font-size:11px;line-height:1.4;letter-spacing:.16em;text-transform:uppercase;color:var(--brand);font-weight:700}
+.page-header h1{margin:0;font-size:22px;line-height:1.15;font-weight:600;letter-spacing:-.03em;color:var(--fg)}
+.page-header-sub{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--faint);max-width:760px}
+.page-header-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap}
+.page-header-actions .btn{height:28px;border-color:transparent;background:transparent;color:var(--muted);box-shadow:none}
+.page-header-actions .btn:hover{background:var(--surface);border-color:transparent;color:var(--fg);box-shadow:var(--shadow-1)}
+.page-header-actions .btn.primary{background:var(--fg);border-color:var(--fg);color:var(--page-canvas);box-shadow:var(--shadow-1)}
+
+/* ── 基础控件 ───────────────────────────────────────────── */
+.btn{height:28px;padding:0 10px;border:1px solid var(--input);border-radius:var(--radius-sm);background:var(--surface);
+  color:var(--fg-2);font-size:12.5px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.btn:hover{background:var(--surface-hover);border-color:var(--border-strong)}
+.btn.primary{background:var(--fg);border-color:var(--fg);color:var(--page-canvas)}
+.btn.primary:hover{background:color-mix(in srgb,var(--fg) 90%,var(--surface))}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.btn.ghost:hover{background:var(--surface-hover);color:var(--fg)}
+.btn.tiny{height:24px;padding:0 8px;font-size:11.5px}
+.btn.icon{width:28px;padding:0;justify-content:center;font-size:13px}
+.link{border:0;background:none;padding:0;color:var(--muted);font-size:12px;white-space:nowrap}
+.link:hover{color:var(--fg)}
+.link.danger{color:var(--red)}
+.tag{display:inline-flex;align-items:center;height:17px;padding:0 6px;border:1px solid var(--border);border-radius:5px;
+  background:var(--surface-hover);color:var(--fg-2);font-size:11px;white-space:nowrap}
+.tag.ok{color:var(--green);background:var(--green-soft);border-color:var(--green-line)}
+.tag.warn{color:var(--amber);background:var(--amber-soft);border-color:var(--amber-line)}
+.tag.ai{color:var(--purple);background:var(--purple-soft);border-color:var(--purple-line)}
+.pill.status{display:inline-flex;align-items:center;height:17px;padding:0 7px;border:1px solid transparent;border-radius:999px;
+  font-size:11px;white-space:nowrap;line-height:1}
+.status.todo{color:var(--muted);background:var(--surface-hover);border-color:var(--border)}
+.status.queued,.status.waiting{color:var(--amber);background:var(--amber-soft);border-color:var(--amber-line)}
+.status.running{color:var(--brand);background:var(--brand-soft);border-color:var(--brand-line)}
+.status.review{color:var(--purple);background:var(--purple-soft);border-color:var(--purple-line)}
+.status.done{color:var(--green);background:var(--green-soft);border-color:var(--green-line)}
+.status.failed{color:var(--red);background:var(--red-soft);border-color:var(--red-line)}
+.thread-dot{width:6px;height:6px;border-radius:50%;background:var(--faint);flex:none}
+.thread-dot.running{background:var(--green)}
+.thread-dot.review{background:var(--purple)}
+.thread-dot.queued{background:var(--amber)}
+
+/* ── 面板 / 两栏 ────────────────────────────────────────── */
+.pane{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-1)}
+.pane-head{flex:none;height:38px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--border);
+  font-size:11.5px;letter-spacing:.08em;font-weight:600;color:var(--muted)}
+.pane-head .spacer{flex:1}
+.pane-body{padding:10px 12px 12px;overflow:auto;min-height:0}
+.pane-body.tight{padding:8px}
+.ws{display:grid;grid-template-columns:264px minmax(0,1fr);gap:12px;min-height:0;flex:1}
+.bot{display:grid;grid-template-columns:216px minmax(0,1fr) 292px;gap:12px;min-height:0;flex:1}
+.scene{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-height:0;flex:1}
+.scene.split{grid-template-columns:minmax(0,1fr) 320px}
+
+/* ── 任务列表 ───────────────────────────────────────────── */
+.group-head{display:flex;align-items:center;justify-content:space-between;width:100%;padding:6px 8px;
+  font-size:11.5px;font-weight:600;letter-spacing:.02em;color:var(--muted);text-align:left}
+.group-head span:last-child{font-size:11px;font-weight:500;color:var(--faint)}
+.group-head.active{color:var(--brand)}
+.group-head.waiting{color:var(--amber)}
+.group-head.review{color:var(--purple)}
+.group-head.done{color:var(--green)}
+.task-row{position:relative;display:flex;flex-direction:column;gap:4px;width:100%;margin-bottom:5px;padding:8px 9px 8px 12px;
+  border:1px solid var(--border);border-radius:8px;background:var(--surface);text-align:left;cursor:pointer;
+  transition:border-color .12s,box-shadow .12s}
+.task-row::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;border-radius:2px;background:var(--border)}
+.task-row:hover{border-color:var(--border-strong);box-shadow:var(--shadow-1)}
+.task-row.on{border-color:var(--brand-line);box-shadow:0 0 0 1px var(--brand-line)}
+.task-row.on::before{background:var(--brand)}
+.task-row.waiting{background:var(--amber-soft);border-color:var(--amber-line)}
+.task-row.child{margin-left:14px;width:calc(100% - 14px)}
+.task-row.child::before{background:var(--border-strong)}
+.task-row-title{font-size:12.5px;font-weight:500;line-height:1.45;color:var(--fg)}
+.task-row-meta{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--faint);min-width:0}
+.task-row-meta .spacer{flex:1}
+.empty-line{padding:10px 8px;font-size:11.5px;color:var(--faint)}
+.avatar{width:22px;height:22px;flex:none;border-radius:999px;display:grid;place-items:center;
+  font-size:10.5px;font-weight:600;color:var(--page-canvas);background:var(--fg-2)}
+.avatar.xs{width:18px;height:18px;font-size:9.5px}
+.avatar.a{background:color-mix(in srgb,var(--green) 76%,var(--fg) 24%);color:var(--page-canvas)}
+.avatar.b{background:color-mix(in srgb,var(--purple) 72%,var(--fg) 28%);color:var(--page-canvas)}
+.avatar.c{background:color-mix(in srgb,var(--amber) 76%,var(--fg) 24%);color:var(--page-canvas)}
+.avatar.d{background:color-mix(in srgb,var(--fg) 70%,transparent);color:var(--page-canvas)}
+
+/* ── Mission 面板 ───────────────────────────────────────── */
+.mission-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.mission-mark{color:var(--brand);font-size:14px}
+.mission-head b{font-size:12.5px;font-weight:600}
+.mission-plan{margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--page-canvas)}
+.mission-plan-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.mission-plan-head b{font-size:12px;font-weight:600}
+.mission-plan-head .spacer{flex:1}
+.mission-summary{margin:8px 0 0;font-size:12px;line-height:1.6;color:var(--fg-2)}
+.mission-steps{display:flex;flex-direction:column;gap:6px;margin:9px 0 0;padding:0;list-style:none}
+.mission-steps li{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;font-size:12px;line-height:1.45}
+.mission-step-key{color:var(--faint);font-size:11px;font-family:var(--mono)}
+.mission-step-title{font-weight:600}
+.mission-step-accept{flex-basis:100%;padding-left:24px;color:var(--muted);font-size:11px}
+.mission-risks{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px;font-size:11.5px;color:var(--amber)}
+.mission-risks b{color:var(--fg-2);font-weight:600}
+.mission-risks span{padding:1px 6px;border:1px solid var(--amber-line);border-radius:5px;background:var(--amber-soft)}
+.mission-approved{margin-top:10px;font-size:12px;color:var(--green)}
+.delegation-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.delegation-card{padding:8px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+.delegation-card.done{background:var(--page-canvas)}
+.delegation-main{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;font-size:12px}
+.delegation-main b{max-width:min(280px,45%);font-size:12px;font-weight:600}
+.delegation-main .spacer{flex:1}
+.delegation-result{margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:11.5px;line-height:1.55;color:var(--muted)}
+
+/* ── Bot 页 ─────────────────────────────────────────────── */
+.bot-item{display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;
+  padding:7px 8px;border:1px solid transparent;border-radius:8px;text-align:left;color:var(--fg-2);margin-bottom:2px}
+.bot-item:hover{background:var(--surface-hover)}
+.bot-item.on{background:var(--surface-selected);border-color:var(--border)}
+.bot-item-main{display:flex;flex-direction:column;min-width:0}
+.bot-item-main b{font-size:12px;font-weight:600;color:var(--fg)}
+.bot-item-main span{font-size:10.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bot-item em{font-style:normal;font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+.stream{display:flex;flex-direction:column;gap:12px}
+.bot-main{display:flex;flex-direction:column;min-height:0}
+.bot-main>.pane-body{flex:1;min-height:0}
+.bot-dot{width:6px;height:6px;border-radius:50%;background:var(--green);flex:none}
+.bot-dot.paused{background:var(--faint)}
+.bot-dot.quiet{background:var(--amber)}
+.bot-new{margin-top:4px;width:100%;padding:7px 8px;border:1px dashed var(--border-strong);border-radius:8px;
+  background:transparent;color:var(--muted);font-size:11.5px;text-align:center}
+.bot-tabs{display:flex;gap:2px;flex:none;padding:6px 10px 0;border-bottom:1px solid var(--border)}
+.bot-tabs button{height:26px;padding:0 8px;border:0;border-radius:6px 6px 0 0;background:transparent;
+  color:var(--muted);font-size:11.5px}
+.bot-tabs button.on{background:var(--surface-hover);color:var(--fg);box-shadow:inset 0 -2px 0 var(--brand)}
+.day{display:flex;align-items:center;gap:10px;font-size:10.5px;letter-spacing:.06em;color:var(--faint)}
+.day::after{content:"";flex:1;height:1px;background:var(--border)}
+.turn{display:flex;gap:9px;min-width:0}
+.turn .avatar{margin-top:1px}
+.turn-body{min-width:0;flex:1}
+.turn-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px;color:var(--faint)}
+.turn-meta b{font-size:12px;font-weight:600;color:var(--fg-2)}
+.bubble{margin-top:5px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);
+  font-size:12.5px;line-height:1.6;color:var(--fg);max-width:min(64ch,100%)}
+.proposal{margin-top:7px;padding:9px 10px;border:1px solid var(--border);border-radius:8px;background:var(--page-canvas);max-width:min(64ch,100%)}
+.proposal>b{font-size:12.5px}
+.proposal p{margin:3px 0 8px;font-size:11.5px;line-height:1.6;color:var(--muted)}
+.proposal .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.proposal .row span{font-size:11px;color:var(--faint)}
+.why{margin-top:6px;max-width:min(64ch,100%)}
+.why summary{cursor:pointer;font-size:11.5px;color:var(--muted);list-style:none}
+.why summary::-webkit-details-marker{display:none}
+.why summary::before{content:"▸ "}
+.why[open] summary::before{content:"▾ "}
+.why summary:hover{color:var(--fg)}
+.why-body{margin-top:5px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--page-canvas)}
+.why-body .kv{grid-template-columns:64px minmax(0,1fr);gap:3px 8px}
+.why-body .kv dd{color:var(--fg-2)}
+.task-link{display:flex;align-items:center;gap:6px;width:100%;max-width:min(64ch,100%);margin-top:7px;padding:6px 8px;
+  border:1px solid var(--border);border-radius:6px;background:var(--page-canvas);text-align:left;font-size:11.5px;color:var(--fg-2)}
+.task-link:hover{border-color:var(--border-strong)}
+.quiet-row{display:flex;align-items:flex-start;gap:7px;font-size:11.5px}
+.quiet-row>.glyph{flex:none;width:12px;text-align:center;color:var(--faint);font-family:var(--mono)}
+.quiet-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.quiet{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px;color:var(--faint)}
+.composer{flex:none;padding:8px 12px 10px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:5px}
+.composer-box{display:flex;align-items:flex-end;gap:6px;padding:5px 6px 5px 10px;
+  border:1px solid var(--input);border-radius:8px;background:var(--surface)}
+.composer-box textarea{flex:1;min-height:26px;max-height:92px;border:0;outline:none;resize:none;background:transparent;
+  font:12.5px/1.5 var(--font-sans);color:var(--fg)}
+.composer-box textarea::placeholder{color:var(--faint)}
+.composer-hint{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:10.5px;color:var(--faint)}
+.field{display:flex;flex-direction:column;gap:3px;margin-bottom:12px}
+.field>span{font-size:11px;letter-spacing:.04em;color:var(--faint)}
+.field b{font-size:12.5px;font-weight:500;color:var(--fg)}
+.select-like{display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:1px solid var(--input);
+  border-radius:var(--radius-sm);background:var(--surface);font-size:12px;color:var(--fg-2)}
+.select-like i{margin-left:auto;font-style:normal;color:var(--faint);font-size:10px}
+.ghost-row{display:flex;align-items:center;gap:6px;width:100%;padding:8px 9px;border:1px solid var(--border);
+  border-radius:8px;background:var(--surface);text-align:left;font-size:12px;color:var(--fg-2)}
+.ghost-row:hover{border-color:var(--border-strong)}
+
+/* ── 场景舞台 ───────────────────────────────────────────── */
+.coord{flex:none;padding:10px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
+.coord-main{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:12px}
+.coord-main b{font-size:12.5px;font-weight:600}
+.members{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.member{display:inline-flex;align-items:center;gap:6px;padding:2px 8px 2px 3px;border:1px solid var(--border);
+  border-radius:999px;background:var(--surface);font-size:11.5px;color:var(--fg-2);white-space:nowrap}
+.member em{font-style:normal;color:var(--faint);font-family:var(--mono);font-size:10.5px}
+.member.quiet{border-style:dashed;color:var(--faint);background:transparent}
+.floor{flex:1;min-height:260px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 12px;
+  padding:18px 16px;align-content:start;
+  background-image:radial-gradient(color-mix(in srgb,var(--border-strong) 55%,transparent) 1px,transparent 1px);
+  background-size:30px 30px;background-position:8px 8px;
+  background-color:var(--page-canvas)}
+.desk-unit{display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;min-width:0}
+.desk-unit:hover .nameplate{border-color:var(--border-strong)}
+.nameplate{display:flex;align-items:center;gap:6px;max-width:100%;padding:3px 8px;border:1px solid var(--border);
+  border-radius:999px;background:var(--surface);box-shadow:var(--shadow-1)}
+.nameplate>div{display:flex;flex-direction:column;min-width:0;line-height:1.25}
+.nameplate b{font-size:11px;font-weight:600;color:var(--fg)}
+.nameplate span{font-size:9.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.desk-unit.on .nameplate{border-color:var(--fg-2);box-shadow:0 0 0 1px color-mix(in srgb,var(--fg) 12%,transparent)}
+.desk{width:100%;max-width:150px;height:44px;border:1px solid var(--border);border-radius:6px;background:var(--surface);
+  position:relative;box-shadow:var(--shadow-1)}
+.desk::after{content:"";position:absolute;left:12px;right:12px;top:9px;height:16px;border-radius:3px;
+  background:var(--page-canvas);border:1px solid var(--border)}
+.desk-unit.busy .desk::after{background:color-mix(in srgb,var(--green) 12%,var(--page-canvas));border-color:var(--green-line)}
+.desk-unit.on .desk{border-color:var(--fg-2)}
+.act-chip{max-width:100%;padding:1px 7px;border:1px solid var(--border);border-radius:999px;background:var(--surface);
+  font-size:10.5px;line-height:15px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.act-chip b{margin-right:4px;font-family:var(--mono);font-weight:500;color:var(--fg-2)}
+.desk-unit.empty{opacity:.6}
+.desk-unit.empty .desk::after{background:transparent}
+.scene-foot{flex:none;padding:8px 12px;border-top:1px solid var(--border);font-size:11.5px;color:var(--faint)}
+
+/* ── 抽屉 / 时间轴 / 其他 ───────────────────────────────── */
+.kv{display:grid;grid-template-columns:72px minmax(0,1fr);gap:8px 10px;margin:0;font-size:12px}
+.kv dt{color:var(--faint)}
+.thread{margin-top:14px;padding-top:12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:9px}
+.thread-sep{font-size:10.5px;letter-spacing:.08em;color:var(--faint)}
+.msg{display:flex;gap:10px;font-size:12px;line-height:1.6}
+.msg-who{flex:none;width:56px;text-align:right;color:var(--faint);font-size:11.5px;padding-top:1px}
+.msg-text{color:var(--fg-2);max-width:72ch}
+.msg-text .mono{color:var(--fg)}
+.kv dd{margin:0;color:var(--fg);line-height:1.5}
+.drawer-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.drawer-head b{font-size:13px;font-weight:600}
+.tl{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--surface)}
+.tl-row{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.15fr);border-bottom:1px solid var(--border)}
+.tl-row:last-child{border-bottom:0}
+.tl-plan{display:flex;align-items:baseline;gap:7px;padding:9px 10px;border-right:1px solid var(--border);
+  font-size:12px;color:var(--fg-2);background:var(--page-canvas);min-width:0}
+.tl-exec{display:flex;align-items:center;gap:7px;padding:9px 10px;font-size:12px;min-width:0}
+.tl-exec b{font-weight:600;font-size:12px}
+.tl-exec .spacer{flex:1}
+.tl-exec.muted{color:var(--faint)}
+.tl-expand{grid-column:1/-1;padding:10px 12px;background:var(--page-canvas);border-top:1px solid var(--border);
+  display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--fg-2)}
+.tl-expand .kv{grid-template-columns:58px minmax(0,1fr)}
+.jumpable{cursor:pointer}
+.jumpable:hover{border-color:var(--border-strong)}
+.tl-exec.jumpable:hover{background:var(--surface-hover)}
+.hint-line{display:block;font-size:11.5px;line-height:1.55;color:var(--faint)}
+
+/* ── 原型 dock（不属于应用界面）─────────────────────────── */
+.dock{flex:none;border-top:1px solid var(--border-strong);background:var(--sidebar);padding:8px 16px 10px;
+  display:flex;flex-direction:column;gap:7px}
+.dock-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.dock-tag{display:inline-flex;align-items:center;height:18px;padding:0 7px;border:1px dashed var(--border-strong);
+  border-radius:999px;font-size:10.5px;letter-spacing:.06em;color:var(--faint);white-space:nowrap}
+.routes{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.route-tab{height:26px;padding:0 10px;border:1px solid var(--border);border-radius:999px;background:transparent;
+  font-size:11.5px;color:var(--muted);white-space:nowrap}
+.route-tab:hover{border-color:var(--border-strong);color:var(--fg)}
+.route-tab.on{background:var(--surface);border-color:var(--border-strong);color:var(--fg)}
+.steps{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.step-chip{height:24px;padding:0 8px;border:1px solid transparent;border-radius:6px;font-size:11.5px;color:var(--faint);
+  white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
+.step-chip:hover{background:var(--surface-hover);color:var(--fg-2)}
+.step-chip.on{background:var(--surface);border-color:var(--border);color:var(--fg)}
+.step-chip i{font-style:normal;font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+.dock-actions{display:flex;align-items:center;gap:6px;margin-left:auto;flex:none}
+.dock-count{font-size:11px;color:var(--faint);font-family:var(--mono);white-space:nowrap}
+.dock-notes{display:grid;grid-template-columns:1.15fr 1fr .85fr .85fr;gap:12px;padding-top:2px}
+.dock-cell{min-width:0;font-size:11.5px;line-height:1.55;color:var(--muted)}
+.dock-cell h4{margin:0 0 2px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:700}
+.dock-cell b,.dock-cell .mono{color:var(--fg-2)}
+.dock-cell.bad h4{color:var(--red)}
+.dock-cell.good h4{color:var(--green)}
+.dock-cell.claim{border-left:2px solid var(--brand-line);padding-left:9px}
+
+@media (max-width:1180px){
+  .bot{grid-template-columns:196px minmax(0,1fr)}
+  .bot .bot-right{display:none}
+  .dock-notes{grid-template-columns:1fr 1fr}
+}
+@media (max-width:980px){
+  .ws,.scene.split{grid-template-columns:1fr}
+  .page-header{grid-template-columns:1fr;align-items:start}
+  .page-header-actions{justify-content:flex-start}
+  .dock-notes{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <div class="shell">
+    <nav class="rail" id="rail" aria-label="主导航"></nav>
+    <div class="wide" id="wide"></div>
+  </div>
+  <footer class="dock" aria-label="原型动线">
+    <div class="dock-bar">
+      <span class="dock-tag">原型 · 动线</span>
+      <div class="routes" id="routes"></div>
+      <div class="steps" id="steps"></div>
+      <div class="dock-actions">
+        <span class="dock-count" id="counter"></span>
+        <button class="btn tiny ghost" id="prev">上一步</button>
+        <button class="btn tiny primary" id="next">下一步</button>
+        <button class="btn tiny ghost" id="theme" title="切亮 / 暗" aria-label="切换主题">◐</button>
+      </div>
+    </div>
+    <div class="dock-notes" id="notes"></div>
+  </footer>
+</div>
+
+<script>
+/* ============================ 基础 ============================ */
+const qs = new URLSearchParams(location.search);
+const ROOT = document.documentElement;
+if (qs.get("theme") === "light" || qs.get("theme") === "dark") ROOT.dataset.theme = qs.get("theme");
+
+const $rail = document.getElementById("rail");
+const $wide = document.getElementById("wide");
+const $routes = document.getElementById("routes");
+const $steps = document.getElementById("steps");
+const $notes = document.getElementById("notes");
+const $counter = document.getElementById("counter");
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pill = (cls, label) => `<span class="pill status ${cls}">${label}</span>`;
+const tag = (cls, label) => `<span class="tag ${cls}">${label}</span>`;
+const mono = (t, cls = "") => `<span class="mono ${cls}">${t}</span>`;
+const dot = (cls = "") => `<span class="thread-dot ${cls}"></span>`;
+const spacer = `<span class="spacer"></span>`;
+
+/* 会话片段：Mission 卡片下面接着说人话，和应用里「任务概览 + thread」的排法一致 */
+const threadStrip = (lines) => `
+  <div class="thread">
+    <div class="thread-sep">对话</div>
+    ${lines.map(([who, text]) => `<div class="msg"><span class="msg-who">${who}</span><span class="msg-text">${text}</span></div>`).join("")}
+  </div>`;
+
+const head = ({ kicker, title, sub, actions }) => `
+  <header class="page-header">
+    <div class="page-header-copy">
+      <span class="page-header-kicker">${kicker}</span>
+      <h1>${title}</h1>
+      <div class="page-header-sub">${sub || ""}</div>
+    </div>
+    <div class="page-header-actions">${actions || ""}</div>
+  </header>`;
+
+const pane = (titleHead, body, cls = "", extra = "") => `
+  <section class="pane ${cls}">
+    <div class="pane-head"><span>${titleHead}</span>${extra}</div>
+    <div class="pane-body">${body}</div>
+  </section>`;
+
+const taskRow = (r) => `
+  <button class="task-row ${r.cls || ""}" ${r.jump != null ? `data-jump="${r.jump}"` : ""}>
+    <span class="task-row-title">${r.title}</span>
+    <span class="task-row-meta">${dot(r.tone)}${r.who ? `<span>${r.who}</span>` : ""}${r.note ? `<span>·</span><span>${r.note}</span>` : ""}
+      ${spacer}${r.key ? mono(r.key, "k") : ""}</span>
+  </button>`;
+
+/* rail：和应用一致，只做导航提示 */
+const ICONS = {
+  workspace: `<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M3 10h6M15 8h3M15 12h3"/>`,
+  scene: `<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11M15 9v11"/>`,
+  projects: `<path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 11h18"/>`,
+  stats: `<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>`,
+  git: `<circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="9" r="2.4"/><path d="M6 8.4v7.2M8.3 6h4.3a3 3 0 0 1 3 3v.2"/>`,
+  memory: `<path d="M12 3v18M5 7v10M19 7v10M8.5 5v14M15.5 5v14"/>`,
+  persona: `<circle cx="12" cy="8" r="3.4"/><path d="M5 20a7 7 0 0 1 14 0"/>`,
+  bot: `<rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V5M9 13h.01M15 13h.01M9 16.5h6"/>`,
+  guide: `<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.4 2.3c-.7.3-.9.9-.9 1.7M12 17h.01"/>`,
+  settings: `<circle cx="12" cy="12" r="3.2"/><path d="M12 3v2.2M12 18.8V21M4.2 7.5l1.9 1.1M17.9 15.4l1.9 1.1M4.2 16.5l1.9-1.1M17.9 8.6l1.9-1.1"/>`,
+};
+$rail.innerHTML = [
+  ["workspace", "工作区"], ["scene", "场景"], ["projects", "项目"], ["stats", "统计"],
+  ["git", "Git"], ["memory", "记忆"], ["persona", "人物"], ["bot", "Bot"],
+].map(([id, label]) => `
+  <button class="rail-btn" data-view="${id}" title="${label}">
+    <svg viewBox="0 0 24 24">${ICONS[id]}</svg><span>${label}</span>
+  </button>`).join("")
+  + `<div class="rail-spacer"></div>
+  <button class="rail-btn" data-view="guide" title="说明"><svg viewBox="0 0 24 24">${ICONS.guide}</svg><span>说明</span></button>
+  <button class="rail-btn" data-view="settings" title="设置"><svg viewBox="0 0 24 24">${ICONS.settings}</svg><span>设置</span></button>`;
+
+/* ============================ 三条动线 ============================ */
+
+/* ---------- 共用片段 ---------- */
+const todoPane = (groups, { jump = null, head: paneTitle = "任务", meta = "" } = {}) => `
+  <section class="pane">
+    <div class="pane-head"><span>${paneTitle}</span><span class="spacer"></span>${meta ? `<span class="tiny faint">${meta}</span>` : ""}</div>
+    <div class="pane-body tight">
+      ${groups.map((g) => `
+        <div class="group-head ${g.cls || ""}"><span>${g.name}</span><span>${g.count}</span></div>
+        ${g.rows.map((r) => taskRow({ ...r, jump: r.jump ?? jump })).join("")}
+      `).join("")}
+    </div>
+  </section>`;
+
+const missionHead = (stateCls, stateLabel, done, total, actions = "") => `
+  <div class="mission-head">
+    <span class="mission-mark">✦</span><b>Mission</b>
+    ${pill(stateCls, stateLabel)}
+    <span class="tiny muted">${done}/${total} 子任务</span>
+    ${spacer}${actions}
+  </div>`;
+
+const planBlock = () => `
+  <div class="mission-plan">
+    <div class="mission-plan-head">
+      <b>计划待审批</b><span class="tiny muted">rev 1</span>${spacer}
+      <button class="btn tiny">退回修改</button>
+      <button class="btn tiny primary" data-jump="1">批准并分派</button>
+    </div>
+    <p class="mission-summary">三步按依赖顺序执行：先打通链路，再补箭头关系，最后出评测报告。</p>
+    <ol class="mission-steps">
+      <li><span class="mission-step-key">①</span><span class="mission-step-title">打通链路</span><span class="tiny muted">vega</span><span class="mission-step-accept">验收：sample.stdf 能解析出 12 组量测</span></li>
+      <li><span class="mission-step-key">②</span><span class="mission-step-title">补箭头关系</span><span class="tiny muted">golo</span><span class="mission-step-accept">验收：依赖 ①；箭头指向与 spec 一致</span></li>
+      <li><span class="mission-step-key">③</span><span class="mission-step-title">出评测报告</span><span class="tiny muted">lumi</span><span class="mission-step-accept">验收：依赖 ①②；3 个样本全绿</span></li>
+    </ol>
+    <div class="mission-risks"><b>风险</b><span>样本还有 2 种格式变体未覆盖</span></div>
+  </div>`;
+
+const delegation = ({ key, title, statusCls, statusLabel, who, run, jump = null, result = "" }) => `
+  <div class="delegation-card ${statusCls === "done" ? "done" : ""} ${jump != null ? "jumpable" : ""}" ${jump != null ? `data-jump="${jump}"` : ""}>
+    <div class="delegation-main">
+      ${dot(statusCls === "running" ? "running" : statusCls === "done" ? "running" : "queued")}
+      ${mono(key, "tiny faint")}
+      <b class="ellipsis" title="${title}">${title}</b>
+      ${pill(statusCls, statusLabel)}
+      <span class="tiny muted">${who}</span>
+      ${run ? mono(run, "tiny faint") : ""}
+      ${spacer}
+      ${statusCls === "running" ? `<button class="link">停止</button>` : `<button class="link">查看会话</button>`}
+    </div>
+    ${result ? `<div class="delegation-result">${result}</div>` : ""}
+  </div>`;
+
+const CAP = { read: "只读", dispatch: "可起任务", work: "能执行" };
+
+/* 左：bot 列表（不是会话列表）——能力档位 + 说过几条 + 状态点 */
+const botList = (active = "shouye") => `
+  <section class="pane">
+    <div class="pane-head"><span>Bots</span><span class="spacer"></span><span class="tiny faint">3</span></div>
+    <div class="pane-body tight">
+      ${[
+        { id: "shouye", name: "守夜", letter: "守", cls: "a", cap: "work", n: 12, dot: "" },
+        { id: "nan", name: "南", letter: "南", cls: "b", cap: "dispatch", n: 4, dot: "quiet" },
+        { id: "draft", name: "草稿", letter: "草", cls: "d", cap: "read", n: 0, dot: "paused" },
+      ].map((b) => `
+        <button class="bot-item ${b.id === active ? "on" : ""}">
+          <span class="avatar ${b.cls}">${b.letter}</span>
+          <span class="bot-item-main"><b>${b.name}</b><span>${CAP[b.cap]} · ${b.n} 条已说</span></span>
+          <span class="bot-dot ${b.dot}" title="${b.dot === "paused" ? "已暂停" : b.dot === "quiet" ? "静音中" : "运行中"}"></span>
+        </button>`).join("")}
+      <button class="bot-new">＋ 新建 bot</button>
+    </div>
+  </section>`;
+
+/* 「为什么说 / 为什么沉默」四行：触发源 / 注入 / 过闸 / 成本 —— 沉默也要可审计 */
+const why = (rows, title = "为什么说") => `
+  <details class="why">
+    <summary>${title}</summary>
+    <div class="why-body"><dl class="kv">
+      <dt>触发源</dt><dd>${rows.trigger}</dd>
+      <dt>注入记忆</dt><dd>${rows.memory}</dd>
+      <dt>过闸</dt><dd>${rows.gates}</dd>
+      <dt>成本</dt><dd>${rows.cost}</dd>
+    </dl></div>
+  </details>`;
+
+/* 汇报：run 结束回流一条摘要；带 runId，并指回它替谁跑的那条任务 */
+const turnReported = ({ name, letter, cls, time, run, text, taskKey, taskTitle, jump, whyRows }) => `
+  <div class="turn">
+    <span class="avatar ${cls}">${letter}</span>
+    <div class="turn-body">
+      <div class="turn-meta"><b>${name}</b><span>${time}</span>${tag("ok", "汇报")}${mono(run, "tiny faint")}</div>
+      <div class="bubble">${text}</div>
+      <button class="task-link" data-jump="${jump}">
+        ${dot("running")}${mono(taskKey, "tiny faint")}<span>${taskTitle}</span>${spacer}<span class="tiny faint">对应任务 →</span>
+      </button>
+      ${whyRows ? why(whyRows) : ""}
+    </div>
+  </div>`;
+
+/* 主动：先问一句再动手；真正的 run 仍要人点 */
+const turnProactive = ({ name, letter, cls, time, text, title, desc, action, note }) => `
+  <div class="turn">
+    <span class="avatar ${cls}">${letter}</span>
+    <div class="turn-body">
+      <div class="turn-meta"><b>${name}</b><span>${time}</span>${tag("ai", "主动")}</div>
+      <div class="bubble">${text}</div>
+      <div class="proposal">
+        <b>${title}</b>
+        <p>${desc}</p>
+        <div class="row"><button class="btn tiny primary">${action}</button><button class="btn tiny">先别</button><span>${note}</span></div>
+      </div>
+    </div>
+  </div>`;
+
+const turnQuiet = ({ time, label, text, whyRows }) => `
+  <div class="quiet-row">
+    <span class="glyph">·</span>
+    <div class="quiet-main">
+      <div class="quiet">${mono(time, "tiny")}<span>${label}</span><span>·</span><span>${text}</span></div>
+      ${whyRows ? why(whyRows, "为什么沉默") : ""}
+    </div>
+  </div>`;
+
+const composer = (name, hint = "说过的话进同一个会话；沉默与被拦只进审计") => `
+  <div class="composer">
+    <div class="composer-box">
+      <textarea rows="1" placeholder="以 @${name} 的身份说点什么，或问它一句…"></textarea>
+      <button class="btn tiny primary">发送</button>
+    </div>
+    <div class="composer-hint"><span>⌘↵ 发送</span><span>·</span><span>${hint}</span></div>
+  </div>`;
+
+const botTabs = (active = "人格卡") => `
+  <div class="bot-tabs">${["人格卡", "记忆", "策略"].map((t) => `<button class="${t === active ? "on" : ""}">${t}</button>`).join("")}</div>`;
+
+const desk = ({ name, letter, cls, role, task, key, busy = true, on = false, empty = false }) => `
+  <div class="desk-unit ${busy ? "busy" : ""} ${on ? "on" : ""} ${empty ? "empty" : ""}">
+    <div class="nameplate">
+      <span class="avatar xs ${cls || "d"}">${letter}</span>
+      <div><b>${name}</b><span>${role}</span></div>
+    </div>
+    <div class="desk"></div>
+    ${task ? `<span class="act-chip"><b>${key}</b>${task}</span>` : `<span class="act-chip">空位</span>`}
+  </div>`;
+
+const stage = ({ coord, desks, foot = "" }) => `
+  <section class="pane">
+    <div class="coord">
+      <div class="coord-main">
+        ${mono(coord.key, "tiny faint")}<b>${coord.title}</b>${pill(coord.cls, coord.label)}
+        <span class="tiny muted">${coord.done}/${coord.total} 完成</span>
+      </div>
+      <div class="members">${coord.members.map((m) => `
+        <span class="member ${m.quiet ? "quiet" : ""}">${dot(m.quiet ? "" : m.tone)}${m.name}${m.task ? `<em>${m.task}</em>` : ""}</span>`).join("")}
+      </div>
+    </div>
+    <div class="floor">${desks.map(desk).join("")}</div>
+    ${foot ? `<div class="scene-foot">${foot}</div>` : ""}
+  </section>`;
+
+/* ---------- A 一处派单 · 三处同影 ---------- */
+const A = {
+  name: "A · 一处派单，三处同影",
+  claim: `<b>事实源 = 任务</b>。Mission 派单只写一次库；Bot 页不复制任务列表，只用汇报回合里那条 todo 指回它；场景只画 delegation。同一个 <span class="mono">todo.id</span> 在三处可点、可跳。`,
+  steps: [
+    {
+      nav: "workspace",
+      head: {
+        kicker: "Mission · M-31",
+        title: "把 STDF 解析器接进管线",
+        sub: `${pill("review", "计划待审批")}<span>主管 北 · 拆成 3 步</span><span class="faint">·</span><span>批准前不会派单</span>`,
+        actions: `<button class="btn">详情</button><button class="btn icon">⋯</button>`,
+      },
+      body: `<div class="ws">
+        ${todoPane([{ name: "计划待审批", count: 1, cls: "review", rows: [
+          { title: "✦ 把 STDF 解析器接进管线", tone: "review", who: "主管 · 北", key: "M-31", cls: "on", jump: 0 },
+        ] }], { meta: "M-31" })}
+        <section class="pane">
+          <div class="pane-head"><span>任务详情</span><span class="spacer"></span><span class="tiny faint">对话</span></div>
+          <div class="pane-body">
+            ${missionHead("review", "计划待审批", 0, 3, `<button class="link danger">取消 Mission</button>`)}
+            ${planBlock()}
+            ${threadStrip([
+              ["你", "先打通链路，样本用 sample.stdf；箭头关系等解析字段定下来再补。"],
+              ["主管 北", "三步已拆好，验收条件写在每一步下面；你批准我就派单。"],
+            ])}
+          </div>
+        </section>
+      </div>`,
+      notes: {
+        note: { head: "这一步发生什么", body: "主管只在 <span class='mono'>mission_plans</span> 落一版 plan，不派单；人批准后才生成子任务。" },
+        good: { head: "为什么这样切", body: "入口只有一个（Mission），免得多处都能起任务。" },
+      },
+    },
+    {
+      nav: "workspace",
+      head: {
+        kicker: "Mission · M-31",
+        title: "把 STDF 解析器接进管线",
+        sub: `${pill("running", "执行中")}<span>3 个子任务 · 1 个在跑</span>`,
+        actions: `<button class="btn">汇总进度</button><button class="btn icon">⋯</button>`,
+      },
+      body: `<div class="ws">
+        ${todoPane([
+          { name: "执行中", count: 3, cls: "active", rows: [
+            { title: "✦ 把 STDF 解析器接进管线", tone: "running", who: "主管 · 北", key: "M-31", cls: "on" },
+            { title: "打通链路", tone: "running", who: "vega", key: "T-311", cls: "child", jump: 2 },
+            { title: "补箭头关系", tone: "running", who: "golo", key: "T-312", cls: "child", jump: 4 },
+          ] },
+          { name: "排队", count: 1, cls: "waiting", rows: [
+            { title: "出评测报告", tone: "queued", who: "lumi", key: "T-313", cls: "child", jump: 4 },
+          ] },
+        ], { meta: "3 条新任务" })}
+        <section class="pane">
+          <div class="pane-head"><span>任务详情</span><span class="spacer"></span><span class="tiny faint">3 个子任务</span></div>
+          <div class="pane-body">
+            ${missionHead("running", "执行中", 0, 3, `<button class="link danger">取消 Mission</button>`)}
+            <div class="mission-approved">计划已批准 · 3 个子任务</div>
+            <div class="delegation-list">
+              ${delegation({ key: "T-311", title: "打通链路", statusCls: "running", statusLabel: "执行中", who: "vega", run: "run-8836", jump: 2 })}
+              ${delegation({ key: "T-312", title: "补箭头关系", statusCls: "queued", statusLabel: "排队", who: "golo", run: "run-8841" })}
+              ${delegation({ key: "T-313", title: "出评测报告", statusCls: "queued", statusLabel: "排队", who: "lumi", jump: 4 })}
+            </div>
+            ${threadStrip([
+              ["你", "批了，按计划跑。"],
+              ["主管 北", `已派单：<span class="mono">T-311</span> / <span class="mono">T-312</span> / <span class="mono">T-313</span>，有变化我在这里说。`],
+            ])}
+          </div>
+        </section>
+      </div>`,
+      notes: {
+        note: { head: "这一步发生什么", body: "三条 todo 一次写入：<span class='mono'>parentId</span> 指向 mission、<span class='mono'>agentId</span> 指向执行体、<span class='mono'>kind='task'</span>。" },
+        good: { head: "为什么这样切", body: "从这一秒起任务就是唯一事实源；Bot 页和场景不再各自 filter 一遍。" },
+      },
+    },
+    {
+      nav: "bot",
+      head: {
+        kicker: "Bot",
+        title: "守夜",
+        sub: `${tag("ok", "主动")}<span>能执行 · 执行体 vega</span><span class="faint">·</span><span class="faint">本小时 1 条已说 / 0 条被拦</span>`,
+        actions: `<button class="btn">暂停</button><button class="btn">静音 1h</button><button class="btn">打开会话</button><button class="btn icon">⋯</button><button class="btn primary">跑一次决策</button>`,
+      },
+      body: `<div class="bot">
+        ${botList("shouye")}
+        <section class="pane bot-main">
+          <div class="pane-head"><span>回合流</span><span class="spacer"></span>${tag("ai", "主动")}</div>
+          <div class="pane-body stream">
+            <div class="day">今天</div>
+            ${turnReported({
+              name: "守夜", letter: "守", cls: "a", time: "12:04", run: "run 8836",
+              text: "「打通链路」跑完了：sample.stdf 解析出 12 组量测，产物在 runs/detect/run-8836/best.pt。② 可以接了。",
+              taskKey: "T-311", taskTitle: "打通链路", jump: 1,
+              whyRows: {
+                trigger: "run.finished · run-8836",
+                memory: "3 条（L3 项目 · L2 事实 ×2）",
+                gates: "通过 · 本小时第 1 条，不在静音时段",
+                cost: "1 280 tokens · 4.2s",
+              },
+            })}
+            ${turnProactive({
+              name: "守夜", letter: "守", cls: "a", time: "11:58",
+              text: "② 我不自己开：① 的产物还没落盘，现在开只会空跑。",
+              title: "我理解的是把 STDF 解析器接进管线分三步，先跑 ① 打通链路？",
+              desc: "开跑会用执行体 vega 起一次 run，产物落到 runs/detect/。",
+              action: "开跑", note: "会立即起一次 run（点这个就是授权）",
+            })}
+            ${turnQuiet({
+              time: "11:40", label: "沉默", text: "配额还够，但这一轮没有新事实",
+              whyRows: {
+                trigger: "todo.changed · T-311",
+                memory: "没注入（不开口就不调模型）",
+                gates: "跳过 · 与上一条近重复 0.83",
+                cost: "没调用模型",
+              },
+            })}
+          </div>
+          ${composer("守夜")}
+        </section>
+        <section class="pane bot-right">
+          ${botTabs("人格卡")}
+          <div class="pane-body">
+            <div class="field"><span>语气</span><b>简短，先给结论</b></div>
+            <div class="field"><span>称呼</span><b>你</b></div>
+            <div class="field"><span>边界</span><b>不替人点审批</b></div>
+            <div class="field"><span>能力档位</span><div class="select-like">能执行<i>▾</i></div></div>
+            <div class="field"><span>执行体（work 档位起 run 用）</span><div class="select-like"><span class="avatar xs a">V</span>vega · 技术执行<i>▾</i></div></div>
+            <div class="field"><span>配额</span><b>8 条 / 小时 · 最小间隔 5 分钟</b></div>
+            <div class="hint-line">任务不在这里再列一遍：汇报的 <span class="mono">trigger.ref</span> 里带 todo，点回任务面板的同一行。</div>
+          </div>
+        </section>
+      </div>`,
+      notes: {
+        note: { head: "这一步发生什么", body: "run 结束回流一条 ≤200 字汇报：<span class='mono'>trigger.kind=run.finished</span>、<span class='mono'>trigger.ref=todo:&lt;id&gt;</span>；任务本体仍在任务面板。" },
+        bad: { head: "之前的样子", body: "回合里只有自然语言 + runId：说了「跑完了」，点不回是哪一条任务，进展只能自己去任务面板翻。" },
+        good: { head: "动线要点", body: "把 <span class='mono'>trigger.ref</span> 渲染成一行：点「对应 T-311」= 任务面板同一行 → 同一个 TaskDetail。Bot 页不复制任务列表。" },
+      },
+    },
+    {
+      nav: "scene",
+      head: {
+        kicker: "场景",
+        title: "办公室",
+        sub: `${pill("running", "实况")}<span>3 人协作中</span><span class="faint">·</span><span>office · template</span>`,
+        actions: `<button class="btn">详情</button><button class="btn">配置</button><button class="btn icon">⋯</button>`,
+      },
+      body: `<div class="scene">
+        ${stage({
+          coord: {
+            key: "M-31", title: "把 STDF 解析器接进管线", cls: "running", label: "并行执行中", done: 0, total: 3,
+            members: [
+              { name: "vega", task: "T-311", tone: "running" },
+              { name: "golo", task: "T-312", tone: "running" },
+              { name: "lumi", task: "T-313", tone: "queued" },
+            ],
+          },
+          desks: [
+            { name: "vega", letter: "V", cls: "a", role: "worker · 执行中", key: "T-311", task: "打通链路", on: true },
+            { name: "golo", letter: "G", cls: "b", role: "worker · 执行中", key: "T-312", task: "补箭头关系" },
+            { name: "lumi", letter: "L", cls: "c", role: "worker · 排队", key: "T-313", task: "出评测报告" },
+            { name: "空位", letter: "·", cls: "d", role: "未上场", empty: true },
+            { name: "空位", letter: "·", cls: "d", role: "未上场", empty: true },
+            { name: "空位", letter: "·", cls: "d", role: "未上场", empty: true },
+          ],
+          foot: `协调台只读 Mission 的子任务；cast 里没有的 agent 保留并标「未上场」，不再整条丢掉。`,
+        })}
+      </div>`,
+      notes: {
+        note: { head: "消除了什么", body: "原来 <span class='mono'>members</span> 用 <span class='mono'>actors.find(agentId)</span> 之后 <span class='mono'>filter(Boolean)</span>：cast 里没有就静默消失。" },
+        bad: { head: "之前的样子", body: "任务里有 3 条子任务，协调台只列出 1 个人；另外 2 条根本没有入口。" },
+        good: { head: "动线要点", body: "舞台上的人、协调台的人、任务里的人都来自同一批 delegation。" },
+      },
+    },
+    {
+      nav: "scene",
+      head: {
+        kicker: "场景",
+        title: "办公室",
+        sub: `${pill("running", "实况")}<span>已选中 lumi · T-313</span>`,
+        actions: `<button class="btn">详情</button><button class="btn">配置</button><button class="btn icon">⋯</button>`,
+      },
+      body: `<div class="scene split">
+        ${stage({
+          coord: {
+            key: "M-31", title: "把 STDF 解析器接进管线", cls: "running", label: "并行执行中", done: 0, total: 3,
+            members: [
+              { name: "vega", task: "T-311", tone: "running" },
+              { name: "golo", task: "T-312", tone: "running" },
+              { name: "lumi", task: "T-313", tone: "queued" },
+            ],
+          },
+          desks: [
+            { name: "vega", letter: "V", cls: "a", role: "worker · 执行中", key: "T-311", task: "打通链路" },
+            { name: "golo", letter: "G", cls: "b", role: "worker · 执行中", key: "T-312", task: "补箭头关系" },
+            { name: "lumi", letter: "L", cls: "c", role: "worker · 排队", key: "T-313", task: "出评测报告", on: true },
+          ],
+          foot: `点工位 = 打开同一个任务抽屉（只吃 todoId）。`,
+        })}
+        <section class="pane" style="grid-column:2;grid-row:1">
+          <div class="pane-head"><span>任务</span><span class="spacer"></span>${pill("queued", "排队")}</div>
+          <div class="pane-body">
+            <div class="drawer-head"><span class="mission-mark">✦</span><b>T-313 出评测报告</b></div>
+            <dl class="kv" style="margin-top:10px">
+              <dt>来自 Mission</dt><dd>M-31 把 STDF 解析器接进管线</dd>
+              <dt>执行体</dt><dd>lumi · 场景 3 号工位</dd>
+              <dt>状态</dt><dd>排队 · 等 T-311 完成</dd>
+              <dt>当前 run</dt><dd>—</dd>
+              <dt>产物</dt><dd class="faint">—</dd>
+            </dl>
+            <div class="hint-line" style="margin-top:12px">改优先级 / 转派 / 取消 收在 ⋯ 里。</div>
+          </div>
+        </section>
+      </div>`,
+      notes: {
+        note: { head: "这一步发生什么", body: "抽屉是同一个组件，只吃 <span class='mono'>todoId</span>；不管从哪个入口打开，内容一致。" },
+        good: { head: "动线要点", body: "三个面共享一次查询，不再出现「Bot 页看到 A、场景看到 B」。" },
+      },
+    },
+    {
+      nav: "workspace",
+      head: {
+        kicker: "Mission · M-31",
+        title: "把 STDF 解析器接进管线",
+        sub: `${pill("review", "待确认")}<span>3 个子任务已完成</span><span class="faint">·</span><span>验收只在这里做一次</span>`,
+        actions: `<button class="btn">退回修改</button><button class="btn icon">⋯</button>`,
+      },
+      body: `<div class="ws">
+        ${todoPane([
+          { name: "待验收", count: 4, cls: "review", rows: [
+            { title: "✦ 把 STDF 解析器接进管线", tone: "review", who: "主管 · 北", key: "M-31", cls: "on" },
+            { title: "打通链路", tone: "running", who: "vega", key: "T-311", cls: "child" },
+            { title: "补箭头关系", tone: "running", who: "golo", key: "T-312", cls: "child" },
+            { title: "出评测报告", tone: "running", who: "lumi", key: "T-313", cls: "child" },
+          ] },
+        ], { meta: "等你验收" })}
+        <section class="pane">
+          <div class="pane-head"><span>任务详情</span><span class="spacer"></span><span class="tiny faint">3 个子任务</span></div>
+          <div class="pane-body">
+            ${missionHead("review", "待确认", 3, 3, `<button class="btn primary tiny">确认完成</button>`)}
+            <div class="delegation-list">
+              ${delegation({ key: "T-311", title: "打通链路", statusCls: "done", statusLabel: "已完成", who: "vega", run: "run-8836", result: "解析出 12 组量测；产物 runs/detect/run-8836/best.pt" })}
+              ${delegation({ key: "T-312", title: "补箭头关系", statusCls: "done", statusLabel: "已完成", who: "golo", run: "run-8841", result: "箭头 8 条全部对齐 spec；改动 2 个文件" })}
+              ${delegation({ key: "T-313", title: "出评测报告", statusCls: "done", statusLabel: "已完成", who: "lumi", run: "run-8847", result: "3 个样本全绿；报告 eval-0930.html" })}
+            </div>
+            ${threadStrip([
+              ["主管 北", "3 条都回来了，产物链接在各自卡片里。"],
+              ["你", "我来验收。"],
+            ])}
+          </div>
+        </section>
+      </div>`,
+      notes: {
+        note: { head: "这一步发生什么", body: "验收是领域动作（写 <span class='mono'>todo.status</span> + <span class='mono'>delegation.accepted</span>），三处都是读投影，自然同步。" },
+        good: { head: "动线要点", body: "闭环终点只有一个操作位，不是三个。" },
+      },
+    },
+  ],
+};
+
+/* ---------- B 人物卡 ---------- */
+const personCard = (name, letter, cls, rows) => `
+  <div class="pane-head"><span>人物</span><span class="spacer"></span><button class="btn tiny ghost">⋯</button></div>
+  <div class="pane-body">
+    <div class="drawer-head"><span class="avatar ${cls}">${letter}</span><b>${name}</b>${pill("running", "进行中")}</div>
+    <dl class="kv" style="margin-top:10px">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
+    <button class="link" data-jump="2" style="margin-top:12px">查看 Mission →</button>
+  </div>`;
+
+const B = {
+  name: "B · 人物卡，先点人再看活",
+  claim: `<b>事实源 = 执行体</b>。任务挂在人身上：点场景里的 NPC 或 Bot 页的人格卡，打开的是同一张人物卡（任务 / Mission / 最近 run / 产物），适合「先找人再找活」。`,
+  steps: [
+    {
+      nav: "scene",
+      head: {
+        kicker: "场景",
+        title: "办公室",
+        sub: `${pill("running", "实况")}<span>已选中 golo</span><span class="faint">·</span><span>抽屉从右侧打开，不跳页</span>`,
+        actions: `<button class="btn">详情</button><button class="btn">配置</button>`,
+      },
+      body: `<div class="scene split">
+        ${stage({
+          coord: {
+            key: "M-31", title: "把 STDF 解析器接进管线", cls: "running", label: "并行执行中", done: 0, total: 3,
+            members: [
+              { name: "vega", task: "T-311", tone: "running" },
+              { name: "golo", task: "T-312", tone: "running" },
+              { name: "lumi", task: "T-313", tone: "queued" },
+            ],
+          },
+          desks: [
+            { name: "vega", letter: "V", cls: "a", role: "worker · 执行中", key: "T-311", task: "打通链路" },
+            { name: "golo", letter: "G", cls: "b", role: "worker · 执行中", key: "T-312", task: "补箭头关系", on: true },
+            { name: "lumi", letter: "L", cls: "c", role: "worker · 排队", key: "T-313", task: "出评测报告" },
+          ],
+        })}
+        <section class="pane" style="grid-column:2;grid-row:1">
+          ${personCard("golo", "G", "b", [
+            ["当前任务", "T-312 补箭头关系"],
+            ["所属 Mission", "M-31 把 STDF 解析器接进管线"],
+            ["最近 run", mono("run-8841", "tiny") + " · waiting_children"],
+            ["今日", "完成 2 / 进行 1"],
+            ["产物", "runs/detect/run-8841/"],
+          ])}
+        </section>
+      </div>`,
+      notes: {
+        note: { head: "这一步发生什么", body: "人物卡只吃 <span class='mono'>agentId</span>，任务列表由 <span class='mono'>assignmentsOf(agentId)</span> 提供。" },
+        good: { head: "动线要点", body: "先认人再看活，符合「舞台上有谁」的直觉。" },
+      },
+    },
+    {
+      nav: "bot",
+      head: {
+        kicker: "Bot",
+        title: "守夜",
+        sub: `${tag("ok", "主动")}<span>人格卡 → 执行体 vega</span><span class="faint">·</span><span>点开是同一张人物卡</span>`,
+        actions: `<button class="btn">暂停</button><button class="btn">静音 1h</button><button class="btn icon">⋯</button><button class="btn primary">跑一次决策</button>`,
+      },
+      body: `<div class="bot">
+        ${botList("shouye")}
+        <section class="pane bot-main">
+          <div class="pane-head"><span>回合流</span><span class="spacer"></span>${tag("ai", "主动")}</div>
+          <div class="pane-body stream">
+            <div class="day">今天</div>
+            ${turnReported({
+              name: "守夜", letter: "守", cls: "a", time: "12:04", run: "run 8836",
+              text: "链路已经通了，12 组量测；② 要的字段我顺手留在产物里，golo 可以直接接。",
+              taskKey: "T-311", taskTitle: "打通链路", jump: 2,
+            })}
+            ${turnQuiet({ time: "11:40", label: "沉默", text: "配额还够，但没新事实" })}
+          </div>
+          ${composer("守夜")}
+        </section>
+        <section class="pane bot-right">
+          <div class="pane-head"><span>人物</span><span class="spacer"></span><span class="tiny faint">从人格卡 · 执行体点进来</span></div>
+          <div class="pane-body">
+            <div class="drawer-head"><span class="avatar a">V</span><b>vega</b>${pill("running", "进行中")}</div>
+            <dl class="kv" style="margin-top:10px">
+              <dt>当前任务</dt><dd>T-311 打通链路</dd>
+              <dt>所属 Mission</dt><dd>M-31 把 STDF 解析器接进管线</dd>
+              <dt>最近 run</dt><dd>${mono("run-8836", "tiny")} · running</dd>
+              <dt>人格</dt><dd>守夜（bot）→ 执行体 vega</dd>
+              <dt>今日</dt><dd>完成 1 / 进行 1</dd>
+            </dl>
+            <button class="link" data-jump="2" style="margin-top:12px">查看 Mission →</button>
+            <div class="hint-line" style="margin-top:10px">场景里点 golo 的工位，打开的是同一张卡。</div>
+          </div>
+        </section>
+      </div>`,
+      notes: {
+        note: { head: "这一步发生什么", body: "人格卡上的「执行体」不是另一份数据：点它打开的就是场景抽屉那张人物卡。" },
+        bad: { head: "之前的样子", body: "bot 与 agent 是两套 id，人格页看不出这些回合是谁在替它干活。" },
+        good: { head: "动线要点", body: "字段只加一个 <span class='mono'>executorAgentId</span>，两个入口读同一张卡。" },
+      },
+    },
+    {
+      nav: "workspace",
+      head: {
+        kicker: "Mission · M-31",
+        title: "把 STDF 解析器接进管线",
+        sub: `${pill("running", "执行中")}<span>从 golo 的人物卡跳过来</span><span class="faint">·</span><span>同一批 delegation，换个分组</span>`,
+        actions: `<button class="btn">汇总进度</button><button class="btn icon">⋯</button>`,
+      },
+      body: `<div class="ws">
+        ${todoPane([
+          { name: "执行中", count: 3, cls: "active", rows: [
+            { title: "✦ 把 STDF 解析器接进管线", tone: "running", who: "主管 · 北", key: "M-31", cls: "on" },
+            { title: "打通链路", tone: "running", who: "vega", key: "T-311", cls: "child", jump: 3 },
+            { title: "补箭头关系", tone: "running", who: "golo", key: "T-312", cls: "child", jump: 3 },
+          ] },
+          { name: "排队", count: 1, cls: "waiting", rows: [
+            { title: "出评测报告", tone: "queued", who: "lumi", key: "T-313", cls: "child", jump: 3 },
+          ] },
+        ], { meta: "按执行体分组也成立" })}
+        <section class="pane">
+          <div class="pane-head"><span>任务详情</span><span class="spacer"></span><span class="tiny faint">3 个子任务</span></div>
+          <div class="pane-body">
+            ${missionHead("running", "执行中", 0, 3)}
+            <div class="delegation-list">
+              ${delegation({ key: "T-311", title: "打通链路", statusCls: "running", statusLabel: "执行中", who: "vega", run: "run-8836" })}
+              ${delegation({ key: "T-312", title: "补箭头关系", statusCls: "running", statusLabel: "执行中", who: "golo", run: "run-8841", jump: 3 })}
+              ${delegation({ key: "T-313", title: "出评测报告", statusCls: "queued", statusLabel: "排队", who: "lumi" })}
+            </div>
+            <div class="hint-line" style="margin-top:10px">「人 → 活」和「活 → 人」双向都能走通，不用回主页找。</div>
+            ${threadStrip([
+              ["主管 北", `② 的产物在 <span class="mono">runs/detect/run-8841</span>；golo 说箭头还剩 3 条等 ① 的字段。`],
+            ])}
+          </div>
+        </section>
+      </div>`,
+      notes: {
+        note: { head: "这一步发生什么", body: "Mission 详情页与人物卡共用同一批 delegation 数据，只是分组维度不同（mission / agent）。" },
+        good: { head: "动线要点", body: "两个入口指向同一个对象，而不是两份副本。" },
+      },
+    },
+    {
+      nav: "scene",
+      head: {
+        kicker: "场景",
+        title: "办公室",
+        sub: `${pill("running", "实况")}<span>已定位 lumi · T-313</span><span class="faint">·</span><span>选行 → 舞台对位</span>`,
+        actions: `<button class="btn">详情</button><button class="btn">配置</button>`,
+      },
+      body: `<div class="scene split">
+        ${stage({
+          coord: {
+            key: "M-31", title: "把 STDF 解析器接进管线", cls: "running", label: "并行执行中", done: 0, total: 3,
+            members: [
+              { name: "vega", task: "T-311", tone: "running" },
+              { name: "golo", task: "T-312", tone: "running" },
+              { name: "lumi", task: "T-313", tone: "queued", quiet: false },
+            ],
+          },
+          desks: [
+            { name: "vega", letter: "V", cls: "a", role: "worker · 执行中", key: "T-311", task: "打通链路" },
+            { name: "golo", letter: "G", cls: "b", role: "worker · 执行中", key: "T-312", task: "补箭头关系" },
+            { name: "lumi", letter: "L", cls: "c", role: "worker · 排队", key: "T-313", task: "出评测报告", on: true },
+          ],
+        })}
+        <section class="pane" style="grid-column:2;grid-row:1">
+          <div class="pane-head"><span>Mission 行</span><span class="spacer"></span>${pill("review", "已选中")}</div>
+          <div class="pane-body">
+            <dl class="kv">
+              <dt>行</dt><dd>③ 出评测报告 · lumi</dd>
+              <dt>状态</dt><dd>排队 · 等 ①②</dd>
+              <dt>舞台</dt><dd>3 号工位（已高亮）</dd>
+            </dl>
+            <button class="link" style="margin-top:12px">在场景中定位 →</button>
+          </div>
+        </section>
+      </div>`,
+      notes: {
+        note: { head: "这一步发生什么", body: "选行 → 场景按 <span class='mono'>agentId</span> 找座位 → 高亮，镜头不动，避免「点了就跳页」。" },
+        good: { head: "动线要点", body: "任务、人员、舞台三者互指，不再需要心智翻译。" },
+      },
+    },
+  ],
+};
+
+/* ---------- C Mission 时间轴 ---------- */
+const C = {
+  name: "C · Mission 时间轴为中心",
+  claim: `<b>事实源 = Mission</b>。以一条 Mission 的时间轴为主面：左列 plan steps、右列 delegations 实时状态；Bot 页与场景都只是它的投影，适合「盯一条长任务」。`,
+  steps: [
+    {
+      nav: "workspace",
+      head: {
+        kicker: "Mission · M-31",
+        title: "把 STDF 解析器接进管线",
+        sub: `${pill("waiting", "等待子任务")}<span>计划 3 步 · 实际 2 步在跑</span>`,
+        actions: `<button class="btn">汇总进度</button><button class="btn icon">⋯</button>`,
+      },
+      body: `<div class="ws">
+        ${todoPane([
+          { name: "执行中", count: 3, cls: "active", rows: [
+            { title: "✦ 把 STDF 解析器接进管线", tone: "running", who: "主管 · 北", key: "M-31", cls: "on" },
+            { title: "打通链路", tone: "running", who: "vega", key: "T-311", cls: "child" },
+            { title: "补箭头关系", tone: "running", who: "golo", key: "T-312", cls: "child", jump: 1 },
+          ] },
+          { name: "排队", count: 1, cls: "waiting", rows: [
+            { title: "出评测报告", tone: "queued", who: "lumi", key: "T-313", cls: "child" },
+          ] },
+        ], { meta: "时间轴是主面" })}
+        <section class="pane">
+          <div class="pane-head"><span>Mission 时间轴</span><span class="spacer"></span>${tag("warn", "计划 vs 实际")}</div>
+          <div class="pane-body">
+            ${missionHead("waiting", "等待子任务", 0, 3)}
+            <div class="tl" style="margin-top:10px">
+              <div class="tl-row">
+                <div class="tl-plan"><span class="mission-step-key">①</span>打通链路 <span class="tiny faint">rev 1</span></div>
+                <div class="tl-exec">${dot("running")}<b>T-311</b>${pill("running", "执行中")}<span class="tiny muted">vega</span>${spacer}${mono("run-8836", "tiny faint")}</div>
+              </div>
+              <div class="tl-row">
+                <div class="tl-plan"><span class="mission-step-key">②</span>补箭头关系 <span class="tiny faint">rev 1</span></div>
+                <div class="tl-exec jumpable" data-jump="1">${dot("running")}<b>T-312</b>${pill("running", "执行中")}<span class="tiny muted">golo</span>${spacer}${mono("run-8841", "tiny faint")}</div>
+              </div>
+              <div class="tl-row">
+                <div class="tl-plan"><span class="mission-step-key">③</span>出评测报告 <span class="tiny faint">rev 1</span></div>
+                <div class="tl-exec muted">${dot("queued")}<b>未开始</b><span class="tiny">等 ①②</span></div>
+              </div>
+            </div>
+            <div class="hint-line" style="margin-top:10px">左列是批准过的计划，右列是实际 delegation；卡在哪一眼能看出来。</div>
+            ${threadStrip([
+              ["主管 北", "② 还在跑；③ 等 ①② 的产物，不提前开。"],
+            ])}
+          </div>
+        </section>
+      </div>`,
+      notes: {
+        note: { head: "这一步发生什么", body: "plan revision 与 delegation 并列显示，不再需要各自去任务面板拼上下文。" },
+        good: { head: "动线要点", body: "长任务的主面就是 Mission 本身。" },
+      },
+    },
+    {
+      nav: "workspace",
+      head: {
+        kicker: "Mission · M-31",
+        title: "把 STDF 解析器接进管线",
+        sub: `${pill("waiting", "等待子任务")}<span>② 已展开</span>`,
+        actions: `<button class="btn">汇总进度</button><button class="btn icon">⋯</button>`,
+      },
+      body: `<div class="ws">
+        ${todoPane([
+          { name: "执行中", count: 3, cls: "active", rows: [
+            { title: "✦ 把 STDF 解析器接进管线", tone: "running", who: "主管 · 北", key: "M-31", cls: "on" },
+            { title: "打通链路", tone: "running", who: "vega", key: "T-311", cls: "child" },
+            { title: "补箭头关系", tone: "running", who: "golo", key: "T-312", cls: "child", jump: 2 },
+          ] },
+          { name: "排队", count: 1, cls: "waiting", rows: [
+            { title: "出评测报告", tone: "queued", who: "lumi", key: "T-313", cls: "child" },
+          ] },
+        ], { meta: "行内展开" })}
+        <section class="pane">
+          <div class="pane-head"><span>Mission 时间轴</span><span class="spacer"></span>${tag("warn", "② 展开")}</div>
+          <div class="pane-body">
+            ${missionHead("waiting", "等待子任务", 0, 3)}
+            <div class="tl" style="margin-top:10px">
+              <div class="tl-row">
+                <div class="tl-plan"><span class="mission-step-key">①</span>打通链路</div>
+                <div class="tl-exec">${dot("running")}<b>T-311</b>${pill("running", "执行中")}<span class="tiny muted">vega</span></div>
+              </div>
+              <div class="tl-row">
+                <div class="tl-plan"><span class="mission-step-key">②</span>补箭头关系</div>
+                <div class="tl-exec">${dot("running")}<b>T-312</b>${pill("running", "执行中")}<span class="tiny muted">golo</span>${spacer}${mono("run-8841", "tiny faint")}</div>
+                <div class="tl-expand">
+                  <dl class="kv">
+                    <dt>在哪</dt><dd>场景 · 2 号工位 <button class="link">去舞台上定位 →</button></dd>
+                    <dt>产物</dt><dd>runs/detect/run-8841 · arrows.json</dd>
+                    <dt>验收</dt><dd>等 ① 完成后一起验收（不是现在逐条点）</dd>
+                  </dl>
+                </div>
+              </div>
+              <div class="tl-row">
+                <div class="tl-plan"><span class="mission-step-key">③</span>出评测报告</div>
+                <div class="tl-exec muted">${dot("queued")}<b>未开始</b><span class="tiny">等 ①②</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>`,
+      notes: {
+        note: { head: "这一步发生什么", body: "「在哪」这一行就是场景入口 —— Mission 视图不孤立，能落到具体工位。" },
+        good: { head: "动线要点", body: "所有追问（谁 / 在哪 / 产物 / 谁验收）都在同一行里回答。" },
+      },
+    },
+    {
+      nav: "bot",
+      head: {
+        kicker: "Bot",
+        title: "守夜",
+        sub: `${tag("ok", "主动")}<span>能执行 · 执行体 vega</span><span class="faint">·</span><span class="faint">与 M-31 相关 1 条</span>`,
+        actions: `<button class="btn">暂停</button><button class="btn">静音 1h</button><button class="btn icon">⋯</button><button class="btn primary">跑一次决策</button>`,
+      },
+      body: `<div class="bot">
+        ${botList("shouye")}
+        <section class="pane bot-main">
+          <div class="pane-head"><span>回合流</span><span class="spacer"></span>${tag("ai", "主动")}</div>
+          <div class="pane-body stream">
+            <div class="day">今天</div>
+            <button class="ghost-row jumpable" data-jump="0">
+              ${mono("M-31", "tiny faint")}<b style="font-weight:500">你参与的任务在 ② 步进行中</b>${spacer}<span class="tiny faint">去 Mission →</span>
+            </button>
+            <div class="hint-line">Bot 页不做第二份任务列表，只给一句 + 指路；状态以 Mission 为准。</div>
+            ${turnQuiet({
+              time: "11:40", label: "沉默", text: "没有新事实；② 的进展在 Mission 里",
+              whyRows: {
+                trigger: "todo.changed · T-312",
+                memory: "没注入（不开口就不调模型）",
+                gates: "跳过 · 事件分低于阈值",
+                cost: "没调用模型",
+              },
+            })}
+          </div>
+          ${composer("守夜")}
+        </section>
+        <section class="pane bot-right">
+          ${botTabs("人格卡")}
+          <div class="pane-body">
+            <div class="field"><span>语气</span><b>简短，先给结论</b></div>
+            <div class="field"><span>能力档位</span><div class="select-like">能执行<i>▾</i></div></div>
+            <div class="field"><span>执行体</span><div class="select-like"><span class="avatar xs a">V</span>vega · 技术执行<i>▾</i></div></div>
+            <div class="hint-line">人格页只说「我知道你在哪」，不重复状态。</div>
+          </div>
+        </section>
+      </div>`,
+      notes: {
+        note: { head: "消除了什么", body: "Bot 页不做第二份任务列表，避免两处状态不一致。" },
+        good: { head: "动线要点", body: "三处不是三个列表，而是「主面 + 指路」。" },
+      },
+    },
+  ],
+};
+
+const ROUTES = { A, B, C };
+/* 步骤条上的短标签（页面标题太长，放不下） */
+const SHORT = {
+  A: ["计划待批", "批准落库", "Bot 汇报", "场景亮起", "同一个抽屉", "验收同步"],
+  B: ["点工位", "点人格卡", "跳 Mission", "回舞台"],
+  C: ["两列对照", "展开一行", "只留指路"],
+};
+
+/* ============================ 渲染 ============================ */
+let routeId = (qs.get("v") || "A").toUpperCase();
+if (!ROUTES[routeId]) routeId = "A";
+let stepIndex = Math.max(1, Math.min(Number(qs.get("s")) || 1, ROUTES[routeId].steps.length)) - 1;
+const maxIndex = () => ROUTES[routeId].steps.length - 1;
+
+function go(index) {
+  stepIndex = Math.max(0, Math.min(index, maxIndex()));
+  render();
+}
+
+function render() {
+  const route = ROUTES[routeId];
+  const step = route.steps[stepIndex];
+
+  document.querySelectorAll(".rail-btn").forEach((b) => b.classList.toggle("on", b.dataset.view === step.nav));
+  $wide.innerHTML = `<div class="page">${head(step.head)}${step.body}</div>`;
+  $wide.scrollTop = 0;
+
+  $routes.innerHTML = Object.entries(ROUTES).map(([id, r]) => `
+    <button class="route-tab ${id === routeId ? "on" : ""}" data-route="${id}">${r.name}</button>`).join("");
+
+  $steps.innerHTML = route.steps.map((s, i) => `
+    <button class="step-chip ${i === stepIndex ? "on" : ""}" data-step="${i}" title="${s.head.title}">
+      <i>${i + 1}</i>${SHORT[routeId][i] || s.head.title}
+    </button>`).join("");
+
+  $counter.textContent = `${routeId} · ${stepIndex + 1}/${route.steps.length}`;
+
+  const notes = [];
+  notes.push(`<div class="dock-cell claim"><h4>${routeId} 的取舍</h4>${route.claim}</div>`);
+  if (step.notes.note) notes.push(`<div class="dock-cell"><h4>${step.notes.note.head}</h4>${step.notes.note.body}</div>`);
+  if (step.notes.bad) notes.push(`<div class="dock-cell bad"><h4>${step.notes.bad.head}</h4>${step.notes.bad.body}</div>`);
+  if (step.notes.good) notes.push(`<div class="dock-cell good"><h4>${step.notes.good.head}</h4>${step.notes.good.body}</div>`);
+  $notes.innerHTML = notes.join("");
+
+  document.getElementById("prev").disabled = stepIndex === 0;
+  document.getElementById("next").disabled = stepIndex === maxIndex();
+  document.getElementById("prev").style.opacity = stepIndex === 0 ? ".45" : "";
+  document.getElementById("next").style.opacity = stepIndex === maxIndex() ? ".45" : "";
+}
+
+$routes.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-route]");
+  if (!btn) return;
+  routeId = btn.dataset.route;
+  stepIndex = 0;
+  render();
+});
+$steps.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-step]");
+  if (!btn) return;
+  go(Number(btn.dataset.step));
+});
+$wide.addEventListener("click", (e) => {
+  const target = e.target.closest("[data-jump]");
+  if (!target) return;
+  go(Number(target.dataset.jump));
+});
+document.getElementById("prev").onclick = () => go(stepIndex - 1);
+document.getElementById("next").onclick = () => go(stepIndex + 1);
+document.getElementById("theme").onclick = () => {
+  ROOT.dataset.theme = ROOT.dataset.theme === "dark" ? "light" : "dark";
+};
+addEventListener("keydown", (e) => {
+  if (e.key === "ArrowRight") go(stepIndex + 1);
+  if (e.key === "ArrowLeft") go(stepIndex - 1);
+});
+
+render();
+</script>
+</body>
+</html>
