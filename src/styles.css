@@ -757,6 +757,9 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .pane-collapse:hover{background:var(--surface-hover);color:var(--fg)}
 .pane-collapse.dark{color:var(--faint)}
 .pane-collapse.dark:hover{background:color-mix(in srgb,var(--fg) 88%,var(--surface));color:var(--page-canvas)}
+/* TODO 段头折叠（只收列表，和机器人 / 项目一致） */
+.pane-fold{width:20px;height:20px;border:0;background:transparent;color:var(--faint);border-radius:4px;display:grid;place-items:center;padding:0;flex:none}
+.pane-fold:hover{background:var(--surface-hover);color:var(--fg)}
 /* 面板最大化：铺满工作区；其余面板只隐藏不卸载（pty / 标签 / 预览都保住），Esc 还原 */
 .main{position:relative}
 .main.pane-max .workspace-view > *{visibility:hidden}
@@ -2996,6 +2999,27 @@ button:focus-visible,[role="button"]:focus-visible,a:focus-visible{outline:2px s
 .settings-embed .host-page{overflow:visible}
 @media(max-width:900px){.settings-embed-bar{justify-content:flex-start}}
 
+/* 机器人配置页：和项目页同一套骨架（概览条 + 卡片 / 列表），只是卡片里多一行回合 */
+.bots-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;align-content:start}
+.bot-card{display:flex;flex-direction:column;gap:10px;padding:14px 15px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-1);min-width:0}
+.bot-card-head{display:flex;align-items:flex-start;gap:10px;min-width:0}
+.bot-card-avatar{width:30px;height:30px;flex:none;border-radius:999px;display:grid;place-items:center;font-size:13px;font-weight:600;color:#fff;background:var(--fg-2)}
+.bot-card-avatar.a{background:#5b6cc0}
+.bot-card-avatar.b{background:#3f8f86}
+.bot-card-avatar.c{background:#b46a3c}
+.bot-card-avatar.d{background:#7d67d1}
+.bot-card-title{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}
+.bot-card-title b{font-size:13.5px;font-weight:600}
+.bot-card-meta{display:flex;flex-direction:column;gap:1px;min-width:0}
+.bot-card-meta .tiny{display:block}
+.bot-state.ready{color:var(--green);border-color:var(--green-line);background:var(--green-soft)}
+.bot-state.unbound{color:var(--amber);border-color:var(--amber-line);background:var(--amber-soft)}
+.bot-state.paused{color:var(--muted)}
+.bot-card-turn{display:flex;align-items:center;gap:7px;min-width:0;padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:var(--page-canvas)}
+.bot-card-turn .tiny.muted{min-width:0}
+.bot-card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.bot-card-foot .project-actions{display:flex;align-items:center;gap:6px}
+
 /* 主机页：概览条 + 宽卡片；去掉右侧重复的概览栏 */
 .host-page{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .host-overview-bar{flex:none}
@@ -3694,6 +3718,8 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
 
 /* ── 人格 bot（P0）：左列表 / 中回合流 / 右 Inspector，分节用 hairline ── */
 .bot-page .page-header-sub{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.bots-page .page-header-sub{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.bots-page .project-list-panel{overflow:visible}
 .bot-grid{display:grid;grid-template-columns:208px minmax(0,1fr) 300px;gap:20px;align-items:start}
 .bot-side,.bot-aside{display:flex;flex-direction:column;gap:8px;min-width:0}
 .bot-label{font-size:11.5px;font-weight:600;letter-spacing:.04em;color:var(--faint)}

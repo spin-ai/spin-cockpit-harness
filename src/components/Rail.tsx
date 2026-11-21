@@ -1,4 +1,4 @@
-type View = "workspace" | "scene" | "projects" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "bot";
+type View = "workspace" | "scene" | "projects" | "bots" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "bot";
 
 const icon = (name: string) => {
   const common = { width: 19, height: 19, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
@@ -23,6 +23,7 @@ export function Rail({ view, onChange, notesEnabled = false, zhulongAvailable = 
     { id: "workspace", label: "工作区" },
     { id: "scene", label: "场景" },
     { id: "projects", label: "项目" },
+    { id: "bots", label: "机器人" },
     { id: "git", label: "Git" },
     ...(notesEnabled ? [{ id: "notes" as View, label: "知识库" }] : []),
     ...(zhulongAvailable ? [{ id: "zhulong" as View, label: "视觉" }] : []),
@@ -33,7 +34,7 @@ export function Rail({ view, onChange, notesEnabled = false, zhulongAvailable = 
     <nav className="rail">
       {items.map((it) => (
         <button key={it.id} className={`rail-btn ${view === it.id ? "on" : ""}`} onClick={() => onChange(it.id)} title={badges[it.id] ? `${it.label} · ${badges[it.id]} 项` : it.label}>
-          {icon(it.id === "notes" ? "note" : it.id === "zhulong" ? "scan" : it.id)}<span>{it.label}</span>
+          {icon(it.id === "notes" ? "note" : it.id === "zhulong" ? "scan" : it.id === "bots" ? "bot" : it.id)}<span>{it.label}</span>
           {badges[it.id] ? <em className={`rail-badge ${it.id === "workspace" ? "run" : ""}`}>{badges[it.id]! > 99 ? "99+" : badges[it.id]}</em> : null}
         </button>
       ))}

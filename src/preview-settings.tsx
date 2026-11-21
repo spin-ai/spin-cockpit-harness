@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import type { State } from "./types";
 import { Settings } from "./components/Settings";
+import { Bots } from "./components/Bots";
 import { Rail } from "./components/Rail";
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
@@ -9,10 +10,12 @@ import "./styles.css";
 import "./design-system.css";
 
 /**
- * 设置页隔离预览（dev-only，不进构建产物）：给「分区里嵌整页内容」这类改动做截图检查。
+ * UI 隔离预览（dev-only，不进构建产物）：设置页分区、机器人配置页的截图检查。
  *
- *   ?section=hosts|stats|general    落到哪个分区
- *   ?theme=light|dark               主题
+ *   ?page=settings|bots            哪一页（默认 settings）
+ *   ?section=hosts|stats|general   设置页落到哪个分区
+ *   ?layout=list                   机器人页用列表布局
+ *   ?theme=light|dark              主题
  *
  * 只 mock State，act 一律返回 ok——不连主进程、不写你的库。
  */
@@ -63,8 +66,25 @@ const state: State = {
     contextDetail: "standard", uiScale: 0, superAgentEnabled: true, maxSupervisorRuns: 1, maxMissionChildren: 4,
     missionBudgetMinutes: 30, worktreeMode: "auto",
   } as State["settings"],
-  bots: [],
-  botTurns: [],
+  // 机器人配置页的样张：一个绑了执行体、一个没绑、一个静音
+  bots: [
+    { id: "b-golo", name: "戈洛", avatar: "戈", avatarClass: "a", capability: "work", executorAgentId: "lan", status: "active", persona: { mission: "项目值守：盯 Mission 进展，需要你定的事先问一句", tone: "直接、短句" }, policy: { maxTurnsPerHour: 8 }, createdAt: ago(4000) },
+    { id: "b-nan", name: "南", avatar: "南", avatarClass: "b", capability: "dispatch", executorAgentId: "lin", status: "active", persona: { mission: "资料管家：导入、检索、引用出处", tone: "温和、给依据" }, policy: { maxTurnsPerHour: 4 }, createdAt: ago(3600) },
+    { id: "b-draft", name: "起草机", avatar: "起", avatarClass: "c", capability: "dispatch", executorAgentId: null, status: "active", persona: { mission: "写作：按语气要求出两版", tone: "克制、书面" }, createdAt: ago(2000) },
+    { id: "b-man", name: "小满", avatar: "满", avatarClass: "d", capability: "read", executorAgentId: null, status: "paused", mutedUntil: now + 3_600_000, persona: { mission: "巡检：每天看一遍服务与日志", tone: "简短" }, createdAt: ago(1200) },
+  ],
+  botTurns: [
+    { id: "t1", botId: "b-golo", channel: "local", decision: "reported", reply: "T-001 跑完了，diff 在会话里。", createdAt: ago(3) },
+    { id: "t2", botId: "b-golo", channel: "local", decision: "silent", reason: "同类事件 10 分钟内已说过一次", createdAt: ago(28) },
+    { id: "t3", botId: "b-nan", channel: "local", decision: "answered", reply: "昨天那份 PDF 有 3 页没抽到文字，要看吗？", createdAt: ago(46) },
+    { id: "t4", botId: "b-nan", channel: "local", decision: "blocked", reason: "本小时配额已用完", createdAt: ago(70) },
+    { id: "t5", botId: "b-draft", channel: "local", decision: "escalated", reason: "对外发布必须人来点", createdAt: ago(120) },
+    { id: "t6", botId: "b-man", channel: "local", decision: "silent", reason: "静音中", createdAt: ago(180) },
+  ],
+  routines: [
+    { id: "r1", botId: "b-nan", name: "早报", kind: "daily", enabled: true, atHour: 8, nextAt: now + 3_600_000 },
+    { id: "r2", botId: "b-golo", name: "盯 Mission", kind: "watch", enabled: true },
+  ],
 };
 
 // 最小 window.harness 桩：设置页只用到这几个；不连主进程
@@ -78,21 +98,30 @@ const state: State = {
 const act = async () => ({ ok: true });
 const section = params.get("section");
 
+const page = params.get("page") === "bots" ? "bots" : "settings";
+// ?layout=list 定格列表排布（页面本身把这套偏好存在 localStorage）
+try { if (params.get("layout") === "list") localStorage.setItem("ymh.bots.layout", "list"); } catch { /* ignore */ }
+const initialView: "settings" | "bots" = page === "bots" ? "bots" : "settings";
+
 function Preview() {
-  const [view, setView] = React.useState<"settings" | "workspace">("settings");
+  const [view, setView] = React.useState<"settings" | "bots">(initialView);
   return (
     <div className="app">
       <div className="main" style={{ gridTemplateColumns: "64px minmax(0,1fr)" }}>
-        <Rail view={view} onChange={(v) => setView(v === "workspace" ? "workspace" : "settings")} />
+        <Rail view={view} onChange={(v) => setView(v === "bots" ? "bots" : "settings")} />
         <div className="wide settings-wide">
-        <Settings
-          state={state}
-          act={act}
-          notify={() => {}}
-          now={now}
-          onOpenTodo={() => {}}
-            initialSection={(section as "hosts" | "stats" | "general" | undefined) ?? "hosts"}
-          />
+          {view === "bots" ? (
+            <Bots state={state} act={act} notify={() => {}} now={now} onOpenBot={() => {}} />
+          ) : (
+            <Settings
+              state={state}
+              act={act}
+              notify={() => {}}
+              now={now}
+              onOpenTodo={() => {}}
+              initialSection={(section as "hosts" | "stats" | "general" | undefined) ?? "hosts"}
+            />
+          )}
         </div>
       </div>
     </div>

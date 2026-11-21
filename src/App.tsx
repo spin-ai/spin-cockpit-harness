@@ -17,13 +17,14 @@ import { Guide } from "./components/Guide";
 import { Notes } from "./components/Notes";
 import { Zhulong } from "./components/Zhulong";
 import { BotConsole } from "./components/Bot";
+import { Bots } from "./components/Bots";
 import { Memory } from "./components/Memory";
 import { Persona } from "./components/Persona";
 import { SceneWorkspace } from "./components/SceneWorkspace";
 import { requestTerminalAdopt, requestTerminalAt } from "./terminal-events";
 import { THEMES, isDarkTheme, resolveTheme } from "./themes";
 
-type View = "workspace" | "scene" | "projects" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "bot";
+type View = "workspace" | "scene" | "projects" | "bots" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "bot";
 type PaneId = "todo" | "chat" | "terminal" | "files";
 const COLLAPSED_PANE_W = 34;
 
@@ -44,6 +45,8 @@ export default function App() {
   const [botUnread, setBotUnread] = useState(0);
   /** 打开设置时落到哪个分区（主机 / 统计已经从 rail 收进设置） */
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
+  /** 从机器人页点「打开会话」进来时要落到哪个 bot */
+  const [activeBotId, setActiveBotId] = useState<string | null>(null);
   const [todoW, setTodoW] = useStoredSize("cmh.layout.todoW", 220, 180, 520);
   const [chatW, setChatW] = useStoredSize("cmh.layout.chatW", 300, 220, 700);
   const [filesW, setFilesW] = useStoredSize("cmh.layout.filesW", 280, 180, 640);
@@ -358,7 +361,7 @@ export default function App() {
     const onView = (e: Event) => {
       const detail = (e as CustomEvent<string | { view?: string; page?: string }>).detail;
       const next = typeof detail === "string" ? detail : detail?.view;
-      if (!next || !["workspace", "scene", "projects", "stats", "hosts", "settings", "guide", "notes", "knowledge", "memory", "persona", "zhulong", "bot"].includes(next)) return;
+      if (!next || !["workspace", "scene", "projects", "bots", "stats", "hosts", "settings", "guide", "notes", "knowledge", "memory", "persona", "zhulong", "bot"].includes(next)) return;
       if (next === "guide" && typeof detail === "object" && detail?.page) setGuidePage(detail.page);
       // 统计 / 主机已收进设置：保留旧入口，落到设置对应分区
       if (next === "stats" || next === "hosts") { setSettingsSection(next); setView("settings"); return; }
@@ -453,7 +456,7 @@ export default function App() {
       { id: "view-knowledge", label: "资料（知识库 → 文档）", group: "导航", run: () => setView("knowledge") },
       { id: "view-memory", label: "记忆（四层 / Dream）", group: "导航", run: () => setView("memory") },
       { id: "view-persona", label: "人物（建模 / 决策辅助）", group: "导航", run: () => setView("persona") },
-      { id: "view-bot", label: "人格 bot（主动 / 审计）", group: "导航", run: () => setView("bot") },
+      { id: "view-bots", label: "机器人（配置：人设 / 执行体 / 日程）", group: "导航", run: () => setView("bots") },
       { id: "quick-capture", label: "快速记录到知识库", hint: "⌘⇧K", group: "任务", run: () => void act("openQuickCapture") },
       { id: "new-thread", label: "新建会话", hint: "⌘N", group: "任务", run: () => void newThread() },
       { id: "new-task", label: "新建任务", hint: "⌘⇧N", group: "任务", run: () => dispatchInWorkspace(() => new Event("harness:new-task")) },
@@ -639,7 +642,7 @@ export default function App() {
                 allProjects={todoAll}
                 onToggleScope={() => setTodoAll((v) => !v)}
                 onOpenBot={(id) => void openBotConversation(id)}
-                onManageBots={() => setView("bot")}
+                onManageBots={() => setView("bots")}
                 botUnread={botUnread}
                 activeBotId={thread?.kind === "bot" ? thread.botId ?? null : null}
               />
@@ -707,7 +710,8 @@ export default function App() {
         {view === "knowledge" && <div className="wide"><Notes state={state} act={act} onOpenTodo={selectTodo} openRequest={notesOpenReq} initialTab="docs" /></div>}
         {view === "memory" && <div className="wide"><Memory act={act} /></div>}
         {view === "persona" && <div className="wide"><Persona act={act} /></div>}
-        {view === "bot" && <div className="wide"><BotConsole act={act} notify={notify} state={state} onOpenMemory={() => setView("memory")} onOpenThread={(id) => void openThreadFromPalette(id)} /></div>}
+        {view === "bots" && <div className="wide"><Bots state={state} act={act} notify={notify} now={now} onOpenBot={(id) => { setActiveBotId(id); setView("bot"); }} /></div>}
+        {view === "bot" && <div className="wide"><BotConsole act={act} notify={notify} state={state} initialBotId={activeBotId} onBackToBots={() => setView("bots")} onOpenMemory={() => setView("memory")} onOpenThread={(id) => void openThreadFromPalette(id)} /></div>}
         {view === "zhulong" && <div className="wide"><Zhulong state={state} act={act} notify={notify} onOpenSettings={() => window.dispatchEvent(new CustomEvent("harness:open-settings", { detail: { section: "plugins" } }))} /></div>}
       </div>
 

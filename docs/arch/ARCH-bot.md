@@ -28,7 +28,8 @@
 | 卡片式人格（tone / address / length / boundary / habit）、出场策略、配额 | `electron/bot/index.mjs` |
 | 60s tick：候选（待输入 / 上次失败）→ 打分 → 三道闸（静音 / 间隔 / 每小时配额）→ 生成 → 记 `BotTurn` | 同上 + `electron/main.mjs` 的 `startBotTick()` |
 | 沉默 / 被拦也落库，`decision` + `reason` + `injected` 可审计 | `bot_turns` |
-| Bot 页：左 bot 列表 / 中回合流（含「为什么」）/ 右人格卡·记忆·策略；暂停 / 静音 1h / 跑一次决策 | `src/components/Bot.tsx` |
+| **机器人页（配置）**：rail 上的「机器人」，和项目页同一套骨架（概览条 + 卡片 / 列表 + 行内操作）；管名字 / 人设 / 能力档位 / 绑定执行体 / 日程 / 配额 / 暂停 / 静音，行尾「打开会话」进入会话面 | `src/components/Bots.tsx` |
+| **会话（控制台）**：左 bot 列表 / 中回合流（含「为什么」）/ 右人格卡·记忆·策略；暂停 / 静音 1h / 跑一次决策；页头「← 机器人」回配置页 | `src/components/Bot.tsx` |
 | **可编辑**：名字 / 语气 / 称呼 / 长短 / 边界 / 习惯（失焦或 Enter 保存）、每小时上限 / 最小间隔 / 静音时段（数字输入）、能力档位（只读 / 可起任务） | 同上，写 `bots.persona` / `bots.policy` |
 | 记忆 tab 读**真实四层计数**（`memoryOverview.byLayer`）与可注入字符数；L1 标「只回查，不注入」 | `memoryOverview` |
 | 能力档位只有 `read`：不建 todo、不起 run | `collectCandidates` / `speak` 不碰 actions |
@@ -90,6 +91,13 @@ type Bot = {
 ```
 
 多个 bot 的隔离边界：**人格、记忆读写视图、配额、频道 allowlist 全部按 botId 分开**；同一个 thread 里不混两个 bot 的记忆。
+
+**两个面（2026-11-21）**：机器人不再把「配置」和「说话」混在一页。
+
+- **配置页（`src/components/Bots.tsx`，rail 上的「机器人」）**：管身份与出场规则——名字、头像、职责（`persona.mission`）、能力档位、绑哪个执行体（`executor_agent_id`）、日程数、主动开口配额、暂停 / 静音、删除。行尾「打开会话」才进会话面。
+- **会话（`src/components/Bot.tsx`）**：回合流与审计。页头 `← 机器人` 回配置页；`initialBotId` 让「打开会话」直接落到那个机器人。
+
+试过一版把机器人列表放进工作区左栏、项目上面（Orca 的 sidebar split），结论是**配置需要独立的一页**：配额 / 执行体 / 日程是「设置一次、长期生效」的东西，放进左栏会和工作区抢高度，也和工作区的心智（任务 / 终端 / 文件）打架。
 
 **派单链（2026-11-21）**：`todos.bot_id` / `delegations.bot_id` 记住「这条活是谁派的」，`agent_id` 仍然是「谁去干」。`botAcceptProposal` 建的 todo 和 `createMissionChild` 派下去的子任务都会带上它（Mission 自己带 botId 时继承）。协调台回答「谁在干」，所以先认执行体所在的座位，执行体没上场才退回派活的机器人——不再出现「派了活却查不到人」。
 

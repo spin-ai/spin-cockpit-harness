@@ -65,13 +65,17 @@ const hm = (ts: number) => {
  *
  * P0 只读能力：tick 只回答与记录，不建 todo、不起 run；dispatch 见 ARCH-bot §9。
  */
-export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
+export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, initialBotId = null, onBackToBots }: {
   act: Act;
   notify: (message: string) => void;
   onOpenMemory: () => void;
   onOpenThread: (threadId: string) => void;
   /** 任务投影需要它；缺省时「分配到的任务」区块只显示未绑定提示 */
   state?: State | null;
+  /** 从机器人配置页「打开会话」进来时直接选它 */
+  initialBotId?: string | null;
+  /** 回机器人配置页 */
+  onBackToBots?: () => void;
 }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [memoryOverview, setMemoryOverview] = useState<{ byLayer?: Record<string, number>; notes?: number; injectable?: number } | null>(null);
@@ -100,14 +104,14 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
       const next = (await act("botSnapshot", {})) as Snapshot | null;
       if (next) {
         setSnapshot(next);
-        setBotId((current) => current || next.bots[0]?.id || "");
+        setBotId((current) => current || (initialBotId && next.bots.some((b) => b.id === initialBotId) ? initialBotId : "") || next.bots[0]?.id || "");
       }
       const ov = (await act("memoryOverview", {})) as { byLayer?: Record<string, number>; notes?: number; injectable?: number } | null;
       if (ov) setMemoryOverview(ov);
     } catch (err) {
       setError(String((err as Error)?.message || err));
     }
-  }, [act]);
+  }, [act, initialBotId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -281,8 +285,8 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
   if (!snapshot) {
     return (
       <div className="page bot-page">
-        <PageHeader kicker="机器人" title="机器人" />
-        <div className="bot-loading"><EmptyState compact title="正在读取 bot…" desc={error || "稍等一下"} /></div>
+        <PageHeader kicker="机器人 · 会话" title="机器人" actions={onBackToBots ? <button className="btn ghost" onClick={onBackToBots}>← 机器人</button> : undefined} />
+        <div className="bot-loading"><EmptyState compact title="正在读取机器人…" desc={error || "稍等一下"} /></div>
       </div>
     );
   }
@@ -290,7 +294,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
   if (!snapshot.bots.length) {
     return (
       <div className="page bot-page">
-        <PageHeader kicker="机器人" title="机器人" />
+        <PageHeader kicker="机器人 · 会话" title="机器人" actions={onBackToBots ? <button className="btn ghost" onClick={onBackToBots}>← 机器人</button> : undefined} />
         <EmptyState mark="◇" title="还没有机器人" desc="建一个机器人需要人格卡、出场策略和配额；先给个名字，其余用默认值。" action={<button className="btn primary" onClick={create}>新建机器人</button>} />
       </div>
     );
@@ -299,7 +303,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
   return (
     <div className="page bot-page">
       <PageHeader
-        kicker="机器人"
+        kicker="机器人 · 会话"
         title={bot?.name || "机器人"}
         subtitle={(
           <>
@@ -314,6 +318,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
         )}
         actions={(
           <>
+            {onBackToBots ? <button className="btn ghost" onClick={onBackToBots} title="回到机器人配置页">← 机器人</button> : null}
             <button className="btn" disabled={Boolean(busy)} onClick={togglePause}>{bot?.status === "active" ? "暂停" : "恢复"}</button>
             <button className="btn" disabled={Boolean(busy)} onClick={() => void (muted ? unmute() : mute())}>{muted ? "取消静音" : "静音 1h"}</button>
             <button
@@ -363,7 +368,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
               );
             })}
           </div>
-          <button className="bot-new" onClick={create}>＋ 新建 bot</button>
+          <button className="bot-new" onClick={create}>＋ 新建机器人</button>
         </aside>
 
         <main className="bot-main">
@@ -593,7 +598,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state }: {
             </div>
             {!botEntity?.executorAgentId ? (
               <p className="bot-note">
-                这个人格还没绑定执行体（<code>executorAgentId</code>）。Mission 派给 Agent 的任务，
+                这个机器人还没绑定执行体（<code>executorAgentId</code>）。Mission 派给 Agent 的任务，
                 只有绑定了执行体才会出现在这里和场景里。
               </p>
             ) : assigned.rows.length === 0 ? (

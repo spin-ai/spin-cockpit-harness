@@ -97,6 +97,19 @@ export interface Bot {
   createdAt?: number;
   updatedAt?: number;
 }
+/** 机器人的日程（daily / every / watch），配置页只读展示条数与下次时间 */
+export interface BotRoutine {
+  id: string;
+  botId: string;
+  name?: string;
+  kind?: "daily" | "every" | "watch";
+  enabled?: boolean;
+  atHour?: number;
+  everyMs?: number;
+  nextAt?: number | null;
+  lastFiredAt?: number;
+  lastError?: string;
+}
 export type BotDecision = "answered" | "replied" | "reported" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted" | "watching";
 /** 一条 bot 回合：说了什么 / 为什么沉默，两者都进审计。 */
 export interface BotTurn {
@@ -317,6 +330,7 @@ export interface State {
   coordinationScenes?: CoordinationScene[];
   bots?: Bot[];
   botTurns?: BotTurn[];
+  routines?: BotRoutine[];
   terminals?: TerminalRecord[];
   runtimes?: RuntimeView[];
   cliCapabilities: string[];
