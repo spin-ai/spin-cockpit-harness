@@ -111,8 +111,8 @@ const baseState: State = {
     { agentId: "an", role: "worker", seat: 3 },
     { agentId: "qiao", role: "reviewer", seat: 4 },
     { agentId: "man", role: "worker", seat: 5 },
-  ], prefs: { reviewGate: true, escalate: true, inject: false, showLinks: true, showLabels: true, light: "auto" } }, createdAt: now, updatedAt: now }],
-  settings: { defaultView: "workspace", theme: "light", chatFontSize: 13, enterToSend: true, confirmStop: false, defaultAgentId: null, maxConcurrentRuns: 2, approvalPolicy: "ask", dshBinary: "", dshHome: "", dshEnv: "", model: "", effort: "", terminalFontSize: 12, terminalScrollback: 5000, shellPath: "", autoDetectDevServerUrl: true, previewHomeUrl: "", elementScreenshots: true, contextDetail: "compact", uiScale: 100 },
+  ], prefs: { reviewGate: true, escalate: true, inject: false, showLinks: true, showLabels: true, light: "auto", motion: { tier: "calm", walk: 900, amp: 100, typing: true } } }, createdAt: now, updatedAt: now }],
+  settings: { defaultView: "workspace", theme: "light", chatFontSize: 13, enterToSend: true, confirmStop: false, defaultAgentId: null, maxConcurrentRuns: 2, approvalPolicy: "ask", dshBinary: "", dshHome: "", dshEnv: "", model: "", effort: "", terminalFontSize: 12, terminalScrollback: 5000, shellPath: "", autoDetectDevServerUrl: true, previewHomeUrl: "", elementScreenshots: true, previewIgnoreCertErrors: false, previewPermissionSites: "", previewAgentControl: true, contextDetail: "compact", uiScale: 100 },
   cliCapabilities: [],
   runtimes: [],
 };

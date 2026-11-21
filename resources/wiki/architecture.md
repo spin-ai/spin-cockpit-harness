@@ -29,7 +29,7 @@
 
 ## 数据
 
-SQLite 是唯一事实来源，主要表：
+`harness.db` 是唯一事实来源，主要表：
 
 | 表 | 内容 |
 |---|---|
@@ -45,6 +45,17 @@ SQLite 是唯一事实来源，主要表：
 ![数据模型](./wiki/data-model.png)
 
 *图：Thread / Todo / Run / Message / Artifact 的关系；消息宿主是 thread，不是 todo。*
+
+### 三套库，删掉一个不会带走另外两套
+
+| 库 | 内容 | 是否可重建 |
+|---|---|---|
+| `harness.db` | 任务 / run / 会话 / 项目 / 设置 / 审批 / 事件 | 否，是唯一事实源 |
+| `kb.db` + `pages/` + `sources/` | 知识库索引、页面正文、引用快照 | 是，正文在文件里，索引丢了重扫 |
+| `memory/mem.db` | 四层记忆、note、注入台账、transcript 索引 | 是，启动对账可补 |
+| `persona/persona.db` | 人物事实、`measures`、依据 | 是，删了只是重建画像 |
+
+边界见 [记忆与 Dream](#/wiki/memory)、[知识库](#/wiki/knowledge) 与 [人物画像与记忆语义](#/wiki/persona)。
 
 ## 一次 run 的执行链路
 
@@ -76,6 +87,9 @@ send(threadId, text)
 | `electron/worktree.mjs` | git worktree 创建与清理 |
 | `electron/plugins/host.mjs` | 插件加载、权限、命令、MCP bridge |
 | `electron/preview.mjs` | 预览窗口、CDP、元素拾取 |
+| `electron/knowledge/index.mjs` | 资料解析 / 索引 / 混合检索 |
+| `electron/memory/index.mjs` | 四层记忆 / 打分注入 / Dream |
+| `src/office/model.ts` | State → OfficeModel（纯函数，舞台只读） |
 | `src/components/TaskChat.tsx` | Chat / 投递回执 / 元素上下文 |
 | `src/components/TaskPane.tsx` | TODO 看板与行内操作 |
 | `src/components/TerminalPanel.tsx` | pty、标签、拆分、预览标签 |
@@ -90,6 +104,10 @@ send(threadId, text)
 
 ## 继续阅读
 
+- [场景与办公室](#/wiki/office)：真实状态怎样落成舞台，却不反过来驱动调度。
+- [五个技术难点](#/wiki/tech)：五件事的判据与现状，决定精力怎么分配。
+- [记忆与 Dream](#/wiki/memory)：四层、打分注入与只提建议的 Dream。
+- [知识库](#/wiki/knowledge)：资料 / 页面共用检索，写入侧分权。
 - [设计取舍与踩坑](#/wiki/design-notes)：为什么不是 TUI / IDE、为什么用 ACP、16 条已踩的坑。
 - [人物画像与记忆语义](#/wiki/persona)：四种「忘」（失效 / 衰减 / 到期 / 合并）、可观测特征与事实的分界。
 - [Super Agent / Mission](#/wiki/super-agent)：Mission、Plan、Delegation 与 MCP 编排。

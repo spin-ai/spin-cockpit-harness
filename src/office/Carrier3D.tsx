@@ -7,18 +7,20 @@ import { mountCarrier3D, type Carrier3DApi } from "./carrier-scene";
  * 航母 3D 舞台的 React 外壳。
  * 场景在命令式模块里逐帧运行，React 只把真实 OfficeModel / 主题 / 动效推进去。
  */
-export function Carrier3D({ model, now, selectedId, onSelect, motion, reduced }: {
+export function Carrier3D({ model, now, selectedId, onSelect, motion, reduced, launchSignal = 0 }: {
   model: OfficeModel;
   now: number;
   selectedId: string | null;
   onSelect: (id: string) => void;
   motion: SceneMotion;
   reduced: boolean;
+  launchSignal?: number;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const apiRef = useRef<Carrier3DApi | null>(null);
   const live = useRef({ model, now, selectedId, motion, reduced, onSelect });
   live.current = { model, now, selectedId, motion, reduced, onSelect };
+  const signalRef = useRef(launchSignal);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -57,6 +59,12 @@ export function Carrier3D({ model, now, selectedId, onSelect, motion, reduced }:
   useEffect(() => {
     apiRef.current?.setMotion(motion.tier, reduced, motion.walk);
   }, [motion.tier, motion.walk, reduced]);
+
+  useEffect(() => {
+    if (launchSignal === signalRef.current) return;
+    signalRef.current = launchSignal;
+    apiRef.current?.launch();
+  }, [launchSignal]);
 
   useEffect(() => {
     const apply = () => apiRef.current?.setTheme(document.documentElement.dataset.mode === "dark" ? "dark" : "light");

@@ -15,13 +15,22 @@ const BASE = process.env.OFFICE_PREVIEW_URL || "http://localhost:5288/office-pre
 const OUT = path.resolve(__dirname, "../../docs/assets/article");
 const TMP = path.join(os.tmpdir(), "office-gif-frames");
 const QUERY = process.env.OFFICE_GIF_QUERY || "template=office&theme=light&hour=10&tab=live&select=none&script=1&mission=plan_review";
-const NAME = process.env.OFFICE_GIF_NAME || "office-live";
+const NAME = process.env.OFFICE_GIF_NAME || "sc-02-office-live";
 const W = 1600, H = 1000, SCALE = 1, FPS = 12, SECONDS = 9;
+
+const FIG = process.env.OFFICE_GIF_FIG || "02";
+const FONT = "'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif";
+const MONO = "'SFMono-Regular',Menlo,Consolas,monospace";
 
 const wrap = (url) => `<!doctype html><html><head><meta charset="utf-8"><style>
 html,body{margin:0;padding:0;width:${W * SCALE}px;height:${H * SCALE}px;overflow:hidden;background:#fff}
 .shot{width:${W}px;height:${H}px;transform:scale(${SCALE});transform-origin:top left}
-iframe{width:${W}px;height:${H}px;border:0;display:block}</style></head><body><div class="shot"><iframe src="${url}"></iframe></div></body></html>`;
+iframe{width:${W}px;height:${H}px;border:0;display:block}
+.figbadge{position:absolute;z-index:9;bottom:18px;right:18px;display:flex;align-items:center;gap:7px;
+  padding:6px 12px;border-radius:999px;background:#fff;border:1px solid #cbd5e1;
+  box-shadow:0 8px 24px rgba(15,23,42,.14);font-family:${FONT};font-size:13px;font-weight:700;color:#1d4ed8;letter-spacing:.5px}
+.figbadge .fig{font-size:11px;font-weight:600;color:#64748b}
+.figbadge .n{font-family:${MONO};font-weight:800}</style></head><body><div class="shot"><iframe src="${url}"></iframe><div class="figbadge"><span class="fig">图</span><span class="n">${FIG}</span></div></div></body></html>`;
 
 app.whenReady().then(async () => {
   fs.rmSync(TMP, { recursive: true, force: true });

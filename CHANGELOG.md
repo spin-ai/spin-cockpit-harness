@@ -4,6 +4,148 @@
 
 ## [Unreleased]
 
+### Fixed（易用性 · Electron 里点了没反应的按钮）
+根因是 `window.prompt`：**Electron 不实现它**，调用不会弹任何东西。以下入口之前都是"点了没反应"，现在全部改成行内输入：
+
+- **Bot 页「＋ 新建 bot」**：直接建一个占位名、切到人格卡、聚焦「名字」输入框，改完失焦即存（不再要求先输名字）
+- **Bot 页「＋ 每天 / ＋ 每隔 / ＋ 变化才跑」**：三连 `window.prompt` 改成一张行内表单（名字 + 时间/间隔/路径 + 保存/取消）
+- **Bot 页「迁移历史到会话」/「删除」/「重命名」**：从埋在「策略」页签的 `⋯` 挪到**页头 `⋯`**，一眼能找到
+- **Git「新建分支」**：改行内输入（Enter 建 / Esc 取消）
+- **Mission「退回修改」**：改行内原因输入（之前这个按钮等于失效，计划根本退不回去）
+- **Markdown 编辑器 ⌘K 链接**：改工具栏下方的行内地址输入（清空 = 取消链接）
+- 新增 `verify:design` 规则：`src` 里出现 `window.prompt(` 直接失败；`AGENTS.md` 补第 12 条 UI 硬规则
+
+### Changed（bot 自测按不变量拆分）
+- 45 项断言从 `scripts/bot-selftest.mjs` 一个文件拆成 **11 个按不变量命名的文件**（`scripts/bot/{gates,prompt,reply,dispatch,guard,notify,routine,ask,thread,resume,memory}.test.mjs`），入口只负责按顺序加载 + 汇总；共享的只有 `_harness.mjs`（固定时钟、bot 夹具、`test()`）。断言总数不变（45），失败时文件名直接说明哪条不变量坏了
+- `npm run verify:bot` 作为 `bot:selftest` 的别名（两个名字都能跑）
+
+### Added（提问卡片 ask_user）
+- 模型主动开口时输出 `ASK: 一句话问题` → 落一张**可作答**的卡片（`bot_turns.ask = { text, status, answer }`），挂在 Bot 页输入框上方；创建时的"你想让我干什么"也走同一套状态机
+- **不挡聊天**：卡片挂着也能继续说别的；人回一句就把当前开着的卡片全部结掉（`answered` + 记下答案）；「先不管」→ `dismissed`；7 天没答懒标记 `expired`
+- `openAsks()` / `settleAsks()` 导出，`botSnapshot` 顺带返回 `asks`
+
+### Added（记忆修订 / 日程落点 / 终端接管）
+- **记忆条目修订与乐观并发**：新增 `entry_revisions` 表 + `entryRewrite()` / `entryRevisions()` / `entryRestoreRevision()`；`entryUpsert` 与 `entryRewrite` 都接受 `expectedUpdatedAt`，版本不一致抛 `MemoryConflictError`（`code: memory_conflict`）。回滚本身也是一次改写，所以能再回滚回去。不传 `expectedUpdatedAt` 的老调用行为不变
+- **日程落点**：`mode: "alongside"`（到点就跑）/ `"in-chat"`（等这个 bot 空下来，最多等 5 分钟就并进去）。有日程到点时 `gatesFor` 跳过「最小间隔」——否则 9:00 的早报会被 8:59 的一句闲聊挡掉
+- **终端接管**：`terminalTakeControl` / `terminalReleaseControl`。接管期间 Chat 纠偏**直接失败而不是排队**，交回时写一条「它需要重新看当前输出」；标签上 ✋ 提示，右键菜单可切换
+
+### Added（持续 chat · 一个人格 bot 一条会话）
+- **bot thread**：人格 bot 与普通 Agent 共用 `threads` / `messages`（`threads.kind="bot"` + `threads.bot_id`，`todo_id` 为空）。**说出口的部分**（提问、回复、主动开口、创建时的提问）镜像进会话，**沉默 / 被拦只留在 `bot_turns` 审计**里，不再让 Chat 变成"两套历史"
+- **历史改读会话**：`reply()` 的对话历史取这条 thread 最后 10 条（含主动开口），不再从 `bot_turns` 拼；没有消息层的环境自动退回旧路径
+- **老数据迁移**：`botThreadMigrate({ dryRun })` 按时间顺序补齐未镜像的回合，写过的标 `mirrored` 所以**幂等**；Bot 页 `⋯ → 迁移历史到会话` 先 dryRun 报数再确认
+- **打开会话**：Bot 页页头「打开会话」→ `botThread` 拿 thread id → 跳到 Chat 的同一条 thread
+- `threads.bot_id` 新列（新库建列 + 老库 ALTER）
+
+### Added（可恢复 · ACP 续跑）
+- **`session/resume` 实测可用**：内置 dsh 的 `agentCapabilities.sessionCapabilities` 是 `{ close, list, resume }`；新增 `npm run verify:acp-resume`（6 项断言：跨进程恢复、`cwd` 必填、响应不含 sessionId、活跃会话不能同进程 resume、不存在的 id 明确报错）。探针脚本会 SIGKILL 第一个进程再起第二个，模拟真实崩溃
+- **run 续跑**：`runs.acp_session` 记录会话 id；`runResume`（任务面板「续跑」按钮，仅在 `interrupted` 且有过 ACP 会话时出现）把 run 放回队列，`startRun` 用 `resumeSession` 接回原会话并追加「先看当前工作区状态再继续」。**cwd 用原 run 的 cwd，不新建 worktree**——否则上次未提交的改动会丢；续不上时明确报「会话已失效，改为新会话」而不是假装续上
+- **bot 回合可恢复**：被动回复先落一条 `decision: "streaming"`，增量每 800ms 节流刷新；成功同一条改 `replied`，取消/报错删掉；应用被杀留下的 `streaming` 下次启动收成 `interrupted` 并保留半截正文，Bot 页单独标「被打断」
+- `electron/acp.mjs` 新增 `listSessions()` / `resumeSession(sessionId, cwd)`
+
+### Added（人格 bot · 日程 / 先问用途）
+- **日程（routine）**：`daily`（每天整点）/ `every`（每隔 N 分钟）/ `watch`（文件或命令输出变了才跑）三类触发。判定是纯函数（`electron/bot/routine.mjs`），探针由主进程注入（文件 `mtime+size`、命令 `stdout` 前 8KB 的 sha1，15s 超时）；到点由 bot 自己开口，**开口成功才推进 `lastFiredAt`**，沉默 / 被拦不推进——否则同一时段会被反复重试。落 `routines` 表（新库自动建，老库补表）。
+- **创建后先问用途**：种子 bot 第一轮不客套，直接问「你想让我干什么」；用户第一句话落成 `persona.mission` 并进 system prompt。空职责时输入框占位文案跟着变。
+- **Bot 页「日程」页签**：列出每条日程的启停、上次跑的时间、"现在为什么不动"（未到点 / 没变化 / 已停用）与下次时间；`＋ 每天 / ＋ 每隔 / ＋ 变化才跑` 三个入口，`RowMenu` 里启停与删除。
+
+### Fixed（人格 bot · 打扰与泄漏）
+- **通知节流**：此前每次主动开口都弹 toast。现在 180 字截断、每小时最多 3 条、未读 ≥5 时只放行「待输入 / 日程失败」两类、静音不弹（`electron/bot/notify.mjs`）
+- **运行时脱敏**：回合落库前把 `sk-…` / `ghp_…` / `Bearer …` / JWT / 32+ 位 hex / `key=value` 的值换成 `[redacted]`（`electron/redact.mjs`）。`verify:privacy` 只管仓库，这条管运行时会话与回合账
+- **事件级防重复**：同一 `trigger.ref` 在 6 小时内说满 2 次即压住；与上一条主动开口相似度 ≥0.8 的近重复也压住（生成后再查一次，防「换个说法重说」），落 `blocked` 并写清原因（`electron/bot/guard.mjs`）
+- **记忆容量外显**：注入用到 80% 时上下文尾部追加「已用 X/Y 字符 · 条目 N · 观察 M」，让它在保存被拒前自己整理（`memory.usage()`）
+
+### Changed（人格 bot · 日程与通知的口径）
+- `botSnapshot` 现在顺带返回 `routines` 与 `routineStatus`（含每条"为什么没跑"），并清零未读计数——未读计数是通知抑制的输入，只在 Bot 页打开时归零
+- `botRemove` 连带删除该 bot 的日程；`bot_turns` 里新增 `decision: "asked"`（创建后先问一句），UI 单独渲染
+
+### Fixed（人格 bot · 记忆只给目录、多 bot 抢事件）
+- **记忆注入只有标题**：`inject().markdown` 被丢弃，bot 只看到「- [L4] 标题」的目录。现在直接注入正文（2400 字符），并以 `bot:<id>:<turnId>` 落 `inject_log`，注入可归因
+- **记忆不分 bot**：新增 `entries.owner` / `notes.owner`（老库自动补列），空 = 共享、`bot:<id>` = 私有；`inject({ owner })` 只返回「共享 + 自己」
+- **多 bot 抢事件**：候选去重的 `seen` 不过滤 `botId`，A 对某条任务开过口，B 30 分钟看不到同一事件；改为按 bot 各算各的
+- **主动说过的话被忘掉**：history 只取 `replied`，半夜主动说的「有三项待确认」在用户回复后不进上下文；现在最近 3 条主动开口进 system prompt（不拼 history，避免破坏 user/assistant 交替），history 6 → 10 条
+
+### Changed（人格 bot · 配额与出站）
+- **`budget.tokensPerHour` 从死字段变成真闸**：接进 `gatesFor`，超了记 `blocked`（此前只有条数闸）
+- **`policy.sensitiveBlocklist` 真正生效**：命中即 `blocked`、不外发，正文只留在本地审计里
+- **`policy.escalate` 明确语义**：不是闸门，而是写进 system prompt 的「必须请人来做」边界（UI 里那格一直是自由文本，此前只存不用）
+- **`force`（手动跑一次）只放行静音时段与最小间隔**：暂停 / 手动静音 / 条数 / token 配额照旧生效，配额不能被一键绕过
+- **`scripts/bot-selftest.mjs` 的 `test()` 改成 `await`**：此前 async 用例在 Promise 里抛断言，等于「全绿但没测」；新增 8 条 P0 回归用例（记忆正文、per-bot 去重、token 闸、force 边界、敏感词、主动上下文）
+- `scripts/memory-selftest.mjs`：新增 owner 隔离断言；顺手修掉 `as_of` 用例的同毫秒抖动
+
+### Fixed（启动崩溃 · 生命周期）
+- **`Attempted to register a second handler for 'clipboard:readImage'`**：同一频道被注册两次，主进程在模块加载阶段直接崩、窗口都出不来。已去重，并新增 `npm run verify:ipc`（扫描 `electron/*.mjs` 里重复的 `ipcMain.handle/on` 频道，53 个频道全量查）
+- **Electron 45 剪贴板 API 迁移**：`clipboard.readImage()` / `writeImage()` 在 45 已移除（只剩 `readText/writeText/read/write/has/clear`）。`clipboard:readImage` 改为 `clipboard.read()` → `ClipboardItem.getType("image/*")` → Blob → data URL；「预览截图」写入剪贴板改为 `clipboard.write([new ClipboardItem({ "image/png": blob })])`
+- 顺带：打包时 `corrupted Electron dist`（缓存的 Electron 45.2.2 包被前面的中断构建弄坏）已清缓存重下
+
+### Fixed（视觉解析 · 叠加图缩放无效）
+- **点 +/− 只有百分比数字变、图片不动**：`.zh-frame` 是 flex 项且默认 `flex-shrink:1`，`width:300%` 被缩回容器宽；同时父容器 `justify-content:center` 会让放大后的左半边滚不到。改为 `flex:none` + `flex-start` + 子项 `margin:0 auto`
+- 顺手删掉上一轮为「结果贴身」加的 `img{max-height;width:auto}`：它覆盖了缩放依赖的 `width:100%`（两个坑叠加，等于放大完全失效）
+- 实测：100% 718px / 150% 1077px / 300% 2154px，可横向滚动到最右；「适应」回 718px
+
+### Changed（视觉解析 · 易用性）
+- **⌘V 粘贴即解析**：视图内直接粘贴截图（`clipboardData` → 图片），选完自动开始解析（「选图后自动解析」可关）；另给「从剪贴板取图」按钮（走 `clipboard.readImage()`），不用先存文件再拖
+- **⌘↵ 解析 / 重新解析**；空态文案直接写「⌘V 粘贴截图，立刻解析」，并给按钮
+- **画布限高** `min(52vh, 560px)`：分析结果（区块表 / 核对项）不用再滚半页才看到
+- **未配置后端**：进视图就出带「去设置 → 插件」的引导条，不再等到点解析才报错
+- 新增 `clipboard:readImage` IPC（主进程 `clipboard.readImage()` → PNG data URL）
+
+### Fixed（视觉解析 · 解析结果看不到）
+- **插件进程空闲自杀**：utilityProcess 的 MessagePort 不 ref 事件循环，插件空转几十秒就 `exit(0)`；宿主又不拒绝该插件的 pending 请求 → 界面「解析中…」卡到 120s 超时。现在 runtime 带 keepAlive，宿主在进程退出时把 pending 全部 reject（可重试）
+- **结构化解析关思考**：实测同一张图 doubao-seed-2.1-turbo **12.8s → 3.0s**（输出 token 621 → 100）；GLM 不发 `thinking.type=disabled`（会 400）。另加 `response_format: json_object` + JSON 解析失败自动重试一次
+- **结果不再丢**：切走视图再回来，图片 / 结果 / 页签仍在（模块级内存会话，不落盘）
+- **错误与进度可见**：解析/探测改走 `window.harness.action` 拿真实错误（不再被 `act` 吞成「插件没有返回解析结果」）；成功后滚动到结果区并 toast「解析完成：N 个区块 · X.Xs」；按钮显示已等待秒数，画布角标提示「视觉模型通常 3–30s」；图片区显示 KB 与真实像素尺寸
+
+### Added（Dream 从「按钮」变成「循环」）
+- **提案带 diff / `base_rev` / `confidence`**：`suggestions` 多四列（`diff` / `base_rev` / `confidence` / `dream_id`），记忆页逐行 `-`/`+` 显示「这条建议会改掉什么」，并标注「确定性检查」还是「模型判断」、基于多久以前的版本
+- **接受前版本闸门**：`base_rev` 与目标当前版本不一致（人改过 / 另一条建议改过）→ 标 `superseded`，不执行、不覆盖、不进 `rejects`；页面版本在主进程用 `wiki.getPage().updatedAt` 校验
+- **语义 pass 带证据**：候选不再只有一句结论——`noteEvidence` 先回 L1 索引取观察自己的出处原文，再按正文 bigram 检索相关会话；来源是页面的再补一段页面摘要 + 引用原句。`correct` 必须带 evidence，且 ref 必须落在这次真的给过它的证据里（`evidenceRefs`），没证据就不进队列
+- **输入指纹幂等**：`dreamFingerprint`（观察 / L3 / 页面 / 资料的 `id@updated_at`）与上一轮相同 → 直接返回，不扫描、不调模型
+- **空闲触发**：记忆页新增「空闲 N 分」（默认 30，0 = 只手动）；只有没有 run 在跑、且 run / 消息 / 事件都静了 idleMinutes 才跑，和手动共用 `runDreamCycle` 一条路径、串行执行
+- **`dream_runs` 台账**：每轮记 trigger / 指纹 / 看到多少对象 / 产出几条 / 耗时 / 语义 pass 为什么没跑；记忆页显示「上次 空闲 · 2 小时前 · 3 条 · 1s」
+- 回归：`npm run memory:selftest` 新增版本闸门 / 指纹 / 证据链 22 项；`npm run memory:preview` 新增逐行 diff、基于哪一版、证据引用、台账 4 项断言
+
+### Fixed（视觉解析 · 外部 API 地址与坐标校准）
+- **`openai` 后端不再写死 `/v1/chat/completions`**：新增 `chatUrl()`，`…/v1`、`…/api/v3`、`…/api/plan/v3`、完整 `…/chat/completions` 都能拼对；探测改为对 `chatUrl` 发一次 `max_tokens:1` 的最小请求（Ark plan 网关没有 `/models`，原来的探测必然 404）
+- **坐标按真实像素校准**：从图片字节读 PNG/JPEG/GIF/WebP 尺寸，模型猜的画布按比例换算 bbox，核对项新增「坐标校准」（实测 doubao 把 320×200 报成 1600×1000，校准后框才落在图上）
+- **空 blocks 的错误可操作**：说明「可能不是视觉模型 / 图里没有可识别内容 / 只回了文字没回 JSON」，并提示跑探测
+- `npm run zhulong:selftest` 18 项（新增地址拼接、图片尺寸解析、坐标校准用例）
+
+### Changed（Pi Agent 模型配置）
+- `~/.pi/agent/models.json` 的 `volcengine`（火山 Ark plan 网关）按实测重写：剔除 5 个 404 模型，按真实能力标注 `input`（图像 / 纯文本）、补 `thinkingFormat: "deepseek"` + `thinkingLevelMap`，GLM 系单独用 `thinkingFormat: "openai"`（它们不接受 `thinking.type=disabled`，会 400）
+
+### Added（预览面板：控制台 / 截图 / 录屏）
+- **控制台面板**：预览头部 `</>` 按钮打开，直接看页面 `console.*`（环形 200 条、error 计数角标、`error/warn` 着色、来源 `文件:行号`）；不用再单开 DevTools，Electron 自身的安全告警不占面板
+- **截图**：一键把当前预览截图落盘 `userData/preview-shots/` 并复制到剪贴板（与 Agent 的 `browser_screenshot` 共用 CDP 实现）
+- **录屏**：主进程 `capturePage` 约 4fps 抓帧 → 渲染层 canvas + `MediaRecorder` 编 WebM → 存 `userData/recordings/*.webm`（无音频、最长 60s、录制中有计时与红点、退出应用自动停）；帧宽 >1280 自动下采样控制体积
+- 实测（隐藏窗口 Electron 验证）：8 帧 → `video/webm;codecs=vp9`，EBML 魔数正确；`console-message` 结构化签名与旧签名都覆盖
+
+### Added（预览 · Agent 驱动 + 版式还原）
+- **Agent 能操作预览页**：普通（非 Mission）ACP run 也会挂 `cockpit_browser` MCP（`electron/browser-mcp-bridge.mjs` + `electron/browser-tools.mjs`），工具：`browser_state / open / read / click / type / wait / screenshot / back / forward / reload`。只作用于「用户正看着的那个预览页」（渲染层 `preview:active` 上报 + `guestOf` 校验必须是 webview guest），URL 只收 http/https/file，点击走真实鼠标事件、输入走 `Input.insertText` 且未落地时回落 setter + `input` 事件（React 受控组件可用）；每次 run 一个随机 token，run 结束回收。设置 → 预览与元素 → 「Agent 可操作预览」可整体关掉
+- **pptx / doc / odt 版式还原**：检测本机 LibreOffice，`soffice --headless --convert-to pdf` 后交给内置 PDF 阅读器，按 `路径+mtime+size` 缓存到 `userData/doc-preview/`；没装 LibreOffice 自动回落 officeparser 抽文本（并提示「装 LibreOffice 可看版式」），转换失败不报错卡住
+- **预览标签上限 3 → 6**（`TerminalPanel`），给「多个页面同时开着对照」留出空间
+- 新增 `verify:browser-tools`（5 项，含 black-box 起 bridge 子进程验证 MCP 协议）；`verify:preview-doc` 增加 LibreOffice 转换 + 缓存命中用例
+
+### Added（预览 · 对齐工作区浏览器：登录态 / 站点权限 / 视口 / 文档）
+- **预览会话持久化**：`partition` 从内存的 `preview` 改为 `persist:preview`，预览页登录态跨重启保留；设置页新增「忽略证书校验」，自签名 https 的 dev server 不再只能看到证书错误页
+- **OAuth / 登录弹窗**：`setWindowOpenHandler` 从一律拒绝改为放行 http(s)，子窗口共用同一会话、无 preload / 无 Node —— 需要登录的站点（GitHub / Google 登录）真正可用
+- **站点权限**：`configurePreviewSession()` 接入 `setPermissionRequestHandler` / `setPermissionCheckHandler`；摄像头 / 麦克风 / 位置 / 通知 / 读剪贴板 / MIDI / 跨站存储按站点授权，全屏与写剪贴板直接给，USB / 串口 / 蓝牙 / 屏幕共享明确拒绝（没有选择器 UI 就不假装允许）；被拒时预览顶部出现「允许并刷新」，设置页可撤销（`previewPermissionSites`）
+- **自由尺寸视口**：原来只有「自适应 / 834 / 390」三个宽度，现在可填任意 宽 × 高（120–4000）+ 预设 + 「适应窗口」；高度也生效，不再只能调宽度
+- **文档预览**：`.docx`（mammoth）、`.xlsx/.xlsm/.xls/.ods`（SheetJS → 表格，12 sheet × 400 行 × 60 列截断）、`.pptx/.doc/.odt/…`（officeparser → 文本）统一走 `files:previewDoc`，渲染层再过 DOMPurify；以前这些格式只能看到「二进制，预览不支持」
+- 新增 `verify:preview-permissions`（9 项）与 `verify:preview-doc`（6 项，含现造 docx/xlsx 夹具）；`verify:preview-format` 增加 `DOC_EXT` 与主进程 `officeKind` 的一致性校验
+
+### Fixed（预览 · 文件格式兼容）
+- **图片 / 音视频 / PDF 走 webview 原生渲染**：以前 `.mp4` `.mp3` `.pdf` `.ico` `.bmp` `.avif` 都被按 UTF-8 读成乱码塞进 `<pre>`；现在统一由 Chromium 画（音视频带播放器），并且不再受「2MB 文本上限」误伤（以前 3MB 的 JPG 会先判成「太大」）
+- **二进制不再当文本**：`files:read` 先做 NUL 字节 / 控制字符占比判定，`.docx` `.xlsx` `.zip` `.woff` `.db` `.wasm` 直接给「不支持预览 + 用 Finder 打开」的原因，不再把二进制灌进 DOM
+- **文本编码不再只有 UTF-8**：严格 UTF-8 → BOM 的 UTF-16LE/BE → GB18030 兜底；按 GB18030 解码时顶部明确提示「保存会写成 UTF-8」；实在解不出来才判二进制
+- **`file://` 地址修正**：`encodeURI` 不转义 `#` / `?`，文件名带这两个字符时预览直接空白；改为逐段 `encodeURIComponent`（同时处理 Windows 盘符 `file:///C:/…` 与 UNC `file://server/share`）
+- **口径唯一**：扩展名清单收敛到 `electron/file-kinds.mjs`，`FileVisual.tsx` 的图标清单与之对齐（以前 `.ico/.bmp` 显示图片图标、预览却是乱码），`npm run verify:preview-format` 校验两处不漂移
+
+### Added（预览 · 远端主机的 dev server 也能打开）
+- **预览跟随 Agent 的运行位置**：当前任务跑在 `kind=ssh` 的主机上时，预览标签自动用 `ssh -L` 把远端端口映射到本机回环（`127.0.0.1:<随机端口>` → 远端 `127.0.0.1:<端口>`），不再要求用户自己先 `ssh -L` 或手动填一个多半连不上的远端 IP
+- **地址栏仍然是远端地址**：`PreviewSurface` 只把隧道地址交给 webview，地址栏 / 「系统浏览器打开」/ 拾取生成的 `ElementContext.url` 都映射回远端原始地址；元素源码也用远端 workdir 相对化（`src/App.tsx:42`），不会把 `127.0.0.1:随机端口` 写进 prompt
+- **只建必要的隧道**：回环 / 内网 / mDNS / 该主机自己的地址才走隧道，公网地址直接加载；同一 `主机 + 目标端口` 复用一条（引用计数），换地址 / 关标签 / 退出应用都会释放，监听只绑 `127.0.0.1`
+- **失败说人话**：`sshHint()` 把 stderr 翻成「免密未配置 / 主机名解析失败 / SSH 连不上 / 远端端口没服务」；页面级 `ERR_CONNECTION_REFUSED` 补一句「隧道已建，但远端该端口没服务」；隧道中途断开通过 `preview:tunnel:closed` 回到预览区显示原因
+- 新增 `electron/preview-tunnel.mjs`（不依赖 electron，可单测）+ `npm run verify:preview-tunnel`；实现见 `docs/arch/ARCH-ui-context.md` 2.3
+
 ### Added（内容 · 抖音介绍视频）
 - **按 WorkBuddy 定稿的 11 段第一人称脚本重做**：热点开场（5 个 Agent 上限）→ 我也是这样 → 我写了个东西 → 派活 / 分工 / 场景 / 知识 / 记忆 / 画像 → 五个难点 → 开源；成片约 **60s**、1080×1920、30fps
 - **视频生成器**：`scripts/video/`（`scenes.cjs` 11 个场景 / `stage.css` 舞台 / `tts.cjs` 分段合成 / `render-douyin.cjs` 时间线 → Electron 逐帧截图 → ffmpeg / `voiceover.md` + `storyboard.md`）；字幕烧进画面，避开抖音底部 400px / 右侧 120px 安全区
@@ -12,6 +154,14 @@
 - **去个人内容**：记忆 / 画像两段不再用真实截图，改成纯 HTML 合成卡片（`示例数据` / `示例人物`），视频里不含真实联系人、真实笔记、本地路径
 - **横版 / GitHub Pages**：`--wide` 输出 1920×1080 横版，`publish-web.cjs` 压成 1600×900 / 4.5MB，落到 `public/video/`；Pages 首页新增 `#video` 区块（`<video controls poster>`），工作流监听 `public/video/**`
 - **产物**：竖版配音 / 静音 + 横版 1920×1080 + Pages 1600×900 + 封面 / 海报；母片在 `.preview/douyin*`（gitignore），Pages 版入库
+
+### Added（文档 · Wiki 与 Pages）
+- **三篇新 Wiki 页**：`场景与办公室`（状态映射 / 三套模板 / 动效 / 明确未做）、`记忆与 Dream`（L1–L4、四种「忘」、打分注入）、`知识库`（解析路由 / 摄入状态机 / 混合检索 / 引用）；同时补了 `office` / `memory` 两段可播放流程图
+- **首页与架构页对齐现在的导航**：导航改为 工作区 / 场景 / 项目 / 统计 / 主机 / Git / 知识库 / 记忆 / 人物 / 说明 / 设置；架构页新增「三套库」（`harness.db` / `kb.db` / `mem.db` / `persona.db`）与对应代码入口
+- **`publish-wiki.mjs` 补齐 `Gallery.md` / `LLM-Wiki.md`**：以前 `#/wiki/gallery`、`#/wiki/llm-wiki` 在 GitHub Wiki 上是死链，现在一并发布；新页同时登记进 `src/wiki/pages.ts` 与侧栏；`<figure><img>` 的相对图片地址也会像 Markdown 图片一样改写回 raw 地址
+- **GitHub Pages 首页重排为「五 + 五」**：五个主打特性（多智能体终端 / Super Agent 编排 / 场景与办公室 / 知识库 / 记忆与人物画像）与五个技术难点（解析 / 编排 / 整理 / 记忆 / 画像）；每个难点写「难在哪 / 做到什么算做到 / 现在到哪了」，口径以 `docs/arch/ARCH-key-tech.md` 为准；下方五张一一对应的封面截图，新增 `cover-office.png` / `cover-memory.png`（由 `scripts/article-images/render-pages-covers.cjs` 生成，与既有封面同一版式）；版本号改为从 `package.json` 读取，标签补 `three.js`
+- **Wiki 补齐「五个技术难点」页**：`resources/wiki/tech.md`（解析 / 编排 / 整理 / 记忆 / 画像：难在哪、判据、现状、明确不做）；首页从「三大能力 + 补充」改成「五个主打特性」并换成五张封面；`plugins.md` 更新 MCP 工具矩阵（wiki / knowledge / memory / persona）与建议队列 / 人工结论，`llm-wiki.md` 补「写入闸门」，`design-notes.md` 把 `sql.js` 订正为 `node:sqlite`，`build.md` 补 Pages 部署
+- **新增隐私守卫**：`npm run verify:privacy` 扫描「已跟踪 + 未忽略的新文件」里的真实微信账号 / 手机号 / 个人邮箱 / 本机绝对路径 / 私钥，命中时只打印打码片段，不进 CI 日志；已接入 `build.yml`；同时把主机表单里的用户名 / 本机 cwd 占位符改成通用值
 
 ### Added（场景 · 场景库卡片管理）
 - **场景库卡片就地增删改查**：`⋯` 菜单里 `重命名 / 复制一份 / 复制为 JSON / 删除`，原来的占位提示换成真实操作；标题双击也能改名（Enter 提交、Esc 取消、失焦提交）
@@ -25,6 +175,7 @@
 - **航母接入 three.js 3D 舞台**：参考 `docs/prototype/carrier-3d.js`，`prefs.template=carrier` 时渲染福建舰甲板、海面 / 夕阳 / 舰载机 / 舰岛 / 升降机 / 着舰道
 - **状态映射沿用现有字段**：弹射位 = 并发 `run`，着舰道 = `review / approval` 串行，失败 = 复飞，待命 = 升降机 / 停机区，主控 = 甲板弹射官；姓名牌 + 引线投影定位，点开复用同一个 Inspector
 - 角色用舰载机（`j15 / j35`）表示，颜色 / 环 / 姓名牌跟随 `tone`；动效档位 / 走位时长 / reduced-motion 生效；光照跟随应用主题
+- **电磁弹射起飞动画**：`run` 开始时沿弹射位做「张紧 → 弹射 → 爬升」，JBD 抬起、尾焰、甲板蒸汽和轻微镜头震动；起飞后保持空中待命，状态变化时再降落到对应甲板位。舞台头新增「演一遍弹射」按钮
 - 新增 `src/office/Carrier3D.tsx` + `src/office/carrier-scene.ts`，按需加载的 3D chunk
 
 ### Added（场景 · 作战室 3D 舞台）

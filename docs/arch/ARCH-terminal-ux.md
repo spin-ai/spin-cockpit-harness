@@ -161,3 +161,13 @@ node --check electron/preload.cjs
 8. 点击输出里的 `http://localhost:PORT` 用系统浏览器打开。
 9. `⌘D` / `⇧⌘D` 递归拆分，原窗格输出（如 `echo MARK`）不丢；拖分隔条比例变化，嵌套拆分只影响对应容器。
 10. `⌘⌥←/→/↑/↓` 在窗格间移动焦点；`⌘W` 只关当前窗格，最后一个窗格时关标签；切走再切回标签，拆分布局与各 pty 保持。
+
+## 接管（terminal takeover）
+
+一条 pty 同时只归一个使用者。`terminalControl` 记 `terminalId → "user"`：
+
+- `terminalTakeControl`：人接管。期间 **Chat 的纠偏投递直接失败**（`delivery: failed` + 系统消息「终端已被你接管」），**不排队**——排队会让人的操作和 Agent 的输出交错；
+- `terminalReleaseControl`：交回。往对应 thread 写一条「你接管期间它看不到输出，接下来要重新看当前输出再动手」——不假装连续；
+- 标签上出现 ✋（`.term-control`），右键菜单变成「交回终端给 Agent」；
+- 不做的事：屏幕截帧、鼠标键盘注入（那是桌面电脑的语义，本项目执行面是终端 / ACP，见 `product/COMPARE-rakazo.md` §1.2）。
+

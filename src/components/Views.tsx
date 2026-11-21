@@ -356,11 +356,11 @@ export function Hosts({ state, act, notify, now }: { state: State; act: Act; not
           <div className="form-row">
             <label>名称<input value={form.name} onChange={set("name")} placeholder="lab-gpu" /></label>
             <label>host / IP<input value={form.addr} onChange={set("addr")} placeholder="10.0.8.21" /></label>
-            <label>用户<input value={form.user} onChange={set("user")} placeholder="spin" /></label>
+            <label>用户<input value={form.user} onChange={set("user")} placeholder="user" /></label>
             <label>端口<input value={form.port} onChange={set("port")} /></label>
           </div>
           <div className="form-row">
-            <label>远端 cwd<input value={form.path} onChange={set("path")} placeholder="/home/spin/work" /></label>
+            <label>远端 cwd<input value={form.path} onChange={set("path")} placeholder="~/work" /></label>
           </div>
           <div className="row gap8" style={{ justifyContent: "flex-end" }}>
             <button className="btn" onClick={() => { setOpen(false); resetForm(); }}>取消</button>

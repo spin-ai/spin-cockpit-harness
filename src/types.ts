@@ -26,7 +26,9 @@ export interface Thread {
   model?: string;
   modelName?: string;
   effort?: string;
-  kind?: "chat" | "mission";
+  /** bot = 人格 bot 的持续会话（todo_id 为空，但**不是**全局空会话） */
+  kind?: "chat" | "mission" | "bot";
+  botId?: string | null;
   createdAt: number; updatedAt: number;
 }
 export interface Todo {
@@ -109,6 +111,8 @@ export interface TerminalRecord {
   /** 长时间无输出（主进程判定，5 分钟） */
   stalled?: boolean;
   idleMs?: number;
+  /** 谁在用这条 pty：null/缺省 = 空着（Agent 可写），"user" = 人接管中（Agent 写入被拒） */
+  controlBy?: "user" | null;
 }
 export interface RuntimeView {
   id: string; hostId: string; hostName: string; cli: string; label: string;
@@ -120,6 +124,8 @@ export interface Run {
   /** null = 执行器未上报，界面显示「未上报」而不是 0（见 docs/arch/ARCH-hosts-stats.md） */
   tokens: number | null;
   error: string | null; parentRunId: string | null; cwd?: string; branch?: string | null;
+  /** ACP 会话 id：有它就能在被中断后续跑（dsh 的 session/resume） */
+  acpSession?: string | null;
   hostId?: string | null; createdAt?: number | null;
   tokensIn?: number | null; tokensOut?: number | null; usageSource?: "acp" | "unknown";
   errorClass?: ErrorClass | null; exitCode?: number | null;
@@ -142,7 +148,15 @@ export interface PluginManifest {
   contributes?: {
     commands?: { id: string; title: string; description?: string }[];
     events?: string[];
-    settings?: { key: string; type?: string; title?: string; default?: unknown }[];
+    settings?: {
+      key: string;
+      type?: string;
+      title?: string;
+      description?: string;
+      default?: unknown;
+      placeholder?: string;
+      options?: { value: string; label: string }[];
+    }[];
     views?: { id: string; title: string; location?: string; icon?: string; entry?: string }[];
     executors?: unknown[];
   };
@@ -153,6 +167,8 @@ export interface PluginRecord {
   lastError: string | null; lastRunAt: number | null;
 }
 export interface PluginCommand { pluginId: string; id: string; title: string; description?: string; }
+/** 插件 manifest 声明的 UI view；目前只有已注册组件的 view 会被渲染（notes / zhulong） */
+export interface PluginView { pluginId: string; id: string; title: string; location?: string; icon?: string; }
 export interface TodoLink {
   id: string; todoId: string; pluginId: string; kind: string; ref: string; title: string; createdAt: number;
 }
@@ -201,6 +217,14 @@ export interface Settings {
   autoDetectDevServerUrl: boolean;
   previewHomeUrl: string;
   elementScreenshots: boolean;
+  /** 自签名 https 的 dev server：默认按 Chromium 校验，开了才信任 */
+  previewIgnoreCertErrors: boolean;
+  /** 预览页站点权限 JSON：{ origin: ["media", "clipboard-read", ...] } */
+  previewPermissionSites: string;
+  /** Agent 是否可以用 browser_* 工具操作预览页 */
+  previewAgentControl: boolean;
+  /** 桌面操作（agent-desktop MCP）：默认关，开启后 Agent 可以读/点桌面窗口 */
+  agentDesktopEnabled?: boolean;
   contextDetail: "compact" | "standard";
   /** 云端向量索引（Ark embedding）：默认 false = 只做本地关键词索引，正文不出网 */
   knowledgeCloudIndex?: boolean;
@@ -211,6 +235,13 @@ export interface Settings {
   worktreeMode?: WorktreeMode;
   /** 即时通信网关（手机继续处理） */
   imEnabled?: boolean;
+  /** 飞书自建应用：扫码配置写入；secret 以 enc: 前缀加密，不回显 */
+  imFeishuAppId?: string;
+  imFeishuAppSecret?: string;
+  imFeishuBoundAt?: number;
+  imFeishuVerificationToken?: string;
+  imFeishuLastChat?: string;
+  imFeishuMode?: "ws" | "http";
   imTelegramToken?: string;
   imTelegramAllow?: string;
   imWebhookUrl?: string;
@@ -223,7 +254,7 @@ export interface Settings {
 export interface State {
   hosts: Host[]; agents: Agent[]; todos: Todo[]; runs: Run[]; threads: Thread[]; messages: Message[];
   missionPlans?: MissionPlanRecord[]; delegations?: Delegation[];
-  plugins?: PluginRecord[]; pluginCommands?: PluginCommand[]; todoLinks?: TodoLink[];
+  plugins?: PluginRecord[]; pluginCommands?: PluginCommand[]; pluginViews?: PluginView[]; todoLinks?: TodoLink[];
   artifacts: Artifact[]; events: Event[]; context: ContextState;
   approvals: Approval[];
   summary: { activeRuns: number; cost: number; tokens: number; failures: number };

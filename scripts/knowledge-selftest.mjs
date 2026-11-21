@@ -147,6 +147,19 @@ async function main() {
   check("新导入排在最前", added.ok && order3[0]?.id === added.docId, order3[0]?.title);
   check("其余顺序不变", order3.slice(1).map((d) => d.id).join(",") === order1.join(","));
 
+  console.log("\n[4.6] 块级 sidecar");
+  const blocksSample = {
+    scene: "arch",
+    size: [1024, 768],
+    blocks: [{ id: "b1", type: "text", bbox: [1, 2, 30, 40], text: "任务调度", conf: 0.93 }],
+    relations: [],
+  };
+  const saved = await kb.saveBlocks(added.docId, blocksSample);
+  check("saveBlocks 写到 files/<doc>/blocks.json", /files[\\/].+blocks\.json$/.test(saved.file), saved.file);
+  const readBack = kb.blocks(added.docId);
+  check("blocks 能原样读回", readBack?.blocks?.[0]?.text === "任务调度");
+  check("不存在的 doc 返回 null", kb.blocks("no-such-doc") === null);
+
   console.log("\n[5] 删除传播");
   kb.remove(ids["接口设计.md"]);
   const after = await kb.search("接口", { mode: "fts" });

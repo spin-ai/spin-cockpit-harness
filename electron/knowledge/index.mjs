@@ -201,6 +201,26 @@ export function createKnowledge({
    * 页图（引用点开看原页）。结果落盘缓存，二次打开不再渲染。
    * @returns {Promise<{dataUrl: string, cached: boolean, bytes: number, width: number, height: number} | null>}
    */
+  /**
+   * 块级 sidecar：解析器（如视觉解析插件）把 bbox 写成 files/<doc_id>/blocks.json。
+   * Reader 契约仍是 Page[]{page_no, markdown}，块信息只旁挂，不进 markdown、不进向量。
+   */
+  function blocksPathOf(docId) {
+    return path.join(filesDir, String(docId || "unknown"), "blocks.json");
+  }
+
+  async function saveDocumentBlocks(docId, payload) {
+    if (!docId) throw new Error("saveBlocks 需要 docId");
+    const file = blocksPathOf(docId);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(payload || {}, null, 2));
+    return { docId: String(docId), file };
+  }
+
+  function documentBlocks(docId) {
+    try { return JSON.parse(fs.readFileSync(blocksPathOf(docId), "utf8")); } catch { return null; }
+  }
+
   async function pageImageOf(docId, pageNo = 1, { scale = 1.6 } = {}) {
     const doc = db.prepare("SELECT id, uri, kind FROM documents WHERE id = ?").get(String(docId || ""));
     if (!doc?.uri) return null;
@@ -230,6 +250,8 @@ export function createKnowledge({
     cite,
     citationsOfDoc,
     filesDir,
+    saveBlocks: saveDocumentBlocks,
+    blocks: documentBlocks,
     get hasKey() { return Boolean(keyOf()); },
     /** 索引模式：UI 用它显示「本地 / 云端」并决定是否给上传提示 */
     embeddingInfo: () => ({

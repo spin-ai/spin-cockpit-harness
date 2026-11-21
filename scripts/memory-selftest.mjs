@@ -12,7 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { createMemory, parseDreamItems } from "../electron/memory/index.mjs";
+import { createMemory, parseDreamItems, MemoryConflictError } from "../electron/memory/index.mjs";
 
 let failures = 0;
 const check = (name, ok, detail = "") => {
@@ -51,6 +51,8 @@ const oldEntry = mem.entryUpsert({ layer: "L4", title: "包管理器用 pnpm", b
 await sleep(5);
 // 同一个毫秒里 "创建" 和 "失效" 会让 as_of 无法区分，所以先睡一下再取分界点
 const before = Date.now();
+// 同一个毫秒里失效的话，invalid_at === before，as_of(before) 就看不到它了：隔开 2ms
+await sleep(2);
 const promoted = mem.promoteNote({ id: verified.id, layer: "L4", supersedes: [oldEntry.id] });
 const newer = promoted.entry;
 check("新条目记下它取代了谁", newer.supersedes.includes(oldEntry.id));
@@ -90,6 +92,16 @@ check("失效条目不在注入里", !big.markdown.includes("包管理器用 pnp
 check("注入项带分数与原因", big.items.every((i) => i.included ? i.reason.length > 0 : true));
 check("注入记录版本号", typeof big.version === "number" && big.version > 0);
 
+// owner 维度：空 = 共享；bot:<id> = 只给这个 bot
+const botOnly = mem.entryUpsert({ layer: "L4", title: "戈洛专属：怕吵", body: "夜里不要主动找我", owner: "bot:golo" });
+const noteBot = mem.noteAdd({ body: "戈洛记得：周报在周五下午发", kind: "preference", confidence: 0.9, expiresAt: null, sourceRef: "run:selftest", owner: "bot:golo" });
+const asGolo = mem.inject({ maxChars: 12000, owner: "bot:golo" });
+const asOther = mem.inject({ maxChars: 12000, owner: "bot:other" });
+check("owner 条目只给本 bot 注入", asGolo.markdown.includes(botOnly.title) && asGolo.markdown.includes(noteBot.body));
+check("别的 bot 看不到私有条目", !asOther.markdown.includes(botOnly.title) && !asOther.markdown.includes(noteBot.body));
+check("共享条目对所有 bot 都注入", asOther.markdown.includes("置顶结论") && asGolo.markdown.includes("置顶结论"));
+check("不传 owner 时不掉私有条目（默认行为不变）", mem.inject({ maxChars: 12000 }).markdown.includes(botOnly.title));
+
 for (let i = 0; i < 20; i += 1) mem.entryUpsert({ layer: "L4", title: `压测条目 ${i}`, body: "x".repeat(150) });
 const tiny = mem.inject({ maxChars: 900 });
 check("小预算时 note 仍能进去（预留生效）", tiny.markdown.includes("未验证观察"));
@@ -102,6 +114,27 @@ check("超出 note 上限的观察也出现在台账里（并说明原因）", (
   const cappedNotes = many.items.filter((i) => i.layer === "note" && !i.included);
   return cappedNotes.length > 0 && cappedNotes.every((i) => /上限/.test(i.reason));
 })());
+
+// ── 3.6 条目修订与乐观并发 ─────────────────────────────────
+console.log("[3.6] 条目修订 / 冲突");
+const revEntry = mem.entryUpsert({ layer: "L4", title: "部署方式", body: "走 install-mac.mjs" });
+// 同一毫秒里改两次的话 updated_at 不变，"版本冲突"就测不出来：隔开 2ms
+await sleep(2);
+const rev1 = mem.entryRewrite({ id: revEntry.id, body: "走 install-mac.mjs --open", expectedUpdatedAt: revEntry.updatedAt });
+check("改写写入新正文", rev1.body.includes("--open"));
+check("旧版进了 entry_revisions", mem.entryRevisions({ id: revEntry.id }).some((r) => r.body.includes("走 install-mac.mjs") && !r.body.includes("--open")));
+let conflict = null;
+try { mem.entryUpsert({ id: revEntry.id, title: "部署方式", body: "被人偷偷覆盖", expectedUpdatedAt: revEntry.updatedAt }); }
+catch (err) { conflict = err; }
+check("版本不一致时写会被拒（乐观并发）", conflict instanceof MemoryConflictError, conflict?.code || "no error");
+check("拒绝之后内容没被改掉", (mem.entryList({ limit: 200 }).find((e) => e.id === revEntry.id) || {}).body?.includes("--open"));
+let revConflict = null;
+try { mem.entryRewrite({ id: revEntry.id, body: "再改一次", expectedUpdatedAt: revEntry.updatedAt }); }
+catch (err) { revConflict = err; }
+check("改写也认 expectedUpdatedAt", revConflict instanceof MemoryConflictError);
+const oldest = mem.entryRevisions({ id: revEntry.id }).at(-1);
+const rolledBack = mem.entryRestoreRevision({ revisionId: oldest.id });
+check("回滚到旧版（回滚本身也进修订历史）", rolledBack.body.includes("install-mac.mjs") && mem.entryRevisions({ id: revEntry.id }).length >= 2);
 
 // ── 4. 检索用 bigram，不靠整串 LIKE ─────────────────────────
 console.log("[4] 检索");
@@ -296,6 +329,49 @@ check("旧版本留在 note_revisions 里", revs.length === 1 && revs[0].body ==
 let rwErr = "";
 try { mem.noteRewrite({ id: rwBase.id, body: "发布前必须过 e2e 与 typecheck" }); } catch (e) { rwErr = e.message; }
 check("改写没变化时报错", /没有任何变化/.test(rwErr));
+
+// ── 8.4 提案版本闸门：人改过的东西不被旧建议覆盖 ────────────
+console.log("[8.4] 版本闸门与台账");
+const firstRun = mem.dreamLastRun();
+check("每轮 Dream 落台账（trigger / 耗时 / 产出）", Boolean(firstRun) && firstRun.trigger === "manual" && firstRun.ms >= 0, firstRun ? `${firstRun.created} 条 / ${firstRun.ms}ms` : "无");
+const targetSug = mem.suggestionList({ status: "pending", limit: 200 }).find((s) => s.targetKind === "note" && s.baseRev > 0);
+check("确定性建议带 baseRev / diff", Boolean(targetSug) && Boolean(targetSug.diff), targetSug?.diff?.split("\n")[0]);
+await sleep(5);
+mem.noteSetStatus({ id: targetSug.targetId, status: "verified" });
+const staleResolve = mem.suggestionResolve({ id: targetSug.id, accept: true });
+check("目标被改过 → 建议作废，不覆盖人的修改", staleResolve.superseded === true && staleResolve.status === "superseded", staleResolve.reason);
+check("作废不进 rejects（不是“人拒绝了它”）", !mem.suggestionList({ status: "pending", limit: 500 }).some((s) => s.id === targetSug.id));
+
+// ── 8.5 输入指纹：同一批输入不重跑 ──────────────────────────
+console.log("[8.5] 输入指纹");
+const fp1 = mem.dreamFingerprint({ pages: [], sources: [] });
+check("同一批输入指纹稳定", fp1 === mem.dreamFingerprint({ pages: [], sources: [] }));
+mem.noteAdd({ body: "新增一条改变输入的观察", kind: "guess", sourceRef: "run:fp" });
+check("输入变了指纹就变", mem.dreamFingerprint({ pages: [], sources: [] }) !== fp1);
+const idleRun = mem.dreamScan({ pages: [], sources: [], trigger: "idle" });
+check("空闲触发与手动共用同一条扫描路径", mem.dreamLastRun()?.trigger === "idle", `+${idleRun.length} 条`);
+check("输入没变就不该再跑", mem.dreamUnchanged({ fingerprint: mem.dreamFingerprint({ pages: [], sources: [] }) }) === true);
+check("输入没变时 dreamScan 直接返回空", mem.dreamScan({ pages: [], sources: [] }).length === 0);
+const forced = mem.dreamScan({ pages: [], sources: [], force: true });
+check("force 可以重跑一轮（手动按钮）", Array.isArray(forced));
+check("台账保留多轮记录", mem.dreamRuns({ limit: 5 }).length >= 3);
+
+// ── 8.6 证据：观察带着自己的出处去给模型看 ──────────────────
+console.log("[8.6] 证据链");
+mem.transcriptPut({ kind: "message", refId: "msg-e1", at: Date.now(), text: "以后装依赖统一用 pnpm，别再用 npm 了", threadId: "t9", runId: "r9" });
+const evNote = mem.noteAdd({ body: "依赖统一用 pnpm 安装", kind: "preference", confidence: 0.6, sourceKind: "transcript", sourceRef: "msg-e1" });
+const withEv = mem.dreamCandidates({ limit: 50, withEvidence: true }).find((c) => c.id === evNote.id);
+check("候选带自己的出处片段", Boolean(withEv?.evidence?.some((e) => e.ref === "message:msg-e1")), withEv?.evidence?.[0]?.snippet?.slice(0, 24));
+check("不开 withEvidence 时不带证据（省上下文预算）", !("evidence" in (mem.dreamCandidates({ limit: 50 }).find((c) => c.id === evNote.id) || {})));
+const noEv = mem.dreamModelSuggest({ items: [{ action: "correct", ids: [evNote.id], reason: "看起来已经不成立了" }] });
+check("correct 没证据直接丢", noEv.length === 0);
+const forgedEv = mem.dreamModelSuggest({ items: [{ action: "correct", ids: [evNote.id], evidence: ["message:伪造"], reason: "这句话不成立了" }], evidenceRefs: new Set(["message:msg-e1"]) });
+check("correct 引用没给它的证据被丢", forgedEv.length === 0);
+const okEv = mem.dreamModelSuggest({ items: [{ action: "correct", ids: [evNote.id], evidence: ["message:msg-e1"], reason: "后来明确改成 npm 了" }], evidenceRefs: new Set(["message:msg-e1"]), dreamId: "dr-test" });
+check("correct 带合法证据可以入队", okEv.length === 1 && okEv[0].payload?.evidence?.[0] === "message:msg-e1");
+check("模型建议 confidence 标 0.5（与确定性检查区分）", okEv[0]?.confidence === 0.5);
+check("模型建议也带 diff", Boolean(okEv[0]?.diff?.includes("stale")));
+check("建议记住属于哪一轮 Dream", okEv[0]?.dreamId === "dr-test");
 
 // ── 9. 老库补列 ────────────────────────────────────────────
 console.log("[9] 老库迁移");

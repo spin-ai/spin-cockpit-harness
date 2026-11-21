@@ -1,4 +1,4 @@
-type View = "workspace" | "scene" | "projects" | "stats" | "hosts" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona";
+type View = "workspace" | "scene" | "projects" | "stats" | "hosts" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "bot";
 
 const icon = (name: string) => {
   const common = { width: 19, height: 19, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
@@ -15,10 +15,12 @@ const icon = (name: string) => {
   if (name === "knowledge") return <svg {...common}><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z" /><path d="M8 7h7M8 11h5" /></svg>;
   if (name === "memory") return <svg {...common}><path d="M12 3v18M5 7v10M19 7v10M8.5 5v14M15.5 5v14" /></svg>;
   if (name === "persona") return <svg {...common}><circle cx="12" cy="8" r="3.4" /><path d="M5 20a7 7 0 0 1 14 0" /></svg>;
+  if (name === "bot") return <svg {...common}><rect x="4" y="8" width="16" height="11" rx="3" /><path d="M12 8V5M9 13h.01M15 13h.01M9 16.5h6" /></svg>;
+  if (name === "scan") return <svg {...common}><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16" /><path d="M8 12h8M12 8v8" /></svg>;
   return <svg {...common}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>;
 };
 
-export function Rail({ view, onChange, notesEnabled = false, badges = {} }: { view: View; onChange: (v: View) => void; notesEnabled?: boolean; badges?: Partial<Record<View, number>> }) {
+export function Rail({ view, onChange, notesEnabled = false, zhulongAvailable = false, badges = {} }: { view: View; onChange: (v: View) => void; notesEnabled?: boolean; zhulongAvailable?: boolean; badges?: Partial<Record<View, number>> }) {
   const items: { id: View; label: string }[] = [
     { id: "workspace", label: "工作区" },
     { id: "scene", label: "场景" },
@@ -27,14 +29,16 @@ export function Rail({ view, onChange, notesEnabled = false, badges = {} }: { vi
     { id: "hosts", label: "主机" },
     { id: "git", label: "Git" },
     ...(notesEnabled ? [{ id: "notes" as View, label: "知识库" }] : []),
+    ...(zhulongAvailable ? [{ id: "zhulong" as View, label: "视觉" }] : []),
     { id: "memory" as View, label: "记忆" },
     { id: "persona" as View, label: "人物" },
+    { id: "bot" as View, label: "Bot" },
   ];
   return (
     <nav className="rail">
       {items.map((it) => (
         <button key={it.id} className={`rail-btn ${view === it.id ? "on" : ""}`} onClick={() => onChange(it.id)} title={badges[it.id] ? `${it.label} · ${badges[it.id]} 项` : it.label}>
-          {icon(it.id === "notes" ? "note" : it.id)}<span>{it.label}</span>
+          {icon(it.id === "notes" ? "note" : it.id === "zhulong" ? "scan" : it.id)}<span>{it.label}</span>
           {badges[it.id] ? <em className={`rail-badge ${it.id === "workspace" ? "run" : ""}`}>{badges[it.id]! > 99 ? "99+" : badges[it.id]}</em> : null}
         </button>
       ))}

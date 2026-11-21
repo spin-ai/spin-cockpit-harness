@@ -7,6 +7,7 @@
 > **结论**：自研 Electron 壳 + **dsh 作为执行层（ACP）** + **定向复用开源实现中的终端 / worktree 模块**。
 > 参考实现一次性 pin 版本、不跟上游；dsh 用协议依赖、不读它的 Cordis 插件树。
 
+
 ## 0. 决策摘要
 
 | 决策 | 选择 | 理由 |
@@ -105,6 +106,17 @@ context get/set
 | F 远程 | `ssh` 传输 + 同一 ACP 客户端 |
 | G 布局 | 固定四区 + 可缩放侧栏 + 保存布局 |
 | K/M IDE 交接 | `context` + 深链 + 只读预览 |
+
+---
+
+### run 续跑（ACP session/resume）
+
+`runs.acp_session` 记录这个 run 的 ACP 会话 id。应用退出后 run 会被 `recoverMissions()` 标成 `interrupted`（本来就是），
+但**会话本身还在 dsh 的磁盘上**：`dsh --profile acp` 的 `agentCapabilities.sessionCapabilities` 是 `{ close, list, resume }`。
+
+- `runResume({ runId })`：把 run 放回 `queued`，写 `resumeSessionId = acpSession`；
+- `startRun()`：有 `resumeSessionId` 时用 `client.resumeSession(id, cwd)`，**cwd 用原 run 的 cwd**（绝不新建 worktree，否则上次未提交的改动就丢了）；续不上（`session is not resumable`）就老实报一句再开新会话；
+- 实测约束（`npm run verify:acp-resume`）：`cwd` 必填；响应不含 sessionId；活跃会话不能在同进程内 resume；不存在的 id 会明确报错。
 
 ---
 

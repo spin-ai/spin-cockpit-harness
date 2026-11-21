@@ -549,14 +549,14 @@ function officeProjection() {
   return svgDoc(w, h, b);
 }
 
-// fig 显式给编号：文章按「先动图、再实况、再映射、再配置」的顺序排
+// fig 是「本篇」的图号（01–15），文件名前缀 sc-，避免和系列前几篇的编号冲突
 module.exports = {
   images: [
-    { fig: 18, name: "cover", width: 1600, height: 900, svg: cover() },
-    { fig: 22, name: "scene-layers", width: 1600, height: 1000, svg: sceneLayers() },
-    { fig: 23, name: "carrier-mapping", width: 1600, height: 1000, svg: carrierMapping() },
-    { fig: 27, name: "scene-matrix", width: 1600, height: 1000, svg: sceneMatrix() },
-    { fig: 28, name: "office-projection", width: 1600, height: 1000, svg: officeProjection() },
-    { fig: 32, name: "scene-dispatch", width: 1600, height: 1000, svg: sceneDispatch() },
+    { fig: 1, name: "cover", width: 1600, height: 900, svg: cover() },
+    { fig: 5, name: "scene-layers", width: 1600, height: 1000, svg: sceneLayers() },
+    { fig: 6, name: "carrier-mapping", width: 1600, height: 1000, svg: carrierMapping() },
+    { fig: 10, name: "scene-matrix", width: 1600, height: 1000, svg: sceneMatrix() },
+    { fig: 11, name: "office-projection", width: 1600, height: 1000, svg: officeProjection() },
+    { fig: 15, name: "scene-dispatch", width: 1600, height: 1000, svg: sceneDispatch() },
   ],
 };

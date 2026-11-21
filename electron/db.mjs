@@ -8,8 +8,8 @@ CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT, path TEXT, 
 CREATE TABLE IF NOT EXISTS hosts (id TEXT PRIMARY KEY, name TEXT, kind TEXT, addr TEXT, status TEXT, heartbeat INTEGER, version TEXT, port INTEGER, user TEXT, caps TEXT, last_probe INTEGER, latency_ms INTEGER, max_concurrency INTEGER, default_cwd TEXT, probe_error TEXT);
 CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT, host_id TEXT, cli TEXT, cwd TEXT, max_concurrency INTEGER, approval TEXT, color TEXT, skills TEXT, alias TEXT, project_id TEXT, terminal_id TEXT, role TEXT DEFAULT 'worker', instructions TEXT DEFAULT '', max_children INTEGER DEFAULT 4);
 CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, key TEXT, title TEXT, desc TEXT, acceptance TEXT, status TEXT, agent_id TEXT, priority TEXT, due TEXT, parent_id TEXT, tags TEXT, subtasks TEXT, blocked_by TEXT, missing_writeback INTEGER, last_run_failed INTEGER, cwd TEXT, created_at INTEGER, updated_at INTEGER, confirmed INTEGER, project_id TEXT, kind TEXT DEFAULT 'task', mission_state TEXT);
-CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, todo_id TEXT, agent_id TEXT, status TEXT, trigger TEXT, started_at INTEGER, ended_at INTEGER, cost REAL, tokens INTEGER, error TEXT, parent_run_id TEXT, cwd TEXT, branch TEXT, host_id TEXT, created_at INTEGER, tokens_in INTEGER, tokens_out INTEGER, usage_source TEXT, error_class TEXT, exit_code INTEGER, queue_wait_ms INTEGER, duration_ms INTEGER, queue_reason TEXT, kind TEXT DEFAULT 'worker', delegation_id TEXT, terminal_id TEXT, runtime TEXT, worktree_cleaned INTEGER);
-CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, todo_id TEXT, title TEXT, project_id TEXT, project TEXT, agent_id TEXT, created_at INTEGER, updated_at INTEGER, model TEXT, model_name TEXT, effort TEXT, kind TEXT DEFAULT 'chat');
+CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, todo_id TEXT, agent_id TEXT, status TEXT, trigger TEXT, started_at INTEGER, ended_at INTEGER, cost REAL, tokens INTEGER, error TEXT, parent_run_id TEXT, cwd TEXT, branch TEXT, host_id TEXT, created_at INTEGER, tokens_in INTEGER, tokens_out INTEGER, usage_source TEXT, error_class TEXT, exit_code INTEGER, queue_wait_ms INTEGER, duration_ms INTEGER, queue_reason TEXT, kind TEXT DEFAULT 'worker', delegation_id TEXT, terminal_id TEXT, runtime TEXT, worktree_cleaned INTEGER, acp_session TEXT);
+CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, todo_id TEXT, title TEXT, project_id TEXT, project TEXT, agent_id TEXT, created_at INTEGER, updated_at INTEGER, model TEXT, model_name TEXT, effort TEXT, kind TEXT DEFAULT 'chat', bot_id TEXT);
 CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, todo_id TEXT, run_id TEXT, role TEXT, kind TEXT, content TEXT, injected INTEGER, created_at INTEGER, thread_id TEXT, delivery TEXT, context TEXT);
 CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, todo_id TEXT, run_id TEXT, kind TEXT, title TEXT, origin TEXT, ref TEXT, deep_link TEXT, created_at INTEGER);
 CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, ts INTEGER, type TEXT, text TEXT);
@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS todo_links (id TEXT PRIMARY KEY, todo_id TEXT, plugin
 CREATE TABLE IF NOT EXISTS scenes (project_id TEXT PRIMARY KEY, text TEXT, config TEXT, updated_at INTEGER);
 CREATE TABLE IF NOT EXISTS coordination_scenes (id TEXT PRIMARY KEY, name TEXT, project_id TEXT, template TEXT, config TEXT, created_at INTEGER, updated_at INTEGER);
 CREATE TABLE IF NOT EXISTS terminals (id TEXT PRIMARY KEY, project_id TEXT, todo_id TEXT, run_id TEXT, agent_id TEXT, cwd TEXT, kind TEXT, title TEXT, status TEXT, exit_code INTEGER, output_tail TEXT, created_at INTEGER, ended_at INTEGER);
+-- 人格 bot：身份（人格卡）/ 策略 / 配额都存在档案里；回合另表，便于按时间查与清理
+CREATE TABLE IF NOT EXISTS bots (id TEXT PRIMARY KEY, name TEXT, avatar TEXT, avatar_class TEXT, persona TEXT, capability TEXT, channels TEXT, policy TEXT, budget TEXT, status TEXT, muted_until INTEGER, created_at INTEGER, updated_at INTEGER);
+CREATE TABLE IF NOT EXISTS bot_turns (id TEXT PRIMARY KEY, bot_id TEXT, channel TEXT, trigger TEXT, input TEXT, injected TEXT, reply TEXT, decision TEXT, reason TEXT, run_id TEXT, cost TEXT, created_at INTEGER);
+CREATE TABLE IF NOT EXISTS routines (id TEXT PRIMARY KEY, bot_id TEXT, kind TEXT, data TEXT, updated_at INTEGER);
 `;
 
 /** 应用设置默认值。缺失的键一律从这里补齐。 */
@@ -47,9 +51,23 @@ export const DEFAULT_SETTINGS = {
   autoDetectDevServerUrl: true,
   previewHomeUrl: "http://localhost:5173/",
   elementScreenshots: true,
+  previewIgnoreCertErrors: false,  // 自签名 https dev server：开了才信任
+  previewPermissionSites: "",      // 预览页站点权限 JSON：{ origin: ["media", ...] }
+  previewAgentControl: true,
+  // 桌面操作（agent-desktop MCP）：默认关；开了会给 Agent 读/点桌面窗口的能力
+  // 桌面操作 MCP（agent-desktop）：默认关
+  agentDesktopEnabled: false,
   contextDetail: "standard",      // compact | standard
   knowledgeCloudIndex: false,     // 云端向量索引（Ark embedding）：默认关，关 = 资料一个字节不出网
   imEnabled: false,
+  // 飞书自建应用（扫码配置写入；secret 以 enc: 前缀加密）
+  imFeishuAppId: "",
+  imFeishuAppSecret: "",
+  imFeishuBoundAt: 0,
+  imFeishuVerificationToken: "",
+  imFeishuLastChat: "",
+  // 飞书事件接收方式：ws（长连接，推荐）| http（公网回调）
+  imFeishuMode: "ws",
   imTelegramToken: "",
   imTelegramAllow: "",
   imWebhookUrl: "",
@@ -97,6 +115,8 @@ export async function openDb(dir, { onTranscript } = {}) {
   const rows = (sql, params = []) => stmt(sql).all(...bind(params));
   for (const sql of [
     "ALTER TABLE runs ADD COLUMN cwd TEXT",
+    // run 的 ACP 会话 id：进程退出后可以 session/resume 续上（dsh 的 agentCapabilities.sessionCapabilities.resume）
+    "ALTER TABLE runs ADD COLUMN acp_session TEXT",
     "ALTER TABLE runs ADD COLUMN branch TEXT",
     "ALTER TABLE hosts ADD COLUMN port INTEGER",
     "ALTER TABLE hosts ADD COLUMN user TEXT",
@@ -115,8 +135,13 @@ export async function openDb(dir, { onTranscript } = {}) {
     "ALTER TABLE threads ADD COLUMN model TEXT",
     "ALTER TABLE threads ADD COLUMN model_name TEXT",
     "ALTER TABLE threads ADD COLUMN effort TEXT",
+    // 人格 bot：一条 thread 归一个 bot（todo_id 为空），见 ARCH-chat-thread「bot thread」
+    "ALTER TABLE threads ADD COLUMN bot_id TEXT",
     "ALTER TABLE messages ADD COLUMN delivery TEXT",
     "ALTER TABLE messages ADD COLUMN context TEXT",
+    // 人格 bot：主动建议落成任务后记 todo_id；建议本身存 proposal（含 dismissed）
+    "ALTER TABLE bot_turns ADD COLUMN todo_id TEXT",
+    "ALTER TABLE bot_turns ADD COLUMN proposal TEXT",
     // 编辑消息后重发：被新版本取代的后续消息打标记（软删除，可追溯）
     "ALTER TABLE messages ADD COLUMN superseded_by TEXT",
     // 主机：能力矩阵 / 探测时间 / 负载上限 / 默认远端目录（见 docs/arch/ARCH-hosts-stats.md）
@@ -200,12 +225,13 @@ export async function openDb(dir, { onTranscript } = {}) {
     queueWaitMs: num(r.queue_wait_ms), durationMs: num(r.duration_ms), queueReason: r.queue_reason || null,
     kind: r.kind || "worker", delegationId: r.delegation_id || null, terminalId: r.terminal_id || null,
     runtime: r.runtime || null, worktreeCleaned: !!r.worktree_cleaned,
+    acpSession: r.acp_session || null,
   }));
   state.threads = rows("SELECT * FROM threads").map((r) => ({
     id: r.id, todoId: r.todo_id || null, title: r.title || "", projectId: r.project_id || null,
     project: r.project || "", agentId: r.agent_id || null,
     model: r.model || "", modelName: r.model_name || "", effort: r.effort || "",
-    kind: r.kind || "chat",
+    kind: r.kind || "chat", botId: r.bot_id || null,
     createdAt: r.created_at || Date.now(), updatedAt: r.updated_at || r.created_at || Date.now(),
   }));
   state.messages = rows("SELECT * FROM messages").map((r) => ({
@@ -239,6 +265,24 @@ export async function openDb(dir, { onTranscript } = {}) {
   state.todoLinks = rows("SELECT * FROM todo_links").map((r) => ({
     id: r.id, todoId: r.todo_id, pluginId: r.plugin_id, kind: r.kind, ref: r.ref, title: r.title || "", createdAt: r.created_at || 0,
   }));
+  state.bots = rows("SELECT * FROM bots").map((r) => ({
+    id: r.id, name: r.name, avatar: r.avatar || "", avatarClass: r.avatar_class || "a",
+    persona: J(r.persona, {}), capability: r.capability || "read",
+    channels: J(r.channels, ["local"]), policy: J(r.policy, {}), budget: J(r.budget, {}),
+    status: r.status || "active", mutedUntil: r.muted_until || 0,
+    createdAt: r.created_at || 0, updatedAt: r.updated_at || 0,
+  }));
+  state.botTurns = rows("SELECT * FROM bot_turns ORDER BY created_at DESC LIMIT 300").map((r) => ({
+    id: r.id, botId: r.bot_id, channel: r.channel || "local",
+    trigger: J(r.trigger, {}), input: r.input || "", injected: J(r.injected, []),
+    reply: r.reply || "", decision: r.decision || "silent", reason: r.reason || "",
+    runId: r.run_id || null, todoId: r.todo_id || null, proposal: J(r.proposal, null),
+    cost: J(r.cost, {}), createdAt: r.created_at || 0,
+  })).reverse();
+  state.routines = rows("SELECT * FROM routines").map((r) => {
+    const data = J(r.data, {});
+    return { ...data, id: r.id, botId: r.bot_id || "", kind: r.kind || data.kind || "daily", updatedAt: data.updatedAt || r.updated_at || 0 };
+  });
   state.scenes = rows("SELECT * FROM scenes").map((r) => ({
     projectId: r.project_id, text: r.text || "", config: J(r.config, {}), updatedAt: r.updated_at || 0,
   }));
@@ -299,7 +343,7 @@ export async function openDb(dir, { onTranscript } = {}) {
     if (closed) return;
     db.exec("BEGIN IMMEDIATE");
     try {
-    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "coordination_scenes", "terminals", "context", "settings", "meta"]) run(`DELETE FROM ${t}`);
+    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "coordination_scenes", "terminals", "context", "settings", "meta", "bots", "bot_turns", "routines"]) run(`DELETE FROM ${t}`);
     for (const h of state.hosts) run(
       "INSERT INTO hosts (id,name,kind,addr,status,heartbeat,version,port,user,caps,last_probe,latency_ms,max_concurrency,default_cwd,probe_error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [h.id, h.name, h.kind, h.addr, h.status, h.heartbeat || 0, h.version || "—", h.port || 22, h.user || "",
@@ -309,14 +353,15 @@ export async function openDb(dir, { onTranscript } = {}) {
     for (const a of state.agents) run("INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [a.id, a.name, a.hostId, a.cli, a.cwd, a.max, a.approval, a.color, JSON.stringify(a.skills || []), a.alias || "", a.projectId || "", a.terminalId || "", a.role || "worker", a.instructions || "", a.maxChildren ?? 4]);
     for (const t of state.todos) run("INSERT INTO todos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.key, t.title, t.desc || "", JSON.stringify(t.acceptance || []), t.status, t.agentId || null, t.priority, t.due || "", t.parentId || null, JSON.stringify(t.tags || []), JSON.stringify(t.subtasks || []), JSON.stringify(t.blockedBy || []), t.missingWriteback ? 1 : 0, t.lastRunFailed ? 1 : 0, t.cwd || "", t.createdAt || Date.now(), t.updatedAt || Date.now(), t.confirmed ? 1 : 0, t.projectId || null, t.kind || "task", t.missionState || null]);
     for (const r of state.runs) run(
-      "INSERT INTO runs (id,todo_id,agent_id,status,trigger,started_at,ended_at,cost,tokens,error,parent_run_id,cwd,branch,host_id,created_at,tokens_in,tokens_out,usage_source,error_class,exit_code,queue_wait_ms,duration_ms,queue_reason,kind,delegation_id,terminal_id,runtime,worktree_cleaned) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO runs (id,todo_id,agent_id,status,trigger,started_at,ended_at,cost,tokens,error,parent_run_id,cwd,branch,host_id,created_at,tokens_in,tokens_out,usage_source,error_class,exit_code,queue_wait_ms,duration_ms,queue_reason,kind,delegation_id,terminal_id,runtime,worktree_cleaned,acp_session) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [r.id, r.todoId, r.agentId, r.status, r.trigger || "assign", r.startedAt || null, r.endedAt || null, r.cost || 0,
         r.tokens ?? null, r.error || null, r.parentRunId || null, r.cwd || "", r.branch || null, r.hostId || null,
         r.createdAt || null, r.tokensIn ?? null, r.tokensOut ?? null, r.usageSource || "unknown", r.errorClass || null,
         r.exitCode ?? null, r.queueWaitMs ?? null, r.durationMs ?? null, r.queueReason || null,
-        r.kind || "worker", r.delegationId || null, r.terminalId || null, r.runtime || null, r.worktreeCleaned ? 1 : 0],
+        r.kind || "worker", r.delegationId || null, r.terminalId || null, r.runtime || null, r.worktreeCleaned ? 1 : 0,
+        r.acpSession || null],
     );
-    for (const t of state.threads) run("INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.todoId || null, t.title || "", t.projectId || null, t.project || "", t.agentId || null, t.createdAt || Date.now(), t.updatedAt || Date.now(), t.model || null, t.modelName || null, t.effort || null, t.kind || "chat"]);
+    for (const t of state.threads) run("INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.todoId || null, t.title || "", t.projectId || null, t.project || "", t.agentId || null, t.createdAt || Date.now(), t.updatedAt || Date.now(), t.model || null, t.modelName || null, t.effort || null, t.kind || "chat", t.botId || null]);
     for (const m of state.messages) run("INSERT INTO messages VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [m.id, m.todoId || null, m.runId || null, m.role, m.kind || "text", m.content, m.injected ? 1 : 0, m.createdAt, m.threadId || null, m.delivery || null, m.context ? JSON.stringify(m.context) : null, m.supersededBy || null]);
     for (const a of state.artifacts) run("INSERT INTO artifacts VALUES (?,?,?,?,?,?,?,?,?)", [a.id, a.todoId, a.runId, a.kind, a.title, a.origin, a.ref, a.deepLink, a.createdAt || Date.now()]);
     for (const e of state.events) run("INSERT INTO events VALUES (?,?,?,?)", [e.id, e.ts, e.type, e.text]);
@@ -327,6 +372,9 @@ export async function openDb(dir, { onTranscript } = {}) {
     for (const l of state.todoLinks || []) run("INSERT INTO todo_links VALUES (?,?,?,?,?,?,?)", [l.id, l.todoId, l.pluginId, l.kind, l.ref, l.title || "", l.createdAt || Date.now()]);
     for (const sc of state.scenes || []) run("INSERT INTO scenes VALUES (?,?,?,?)", [sc.projectId, sc.text || "", JSON.stringify(sc.config || {}), sc.updatedAt || Date.now()]);
     for (const cs of state.coordinationScenes || []) run("INSERT INTO coordination_scenes VALUES (?,?,?,?,?,?,?)", [cs.id, cs.name || "场景", cs.projectId || null, cs.template || "office", JSON.stringify(cs.config || {}), cs.createdAt || Date.now(), cs.updatedAt || Date.now()]);
+    for (const b of state.bots || []) run("INSERT INTO bots VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [b.id, b.name, b.avatar || "", b.avatarClass || "a", JSON.stringify(b.persona || {}), b.capability || "read", JSON.stringify(b.channels || ["local"]), JSON.stringify(b.policy || {}), JSON.stringify(b.budget || {}), b.status || "active", b.mutedUntil || 0, b.createdAt || Date.now(), b.updatedAt || Date.now()]);
+    for (const rt of state.routines || []) run("INSERT INTO routines VALUES (?,?,?,?,?)", [rt.id, rt.botId || "", rt.kind || "daily", JSON.stringify((({ botId, id, kind, ...rest }) => rest)(rt)), rt.updatedAt || Date.now()]);
+    for (const t of state.botTurns || []) run("INSERT INTO bot_turns VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.botId, t.channel || "local", JSON.stringify(t.trigger || {}), t.input || "", JSON.stringify(t.injected || []), t.reply || "", t.decision || "silent", t.reason || "", t.runId || null, t.todoId || null, t.proposal ? JSON.stringify(t.proposal) : null, JSON.stringify(t.cost || {}), t.createdAt || Date.now()]);
     for (const tm of state.terminals || []) run("INSERT INTO terminals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [tm.id, tm.projectId || null, tm.todoId || null, tm.runId || null, tm.agentId || null, tm.cwd || "", tm.kind || "shell", tm.title || "", tm.status || "exited", tm.exitCode ?? null, tm.tail || "", tm.createdAt || Date.now(), tm.endedAt ?? null]);
     run("INSERT INTO context VALUES ('current', ?)", [JSON.stringify(state.context)]);
     run("INSERT INTO settings VALUES ('app', ?)", [JSON.stringify(state.settings || {})]);

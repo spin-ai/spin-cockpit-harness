@@ -17,7 +17,7 @@ UI 最容易产生“进度感”，也最容易返工。Chat 曾因 thread 模�
 | 不做 TUI | 要同时看任务、Chat、终端、文件和审批，TUI 的窗口管理成本高于收益 |
 | 不做 IDE | 编辑体验交给现有 IDE；这里解决的是多 Agent 的调度、观察、纠偏和验收 |
 | 用 ACP，不自定协议 | CLI 适配、流式事件、审批、取消已有协议；自定协议会绑定每个 CLI |
-| 用 `sql.js` | 桌面单用户、单文件数据库、无原生编译负担；代价是整库持久化要控制频率 |
+| 用内置 `node:sqlite` | Electron 45 自带、零原生依赖，FTS5 可用；和知识库 / 记忆 / 画像共用一个引擎；代价是绑定 Electron 版本，升级要跑 FTS5 / cosine 契约测试 |
 | 单一 `send` 入口 | 派活、纠偏、排队补充、仅记录都走同一状态机，避免每个能力写三遍 |
 | 消息宿主是 thread | 任务只是 thread 的一种归属；否则没有任务就没有地方放消息 |
 | 投递必须有回执 | `pending → injected / failed`，不在 ACP 返回前写“已注入” |
@@ -39,7 +39,7 @@ UI 最容易产生“进度感”，也最容易返工。Chat 曾因 thread 模�
 | 3 | Electron 默认菜单抢快捷键 | 重写最小菜单，⌘W / ⌘+ / ⌘R / ⌘A 不吞终端 |
 | 4 | xterm 自己处理 keydown | capture 监听 + `preventDefault`，避免执行两次 |
 | 5 | 拆分时重建 xterm | 二叉布局树 + 稳定 key + 绝对定位 |
-| 6 | `sql.js` 整库持久化 | 控制 `broadcast` / `persist` 频率 |
+| 6 | 早期 `sql.js` 整库持久化（已换 `node:sqlite` + WAL） | 控制 `broadcast` / `persist` 频率；退出前合并 WAL |
 | 7 | 迁移不幂等 | `ALTER TABLE` 逐条 try/catch，重复执行不报错 |
 | 8 | 把 ACP 审批当普通弹窗 | 按 optionId 回 `outcome.selected` |
 | 9 | 纠偏无条件写 `injected: true` | 投递回执 + run 结束时结算 pending |

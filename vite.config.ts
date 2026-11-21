@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     port: 5199,
     strictPort: true,
-    watch: { ignored: ["**/docs/**", "**/release/**", "**/dist/**"] },
+    watch: { ignored: ["**/docs/**", "**/release/**", "**/dist/**", "**/third-part/**"] },
   },
   // Only the app's index.html is an entry; docs/ contains local reference material.
   optimizeDeps: { entries: ["index.html"] },

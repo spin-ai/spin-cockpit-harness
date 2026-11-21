@@ -14,16 +14,26 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { normalizeEvent } from "./feishu.mjs";
 
 const IDENT = "cockpit-harness/im-gateway";
 
-export function createImGateway({ dir, settings, onMessage, onLog = () => {} }) {
+export function createImGateway({ dir, settings, onMessage, onLog = () => {}, feishu = null, feishuWsFactory = null, verificationToken = () => "", dedup = null }) {
   fs.mkdirSync(dir, { recursive: true });
   const offsetFile = path.join(dir, "telegram-offset.json");
   const loadOffset = () => { try { return Number(JSON.parse(fs.readFileSync(offsetFile, "utf8")).offset) || 0; } catch { return 0; } };
   const saveOffset = (offset) => { try { fs.writeFileSync(offsetFile, JSON.stringify({ offset })); } catch { /* ignore */ } };
 
   let stopped = false;
+  let wsClient = null;
+  // 最近事件/错误：WS 与 HTTP 都走这里，方便在设置页自检（不记录消息正文）
+  const recent = [];
+  const log = (line) => {
+    const text = String(line || "").slice(0, 200);
+    recent.push({ at: Date.now(), line: text });
+    if (recent.length > 40) recent.splice(0, recent.length - 40);
+    onLog(text);
+  };
   let pollTimer = null;
   let server = null;
   let offset = loadOffset();
@@ -37,6 +47,15 @@ export function createImGateway({ dir, settings, onMessage, onLog = () => {} }) 
     inboundPort: Number(settings()?.imInboundPort) || 0,
     allowIds: String(settings()?.imAllowIds || "").split(/[\s,;]+/).filter(Boolean),
   });
+
+  /** 飞书：allowlist 为空时放行第一个跟它说话的会话（写日志），填了就严格匹配 */
+  const feishuAllowed = (chatId, openId) => {
+    const c = cfg();
+    const list = [...c.telegramAllow, ...c.allowIds];
+    const id = String(openId || chatId || "");
+    if (!list.length) { onLog(`feishu first chat auto-allowed ${id}`); return true; }
+    return list.includes(String(chatId)) || list.includes(String(openId)) || list.includes("*");
+  };
 
   const allowed = (id) => {
     const c = cfg();
@@ -63,6 +82,17 @@ export function createImGateway({ dir, settings, onMessage, onLog = () => {} }) 
     const c = cfg();
     const body = String(text || "");
     if (!body.trim()) return { sent: false };
+    // 飞书优先：配置了应用凭据就走开放接口（能给单聊 open_id 回消息）
+    if (feishu?.status?.().configured && to) {
+      const receiveIdType = String(to).startsWith("oc_") ? "chat_id" : "open_id";
+      try {
+        const out = await feishu.sendText({ receiveId: String(to), receiveIdType, text: body });
+        return { sent: true, via: "feishu", messageId: out.messageId };
+      } catch (err) {
+        onLog(`feishu send failed: ${String(err?.message || err).slice(0, 200)}`);
+        // 失败继续尝试 webhook，避免整条消息静默丢失
+      }
+    }
     if (kind === "telegram" && c.telegramToken && to) {
       await telegramCall("sendMessage", { chat_id: to, text: body, disable_web_page_preview: true });
       return { sent: true, via: "telegram" };
@@ -110,6 +140,25 @@ export function createImGateway({ dir, settings, onMessage, onLog = () => {} }) 
     });
   }
 
+
+  /** 飞书事件（HTTP 回调与长连接共用）：返回要回给调用的响应；消息用异步派发，先 ack */
+  function processFeishuPayload(payload) {
+    const envelope = payload?.schema === "2.0" || payload?.header ? payload
+      : (payload?.event || payload?.message ? { schema: "2.0", header: { event_id: payload.event_id || payload.uuid, event_type: payload.event_type || "im.message.receive_v1" }, event: payload.event ? payload : { message: payload.message, sender: payload.sender } } : payload);
+    const event = normalizeEvent(envelope);
+    if (event.kind === "challenge") return { kind: "challenge", body: { challenge: event.challenge } };
+    if (event.kind !== "message") return { kind: "ignored", body: { ok: true, ignored: event.reason || "event" } };
+    if (event.eventId && dedup?.has(event.eventId)) return { kind: "duplicate", body: { ok: true, duplicate: true } };
+    if (event.eventId) dedup?.add(event.eventId);
+    if (!feishuAllowed(event.chatId, event.openId)) {
+      log(`ignored stranger chat ${event.chatId}`);
+      return { kind: "stranger", body: { ok: true, ignored: "stranger" } };
+    }
+    void onMessage({ text: event.text, chatId: event.openId || event.chatId, kind: "feishu", from: event.openId, feishuChatId: event.chatId })
+      .catch((err) => onLog(`feishu message failed: ${String(err?.message || err).slice(0, 200)}`));
+    return { kind: "message", body: { ok: true } };
+  }
+
   function startInbound() {
     const c = cfg();
     if (!c.enabled || !c.inboundPort) return;
@@ -117,11 +166,26 @@ export function createImGateway({ dir, settings, onMessage, onLog = () => {} }) 
       const send2 = (code, payload) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(payload)); };
       if (req.method !== "POST") return send2(405, { ok: false });
       const auth = String(req.headers.authorization || "");
-      if (c.webhookToken && auth !== `Bearer ${c.webhookToken}`) return send2(403, { ok: false, error: "bad token" });
       let raw = "";
       for await (const chunk of req) raw += chunk;
       try {
         const payload = JSON.parse(raw || "{}");
+
+        // 飞书事件订阅 v2：先应答（3 秒内不 ack 会重推），再异步处理
+        const isFeishuEvent = payload?.schema === "2.0" || payload?.type === "url_verification" || Boolean(payload?.header);
+        // 飞书回调不带 Authorization（它用 header.token 验签），所以 Bearer 只对自定义入站生效
+        if (!isFeishuEvent && c.webhookToken && auth !== `Bearer ${c.webhookToken}`) {
+          return send2(403, { ok: false, error: "bad token" });
+        }
+        if (isFeishuEvent) {
+          log(`feishu event ${String(payload?.header?.event_type || payload?.type || "unknown")}`);
+          const token = String(verificationToken?.() || "");
+          const incoming = String(payload?.header?.token || payload?.token || "");
+          if (token && incoming && token !== incoming) return send2(403, { ok: false, error: "bad verification token" });
+          const out = processFeishuPayload(payload);
+          return send2(out.kind === "challenge" ? 200 : 200, out.body);
+        }
+
         const text = String(payload.text || payload.content || payload.message || "").trim();
         const chatId = String(payload.chat_id || payload.from || payload.open_id || "");
         if (!text || !chatId) return send2(400, { ok: false, error: "需要 chat_id 与 text" });
@@ -140,17 +204,33 @@ export function createImGateway({ dir, settings, onMessage, onLog = () => {} }) 
       if (!c.enabled) { onLog("disabled"); return; }
       loop();
       startInbound();
+      // 飞书长连接：默认 ws（飞书后台推荐、不需要公网）；失败退回到 HTTP 入站
+      const mode = String(settings()?.imFeishuMode || "ws");
+      if (feishuWsFactory && mode === "ws" && feishu?.status?.().configured) {
+        try { wsClient = feishuWsFactory((payload) => processFeishuPayload(payload)); } catch (err) { log(`feishu ws init failed: ${String(err?.message || err)}`); }
+        wsClient?.start?.().catch?.((err) => onLog(`feishu ws failed: ${String(err?.message || err)}`));
+      }
       onLog(`started${c.telegramToken ? " · telegram" : ""}${c.webhook ? " · webhook" : ""}`);
     },
     stop() {
       stopped = true;
+      try { wsClient?.stop?.(); } catch { /* ignore */ }
+      wsClient = null;
       if (pollTimer) clearTimeout(pollTimer);
       try { server?.close(); } catch { /* ignore */ }
     },
     send,
     status() {
       const c = cfg();
-      return { enabled: c.enabled, telegram: Boolean(c.telegramToken), webhook: Boolean(c.webhook), inbound: c.inboundPort || 0, allow: [...c.telegramAllow, ...c.allowIds] };
+      return {
+        enabled: c.enabled, telegram: Boolean(c.telegramToken), webhook: Boolean(c.webhook),
+        feishu: Boolean(feishu?.status?.().configured), inbound: c.inboundPort || 0,
+        ws: Boolean(wsClient?.status?.().started),
+        wsReady: Boolean(wsClient?.status?.().ready),
+        wsError: String(wsClient?.status?.().lastError || ""),
+        recent: recent.slice(-20),
+        allow: [...c.telegramAllow, ...c.allowIds],
+      };
     },
   };
 }

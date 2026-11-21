@@ -113,17 +113,28 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
       return res;
     });
   };
-  const push = () => run("推送", () => window.harness.gitPush(root));
+  const push = () => run("推送", async () => {
+    const res = await window.harness.gitPush(root);
+    // WADE 门禁：把「下一步跑什么命令」一起显示在输出区，避免只看到英文拒绝
+    if (res.wadeGate) return { ...res, output: `${res.output || ""}\n\n${res.hint || ""}`.trim() };
+    return res;
+  });
   const pull = () => run("拉取", () => window.harness.gitPull(root));
   const checkout = (branch: string) => {
     if (!branch || branch === status?.branch) return;
     if ((status?.files?.length ?? 0) > 0 && !window.confirm("工作区有改动，切换分支可能失败或带过去。继续？")) return;
     void run("切换分支", () => window.harness.gitCheckout(root, branch));
   };
-  const createBranch = () => {
-    const name = window.prompt("新分支名（基于当前 HEAD）");
-    if (!name?.trim()) return;
-    void run("新建分支", () => window.harness.gitCheckout(root, name.trim(), true));
+  /**
+   * 新建分支：**不弹 window.prompt**（Electron 不实现它，点了没有任何反应）。
+   * 改成一行输入：Enter 建、Esc 取消，名字从当前 HEAD 拉。
+   */
+  const [branchDraft, setBranchDraft] = useState<string | null>(null);
+  const createBranch = (name: string) => {
+    const branch = String(name || "").trim();
+    if (!branch) { setBranchDraft(null); return; }
+    void run("新建分支", () => window.harness.gitCheckout(root, branch, true));
+    setBranchDraft(null);
   };
 
   // ⌘Enter 提交
@@ -210,12 +221,36 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
           </select>
           <button className="btn tiny-btn" disabled={Boolean(busy)} onClick={refresh}>{loading ? "刷新中…" : "刷新"}</button>
           <RowMenu title="更多 Git 操作">
-            <button onClick={createBranch}>新建分支</button>
+            {branchDraft === null
+              ? <button onClick={() => setBranchDraft("")}>新建分支</button>
+              : (
+                <span className="git-branch-input">
+                  <input
+                    autoFocus
+                    value={branchDraft}
+                    placeholder="新分支名（基于当前 HEAD）"
+                    onChange={(e) => setBranchDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.preventDefault(); createBranch(branchDraft); }
+                      else if (e.key === "Escape") { e.preventDefault(); setBranchDraft(null); }
+                    }}
+                  />
+                  <button onClick={() => createBranch(branchDraft)}>建</button>
+                  <button onClick={() => setBranchDraft(null)}>取消</button>
+                </span>
+              )}
             <button disabled={Boolean(busy)} onClick={() => void pull()}>拉取{status.behind ? ` ↓${status.behind}` : ""}</button>
           </RowMenu>
-          <button className="btn tiny-btn primary" disabled={Boolean(busy)} onClick={() => void push()}>推送{status.ahead ? ` ↑${status.ahead}` : ""}</button>
+          <button className="btn tiny-btn primary" disabled={Boolean(busy)} onClick={() => void push()} title={status.wadeGate ? "WADE worktree：推送要走 wade implementation-session done" : undefined}>推送{status.ahead ? ` ↑${status.ahead}` : ""}</button>
         </div>}
       />
+
+      {status.wadeGate && (
+        <div className="git-note">
+          <span className="tag">WADE</span>
+          <span>这是 WADE worktree：推送前先在终端运行 <code>wade implementation-session done</code>（由它完成 push 并更新 PR）。直接在面板里点推送会被 pre-push 门禁拦下，提示「no completion marker」。</span>
+        </div>
+      )}
 
       {(output || error) && <pre className="git-output">{output || error}</pre>}
 

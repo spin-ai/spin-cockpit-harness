@@ -84,6 +84,20 @@ export const FileImageIcon = (p: IconProps) => (
   <Svg {...p}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" /><path d="M14 3v5h5" /><circle cx="10" cy="13" r="1.2" /><path d="m9 18 3-3 2 2 2-2 1 1" /></Svg>
 );
 
+/** 音视频：文件 + 播放三角（和图片图标区分开，避免 mp3 显示成图片） */
+export const FileMediaIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" /><path d="M14 3v5h5" /><path d="m10.5 12.5 4 2.5-4 2.5Z" /></Svg>
+);
+
+export const CameraIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.8l1-1.6h5.4l1 1.6h1.8A2.5 2.5 0 0 1 19 8.5v8A2.5 2.5 0 0 1 16.5 19h-11A2.5 2.5 0 0 1 3 16.5Z" /><circle cx="11" cy="12.5" r="3.2" /></Svg>
+);
+
+/** 录制：一个实心圆，录制中由 CSS 闪烁 */
+export const RecordIcon = (p: IconProps) => (
+  <Svg {...p}><circle cx="12" cy="12" r="6" fill="currentColor" stroke="none" /></Svg>
+);
+
 export const BotIcon = (p: IconProps) => (
   <Svg {...p}><rect x="4" y="8" width="16" height="12" rx="3" /><path d="M12 4v4" /><circle cx="9" cy="14" r="1" /><circle cx="15" cy="14" r="1" /><path d="M9 18h6" /></Svg>
 );
@@ -126,6 +140,14 @@ export const TerminalIcon = (p: IconProps) => (
 
 export const PanelCollapseIcon = (p: IconProps) => (
   <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M14 4v16" /><path d="m10 10-2 2 2 2" /></Svg>
+);
+
+export const PanelExpandIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" /></Svg>
+);
+
+export const PanelRestoreIcon = (p: IconProps) => (
+  <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 9h6v6H9z" /></Svg>
 );
 
 export const FilePlusIcon = (p: IconProps) => (

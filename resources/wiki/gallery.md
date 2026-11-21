@@ -47,6 +47,13 @@
 <figure><img src="./wiki/notes-memory.png" alt="Memory 索引" loading="lazy" /><figcaption><b>Memory</b><span>小型顶层索引，详情按需下钻</span></figcaption></figure>
 </div>
 
+## 场景与记忆
+
+<div class="wiki-gallery">
+<figure><img src="./wiki/cover-office.png" alt="办公室实况" loading="lazy" /><figcaption><b>办公室实况</b><span>状态落到舞台，时间轴记录真实 zone 变化</span></figcaption></figure>
+<figure><img src="./wiki/cover-memory.png" alt="记忆与 Dream" loading="lazy" /><figcaption><b>记忆与 Dream</b><span>四层 + 注入预算，Dream 只出建议</span></figcaption></figure>
+</div>
+
 ## 打包
 
 <div class="wiki-gallery">

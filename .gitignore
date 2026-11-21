@@ -45,3 +45,7 @@ datasets/
 
 # 渲染层预览截图（scripts/preview-persona.mjs · scripts/preview-memory.mjs）
 .preview/
+
+# 第三方源码（只读参考，不入库）：third-part/<repo>
+# 整个目录忽略，里面的 README.md 也不入库（规则正文在 AGENTS.md）
+third-part/

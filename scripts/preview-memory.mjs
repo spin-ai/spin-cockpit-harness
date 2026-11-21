@@ -76,11 +76,16 @@ const MOCK = String.raw`
     e({ id: "m10", title: "旧的注入规则：按 sort_order 排序", body: "", status: "archived", updatedAt: now - 9 * DAY }),
   ];
   const sugs = [
-    { id: "s1", action: "merge", title: "合并观察（模型）：依赖用 pnpm 安装", detail: "两条说的是同一件事（词重合 92%）", targetKind: "note", targetId: "n1", status: "pending" },
-    { id: "s2", action: "correct", title: "复核观察（依据已被推翻）：包管理器用 pnpm", detail: "它支撑的结论已失效，建议重新确认", targetKind: "note", targetId: "n2", status: "pending" },
-    { id: "s3", action: "promote", title: "晋升观察：部署走 install-mac.mjs", detail: "已验证的观察可以并入页面或 L4 结论", targetKind: "note", targetId: "n3", status: "pending" },
+    { id: "s1", action: "merge", title: "合并观察（模型）：依赖用 pnpm 安装", detail: "两条说的是同一件事（词重合 92%）", targetKind: "note", targetId: "n1", status: "pending",
+      diff: "- 依赖用 pnpm 安装，CI 也一样\n+ （并入保留项：依赖用 pnpm 安装）", baseRev: 1794846975000, confidence: 0.5 },
+    { id: "s2", action: "correct", title: "复核观察（依据已被推翻）：包管理器用 pnpm", detail: "它支撑的结论已失效，建议重新确认", targetKind: "note", targetId: "n2", status: "pending",
+      diff: "- 状态：verified\n+ 状态：stale（依据已失效，行与来源保留）", baseRev: 1794846975100, confidence: 1,
+      payload: { evidence: ["message:msg-e1"] } },
+    { id: "s3", action: "promote", title: "晋升观察：部署走 install-mac.mjs", detail: "已验证的观察可以并入页面或 L4 结论", targetKind: "note", targetId: "n3", status: "pending",
+      diff: "+ 晋升为 L4 条目：部署走 install-mac.mjs", baseRev: 1794846975200, confidence: 1 },
     { id: "s4", action: "rewrite", title: "改写观察（模型）：提交前跑 typecheck → 提交前必须过 typecheck 与 build",
       detail: "去掉口语填充词，意思不变\n\n原句：「提交前必须跑 typecheck 和 build」", targetKind: "note", targetId: "n1",
+      diff: "- …跑 typecheck 和 build\n+ …必须过 typecheck 与 build", baseRev: 1794846975300, confidence: 0.5,
       payload: { body: "提交前必须过 typecheck 与 build", kind: "rule" }, status: "pending" },
   ];
   const inject = {
@@ -93,8 +98,9 @@ const MOCK = String.raw`
     ],
   };
   const injectStats = { runs: 6, injected: 42, cited: 15, hitRate: 0.36, avgChars: 8100, version: 42, recent: [] };
-  const dream = { enabled: true, maxSuggestions: 40, dayLimit: 200, llmPass: true, llmBatch: 60, llmDailyCalls: 20,
-    budget: { day: "2026-11-15", used: 7, limit: 200 }, modelBudget: { day: "2026-11-15", used: 2, tokens: 4210, limit: 20 } };
+  const dream = { enabled: true, maxSuggestions: 40, dayLimit: 200, llmPass: true, llmBatch: 60, llmDailyCalls: 20, idleMinutes: 30,
+    budget: { day: "2026-11-15", used: 7, limit: 200 }, modelBudget: { day: "2026-11-15", used: 2, tokens: 4210, limit: 20 },
+    lastRun: { id: "dr1", trigger: "idle", created: 3, ms: 820, notes: 12, pages: 4, sources: 2, at: now - 95 * 60000 } };
   const overview = { byLayer: { L1: 0, L2: 1, L3: 1, L4: 2 }, notes: 3, notesPending: 3, notesExpired: 1,
     suggestions: 3, invalidated: 1, injectable: 1840, version: 42 };
   const state = {
@@ -287,6 +293,16 @@ check("语义 pass 开关是勾上的", (await ev(`
   [...document.querySelectorAll(".pr-dreamcfg label")].find((l) => l.textContent.includes("语义 pass"))?.querySelector("input")?.checked ?? null`)) === true);
 check("显示当日建议预算", dreamText.includes("今日 7 / 200"), dreamText.match(/今日 \d+ \/ \d+/)?.[0]);
 check("显示当日模型调用预算", dreamText.includes("模型 2 / 20"), dreamText.match(/模型 \d+ \/ \d+/)?.[0]);
+check("显示空闲触发配置", dreamText.includes("空闲"), dreamText.match(/空闲[\s\S]{0,20}/)?.[0]?.trim());
+check("显示上一轮 Dream 的台账", dreamText.includes("上次 空闲"), dreamText.match(/上次[^·]{0,12}·[^·]{0,12}·[^·]{0,10}/)?.[0]);
+const diffLines = await ev(`document.querySelectorAll(".pr-sug-diff .notes-diff-line").length`);
+check("提案带逐行 diff（不只是「已整理」）", Number(diffLines) >= 4, String(diffLines));
+const diffAdds = await ev(`document.querySelectorAll(".pr-sug-diff .notes-diff-line.add").length`);
+const diffDels = await ev(`document.querySelectorAll(".pr-sug-diff .notes-diff-line.del").length`);
+check("diff 分清删除与新增", Number(diffAdds) > 0 && Number(diffDels) > 0, `+${diffAdds} / -${diffDels}`);
+check("显示建议基于哪一版", dreamText.includes("的版本"), dreamText.match(/基于[^·]{0,12}的版本/)?.[0]);
+check("确定性检查与模型判断分开标注", dreamText.includes("确定性检查") && dreamText.includes("模型判断"));
+check("校正建议带证据引用", dreamText.includes("依据：message:msg-e1"));
 
 // ── 注入预览：note 单独一块、命中率、被裁原因可展开 ────────────
 const injText = await text(".pr-side");
@@ -342,10 +358,19 @@ await setTheme("light");
 await clickText(".kv-tabs button", "Dream");
 const dreamShot = await shot(path.join(OUT, "memory-dream-light.png"));
 await setTheme("dark");
+const dreamDark = await shot(path.join(OUT, "memory-dream-dark.png"));
+// 暗色下 diff 文字必须仍可读：抠一行新增的 computed color，不能等于背景色
+const darkDiff = await ev(`(() => {
+  const el = document.querySelector(".pr-sug-diff .notes-diff-line.add");
+  if (!el) return null;
+  const cs = getComputedStyle(el);
+  return { color: cs.color, bg: cs.backgroundColor };
+})()`);
+check("暗色下 diff 文字与底色不同", Boolean(darkDiff) && darkDiff.color !== darkDiff.bg, darkDiff ? `${darkDiff.color} on ${darkDiff.bg}` : "无");
 
 check("没有 console error / 未捕获异常", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 
-console.log(`\n截图：${[lightShot, darkShot, dreamShot].map((f) => path.relative(root, f)).join(" / ")}`);
+console.log(`\n截图：${[lightShot, darkShot, dreamShot, dreamDark].map((f) => path.relative(root, f)).join(" / ")}`);
 console.log(fails === 0 ? "预览验证通过" : `${fails} 项失败`);
 
 ws.close();

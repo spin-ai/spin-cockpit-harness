@@ -10,7 +10,12 @@ type Act = (type: string, payload?: unknown) => Promise<any>;
 
 type Note = { id: string; body: string; kind: string; confidence: number; sourceKind: string; sourceRef: string; status: string; expiresAt: number; expired: boolean; createdAt: number };
 type Entry = { id: string; layer: string; title: string; body: string; sourceRefs: string[]; status: string; pinned: boolean; invalidAt: number; supersededBy: string; supersedes: string[]; updatedAt: number };
-type Sug = { id: string; action: string; title: string; detail: string; targetKind: string; targetId: string; status: string; payload?: { body?: string; kind?: string } | null };
+type Sug = {
+  id: string; action: string; title: string; detail: string; targetKind: string; targetId: string; status: string;
+  payload?: { body?: string; kind?: string; evidence?: string[] } | null;
+  diff?: string; baseRev?: number; confidence?: number | null; dreamId?: string;
+};
+type DreamRun = { id: string; trigger: string; fingerprint?: string; created: number; ms: number; notes: number; pages: number; sources: number; at: number; semantic?: { skipped?: string; items?: number } | null };
 type Hit = { kind: string; id: string; at: number; snippet: string };
 type InjectItem = { id: string; layer: string; title: string; chars: number; included: boolean; reason: string; score?: number };
 type Inject = { markdown: string; chars: number; budget: number; dropped: number; items: InjectItem[] };
@@ -62,8 +67,8 @@ export function Memory({ act }: { act: Act }) {
   const { dense, toggle: toggleDense } = useDensity("memory");
   const [archived, setArchived] = useState<Entry[]>([]);
   const [showArchived, setShowArchived] = useState(false);
-  type DreamCfg = { enabled: boolean; maxSuggestions: number; llmPass: boolean; budget?: { used: number; limit: number }; modelBudget?: { used: number; limit: number } };
-  const [dreamCfg, setDreamCfg] = useState<DreamCfg>({ enabled: true, maxSuggestions: 40, llmPass: false });
+  type DreamCfg = { enabled: boolean; maxSuggestions: number; llmPass: boolean; idleMinutes?: number; budget?: { used: number; limit: number }; modelBudget?: { used: number; limit: number }; lastRun?: DreamRun | null };
+  const [dreamCfg, setDreamCfg] = useState<DreamCfg>({ enabled: true, maxSuggestions: 40, llmPass: false, idleMinutes: 30 });
   const [budgetDraft, setBudgetDraft] = useState<string>("");
   const [entryQuery, setEntryQuery] = useState("");
   const [entryHits, setEntryHits] = useState<Entry[]>([]);
@@ -92,7 +97,7 @@ export function Memory({ act }: { act: Act }) {
       if (!budgetDraft) setBudgetDraft(String(inj?.budget || 12000));
       const [arc, cfg] = await Promise.all([act("memoryEntryArchived", { limit: 100 }), act("memoryDreamStatus")]);
       setArchived(arc || []);
-      if (cfg) setDreamCfg({ enabled: Boolean(cfg.enabled), maxSuggestions: Number(cfg.maxSuggestions) || 40, llmPass: Boolean(cfg.llmPass), budget: cfg.budget, modelBudget: cfg.modelBudget });
+      if (cfg) setDreamCfg({ enabled: Boolean(cfg.enabled), maxSuggestions: Number(cfg.maxSuggestions) || 40, llmPass: Boolean(cfg.llmPass), idleMinutes: Number(cfg.idleMinutes) || 0, budget: cfg.budget, modelBudget: cfg.modelBudget, lastRun: cfg.lastRun || null });
     } catch (err) { fail(err); }
   }, [act, layer]);
 
@@ -173,7 +178,8 @@ export function Memory({ act }: { act: Act }) {
     setBusy(true);
     try {
       const res = await act("memorySuggestionResolve", { id, accept });
-      setNotice(accept ? (res?.applied?.applied ? "已执行并留痕" : "已采纳（未自动执行）") : "已拒绝，同类不再打扰");
+      if (res?.superseded) setNotice(`这条建议已作废：${res.reason || "目标被改过，不覆盖你的修改"}`);
+      else setNotice(accept ? (res?.applied?.applied ? "已执行并留痕" : "已采纳（未自动执行）") : "已拒绝，同类不再打扰");
       await load();
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
@@ -220,10 +226,10 @@ export function Memory({ act }: { act: Act }) {
     const n = Number(budgetDraft) || 12000;
     try { await act("memorySetInjectBudget", { maxChars: n }); setNotice(`注入预算改为 ${n} 字符`); await load(); } catch (err) { fail(err); }
   };
-  const saveDreamCfg = async (patch: Partial<{ enabled: boolean; maxSuggestions: number; llmPass: boolean }>) => {
+  const saveDreamCfg = async (patch: Partial<{ enabled: boolean; maxSuggestions: number; llmPass: boolean; idleMinutes: number }>) => {
     try {
       const next = await act("memoryDreamConfig", { patch: { ...dreamCfg, ...patch } });
-      if (next) setDreamCfg({ enabled: Boolean(next.enabled), maxSuggestions: Number(next.maxSuggestions) || 40, llmPass: Boolean(next.llmPass), budget: next.budget, modelBudget: next.modelBudget });
+      if (next) setDreamCfg({ enabled: Boolean(next.enabled), maxSuggestions: Number(next.maxSuggestions) || 40, llmPass: Boolean(next.llmPass), idleMinutes: Number(next.idleMinutes) || 0, budget: next.budget, modelBudget: next.modelBudget, lastRun: next.lastRun || null });
       setNotice(`Dream 已${next?.enabled ? "开启" : "关闭"} · 单次最多 ${next?.maxSuggestions} 条建议`);
     } catch (err) { fail(err); }
   };
@@ -533,8 +539,27 @@ export function Memory({ act }: { act: Act }) {
               {dreamCfg.budget ? (
                 <span className="tiny faint" title="每天建议上限：没有上限会把复核队列淹掉">今日 {dreamCfg.budget.used} / {dreamCfg.budget.limit}</span>
               ) : null}
+              <label className="tiny faint" title="应用空闲这么久且没有 run 在跑时自动跑一轮；0 = 只手动">
+                空闲
+                <input
+                  className="kv-input pr-cfg-num"
+                  type="number"
+                  min={0}
+                  max={720}
+                  value={dreamCfg.idleMinutes ?? 30}
+                  onChange={(e) => setDreamCfg({ ...dreamCfg, idleMinutes: Number(e.target.value) || 0 })}
+                  onBlur={(e) => void saveDreamCfg({ idleMinutes: Math.max(0, Number(e.target.value) || 0) })}
+                  title="空闲多少分钟后自动跑（0 = 关）"
+                />
+                <span>分</span>
+              </label>
               {dreamCfg.llmPass && dreamCfg.modelBudget ? (
                 <span className="tiny faint" title="语义 pass 的每日模型调用上限">模型 {dreamCfg.modelBudget.used} / {dreamCfg.modelBudget.limit}</span>
+              ) : null}
+              {dreamCfg.lastRun ? (
+                <span className="tiny faint" title={`输入指纹 ${dreamCfg.lastRun.fingerprint || ""}`}>
+                  上次 {dreamCfg.lastRun.trigger === "idle" ? "空闲" : "手动"} · {relTime(dreamCfg.lastRun.at)} · {dreamCfg.lastRun.created} 条 · {Math.max(1, Math.round((dreamCfg.lastRun.ms || 0) / 1000))}s
+                </span>
               ) : null}
             </div>
 
@@ -579,11 +604,24 @@ export function Memory({ act }: { act: Act }) {
                       <b>{sg.title}</b>
                     </div>
                     <p>{sg.detail}</p>
+                    {sg.diff ? (
+                      <div className="notes-diff pr-sug-diff">
+                        {sg.diff.split("\n").map((line, i) => (
+                          <span key={i} className={`notes-diff-line ${line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : ""}`}>{line}</span>
+                        ))}
+                      </div>
+                    ) : null}
                     {sg.action === "rewrite" && sg.payload?.body ? (
                       <p><span className="chip">拟改为</span> {sg.payload.body}</p>
                     ) : null}
+                    {sg.payload?.evidence?.length ? (
+                      <p className="tiny faint">依据：{sg.payload.evidence.join(" / ")}</p>
+                    ) : null}
                     <div className="pr-qf">
-                      <span className="src">影响 1 条 · 只产建议</span>
+                      <span className="src" title="确定性检查 = 数据库里能验证的结构问题；模型判断 = 语义 pass 产出的建议">
+                        {sg.confidence != null ? `${sg.confidence >= 1 ? "确定性检查" : "模型判断"} · ` : ""}
+                        {sg.baseRev ? `${relTime(sg.baseRev)}前的版本` : "只产建议"}
+                      </span>
                       <span className="row gap6">
                         <button className="btn tiny-btn" onClick={() => void resolveSug(sg.id, false)} disabled={busy}>拒绝</button>
                         <button className="btn tiny-btn ok" onClick={() => void resolveSug(sg.id, true)} disabled={busy}>接受</button>

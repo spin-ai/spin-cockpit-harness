@@ -66,7 +66,7 @@ app.whenReady().then(async () => {
   for (let i = 0; i < images.length; i++) {
     const img = images[i];
     const fig = String(img.fig ?? i + START).padStart(2, "0");
-    const base = `${fig}-${img.name}`;
+    const base = `sc-${fig}-${img.name}`;
     const theme = img.name === "cover" ? "dark" : "light";
     const badge = badgeHtml(fig, "tr", theme);
     try {

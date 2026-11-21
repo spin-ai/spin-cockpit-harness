@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Delegation, ElementContext, Message, MissionPlanRecord, State, Thread, Todo } from "../types";
 import { RUN_STATUS, STATUS, agentOf, duration, lastRun, missingKeyInfo, timeAgo } from "../ui";
-import { ChevronRightIcon, CopyCheckIcon, CopyIcon, PanelCollapseIcon, PencilIcon, RefreshIcon, SendIcon, SparkleIcon } from "./Icons";
+import { ChevronRightIcon, CopyCheckIcon, CopyIcon, PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon, PencilIcon, RefreshIcon, SendIcon, SparkleIcon } from "./Icons";
 import { requestTerminalAdopt } from "../terminal-events";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
@@ -18,10 +18,12 @@ const modelCatalogCache = new Map<string, ModelCatalog>();
  * - 已派活但没运行：发一句话 = 新起一次运行
  * 任务状态与操作按钮只在 TODO LIST 行内维护，这里不再重复。
  */
-export function TaskChat({ state, globalState, thread, now, act, onSelect, onNewThread, onOpenThread, onOpenGlobal, threads = [], context, onClearContext, onCollapse, enterToSend = true, confirmStop = false }: {
+export function TaskChat({ state, globalState, thread, now, act, onSelect, onNewThread, onOpenThread, onOpenGlobal, threads = [], context, onClearContext, onCollapse, enterToSend = true, confirmStop = false, maximized = false, onToggleMaximize }: {
   state: State; globalState?: State; thread: Thread | null; now: number; act: Act; onSelect: (id: string) => void; onNewThread: () => void; onOpenThread?: (id: string) => void; onOpenGlobal?: (id: string) => void; threads?: Thread[];
   context: ElementContext | null; onClearContext: () => void;
   onCollapse?: () => void;
+  maximized?: boolean;
+  onToggleMaximize?: () => void;
   enterToSend?: boolean;
   confirmStop?: boolean;
 }) {
@@ -533,8 +535,8 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   };
 
   return (
-    <section className="chat-pane" tabIndex={0} aria-label="Chat">
-      <div className="pane-head">
+    <section className={`chat-pane${maximized ? " pane-max-target" : ""}`} tabIndex={0} aria-label="Chat">
+      <div className="pane-head" onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest("button")) onToggleMaximize?.(); }}>
         <span>Chat</span>
         <div className="row gap6">
           {todo && <span className={`pill status ${mission ? missionPillClass(mission.missionState) : STATUS[todo.status].cls}`}>{todo.confirmed ? "已确认" : mission ? missionStateLabel(mission.missionState) : STATUS[todo.status].label}</span>}
@@ -565,6 +567,11 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
             进展{progressCount > 0 ? ` ${progressCount}` : ""}
           </button>
           <button className="link" onClick={onNewThread} title="新建会话">＋ 新任务</button>
+          {onToggleMaximize && (
+            <button className="pane-collapse" title={maximized ? "还原（Esc）" : "最大化"} aria-label={maximized ? "还原 Chat" : "最大化 Chat"} onClick={onToggleMaximize}>
+              {maximized ? <PanelRestoreIcon size={13} /> : <PanelExpandIcon size={13} />}
+            </button>
+          )}
           {onCollapse && (
             <button className="pane-collapse" title="收起 Chat" aria-label="收起 Chat" onClick={onCollapse}>
               <PanelCollapseIcon size={13} />
@@ -1011,6 +1018,9 @@ function MissionOverview({ mission, plan, delegations, state, act, onOpenThread 
 }) {
   const draft = plan && plan.status === "draft" ? plan : null;
   const done = delegations.filter((d) => ["completed", "accepted"].includes(d.status));
+  /** 「退回修改」的原因输入（替代 Electron 里不存在的 window.prompt：之前点了没反应） */
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectText, setRejectText] = useState("");
   return (
     <section className={`mission-panel mission-${mission.missionState || "planning"}`} aria-label="Mission">
       <div className="mission-head">
@@ -1035,9 +1045,25 @@ function MissionOverview({ mission, plan, delegations, state, act, onOpenThread 
             <b>计划待审批</b>
             <span className="tiny muted">rev {draft.revision}</span>
             <span className="spacer" />
-            <button className="btn tiny-btn" onClick={() => { const feedback = window.prompt("退回原因（可空）", ""); if (feedback !== null) void act("rejectMissionPlan", { id: mission.id, feedback }); }}>退回修改</button>
+            <button className="btn tiny-btn" onClick={() => setRejectOpen(true)}>退回修改</button>
             <button className="btn tiny-btn primary" onClick={() => void act("approveMissionPlan", { id: mission.id })}>批准并分派</button>
           </div>
+          {rejectOpen && (
+            <div className="mission-reject">
+              <input
+                autoFocus
+                placeholder="退回原因（可空）：写清楚要改什么，主管会带着它重排"
+                value={rejectText}
+                onChange={(e) => setRejectText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); void act("rejectMissionPlan", { id: mission.id, feedback: rejectText }); setRejectOpen(false); }
+                  else if (e.key === "Escape") { e.preventDefault(); setRejectOpen(false); }
+                }}
+              />
+              <button className="btn tiny-btn primary" onClick={() => { void act("rejectMissionPlan", { id: mission.id, feedback: rejectText }); setRejectOpen(false); }}>确认退回</button>
+              <button className="btn tiny-btn" onClick={() => setRejectOpen(false)}>取消</button>
+            </div>
+          )}
           {draft.plan.summary && <p className="mission-summary">{draft.plan.summary}</p>}
           <ol className="mission-steps">
             {draft.plan.steps.map((step) => (

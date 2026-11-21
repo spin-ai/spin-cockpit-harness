@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS notes (
   source_ref TEXT,                         -- message id / page id / run id
   status TEXT NOT NULL,                    -- new | verified | stale | rejected
   tags TEXT,
+  owner TEXT,                              -- 空 = 全局共享；非空 = 只给这个 owner（bot:<id>）注入
   expires_at INTEGER,                      -- decay：到期后不注入，行保留
   created_at INTEGER, updated_at INTEGER
 );
@@ -82,6 +83,7 @@ CREATE TABLE IF NOT EXISTS entries (
   hit_count INTEGER DEFAULT 0,             -- 被注入次数（M3 换成被引用）
   last_hit_at INTEGER,
   sort_order INTEGER,                      -- 非空 = 置顶（决定注入分数）
+  owner TEXT,                              -- 空 = 全局共享；非空 = 只给这个 owner 注入
   created_at INTEGER, updated_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS suggestions (
@@ -94,8 +96,22 @@ CREATE TABLE IF NOT EXISTS suggestions (
   target_id TEXT,
   sources TEXT,                            -- JSON array
   sig TEXT NOT NULL,
-  status TEXT NOT NULL,                    -- pending | accepted | rejected
+  status TEXT NOT NULL,                    -- pending | accepted | rejected | superseded
+  diff TEXT,                               -- 人一眼能看：这条建议会改掉什么
+  base_rev INTEGER,                        -- 建议基于目标的哪一版（note/entry 的 updated_at）
+  confidence REAL,                        -- 1 = 确定性检查，0.5 = 模型判断
+  dream_id TEXT,                           -- 属于哪一轮 Dream（dream_runs.id）
   created_at INTEGER, resolved_at INTEGER
+);
+-- 每一轮 Dream 的台账：输入指纹、耗时、产出、模型结果。没有它就没法回答「上次跑出过什么」。
+CREATE TABLE IF NOT EXISTS dream_runs (
+  id TEXT PRIMARY KEY,
+  trigger TEXT,                            -- manual | idle | import
+  fingerprint TEXT,                        -- 输入指纹：一样就不重跑
+  pages INTEGER, sources INTEGER, notes INTEGER,
+  created INTEGER, ms INTEGER,
+  semantic TEXT,                           -- JSON：语义 pass 摘要（skipped / items / created / reason）
+  at INTEGER
 );
 CREATE TABLE IF NOT EXISTS rejects (sig TEXT PRIMARY KEY, at INTEGER, times INTEGER DEFAULT 1);
 CREATE TABLE IF NOT EXISTS inject_log (
@@ -108,6 +124,14 @@ CREATE TABLE IF NOT EXISTS inject_log (
   dropped INTEGER,
   items TEXT,                              -- JSON：[{id, layer, title, included, reason, score}]
   cited TEXT                               -- JSON：run 结束后回填，被实际用到的 id
+);
+CREATE TABLE IF NOT EXISTS entry_revisions (
+  id TEXT PRIMARY KEY,
+  entry_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,                      -- 被改掉的那一版
+  at INTEGER,
+  source TEXT                              -- human | dream | bot
 );
 CREATE TABLE IF NOT EXISTS note_revisions (
   id TEXT PRIMARY KEY,
@@ -135,6 +159,8 @@ CREATE INDEX IF NOT EXISTS suggestions_status ON suggestions(status);
 CREATE INDEX IF NOT EXISTS inject_log_at ON inject_log(at);
 CREATE INDEX IF NOT EXISTS transcript_map_at ON transcript_map(at);
 CREATE INDEX IF NOT EXISTS note_revisions_note ON note_revisions(note_id, at);
+CREATE INDEX IF NOT EXISTS entry_revisions_entry ON entry_revisions(entry_id, at);
+CREATE INDEX IF NOT EXISTS dream_runs_at ON dream_runs(at);
 `;
 
 /**
@@ -167,7 +193,13 @@ const COLUMNS = [
   ["entries", "hit_count", "INTEGER DEFAULT 0"],
   ["entries", "last_hit_at", "INTEGER"],
   ["entries", "sort_order", "INTEGER"],
+  ["notes", "owner", "TEXT"],
+  ["entries", "owner", "TEXT"],
   ["suggestions", "payload", "TEXT"],
+  ["suggestions", "diff", "TEXT"],
+  ["suggestions", "base_rev", "INTEGER"],
+  ["suggestions", "confidence", "REAL"],
+  ["suggestions", "dream_id", "TEXT"],
 ];
 
 const uid = (p) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -189,6 +221,37 @@ function dedupeKey(text) {
     h = Math.imul(h, 0x01000193) >>> 0;
   }
   return `${norm.length}:${h.toString(36)}`;
+}
+
+/** 通用 FNV-1a：只用来比较「一批输入是不是同一批」，不做安全哈希。 */
+function hashText(text) {
+  const s = String(text || "");
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `${s.length}:${h.toString(36)}`;
+}
+
+/**
+ * 提案 diff：裁掉公共前后缀，只留「改了什么」那一小段。
+ * 不做字符级对齐——观察只有一句话，人要看的是「删了什么、加了什么」，不是 patch。
+ */
+function makeDiff(before, after, limit = 160) {
+  const a = String(before ?? "").replace(/\s+/g, " ").trim();
+  const b = String(after ?? "").replace(/\s+/g, " ").trim();
+  if (a === b) return "";
+  if (!a && !b) return "";
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p += 1;
+  let s = 0;
+  while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s += 1;
+  const oldMid = clip(a.slice(p, a.length - s), limit) || "（空）";
+  const newMid = clip(b.slice(p, b.length - s), limit) || "（空）";
+  const head = p > 0 ? "…" : "";
+  const tail = s > 0 ? "…" : "";
+  return [`- ${head}${oldMid}${tail}`, `+ ${head}${newMid}${tail}`].join("\n");
 }
 
 /**
@@ -288,6 +351,15 @@ function makeSnippet(text, toks, len = 130) {
   return `${head}${flat.slice(start, start + len)}${tail}`;
 }
 
+/** 乐观并发失败：库里的版本和你看到的不一致（不是致命错误，重读再来一次即可） */
+export class MemoryConflictError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "MemoryConflictError";
+    this.code = "memory_conflict";
+  }
+}
+
 export function createMemory({ dir }) {
   fs.mkdirSync(dir, { recursive: true });
   const db = new DatabaseSync(path.join(dir, "mem.db"));
@@ -317,6 +389,8 @@ export function createMemory({ dir }) {
     llmPass: false,
     llmBatch: 60,
     llmDailyCalls: 20,
+    // 空闲多久之后自动跑一轮（分钟，0 = 只手动）。只在没有 run 在跑时生效
+    idleMinutes: 30,
     ...(metaGet("dream") || {}),
   });
 
@@ -348,6 +422,7 @@ export function createMemory({ dir }) {
     confidence: Number(r.confidence ?? 0.4),
     sourceKind: r.source_kind, sourceRef: r.source_ref,
     status: r.status, tags: J(r.tags, []),
+    owner: r.owner || "",
     expiresAt: r.expires_at || 0,
     expired: Boolean(r.expires_at && r.expires_at <= Date.now()),
     createdAt: r.created_at, updatedAt: r.updated_at,
@@ -355,6 +430,7 @@ export function createMemory({ dir }) {
   const entryRow = (r) => ({
     id: r.id, layer: r.layer, title: r.title, body: r.body,
     sourceRefs: J(r.source_refs, []), status: r.status,
+    owner: r.owner || "",
     validFrom: r.valid_from || r.created_at || 0,
     invalidAt: r.invalid_at || 0,
     supersededBy: r.superseded_by || "",
@@ -370,7 +446,29 @@ export function createMemory({ dir }) {
     payload: J(r.payload, null),
     targetKind: r.target_kind, targetId: r.target_id, sources: J(r.sources, []),
     sig: r.sig, status: r.status, createdAt: r.created_at, resolvedAt: r.resolved_at,
+    baseRev: r.base_rev || 0,
+    diff: r.diff || "",
+    confidence: r.confidence == null ? null : Number(r.confidence),
+    dreamId: r.dream_id || "",
   });
+  const dreamRunRow = (r) => ({
+    id: r.id, trigger: r.trigger || "manual", fingerprint: r.fingerprint || "",
+    pages: r.pages || 0, sources: r.sources || 0, notes: r.notes || 0,
+    created: r.created || 0, ms: r.ms || 0,
+    semantic: J(r.semantic, null), at: r.at || 0,
+  });
+  /**
+   * 目标当前版本：note / entry 用 updated_at。
+   * 页面与资料的真版本在插件库里，主进程接受建议前自己再校验一次。
+   */
+  const targetRev = (kind, id) => {
+    if (!id) return 0;
+    try {
+      if (kind === "note") return Number(one("SELECT updated_at AS u FROM notes WHERE id=?", [id])?.u) || 0;
+      if (kind === "entry") return Number(one("SELECT updated_at AS u FROM entries WHERE id=?", [id])?.u) || 0;
+    } catch { /* ignore */ }
+    return 0;
+  };
 
   return {
     dir,
@@ -480,7 +578,7 @@ export function createMemory({ dir }) {
      *   2. 太长不写——观察只放一句结论，长内容应该去写页面；
      *   3. 同一句话只存一行，重复写 = 多一个佐证（confidence +0.1）。
      */
-    noteAdd({ body, kind = "guess", confidence, sourceKind = "manual", sourceRef = "", tags = [], expiresAt } = {}) {
+    noteAdd({ body, kind = "guess", confidence, sourceKind = "manual", sourceRef = "", tags = [], expiresAt, owner = "" } = {}) {
       const text = String(body || "").trim();
       if (!text) throw new Error("note 内容不能为空");
       if (!String(sourceRef || "").trim()) {
@@ -509,8 +607,8 @@ export function createMemory({ dir }) {
       }
       const id = uid("n");
       run(
-        "INSERT INTO notes(id, body, kind, confidence, source_kind, source_ref, status, tags, expires_at, dedupe_key, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-        [id, text, k, conf, sourceKind || "manual", sourceRef, "new", JSON.stringify(tags), expires, key, at, at],
+        "INSERT INTO notes(id, body, kind, confidence, source_kind, source_ref, status, tags, owner, expires_at, dedupe_key, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [id, text, k, conf, sourceKind || "manual", sourceRef, "new", JSON.stringify(tags), String(owner || ""), expires, key, at, at],
       );
       bumpVersion();
       return { ...noteRow(one("SELECT * FROM notes WHERE id=?", [id])), deduped: false };
@@ -556,11 +654,23 @@ export function createMemory({ dir }) {
     },
 
     // ── 四层条目 ─────────────────────────────────────────────────
-    entryUpsert({ id, layer = "L4", title, body = "", sources = [] } = {}) {
+    /**
+     * 写条目。带 `expectedUpdatedAt` 时做**乐观并发**：库里的 updated_at 和它不一致就抛
+     * MemoryConflictError —— 两个人（或 bot + 人）同时改一条结论时，后来的不能悄悄覆盖。
+     */
+    entryUpsert({ id, layer = "L4", title, body = "", sources = [], owner, expectedUpdatedAt } = {}) {
       if (!LAYERS.includes(layer)) throw new Error("layer 必须是 L1–L4");
       const name = String(title || "").trim();
       if (!name) throw new Error("条目标题不能为空");
       const at = Date.now();
+      if (id && expectedUpdatedAt !== undefined && expectedUpdatedAt !== null) {
+        const live = one("SELECT updated_at AS u, title, body FROM entries WHERE id=?", [id]);
+        const liveAt = Number(live?.u) || 0;
+        if (!live) throw new MemoryConflictError("条目不存在（可能已被删除）");
+        if (liveAt !== Number(expectedUpdatedAt)) {
+          throw new MemoryConflictError(`条目已被改过（库 ${liveAt} ≠ 你看到的 ${Number(expectedUpdatedAt)}）：先读一遍再改`);
+        }
+      }
       if (id && one("SELECT id FROM entries WHERE id=?", [id])) {
         // 原地编辑：不动 valid_from / invalid_at（失效链只由 invalidate/restore 改）
         run("UPDATE entries SET layer=?, title=?, body=?, source_refs=?, status='active', updated_at=? WHERE id=?", [layer, name, String(body).slice(0, 8000), JSON.stringify(sources), at, id]);
@@ -569,11 +679,41 @@ export function createMemory({ dir }) {
       }
       const next = id || uid("m");
       run(
-        "INSERT INTO entries(id, layer, title, body, source_refs, status, valid_from, supersedes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        [next, layer, name, String(body).slice(0, 8000), JSON.stringify(sources), "active", at, "[]", at, at],
+        "INSERT INTO entries(id, layer, title, body, source_refs, status, valid_from, supersedes, owner, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [next, layer, name, String(body).slice(0, 8000), JSON.stringify(sources), "active", at, "[]", String(owner || ""), at, at],
       );
       bumpVersion();
       return entryRow(one("SELECT * FROM entries WHERE id=?", [next]));
+    },
+    /**
+     * 改写一条条目：旧版存进 entry_revisions，再覆盖。
+     * 与 noteRewrite 的区别：条目有 title，所以判定"有没有变化"要同时看 title 与 body。
+     */
+    entryRewrite({ id, title, body, source = "human", expectedUpdatedAt } = {}) {
+      const row = one("SELECT * FROM entries WHERE id=?", [id]);
+      if (!row) throw new Error("条目不存在");
+      if (expectedUpdatedAt !== undefined && expectedUpdatedAt !== null && Number(row.updated_at) !== Number(expectedUpdatedAt)) {
+        throw new MemoryConflictError("条目已被改过，先读一遍再改");
+      }
+      const nextTitle = title === undefined ? row.title : String(title).trim();
+      const nextBody = body === undefined ? row.body : String(body);
+      if (!nextTitle) throw new Error("标题不能为空");
+      if (nextTitle === row.title && nextBody === row.body) throw new Error("改写没有任何变化");
+      const at = Date.now();
+      run("INSERT INTO entry_revisions(id, entry_id, title, body, at, source) VALUES (?,?,?,?,?,?)", [uid("erv"), id, row.title, row.body, at, source]);
+      run("UPDATE entries SET title=?, body=?, updated_at=? WHERE id=?", [nextTitle, nextBody.slice(0, 8000), at, id]);
+      bumpVersion();
+      return entryRow(one("SELECT * FROM entries WHERE id=?", [id]));
+    },
+    entryRevisions({ id, limit = 20 } = {}) {
+      return rows("SELECT * FROM entry_revisions WHERE entry_id=? ORDER BY at DESC LIMIT ?", [id, limit])
+        .map((r) => ({ id: r.id, title: r.title, body: r.body, at: r.at, source: r.source }));
+    },
+    /** 回滚到某一版（本身也是一次改写，所以能再回滚回去） */
+    entryRestoreRevision({ revisionId, source = "human" } = {}) {
+      const rev = one("SELECT * FROM entry_revisions WHERE id=?", [revisionId]);
+      if (!rev) throw new Error("修订不存在");
+      return this.entryRewrite({ id: rev.entry_id, title: rev.title, body: rev.body, source });
     },
     entryList({ layer, status = "active", limit = 200, includeInvalidated = false } = {}) {
       const where = ["status=?"];
@@ -695,6 +835,7 @@ export function createMemory({ dir }) {
         ...cfg,
         budget: { day, used: b.day === day ? (Number(b.count) || 0) : 0, limit: Math.max(1, Number(cfg.dayLimit) || DREAM_DAY_LIMIT) },
         modelBudget: this.dreamModelCallBudget(),
+        lastRun: this.dreamLastRun(),
       };
     },
     setInjectBudget({ maxChars } = {}) {
@@ -703,6 +844,24 @@ export function createMemory({ dir }) {
       return n;
     },
     currentInjectBudget() { return Number(metaGet("injectBudget")) || 12000; },
+    /**
+     * 容量账：注入方（尤其人格 bot）要能说出「你还能记多少」。
+     * 没有这个数，bot 只会在"保存被拒"那一刻才知道装不下了——那已经晚了。
+     */
+    usage({ maxChars } = {}) {
+      const budget = Math.max(800, Number(maxChars) || Number(metaGet("injectBudget")) || 12000);
+      const ctx = this.inject({ maxChars: budget });
+      const active = Number(one("SELECT COUNT(*) n FROM entries WHERE status='active' AND invalid_at IS NULL AND layer!='L1'")?.n) || 0;
+      const notes = Number(one("SELECT COUNT(*) n FROM notes WHERE status IN ('verified','new') AND (expires_at IS NULL OR expires_at > ?)", [Date.now()])?.n) || 0;
+      return {
+        budget,
+        chars: ctx.chars,
+        ratio: budget ? Math.round((ctx.chars / budget) * 100) / 100 : 0,
+        entries: active,
+        notes,
+        dropped: ctx.dropped || 0,
+      };
+    },
     /** 导出全部记忆（Markdown），用于备份 / 迁移；失效条目单独列出以保留溯源 */
     exportMarkdown() {
       const lines = [`# 记忆导出 ${new Date().toISOString()}`, ""];
@@ -750,19 +909,28 @@ export function createMemory({ dir }) {
     },
 
     // ── 注入：按分数排序后自然截止，超预算做减法 ─────────────────
-    inject({ maxChars, runId = "" } = {}) {
+    inject({ maxChars, runId = "", owner = "" } = {}) {
       const stored = Number(metaGet("injectBudget")) || 12000;
       const budget = Math.max(800, Number(maxChars) || stored);
       const now = Date.now();
+      // owner：空 = 全库共享（默认）；传了 owner（如 bot:<id>）就只看「共享 + 自己的」
+      const own = String(owner || "");
+      const ownSql = own ? " AND (COALESCE(owner,'')='' OR owner=?)" : "";
 
       // L1 永不进注入：原文太大，且把原文塞进上下文等于让 Agent 自己编历史
-      const entries = rows("SELECT * FROM entries WHERE status='active' AND invalid_at IS NULL AND layer!='L1'")
+      const entries = rows(
+        `SELECT * FROM entries WHERE status='active' AND invalid_at IS NULL AND layer!='L1'${ownSql}`,
+        own ? [own] : [],
+      )
         .map(entryRow)
         .map((e) => ({ ...e, score: scoreEntry(e, now) }))
         .sort((a, b) => b.score - a.score || (a.sortOrder ?? 1e12) - (b.sortOrder ?? 1e12) || b.updatedAt - a.updatedAt);
 
       // note 只取未过期的：verified 全取（有上限），new 只取高置信度
-      const freshNotes = rows("SELECT * FROM notes WHERE status IN ('verified','new') AND (expires_at IS NULL OR expires_at > ?)", [now])
+      const freshNotes = rows(
+        `SELECT * FROM notes WHERE status IN ('verified','new') AND (expires_at IS NULL OR expires_at > ?)${ownSql}`,
+        own ? [now, own] : [now],
+      )
         .map(noteRow)
         .filter((n) => n.status === "verified" || n.confidence >= 0.6)
         .map((n) => ({ ...n, score: scoreNote(n, now) }))
@@ -924,9 +1092,50 @@ export function createMemory({ dir }) {
     },
 
     // ── Dream：五种动作，只产建议 ─────────────────────────────────
-    dreamScan({ pages = [], sources = [], noteStats = null } = {}) {
+    /**
+     * 输入指纹：这一轮 Dream 要处理的对象有没有变（观察、L3、页面、资料）。
+     * 输入没变就不该再跑一轮：同一批输入重复跑只会出重复提案、重复调模型。
+     */
+    dreamFingerprint({ pages = [], sources = [] } = {}) {
+      const live = rows("SELECT id, updated_at FROM notes WHERE status IN ('new','verified') ORDER BY id");
+      const l3 = rows("SELECT id, updated_at FROM entries WHERE layer='L3' AND status='active' ORDER BY id");
+      const pageParts = (Array.isArray(pages) ? pages : [])
+        .map((p) => `${p.id}:${p.updatedAt || 0}:${(Array.isArray(p.citations) ? p.citations.length : 0)}`).sort();
+      const sourceParts = (Array.isArray(sources) ? sources : [])
+        .map((s) => `${s.id}:${s.updatedAt || s.updated_at || s.chars || 0}`).sort();
+      return hashText([
+        DREAM().llmPass ? "llm" : "det",
+        ...live.map((n) => `${n.id}@${n.updated_at}`),
+        ...l3.map((e) => `${e.id}@${e.updated_at}`),
+        ...pageParts, ...sourceParts,
+      ].join("\n"));
+    },
+    dreamUnchanged({ fingerprint = "" } = {}) {
+      const last = this.dreamLastRun();
+      return Boolean(fingerprint) && Boolean(last) && last.fingerprint === fingerprint;
+    },
+    dreamLastRun() {
+      const r = one("SELECT * FROM dream_runs ORDER BY at DESC LIMIT 1");
+      return r ? dreamRunRow(r) : null;
+    },
+    dreamRuns({ limit = 10 } = {}) {
+      return rows("SELECT * FROM dream_runs ORDER BY at DESC LIMIT ?", [Math.max(1, Math.min(50, Number(limit) || 10))]).map(dreamRunRow);
+    },
+    /** 语义 pass 跑完之后回填结果（一轮 Dream = 确定性扫描 + 可选模型 pass） */
+    dreamRunSemantic({ id = "", semantic = null } = {}) {
+      if (!id) return null;
+      run("UPDATE dream_runs SET semantic=? WHERE id=?", [JSON.stringify(semantic || null), id]);
+      const r = one("SELECT * FROM dream_runs WHERE id=?", [id]);
+      return r ? dreamRunRow(r) : null;
+    },
+    dreamScan({ pages = [], sources = [], noteStats = null, trigger = "manual", force = false } = {}) {
       const cfg = DREAM();
       if (!cfg.enabled) return [];
+      // 输入指纹：没变就不跑（force = 人手点的，允许重跑一次）
+      const fingerprint = this.dreamFingerprint({ pages, sources });
+      if (!force && this.dreamUnchanged({ fingerprint })) return [];
+      const runId = uid("dr");
+      const startedAt = Date.now();
       // 每日预算：确定性扫描不花钱，但没上限会把复核队列淹掉（人一旦不看队列，Dream 就白跑）
       const day = dayKey();
       const budget = metaGet("dreamBudget") || {};
@@ -935,15 +1144,16 @@ export function createMemory({ dir }) {
       if (usedToday >= dayLimit) return [];
       const rejected = new Set(rows("SELECT sig FROM rejects").map((r) => r.sig));
       const knownSigs = new Set(rows("SELECT sig FROM suggestions WHERE status IN ('pending','accepted')").map((r) => r.sig));
-      const add = (action, title, detail, targetKind, targetId, sourcesArr = []) => {
+      const add = (action, title, detail, targetKind, targetId, sourcesArr = [], extra = {}) => {
         if (created.length >= cfg.maxSuggestions) return null;
         if (usedToday + created.length >= dayLimit) return null;
         const sig = `${action}:${targetKind}:${targetId}:${title}`;
         if (rejected.has(sig) || knownSigs.has(sig)) return null;
         const id = uid("s");
         run(
-          "INSERT INTO suggestions(id, action, title, detail, target_kind, target_id, sources, sig, status, created_at, resolved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-          [id, action, title.slice(0, 200), detail || "", targetKind, targetId || null, JSON.stringify(sourcesArr), sig, "pending", Date.now(), null],
+          "INSERT INTO suggestions(id, action, title, detail, payload, target_kind, target_id, sources, sig, status, diff, base_rev, confidence, dream_id, created_at, resolved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+          [id, action, title.slice(0, 200), detail || "", extra.payload ? JSON.stringify(extra.payload) : null, targetKind, targetId || null, JSON.stringify(sourcesArr), sig, "pending",
+            extra.diff || "", extra.baseRev === undefined ? targetRev(targetKind, targetId) : (Number(extra.baseRev) || 0), extra.confidence == null ? 1 : Number(extra.confidence), runId, Date.now(), null],
         );
         knownSigs.add(sig);
         return sugRow(one("SELECT * FROM suggestions WHERE id=?", [id]));
@@ -958,28 +1168,38 @@ export function createMemory({ dir }) {
         // fix：reviewed 页面的引用源已不存在 / 页面缺摘要
         const missing = cites.filter((c) => !sourceIds.has(c.sourceId));
         if (page.status === "reviewed" && missing.length) {
-          const s = add("fix", `修正「${page.title}」的失效引用`, `${missing.length} 条引用指向已删除的资料`, "page", page.id, missing.map((c) => c.sourceId));
+          const s = add("fix", `修正「${page.title}」的失效引用`, `${missing.length} 条引用指向已删除的资料`, "page", page.id, missing.map((c) => c.sourceId), {
+            baseRev: page.updatedAt, diff: `- ${clip(missing.map((c) => c.sourceId).join(", "), 80)}\n+ （重指到现存资料或删掉该引用）`,
+          });
           if (s) created.push(s);
         }
         if (page.status === "reviewed" && !String(page.summary || "").trim()) {
-          const s = add("fix", `补摘要「${page.title}」`, "reviewed 页面没有摘要，检索与注入都读不到结论", "page", page.id);
+          const s = add("fix", `补摘要「${page.title}」`, "reviewed 页面没有摘要，检索与注入都读不到结论", "page", page.id, [], {
+            baseRev: page.updatedAt, diff: "+ 补一段能被检索与注入读到的摘要",
+          });
           if (s) created.push(s);
         }
         // fill：页面没有引用也没有反链
         if (!cites.length && !(page.backlinks || 0)) {
-          const s = add("fill", `补依据「${page.title}」`, "页面既没有引用资料，也没有被别的页面链接", "page", page.id);
+          const s = add("fill", `补依据「${page.title}」`, "页面既没有引用资料，也没有被别的页面链接", "page", page.id, [], {
+            baseRev: page.updatedAt, diff: "+ 补一条引用或互链（不自动编造依据）",
+          });
           if (s) created.push(s);
         }
       }
       // build：有资料没有页面
       for (const src of sources) {
         if (cited.has(src.id)) continue;
-        const s = add("build", `为资料「${src.title}」建页面`, "这份资料还没有对应页面", "source", src.id, [src.id]);
+        const s = add("build", `为资料「${src.title}」建页面`, "这份资料还没有对应页面", "source", src.id, [src.id], {
+          baseRev: src.updatedAt || src.updated_at || 0, diff: `+ 新建 draft 页面「${clip(src.title, 60)}」`,
+        });
         if (s) created.push(s);
       }
       // promote：已验证的 note 还没进页面
       for (const note of this.noteList({ status: "verified", limit: 50 })) {
-        const s = add("promote", `晋升观察：${note.body.slice(0, 40)}`, "已验证的观察可以并入页面或 L4 结论", "note", note.id, [note.sourceRef].filter(Boolean));
+        const s = add("promote", `晋升观察：${note.body.slice(0, 40)}`, "已验证的观察可以并入页面或 L4 结论", "note", note.id, [note.sourceRef].filter(Boolean), {
+          baseRev: note.updatedAt, diff: `+ 晋升为 L4 条目：${clip(note.body, 80)}`,
+        });
         if (s) created.push(s);
       }
       // merge：两条观察说的是同一件事 → 建议合并（只产建议，接受后把多余的那条标 stale）
@@ -1005,7 +1225,10 @@ export function createMemory({ dir }) {
             "merge",
             `合并观察：${clip(keep.body, 24)}`,
             `两条说的是同一件事（词重合 ${(sim * 100).toFixed(0)}%）：「${clip(keep.body, 60)}」/「${clip(drop.body, 60)}」。接受后保留前者，把后者标为不成立。`,
-            "note", keep.id, [keep.id, drop.id],
+            "note", keep.id, [keep.id, drop.id], {
+              baseRev: keep.updatedAt,
+              diff: `- ${clip(drop.body, 80)}\n+ （并入保留项：${clip(keep.body, 60)}）`,
+            },
           );
           if (s) created.push(s);
         }
@@ -1023,7 +1246,10 @@ export function createMemory({ dir }) {
               "correct",
               `复核观察（依据已被推翻）：${clip(note.body, 24)}`,
               `它支撑的结论「${dead.title}」已失效（被 ${dead.supersededBy || "新结论"} 取代），这条观察需要重新确认；接受 = 先标为不成立、退出注入与晋升队列。`,
-              "note", note.id, [dead.id],
+              "note", note.id, [dead.id], {
+                baseRev: note.updatedAt,
+                diff: `- 状态：${note.status}\n+ 状态：stale（依据已失效，行与来源保留）`,
+              },
             );
             if (s) created.push(s);
           }
@@ -1034,22 +1260,76 @@ export function createMemory({ dir }) {
       const entriesL3 = this.entryList({ layer: "L3" });
       const total = entriesL3.reduce((n, e) => n + e.body.length, 0);
       if (entriesL3.length > 12 || total > 20000) {
-        const s = add("prune", `压缩 L3（${entriesL3.length} 条 / ${total} 字符）`, "L3 体积偏大，建议合并同类条目、正文下沉成页面，只留链接", "entry", entriesL3[0]?.id || "", []);
+        const victims = Math.max(1, Math.ceil(entriesL3.length / 3));
+        const s = add("prune", `压缩 L3（${entriesL3.length} 条 / ${total} 字符）`, "L3 体积偏大，建议合并同类条目、正文下沉成页面，只留链接", "entry", entriesL3[0]?.id || "", [], {
+          // 剪枝作用于「体积最大的三分之一」，不是某一条：不给 baseRev，免得一条被改就把整条建议作废
+          baseRev: 0, diff: `+ 归档 L3 里体积最大的 ${victims} 条（可恢复）`,
+        });
         if (s) created.push(s);
       }
       void noteStats;
       if (created.length) bumpDreamBudget({ day, addCount: created.length });
+      // 台账：这一轮看到了什么、产出多少、花了多久。语义 pass 的结果稍后回填
+      const liveCount = one("SELECT COUNT(*) n FROM notes WHERE status IN ('new','verified')").n;
+      run(
+        "INSERT INTO dream_runs(id, trigger, fingerprint, pages, sources, notes, created, ms, semantic, at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        [runId, trigger, fingerprint, pages.length, sources.length, liveCount, created.length, Date.now() - startedAt, null, startedAt],
+      );
       return created;
     },
     // ── Dream 的语义 pass（调模型，默认关）──────────────────────
-    /** 交给模型的候选集：只在「还活着」的观察里挑，按最近更新排 */
-    dreamCandidates({ limit = 60 } = {}) {
+    /**
+     * 一条观察的证据：先给它自己的出处（最强），再按正文关键词去会话索引里找回相关片段。
+     * 只给能找到的；找不到就少给——模型看不见的结论不应该被“确认”。
+     */
+    noteEvidence({ body = "", sourceKind = "", sourceRef = "", max = 3 } = {}) {
+      const out = [];
+      const push = (src, ref, at, snippet) => {
+        const text = clip(snippet || "", 160);
+        if (!ref || !text) return;
+        if (out.some((e) => e.ref === ref && e.snippet === text)) return;
+        out.push({ src, ref, at: Number(at) || 0, snippet: text });
+      };
+      if (sourceRef) {
+        // 观察自己的出处（哪条消息 / 哪个 run）是最强证据：直接回索引取原文
+        try {
+          const row = one(
+            "SELECT t.text AS text, t.at AS at, t.ref_kind AS kind, t.ref_id AS id FROM transcript_map m JOIN transcript_fts t ON t.rowid = m.rowid_ WHERE m.ref_id = ? LIMIT 1",
+            [sourceRef],
+          );
+          if (row) {
+            const toks = [...bigramTokens(body, { maxTokens: 24 })].slice(0, 6);
+            // 证据只取索引里真实存在的原文片段，不做二次改写
+            push(row.kind || sourceKind || "transcript", `${row.kind}:${row.id}`, row.at, makeSnippet(row.text, toks));
+          }
+        } catch { /* 索引不可用 / 来源不在会话里：只给检索证据 */ }
+      }
+      // 取最长的几个 bigram 当检索词：短词（“要用”）命中一片，没有证据价值
+      const query = [...new Set(bigramTokens(body, { maxTokens: 40 }))]
+        .filter((t) => t.length >= 2)
+        .slice(0, 4)
+        .join(" ");
+      if (query) {
+        for (const hit of this.transcriptSearch({ query, limit: max })) {
+          push(hit.kind, `${hit.kind}:${hit.id}`, hit.at, hit.snippet);
+        }
+      }
+      return out.slice(0, max + 1);
+    },
+    /** 交给模型的候选集：只在「还活着」的观察里挑，按最近更新排；withEvidence 时带上证据片段 */
+    dreamCandidates({ limit = 60, withEvidence = false } = {}) {
       return this.noteList({ limit: 400 })
         .filter((n) => n.status === "new" || n.status === "verified")
         .filter((n) => !n.expired)
         .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
         .slice(0, Math.max(2, Math.min(200, Number(limit) || 60)))
-        .map((n) => ({ id: n.id, kind: n.kind, status: n.status, confidence: n.confidence, body: n.body }));
+        .map((n) => ({
+          id: n.id, kind: n.kind, status: n.status, confidence: n.confidence, body: n.body,
+          sourceKind: n.sourceKind, sourceRef: n.sourceRef,
+          ...(withEvidence
+            ? { evidence: this.noteEvidence({ body: n.body, sourceKind: n.sourceKind, sourceRef: n.sourceRef }) }
+            : {}),
+        }));
     },
     /** 模型调用预算（按本地自然日），和「建议条数」预算是两笔账 */
     dreamModelCallBudget() {
@@ -1071,10 +1351,12 @@ export function createMemory({ dir }) {
      * 模型产出的建议落库。**只收能校验的**：
      *   - 只能对存在的 note 说话（防幻觉 id）；
      *   - merge 必须 ≥2 个 id 且 keep 在 ids 里；
-     *   - 必须有 reason（没理由的建议不进队列）；
-     *   - 同一天同类（同 id 集合）不重复入队。
+     *   - correct 必须带证据，且证据必须是这次真的给过它的（证据链不许凭空造）；
+     *   - rewrite 必须过「不引入新事实」两道闸门；
+     *   - 必须有 reason，同一天同类（同 id 集合）不重复入队。
+     * 每条都带 diff / base_rev / confidence：人看的不是「我改好了」，是改了什么、基于哪一版。
      */
-    dreamModelSuggest({ items = [], model = "" } = {}) {
+    dreamModelSuggest({ items = [], model = "", dreamId = "", evidenceRefs = null } = {}) {
       const cfg = DREAM();
       const day = dayKey();
       const budget = metaGet("dreamBudget") || {};
@@ -1093,13 +1375,23 @@ export function createMemory({ dir }) {
         if (!reason || reason.length < 4) continue;
         if (action === "merge" && ids.length < 2) continue;
         if (action !== "merge" && ids.length !== 1) continue;
+        const evidence = [...new Set((Array.isArray(raw?.evidence) ? raw.evidence : []).map((v) => String(v || "")))]
+          .filter(Boolean)
+          .slice(0, 4);
+        // 校正必须有依据：没给证据 / 引用了没给它的 ref 一律丢（不许拿「我觉得」改别人的记忆）
+        if (action === "correct") {
+          if (!evidence.length) continue;
+          if (evidenceRefs && !evidence.every((r) => evidenceRefs.has(r))) continue;
+        }
         const keep = action === "merge"
           ? (ids.includes(String(raw?.keep || "")) ? String(raw.keep) : ids[0])
           : ids[0];
         const keepNote = notes.get(keep);
         if (!keepNote) continue;
-        let payload = null;
+        const dropNotes = ids.filter((id) => id !== keep).map((id) => notes.get(id)).filter(Boolean);
+        let payload = evidence.length ? { evidence } : null;
         let sig = `llm:${action}:${ids.slice().sort().join("+")}`;
+        let diff = "";
         // 改写：只允许动「还没被人确认过」的观察，且不许引入新事实
         if (action === "rewrite") {
           if (keepNote.status !== "new") continue; // verified 是人确认过的，只能走 correct / merge
@@ -1112,8 +1404,13 @@ export function createMemory({ dir }) {
           const extras = [...newTokens].filter((t) => !oldTokens.has(t));
           if (extras.length > allowedExtra) continue;            // 引入了原句没有的内容 → 当新事实，拒
           if (containment(oldTokens, newTokens) < REWRITE_MIN_CONTAINMENT) continue; // 把原句扔了
-          payload = { body: next, kind: keepNote.kind };
+          payload = { body: next, kind: keepNote.kind, ...(evidence.length ? { evidence } : {}) };
+          diff = makeDiff(keepNote.body, next);
           sig = `llm:rewrite:${keep}:${dedupeKey(next)}`;
+        } else if (action === "merge") {
+          diff = [...dropNotes.map((n) => `- ${clip(n.body, 80)}`), `+ （并入保留项：${clip(keepNote.body, 60)}）`].join("\n");
+        } else {
+          diff = `- 状态：${keepNote.status}\n+ 状态：stale（依据已失效，行与来源保留）`;
         }
         if (rejected.has(sig) || known.has(sig)) continue;
         if (usedToday + created.length >= dayLimit || created.length >= cfg.maxSuggestions) break;
@@ -1122,13 +1419,15 @@ export function createMemory({ dir }) {
           : action === "correct"
             ? `复核观察（模型判断不成立）：${clip(keepNote.body, 24)}`
             : `改写观察（模型）：${clip(keepNote.body, 20)} → ${clip(payload.body, 20)}`;
+        const reasonLine = evidence.length ? `${reason.slice(0, 240)}\n\n依据：${evidence.join(" / ")}` : reason.slice(0, 240);
         const detail = action === "rewrite"
-          ? `${reason.slice(0, 240)}\n\n原句：「${clip(keepNote.body, 80)}」`
-          : `${reason.slice(0, 240)}\n\n${ids.map((id) => `「${clip(notes.get(id).body, 60)}」`).join(" / ")}`;
+          ? `${reasonLine}\n\n原句：「${clip(keepNote.body, 80)}」`
+          : `${reasonLine}\n\n${ids.map((id) => `「${clip(notes.get(id).body, 60)}」`).join(" / ")}`;
         const id = uid("s");
         run(
-          "INSERT INTO suggestions(id, action, title, detail, payload, target_kind, target_id, sources, sig, status, created_at, resolved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-          [id, action, title.slice(0, 200), detail, payload ? JSON.stringify(payload) : null, "note", keep, JSON.stringify(ids), sig, "pending", Date.now(), null],
+          "INSERT INTO suggestions(id, action, title, detail, payload, target_kind, target_id, sources, sig, status, diff, base_rev, confidence, dream_id, created_at, resolved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+          [id, action, title.slice(0, 200), detail, payload ? JSON.stringify(payload) : null, "note", keep, JSON.stringify(ids), sig, "pending",
+            diff, targetRev("note", keep), 0.5, dreamId || "", Date.now(), null],
         );
         known.add(sig);
         created.push(sugRow(one("SELECT * FROM suggestions WHERE id=?", [id])));
@@ -1143,10 +1442,25 @@ export function createMemory({ dir }) {
     suggestionResolve({ id, accept = false } = {}) {
       const sug = one("SELECT * FROM suggestions WHERE id=?", [id]);
       if (!sug) throw new Error("建议不存在");
+      // 版本闸门：目标在这条建议之后被人改过 → 作废，绝不覆盖人的修改
+      if (accept) {
+        const baseRev = Number(sug.base_rev) || 0;
+        const cur = baseRev ? targetRev(sug.target_kind, sug.target_id) : 0;
+        if (baseRev && cur && cur !== baseRev) {
+          return this.suggestionSuperseded({ id, reason: `目标在建议之后被改过（基础版本 ${baseRev} ≠ 当前 ${cur}），不覆盖` });
+        }
+      }
       run("UPDATE suggestions SET status=?, resolved_at=? WHERE id=?", [accept ? "accepted" : "rejected", Date.now(), id]);
       // 拒绝过的同类不再反复打扰
       if (!accept) run("INSERT INTO rejects VALUES (?,?,1) ON CONFLICT(sig) DO UPDATE SET at=excluded.at, times=times+1", [sug.sig, Date.now()]);
       return sugRow(one("SELECT * FROM suggestions WHERE id=?", [id]));
+    },
+    /** 建议作废：目标已被改动（人改过 / 被另一条建议改过）。不进 rejects——这不是“人拒绝了它”。 */
+    suggestionSuperseded({ id, reason = "" } = {}) {
+      const sug = one("SELECT * FROM suggestions WHERE id=?", [id]);
+      if (!sug) throw new Error("建议不存在");
+      run("UPDATE suggestions SET status='superseded', resolved_at=? WHERE id=?", [Date.now(), id]);
+      return { ...sugRow(one("SELECT * FROM suggestions WHERE id=?", [id])), superseded: true, reason };
     },
 
     overview() {

@@ -1,4 +1,4 @@
-> 层：架构 · 状态：已落地 · 核对：2026-11-14 · 覆盖：thread 模型与 send 状态机
+> 层：架构 · 状态：已落地 · 核对：2026-11-20 · 覆盖：thread 模型与 send 状态机，含人格 bot 的 bot thread
 
 # CHAT：从「两态」到「单会话（thread）」
 
@@ -72,6 +72,22 @@ messages(
 5. 有变更则 `persist()` 一次。
 
 已用「旧 8 列 messages 表 + 1 todo + 1 message」实测：迁移后 thread 自动生成、消息 `threadId` 正确、重开 DB 结果稳定。
+
+---
+
+### 3.3 bot thread（人格 bot 的持续会话）
+
+人格 bot 和普通 Agent **共用一套 thread / message**，不另造会话表：
+
+| 项 | 约定 |
+|---|---|
+| 归属 | `threads.kind = "bot"` + `threads.bot_id`（`todo_id` 为空，所以不挂在项目任务下） |
+| 会话内容 | 只有**说出口的部分**进 `messages`（user 提问 / agent 回复，含主动开口与创建时的提问）；**沉默、被拦只留在 `bot_turns` 审计**里，不污染 Chat |
+| 历史来源 | `reply()` 的对话历史读这条 thread 的最后 10 条消息（含主动开口），不再从 `bot_turns` 拼 —— 这才叫"一条不间断会话" |
+| 老数据迁移 | `botThreadMigrate({ dryRun })`：按时间顺序把未镜像的 `bot_turns` 补成消息，写过的回合标 `mirrored`，所以**幂等**；先 dryRun 看数，再真跑。Bot 页 `⋯ → 迁移历史到会话` |
+| 打开 | Bot 页「打开会话」→ `botThread` 拿 thread id → 跳到 Chat 同一个 thread |
+
+**为什么不多一张表**：多一张就等于 Chat 和 Bot 两处历史，用户永远不知道哪条是真的。现在 Bot 页是"这个 bot 的审计台"，Chat 是"这个 bot 的会话"，数据只有一份。
 
 ---
 

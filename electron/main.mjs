@@ -1,7 +1,8 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, clipboard, Menu, globalShortcut, screen } from "electron";
+import { app, BrowserWindow, ipcMain, shell, dialog, clipboard, ClipboardItem, Menu, globalShortcut, screen, session, nativeImage, webContents } from "electron";
 import path from "node:path";
 import fs from "node:fs";
-import { spawn, spawnSync, execFile } from "node:child_process";
+import os from "node:os";
+import { spawn, spawnSync, execFile, execFileSync } from "node:child_process";
 import http from "node:http";
 import crypto from "node:crypto";
 import pty from "node-pty";
@@ -13,7 +14,13 @@ import { openDb, DEFAULT_SETTINGS } from "./db.mjs";
 import { safeStorage } from "electron";
 import { AcpClient, dshPathEnv } from "./acp.mjs";
 import { createKnowledge } from "./knowledge/index.mjs";
-import { chat as arkChat, resolveArkKey as resolveArkKeyFor } from "./knowledge/ark.mjs";
+import { chat as arkChat, chatStream as arkChatStream, resolveArkKey as resolveArkKeyFor } from "./knowledge/ark.mjs";
+import { createBots } from "./bot/index.mjs";
+import { notifyDecision } from "./bot/notify.mjs";
+import { createPairing } from "./im/pairing.mjs";
+import { createFeishu, createDedup, parseFeishuSetup } from "./im/feishu.mjs";
+import { createFeishuWs } from "./im/feishu-ws.mjs";
+import QRCode from "qrcode";
 import { curateMessages, parseCurated, spliceCurated, contentHash } from "./wiki-curate.mjs";
 import { createMemory, parseDreamItems } from "./memory/index.mjs";
 import { createPersona } from "./persona/index.mjs";
@@ -21,7 +28,12 @@ import { computeFeatures, computeMeasures, analyzePersonWithLLM, analysisCacheHa
 import { createImGateway, formatImCard, formatApprovalCard } from "./im/gateway.mjs";
 import { prepareWorktree, removeWorktree, repoRoot } from "./worktree.mjs";
 import { pickElement, cancelPick, detachPreview } from "./preview.mjs";
+import { openTunnel, closeTunnel, closeAllTunnels, toRemoteUrl, onTunnelClosed } from "./preview-tunnel.mjs";
 import { formatContext, detectDevUrl } from "./ui-context.mjs";
+import { classifyFile, PREVIEW_NATIVE_EXT } from "./file-kinds.mjs";
+import { MAX_DOC_BYTES, officeKind, renderOffice } from "./doc-preview.mjs";
+import { browserScreenshot, clearActivePreview, runBrowserTool, setActivePreview } from "./browser-tools.mjs";
+import { allows, describePermission, grant as grantPreviewPermission, listSites, originOf as previewOrigin, revoke as revokePreviewPermission } from "./preview-permissions.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appIconPath = app.isPackaged ? path.join(process.resourcesPath, "icon.png") : path.join(__dirname, "../resources/icon.png");
@@ -495,7 +507,7 @@ function ensureThreads() {
     }
     if (!thread.project) thread.project = store.state.projects.find((p) => p.id === thread.projectId)?.path || "";
   }
-  const draft = store.state.threads.find((t) => !t.todoId);
+  const draft = store.state.threads.find((t) => !t.todoId && t.kind !== "bot");
   if (draft) {
     if (!draft.agentId || !chatRunnable(store.state.agents.find((a) => a.id === draft.agentId))) {
       draft.agentId = defaultChatAgent(draft.projectId || store.state.activeProjectId)?.id || null;
@@ -507,7 +519,7 @@ function ensureThreads() {
 
 /** 项目切换 / 新增项目时，保证有一个全局空会话（不绑定项目） */
 function ensureGlobalDraft() {
-  if (store.state.threads.some((t) => !t.todoId)) return;
+  if (store.state.threads.some((t) => !t.todoId && t.kind !== "bot")) return;
   store.state.threads.push(newThreadRecord({ title: "新任务" }));
 }
 
@@ -670,6 +682,7 @@ function snapshot() {
     approvals: [...approvals.values()],
     plugins: store.state.plugins || [],
     pluginCommands: pluginHost?.commands() || [],
+    pluginViews: pluginHost?.views() || [],
     todoLinks: store.state.todoLinks || [],
     settings: {
       ...(store.state.settings || { ...DEFAULT_SETTINGS }),
@@ -733,7 +746,10 @@ function recoverMissions() {
     run.errorClass = run.errorClass || "other";
     const todo = store.state.todos.find((t) => t.id === run.todoId);
     if (todo && ["queued", "in_progress", "waiting_input"].includes(todo.status)) { todo.status = "todo"; todo.updatedAt = now(); }
-    if (todo) store.addMessage(threadForTodo(todo).id, run.id, "system", "system", `应用重启：运行 ${run.id} 已中断（Agent 进程随应用退出）`);
+    if (todo) {
+      const hint = run.acpSession ? `；ACP 会话已保存，可以续跑（runResume）` : "";
+      store.addMessage(threadForTodo(todo).id, run.id, "system", "system", `应用重启：运行 ${run.id} 已中断（Agent 进程随应用退出）${hint}`);
+    }
     store.addEvent("run.interrupted", `run.interrupted ${run.id}`);
     changed = true;
   }
@@ -913,6 +929,11 @@ async function startRun(run, todo, agent) {
     run.cwd = cwd;
     run.branch = null;
     store.addEvent("run.remote", `run.remote ${host.name} cwd=${cwd}`);
+  } else if (run.resumeSessionId && run.cwd && fs.existsSync(run.cwd)) {
+    // 续跑：留在原 cwd。换成新 worktree 等于把上次没提交的改动丢掉
+    cwd = run.cwd;
+    branch = run.branch || null;
+    store.addEvent("run.resume", `run.resume ${run.id} cwd=${cwd}`);
   } else {
     const worktree = prepareRunWorktree(todo, baseCwd, run.id);
     cwd = worktree.cwd;
@@ -1024,6 +1045,8 @@ async function startRun(run, todo, agent) {
   }
 
   const extraEnv = parseEnvText(decSecret(store.state.settings?.dshEnv || ""));
+  // 浏览器工具只在本地 run 可用：远端机器连不到本机回环端点
+  const browserMcp = isRemote ? [] : await browserMcpServers(run);
   const client = new AcpClient({
     cwd,
     env: isRemote ? null : extraEnv, // 远端请在目标机自己配置（env 不会随 ssh 过去）
@@ -1035,7 +1058,7 @@ async function startRun(run, todo, agent) {
     model: thread.model || store.state.settings?.model || undefined,
     effort: thread.effort || store.state.settings?.effort || undefined,
     patches: process.env.COCKPIT_TEST_DSH_PATCH ? [process.env.COCKPIT_TEST_DSH_PATCH] : [],
-    mcpServers: wikiMcpServers(run.id),
+    mcpServers: [...wikiMcpServers(run.id), ...browserMcp, ...desktopMcpServers()],
   });
   const handle = { client, threadId: thread.id, streamId: null, thoughtId: null, tools: new Map(), toolMeta: new Map(), done: false, stderr: "" };
   active.set(run.id, handle);
@@ -1084,9 +1107,28 @@ async function startRun(run, todo, agent) {
     handleUpdate(run, todo, handle, params?.update || {});
   });
 
+  let resumed = false;
   try {
     await client.start();
-    const session = await client.newSession(cwd);
+    const resumeId = String(run.resumeSessionId || "");
+    let session = null;
+    if (resumeId) {
+      try {
+        session = await client.resumeSession(resumeId, cwd);
+        run.acpSession = resumeId;
+        resumed = true;
+        store.addMessage(thread.id, run.id, "system", "system", `续跑：已恢复 ACP 会话 ${resumeId.slice(0, 8)}…`);
+        store.addEvent("run.resumed", `run.resumed ${run.id} session=${resumeId}`);
+      } catch (err) {
+        // 会话过期 / 被清掉了：老实说一句，然后开新会话继续，不要假装续上了
+        store.addMessage(thread.id, run.id, "system", "error", `续跑失败（会话已失效），改为新会话：${String(err?.message || err).slice(0, 160)}`);
+        store.addEvent("run.resume.failed", `run.resume.failed ${run.id} ${String(err?.message || err).slice(0, 120)}`);
+      }
+    }
+    if (!session) session = await client.newSession(cwd);
+    run.acpSession = client.sessionId || run.acpSession || null;
+    run.resumeSessionId = null;
+    store.persist();
     await client.configure();
     // 本轮 run 绑定的用户指令（派活/纠偏重跑）；派活原话已由任务标题承载，不重复。
     const userMessages = store.state.messages
@@ -1129,6 +1171,18 @@ async function startRun(run, todo, agent) {
       layers ? `${layers}\n（详情用 memory_search / wiki_search；写观察用 memory_note_write，写页面用 wiki_upsert_draft）` : "",
       wikiMemory ? `知识库索引（需要详情时使用 wiki_search / wiki_read_page；写入用 wiki_upsert_draft）：\n${wikiMemory}` : "",
       personaBlock,
+      // 桌面操作：只给「怎么用」，不重复工具清单；隐私规则写在最后一条
+      store.state.settings?.agentDesktopEnabled
+        ? [
+          "桌面操作（agent_desktop MCP 已开启）：",
+          "- 先 desktop_snapshot 拿 @snapshot:ref，再 desktop_click / desktop_type；ref 只属于那次快照，UI 变了必须重新快照。",
+          "- 默认 headless（不动鼠标、不抢焦点）；不需要截图，读可访问性树即可。",
+          "- 拿不到窗口时先 desktop_list_windows，用 window_id 限定；同名 Electron 应用优先用 window_id。",
+          "- 快照可能包含私人内容：不要贴进日志、不要外传，也不要写进提交信息。",
+          "- 拿不准规则时调 desktop_skills_get（传 desktop 或 platform），它和当前二进制版本一致。",
+        ].join("\n")
+        : "",
+      resumed ? "这是中断后的续跑：先看一眼当前工作区状态（文件改到哪、有没有半成品），再继续没做完的部分，不要从头重做。" : "",
       "完成后给出结论；如需改文件请直接修改。",
     ].filter(Boolean).join("\n");
     const res = await client.prompt(prompt);
@@ -1612,6 +1666,12 @@ const SETTINGS_SPEC = {
   personaDatasetDir: { kind: "string", max: 1000 },
   // 即时通信（gateway 每次读取 settings 决定是否 listen）
   imEnabled: { kind: "boolean" },
+  imFeishuAppId: { kind: "string", max: 200 },
+  imFeishuAppSecret: { kind: "string", max: 500 },
+  imFeishuBoundAt: { kind: "number" },
+  imFeishuVerificationToken: { kind: "string", max: 200 },
+  imFeishuLastChat: { kind: "string", max: 200 },
+  imFeishuMode: { kind: "enum", values: ["ws", "http"], fallback: "ws" },
   imTelegramToken: { kind: "string", max: 500 },
   imTelegramAllow: { kind: "string", max: 500 },
   imWebhookUrl: { kind: "string", max: 1000 },
@@ -1628,6 +1688,14 @@ const SETTINGS_SPEC = {
   autoDetectDevServerUrl: { kind: "boolean", fallback: true },
   previewHomeUrl: { kind: "string", fallback: "http://localhost:5173/", max: 500 },
   elementScreenshots: { kind: "boolean", fallback: true },
+  // 自签名 https 的 dev server：默认按 Chromium 校验，开了才信任
+  previewIgnoreCertErrors: { kind: "boolean", fallback: false },
+  // 预览页站点权限（JSON：{ origin: ["media", ...] }），由「允许本页」/ 设置页写入
+  previewPermissionSites: { kind: "string", fallback: "", max: 20000 },
+  // Agent 能不能操作预览页（browser_* 工具）；关掉就不给 run 挂浏览器 MCP
+  previewAgentControl: { kind: "boolean", fallback: true },
+  // 桌面操作 MCP（agent-desktop）：默认关，开了才会给 Agent 挂 desktop_* 工具
+  agentDesktopEnabled: { kind: "boolean", fallback: false },
   contextDetail: { kind: "enum", values: ["compact", "standard"], fallback: "standard" },
   // 云端向量索引（Ark embedding）：默认关，开了才会把正文分块发出去
   knowledgeCloudIndex: { kind: "boolean", fallback: false },
@@ -1874,6 +1942,9 @@ const MISSION_PATCH_PATH = app.isPackaged
 const MCP_BRIDGE_PATH = app.isPackaged
   ? path.join(process.resourcesPath, "app.asar.unpacked", "electron", "mcp-bridge.mjs")
   : path.join(__dirname, "mcp-bridge.mjs");
+const BROWSER_BRIDGE_PATH = app.isPackaged
+  ? path.join(process.resourcesPath, "app.asar.unpacked", "electron", "browser-mcp-bridge.mjs")
+  : path.join(__dirname, "browser-mcp-bridge.mjs");
 
 function missionThread(mission) { return threadForTodo(mission); }
 
@@ -2440,7 +2511,7 @@ async function startSupervisorRun(run, mission, agent) {
     home: store.state.settings?.dshHome || undefined,
     model: thread.model || store.state.settings?.model || undefined,
     effort: thread.effort || store.state.settings?.effort || undefined,
-    mcpServers: [...mcpServers, ...wikiMcpServers(run.id)],
+    mcpServers: [...mcpServers, ...wikiMcpServers(run.id), ...desktopMcpServers()],
     patches: [MISSION_PATCH_PATH, ...(process.env.COCKPIT_TEST_DSH_PATCH ? [process.env.COCKPIT_TEST_DSH_PATCH] : [])],
   });
   const handle = {
@@ -2617,6 +2688,210 @@ function startMissionMcpServer() {
   mcpServer.on("error", (err) => console.warn(`[mission.mcp] ${String(err?.message || err)}`));
 }
 
+/** 浏览器工具：普通（非 Mission）run 也能操作工作区里那个预览页 */
+const browserTokens = new Map(); // token -> runId
+let browserServer = null;
+let browserServerUrl = "";
+
+async function ensureBrowserServer() {
+  if (browserServerUrl) return browserServerUrl;
+  browserServer = http.createServer(async (req, res) => {
+    const send = (status, payload) => {
+      res.writeHead(status, { "content-type": "application/json" });
+      res.end(JSON.stringify(payload));
+    };
+    if (req.method !== "POST") return send(405, { ok: false, error: "method not allowed" });
+    try {
+      const auth = String(req.headers.authorization || "");
+      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+      if (!browserTokens.has(token)) return send(403, { ok: false, error: "invalid browser token" });
+      const payload = await readRequestBody(req);
+      const result = await runBrowserTool(String(payload.name || ""), payload.arguments || {});
+      return send(200, { ok: true, result });
+    } catch (err) {
+      return send(400, { ok: false, error: String(err?.message || err).slice(0, 800) });
+    }
+  });
+  browserServer.on("error", (err) => console.warn(`[browser.mcp] ${String(err?.message || err)}`));
+  // listen 失败也要结束等待，否则 startRun 会一直挂着
+  await new Promise((resolve) => {
+    browserServer.once("listening", resolve);
+    browserServer.once("error", resolve);
+    browserServer.listen(0, "127.0.0.1");
+  });
+  if (!browserServer.listening) throw new Error("浏览器工具端口监听失败");
+  const address = browserServer.address();
+  browserServerUrl = `http://127.0.0.1:${address.port}/call`;
+  console.log(`[browser.mcp] listening ${browserServerUrl}`);
+  return browserServerUrl;
+}
+
+/** 每次 run 一个 token；没打开预览页时工具会返回可操作的提示，不会静默失败 */
+async function browserMcpServers(run) {
+  if (store.state.settings?.previewAgentControl === false) return [];
+  try {
+    const url = await ensureBrowserServer();
+    const token = crypto.randomBytes(20).toString("hex");
+    browserTokens.set(token, run.id);
+    return [{
+      name: "cockpit_browser",
+      command: process.execPath,
+      args: [BROWSER_BRIDGE_PATH],
+      env: [
+        { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+        { name: "COCKPIT_BROWSER_URL", value: url },
+        { name: "COCKPIT_BROWSER_TOKEN", value: token },
+      ],
+    }];
+  } catch (err) {
+    console.warn(`[browser.mcp] unavailable: ${String(err?.message || err)}`);
+    return [];
+  }
+}
+
+/** agent-desktop 是外部 CLI（npm i -g），不打包进安装包；这里只做「找得到才挂 MCP」 */
+function agentDesktopBin() {
+  const candidates = [
+    "/opt/homebrew/bin/agent-desktop",
+    "/usr/local/bin/agent-desktop",
+    path.join(os.homedir(), ".local", "bin", "agent-desktop"),
+    path.join(os.homedir(), ".bun", "bin", "agent-desktop"),
+  ];
+  for (const file of candidates) { try { if (fs.existsSync(file)) return file; } catch { /* ignore */ } }
+  return "agent-desktop";
+}
+
+/** 桌面操作 MCP：给 Agent 读 accessibility tree / 点按；默认关闭，设置里显式开启 */
+function desktopMcpServers() {
+  if (!store.state.settings?.agentDesktopEnabled) return [];
+  return [{ name: "agent_desktop", command: agentDesktopBin(), args: ["mcp"], env: [] }];
+}
+
+function releaseBrowserTokens(runId) {
+  for (const [token, id] of browserTokens) if (!runId || id === runId) browserTokens.delete(token);
+}
+
+/** 改完 IM 配置要重启网关，否则 enabled 之后不会自动 listen */
+function restartImGateway() {
+  try { imGateway?.stop(); } catch { /* ignore */ }
+  imGateway = null;
+  try { startImGateway(); } catch (err) { console.warn(`[im] restart failed: ${String(err?.message || err)}`); }
+}
+
+/** 飞书客户端：凭据从设置里取，secret 解密后只在内存里用 */
+let imFeishu = null;
+function feishuClient() {
+  if (!imFeishu) {
+    imFeishu = createFeishu({
+      getCredentials: () => ({
+        appId: store.state.settings?.imFeishuAppId || "",
+        appSecret: decSecret(store.state.settings?.imFeishuAppSecret || ""),
+      }),
+      log: console,
+    });
+  }
+  return imFeishu;
+}
+
+/** 扫码配置：局域网一次性配对页，手机扫码填凭据，成功即关闭监听 */
+let imPairingStore = null;
+function imPairing() {
+  if (!imPairingStore) {
+    imPairingStore = createPairing({
+      onSave: async ({ appId, appSecret, allowIds }) => {
+        store.state.settings.imFeishuAppId = appId;
+        store.state.settings.imFeishuAppSecret = encSecret(appSecret);
+        store.state.settings.imFeishuBoundAt = Date.now();
+        if (allowIds) store.state.settings.imAllowIds = allowIds;
+        store.persist();
+        broadcast();
+        if (win && !win.isDestroyed()) win.webContents.send("harness:im-paired", { appId, allowIds });
+      },
+      log: console,
+    });
+  }
+  return imPairingStore;
+}
+
+/**
+ * 日程探针（watch）：给 bot 的 routine 用。
+ *  - 文件：mtime + size 的指纹（不读内容，大文件也不慢）
+ *  - 命令：跑一次、取 stdout 前 8KB 的 sha1（有超时，失败只报错不抛）
+ * 纯 IO 放主进程，判定逻辑在 electron/bot/routine.mjs（可测）。
+ */
+function botWatchProbe(watch) {
+  if (watch?.kind === "cmd") {
+    const cmd = String(watch.cmd || "").trim();
+    if (!cmd) return { reason: "还没设置要跑的命令" };
+    const isWin = process.platform === "win32";
+    const res = spawnSync(isWin ? "cmd" : "/bin/sh", [isWin ? "/c" : "-lc", cmd], {
+      timeout: 15_000, maxBuffer: 1024 * 1024, cwd: store.state.projectPath || undefined,
+    });
+    if (res.error) return { reason: `命令失败：${String(res.error.message || res.error).slice(0, 120)}` };
+    if (res.status !== 0) return { reason: `命令退出码 ${res.status}` };
+    const head = String(res.stdout || "").slice(0, 8192);
+    return { hash: crypto.createHash("sha1").update(head).digest("hex") };
+  }
+  const file = String(watch?.path || "").trim();
+  if (!file) return { reason: "还没设置要看的文件" };
+  try {
+    const st = fs.statSync(file);
+    return { hash: `${Math.round(st.mtimeMs)}:${st.size}` };
+  } catch (err) {
+    return { reason: `看不了：${String(err?.message || err).slice(0, 120)}` };
+  }
+}
+
+/** 人格 bot：tick 在主进程里跑，只在应用运行时；睡眠唤醒不补跑积压。 */
+let botStore = null;
+let botTimer = null;
+const botAborts = new Map();
+function bots() {
+  if (!botStore) {
+    botStore = createBots({
+      store,
+      memory,
+      probeWatch: botWatchProbe,
+      chat: arkChat,
+      chatStream: arkChatStream,
+      key: () => arkKeyFromSettings(),
+      onChange: () => broadcast(),
+      log: console,
+    });
+    botStore.ensureSeed();
+  }
+  return botStore;
+}
+/** 已弹过的通知时间（只存在内存里：重启后重新计，通知不是审计数据） */
+const botNotifyLog = [];
+let botUnread = 0;
+function startBotTick() {
+  if (botTimer) return;
+  botTimer = setInterval(() => {
+    bots().tick().then((out) => {
+      for (const turn of out || []) {
+        if (turn.decision === "asked") {
+          botUnread += 1;
+          if (win && !win.isDestroyed()) win.webContents.send("harness:bot-message", { botId: turn.botId, text: turn.reply, turnId: turn.id, kind: "asked" });
+          continue;
+        }
+        if (turn.decision !== "answered") continue;
+        botUnread += 1;
+        // 通知是"打扰"，要有量化规则：180 字上限 / 每小时最多 3 条 / 未读太多就不叠加
+        const bot = bots().list().find((b) => b.id === turn.botId);
+        const verdict = notifyDecision({
+          reply: turn.reply, kind: turn.trigger?.kind, now: Date.now(),
+          sentAt: botNotifyLog, mutedUntil: bot?.mutedUntil || 0, unread: botUnread,
+        });
+        if (!verdict.send) { console.log(`[bot] 不弹通知：${verdict.reason}`); continue; }
+        botNotifyLog.push(Date.now());
+        if (win && !win.isDestroyed()) win.webContents.send("harness:bot-message", { botId: turn.botId, text: verdict.text, turnId: turn.id });
+      }
+    }).catch((err) => console.warn(`[bot] tick failed: ${String(err?.message || err)}`));
+  }, 60_000);
+  botTimer.unref?.();
+}
+
 /** 记忆层（L1–L4）/ note / Dream 建议：独立 mem.db，可删可重建。 */
 let memoryStore = null;
 function memory() {
@@ -2646,11 +2921,32 @@ function saveImSessions() {
 function startImGateway() {
   if (imGateway) return imGateway;
   loadImSessions();
+  const feishu = feishuClient();
+  const imDedup = createDedup();
+  const feishuWsFactory = (onEvent) => createFeishuWs({
+    getCredentials: () => ({
+      appId: store.state.settings?.imFeishuAppId || "",
+      appSecret: decSecret(store.state.settings?.imFeishuAppSecret || ""),
+    }),
+    onEvent,
+    onLog: (line) => console.log(`[im] ${line}`),
+  });
   imGateway = createImGateway({
     dir: path.join(app.getPath("userData"), "im"),
     settings: () => store.state.settings || {},
+    feishu,
+    feishuWsFactory,
+    dedup: imDedup,
+    verificationToken: () => store.state.settings?.imFeishuVerificationToken || "",
     onLog: (line) => console.log(`[im] ${line}`),
     onMessage: async ({ text, chatId, kind }) => {
+      // 记住最近一个会话：设置页的「发送测试消息」要用它验证出站链路
+      if (kind === "feishu" && chatId) {
+        if (store.state.settings?.imFeishuLastChat !== String(chatId)) {
+          store.state.settings.imFeishuLastChat = String(chatId);
+          store.persist();
+        }
+      }
       // 1) 审批回复：数字 → 对应 run 的审批选项
       const pending = [...approvals.values()].filter((a) => imSessions[chatId] && a.todoId === imSessions[chatId]);
       const pick = Number(String(text).trim());
@@ -2845,39 +3141,74 @@ function runRead(runId) {
 
 const DREAM_SEMANTIC_SYSTEM = [
   "你在整理一个工程师长期记忆库里的「未验证观察」。只做两件事：找重复、找矛盾。",
+  "输入里每条观察都带 evidence（它的出处片段：原始会话 / 资料页面）。evidence 是事实，观察是结论。",
   "规则：",
-  "1. 只能引用给定的 id，不许编造；",
+  "1. 只能引用给定的 id 与 evidence 里的 ref，不许编造；",
   "2. merge：两条说的是同一件事（换个说法、加了条件、写了两次），给 ids 与 keep（保留哪条）；",
-  "3. correct：这条观察已经不成立 / 与另一条直接冲突，给 1 个 id；",
+  "3. correct：这条观察已经不成立 / 与另一条直接冲突。**必须给 evidence**（从它留下的证据里选 ref），没有证据就别报 correct，改为 merge 或不报；",
   "4. rewrite：这条观察写得太糙（措辞含糊、攒了三条挤在一句里），给 1 个 id 和改写后的 body。",
   "   rewrite 的铁律：只能删减、纠正措辞、合并它自己已有的说法；**不许引入原句里没有的新事实、新数字、新名字**。",
   "   status 已经是 verified 的不要 rewrite（那是人确认过的），要报就报 correct。",
   "5. 拿不准就别报——宁可漏，不要为凑数编造；",
-  "6. 每条都要给 reason：为什么它是重复、已不成立、或者该怎么改写，拿证据说话。",
-  '只输出 JSON：{"items":[{"action":"merge|correct|rewrite","ids":["..."],"keep":"...","body":"仅 rewrite 用","reason":"..."}]}',
+  "6. 每条都要给 reason：为什么它是重复、已不成立、或者该怎么改写，拿证据说话；",
+  "7. evidence 只用来判断观察是否还成立（比如后来改了主意、换了工具），不要从里面摘出新结论。",
+  '只输出 JSON：{"items":[{"action":"merge|correct|rewrite","ids":["..."],"keep":"...","body":"仅 rewrite 用","evidence":["给过的 ref"],"reason":"..."}]}',
   '没有可报的就输出 {"items":[]}。',
 ].join("\n");
 
 /**
+ * 给观察补上「页面侧证据」：它的来源是一页 Wiki 时，把页面摘要与引用原句一起带上。
+ * 只读，不改页面；页面读不到就只给 transcript 证据。
+ */
+async function dreamPageEvidence(cands = []) {
+  const map = new Map();
+  if (!pluginHost) return map;
+  const pageIds = [...new Set(cands
+    .filter((n) => n.sourceKind === "page" && n.sourceRef)
+    .map((n) => String(n.sourceRef)))].slice(0, 6);
+  for (const pid of pageIds) {
+    try {
+      const page = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: pid });
+      if (!page?.id) continue;
+      const quotes = (page.citations || []).slice(0, 2).map((c) => String(c.quote || "").replace(/\s+/g, " ").slice(0, 180)).filter(Boolean);
+      map.set(pid, {
+        ref: `page:${page.id}`,
+        snippet: [`页面「${page.title || pid}」`, page.summary || "", quotes.join(" / ")].filter(Boolean).join(" · ").slice(0, 320),
+      });
+    } catch { /* 插件未启用 / 页面已删：不加页面证据 */ }
+  }
+  return map;
+}
+
+/**
  * Dream 的语义 pass：一次调用，让模型在候选观察里找重复与矛盾。
  * 三道闸门：设置里打开 / 有 key / 没超当日调用预算。任何一道不过都静默跳过。
+ * 候选不再只有一句话：每条带自己的出处片段（transcript / 页面引用），没有证据就不能报 correct。
  * 它**只产建议**，绝不写 note 或 L4。
  */
-async function dreamSemanticPass(cfg) {
+async function dreamSemanticPass(cfg, { dreamId = "" } = {}) {
   const budget = memory().dreamModelCallBudget();
   if (budget.used >= budget.limit) return { skipped: "budget", calls: 0, created: [], budget };
   const key = arkKeyFromSettings();
   if (!key) return { skipped: "nokey", calls: 0, created: [], budget };
-  const all = memory().dreamCandidates({ limit: cfg.llmBatch });
+  const all = memory().dreamCandidates({ limit: cfg.llmBatch, withEvidence: true });
   if (all.length < 2) return { skipped: "too-few", calls: 0, created: [], budget };
+  const pageEv = await dreamPageEvidence(all);
   // 预算之外还有「上下文预算」：60 条 × 400 字可能超模型窗口，按字符数截断候选
   const TEXT_BUDGET = 32000;
   const candidates = [];
+  const refs = new Set();
   let chars = 0;
   for (const n of all) {
-    chars += n.body.length + 40;
+    const ev = (n.evidence || []).map((e) => ({ ref: e.ref, snippet: e.snippet }));
+    const pageEvidence = n.sourceKind === "page" ? pageEv.get(String(n.sourceRef)) : null;
+    if (pageEvidence) ev.unshift({ ref: pageEvidence.ref, snippet: pageEvidence.snippet });
+    const trimmed = ev.slice(0, 3);
+    const bodyChars = n.body.length + trimmed.reduce((s, e) => s + e.snippet.length + 24, 0) + 40;
+    chars += bodyChars;
     if (chars > TEXT_BUDGET) break;
-    candidates.push(n);
+    trimmed.forEach((e) => refs.add(e.ref));
+    candidates.push({ id: n.id, kind: n.kind, status: n.status, body: n.body, evidence: trimmed });
   }
   if (candidates.length < 2) return { skipped: "too-few", calls: 0, created: [], budget };
   const user = JSON.stringify({ notes: candidates });
@@ -2900,8 +3231,109 @@ async function dreamSemanticPass(cfg) {
     memory().noteDreamModelCall({ calls: 1, tokens });
   }
   const items = parseDreamItems(text) || [];
-  const created = items.length ? memory().dreamModelSuggest({ items, model: "dream-semantic" }) : [];
+  const created = items.length
+    ? memory().dreamModelSuggest({ items, model: "dream-semantic", dreamId, evidenceRefs: refs })
+    : [];
   return { skipped: items.length ? "" : "empty", calls: 1, items: items.length, created, budget: memory().dreamModelCallBudget(), raw: text.slice(0, 160) };
+}
+
+/**
+ * 一轮 Dream：确定性扫描 → 可选语义 pass → 台账（dream_runs）。
+ * 手动和空闲走同一条路径，只是 trigger 不同；串行执行（dreamBusy）。
+ */
+async function runDreamCycle({ trigger = "manual", force = false } = {}) {
+  let pages = [];
+  let sources = [];
+  try {
+    const list = await pluginHost.invoke("ai.cockpit.notes", "wiki.list", {});
+    sources = list.sources || [];
+    pages = (list.pages || []).map((p) => ({ ...p }));
+    for (const page of pages) {
+      const full = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: page.id });
+      page.summary = full?.summary || "";
+      page.citations = full?.citations || [];
+      page.updatedAt = full?.updatedAt || page.updatedAt;
+    }
+  } catch { /* 插件未启用：只做 note / L3 相关建议 */ }
+  // 输入指纹没变就不跑：同一批输入重复跑只会产生重复提案和重复模型调用
+  const fingerprint = memory().dreamFingerprint({ pages, sources });
+  if (!force && memory().dreamUnchanged({ fingerprint })) {
+    return { created: [], semantic: null, skipped: "unchanged", pending: memory().suggestionList({ status: "pending" }) };
+  }
+  // 这一轮有没有真的写台账：没有 = 被开关或预算挡掉了，不要拿上一轮的台账去回填
+  const prevRunId = memory().dreamLastRun()?.id || "";
+  const created = memory().dreamScan({ pages, sources, trigger, force: true });
+  const lastRun = memory().dreamLastRun();
+  const runId = lastRun && lastRun.id !== prevRunId ? lastRun.id : "";
+  store.addEvent("memory.dream", `memory.dream（${trigger}）${created.length} 条建议`);
+  if (!runId) {
+    const cfgNow = memory().dreamConfig({});
+    const skipped = cfgNow.enabled ? "budget" : "disabled";
+    store.addEvent("memory.dream", `memory.dream 跳过（${skipped}）`);
+    return { created, semantic: null, runId: "", skipped, pending: memory().suggestionList({ status: "pending" }) };
+  }
+  const cfg = memory().dreamConfig({});
+  let semantic = null;
+  if (cfg.llmPass) {
+    try {
+      semantic = await dreamSemanticPass(cfg, { dreamId: runId });
+      if (semantic.created?.length) created.push(...semantic.created);
+      if (semantic.calls) store.addEvent("memory.dream", `memory.dream 语义 pass：${semantic.items || 0} 条候选 → ${semantic.created?.length || 0} 条建议`);
+      else if (semantic.skipped && !["empty"].includes(semantic.skipped)) store.addEvent("memory.dream", `memory.dream 语义 pass 跳过（${semantic.skipped}）`);
+    } catch (err) {
+      semantic = { skipped: "error", reason: String(err?.message || err), calls: 0, created: [] };
+    }
+  }
+  // 语义 pass 的结果回填同一轮台账（不管跑没跑，semantic 里的 skipped 原因都要留下来）
+  if (runId) memory().dreamRunSemantic({ id: runId, semantic });
+  return { created, semantic, runId, skipped: "", pending: memory().suggestionList({ status: "pending" }) };
+}
+
+/** 空闲整理的检查间隔：Dream 不是高频动作，5 分钟看一次足够 */
+const DREAM_IDLE_TICK_MS = 5 * 60 * 1000;
+let dreamIdleTimer = null;
+let dreamBusy = false;
+let dreamIdleAttemptAt = 0;
+
+/** 人最后一次“动过”的时间：run、消息、事件都算 */
+function lastActivityAt() {
+  const state = store?.state || {};
+  let at = 0;
+  for (const r of (state.runs || []).slice(-200)) at = Math.max(at, Number(r.endedAt) || 0, Number(r.startedAt || r.createdAt) || 0);
+  for (const m of (state.messages || []).slice(-50)) at = Math.max(at, Number(m.createdAt) || 0);
+  for (const e of (state.events || []).slice(-50)) at = Math.max(at, Number(e.ts) || 0);
+  return at;
+}
+
+function runsInFlight() {
+  return (store?.state?.runs || []).some((r) => ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"].includes(r.status));
+}
+
+/**
+ * 空闲触发：只在人确实闲下来、没有 run 在跑时跑一轮。
+ * 失败不影响前台；同一段空闲里不反复扫（输入没变时 runDreamCycle 会直接返回）。
+ */
+async function dreamIdleTick() {
+  if (dreamBusy || !store) return;
+  try {
+    const cfg = memory().dreamConfig({});
+    const idleMinutes = Number(cfg.idleMinutes) || 0;
+    if (!cfg.enabled || idleMinutes <= 0) return;
+    if (runsInFlight()) return;
+    if (Date.now() - lastActivityAt() < idleMinutes * 60000) return;
+    if (Date.now() - dreamIdleAttemptAt < Math.max(10 * 60000, idleMinutes * 60000)) return;
+    dreamIdleAttemptAt = Date.now();
+    dreamBusy = true;
+    const res = await runDreamCycle({ trigger: "idle" });
+    if (res.created?.length) {
+      store.addEvent("memory.dream", `memory.dream 空闲整理：${res.created.length} 条建议待复核`);
+      broadcast();
+    }
+  } catch (err) {
+    console.warn(`[dream] idle failed: ${String(err?.message || err)}`);
+  } finally {
+    dreamBusy = false;
+  }
 }
 
 /** Dream 建议被接受后真正落地 */
@@ -3002,6 +3434,27 @@ function knowledge() {
 }
 
 const actions = {
+  /** 人接管这条终端：接管期间 Agent 的写入被拒绝（不排队），避免两边交错 */
+  terminalTakeControl: ({ id } = {}) => {
+    const tid = String(id || "");
+    if (!terminals.has(tid)) throw new Error("终端不在运行");
+    terminalControl.set(tid, { by: "user", at: now() });
+    store.addEvent("terminal.takeover", `terminal.takeover ${tid}`);
+    broadcast();
+    return { ok: true, controlBy: "user" };
+  },
+  /** 交回：明确写一条「你接管期间它看不到输出」，别假装连续 */
+  terminalReleaseControl: ({ id } = {}) => {
+    const tid = String(id || "");
+    const had = terminalControl.delete(tid);
+    const run = store.state.runs.find((r) => r.terminalId === tid && ["running", "waiting_input"].includes(r.status));
+    const todo = run ? store.state.todos.find((t) => t.id === run.todoId) : null;
+    if (run && todo) {
+      store.addMessage(threadForTodo(todo).id, run.id, "system", "system", "终端已交回：你接管期间 Agent 的输出被拒绝，它接下来需要重新看当前终端输出再动手。");
+    }
+    if (had) { store.addEvent("terminal.release", `terminal.release ${tid}`); broadcast(); }
+    return { ok: true, controlBy: null };
+  },
   knowledgeStatus: async () => {
     const kb = knowledge();
     return { ...kb.status(), hasKey: kb.hasKey, root: kb.root, embedding: kb.embeddingInfo() };
@@ -3070,16 +3523,237 @@ const actions = {
     return { added, engine: engine || "auto" };
   },
   /** 粘贴一段文本/网页正文进资料库（也方便脚本与 Agent 自测） */
-  knowledgeIngestText: async ({ title, text, url } = {}) => {
+  knowledgeIngestText: async ({ title, text, url, blocks } = {}) => {
     const body = String(text || "").trim();
     if (!body) throw new Error("内容不能为空");
-    return knowledge().ingestText({
+    const res = await knowledge().ingestText({
       title: String(title || "粘贴的资料").slice(0, 120),
       markdown: body,
       uri: String(url || `paste:${Date.now()}`),
     });
+    // 解析器附带的块级信息走 sidecar：Reader 契约仍是 Page[]{page_no, markdown}
+    if (blocks && res?.docId) {
+      try { res.blocksPath = (await knowledge().saveBlocks(res.docId, blocks)).file; }
+      catch (err) { console.warn(`[knowledge] saveBlocks failed: ${String(err?.message || err)}`); }
+    }
+    return res;
   },
+  knowledgeDocBlocks: async ({ id } = {}) => knowledge().blocks(String(id || "")),
   knowledgePageImage: async ({ id, page } = {}) => knowledge().pageImage(String(id || ""), Number(page) || 1),
+  /** 扫码配置：起一次性配对页 + 返回二维码（dataURL）；成功由 pairing 回调写设置 */
+  imPairStart: async () => {
+    const p = await imPairing().start();
+    const qr = await QRCode.toDataURL(p.url, { margin: 1, width: 320, color: { dark: "#0a0a0a", light: "#ffffff" } });
+    return { ok: true, url: p.url, port: p.port, expiresAt: p.expiresAt, qr };
+  },
+  imPairCancel: async () => { imPairing().stop(); return { ok: true }; },
+  /** 从剪贴板读取配置串并写入（避免密钥出现在聊天/日志里：先复制，再点这个） */
+  imFeishuSetupFromClipboard: async () => {
+    // Safari/飞书后台的复制是「惰性剪贴板」：Electron 的 clipboard.readText() 可能只拿到截断的
+    // 占位串（实测 32 位 secret 被读成 16 位且带空格）。macOS 上优先用 pbpaste 解析真实内容。
+    const readClipboard = () => {
+      if (process.platform === "darwin") {
+        for (const bin of ["/usr/bin/pbpaste", "pbpaste"]) {
+          try {
+            const out = String(execFileSync(bin, [], { encoding: "utf8", timeout: 3000 }) || "");
+            if (out.trim()) return { text: out, source: `pbpaste:${bin}` };
+          } catch { /* 试下一个 */ }
+        }
+        try {
+          const out = String(execFileSync("/usr/bin/osascript", ["-e", "the clipboard as text"], { encoding: "utf8", timeout: 3000 }) || "");
+          if (out.trim()) return { text: out, source: "osascript" };
+        } catch { /* 退回 Electron */ }
+      }
+      return { text: String(clipboard.readText() || ""), source: "electron" };
+    };
+    const picked = readClipboard();
+    const text = picked.text.trim();
+    if (!text) return { ok: false, error: "剪贴板是空的：先在飞书后台点「复制」App ID 与 App Secret" };
+    const parsed = parseFeishuSetup(text);
+    // 分两次复制也能用：先复制 App ID → 点一次；再复制 Secret → 再点一次
+    if (!parsed && /^cli_[A-Za-z0-9]+$/.test(text)) {
+      store.state.settings.imFeishuAppId = text;
+      store.persist();
+      broadcast();
+      return { ok: true, mode: "appId", appId: text };
+    }
+    if (!parsed && !/\s/.test(text) && text.length >= 16) {
+      const appId = String(store.state.settings?.imFeishuAppId || "");
+      if (!appId) return { ok: false, error: "先复制 App ID 点一次，再复制 Secret" };
+      store.state.settings.imFeishuAppSecret = encSecret(text);
+      store.state.settings.imFeishuBoundAt = Date.now();
+      store.state.settings.imEnabled = true;
+      store.persist();
+      broadcast();
+      restartImGateway();
+      try {
+        await feishuClient().token({ force: true });
+        return { ok: true, mode: "app", appId };
+      } catch (err) {
+        return { ok: false, mode: "app", appId, error: `已保存，但验证失败：${String(err?.message || err)}` };
+      }
+    }
+    if (!parsed) {
+      // 只回「形状」，绝不回内容：用来判断是 Electron 读到的不是纯文本，还是格式确实不认
+      const shape = {
+        len: text.length,
+        hasSpace: /\s/.test(text),
+        asciiOnly: /^[\x20-\x7e]+$/.test(text),
+        looksHtml: /^\s*</.test(text),
+        startsWithCli: /^cli_/.test(text),
+      };
+      return { ok: false, error: "剪贴板里没认出飞书配置（需要 cli_… 与 secret，或 webhook 地址）", shape: { ...shape, source: picked.source } };
+    }
+    if (parsed.mode === "webhook") {
+      store.state.settings.imWebhookUrl = parsed.webhookUrl;
+      store.state.settings.imEnabled = true;
+    } else {
+      store.state.settings.imFeishuAppId = parsed.appId;
+      store.state.settings.imFeishuAppSecret = encSecret(parsed.appSecret);
+      store.state.settings.imFeishuBoundAt = Date.now();
+      store.state.settings.imEnabled = true;
+    }
+    store.persist();
+    broadcast();
+    restartImGateway();
+    // 不回传任何凭据本身，只回「读到了什么形态」
+    if (parsed.mode === "webhook") return { ok: true, mode: "webhook" };
+    try {
+      await feishuClient().token({ force: true });
+      return { ok: true, mode: "app", appId: parsed.appId };
+    } catch (err) {
+      return { ok: false, mode: "app", appId: parsed.appId, error: `已保存，但验证失败：${String(err?.message || err)}` };
+    }
+  },
+  /** 一次粘贴就配好：自动识别「自建应用凭据」或「群机器人 webhook」，存完顺手验一次 */
+  imFeishuSetup: async ({ text } = {}) => {
+    const parsed = parseFeishuSetup(text);
+    if (!parsed) {
+      return { ok: false, error: "没认出格式：粘 App ID + App Secret（可以分两行），或粘自定义机器人 webhook 地址" };
+    }
+    if (parsed.mode === "webhook") {
+      store.state.settings.imWebhookUrl = parsed.webhookUrl;
+      store.state.settings.imEnabled = true;
+      store.persist();
+      broadcast();
+      restartImGateway();
+      return { ok: true, mode: "webhook", note: "已保存自定义机器人 webhook（只能发群，收不到 @）" };
+    }
+    store.state.settings.imFeishuAppId = parsed.appId;
+    store.state.settings.imFeishuAppSecret = encSecret(parsed.appSecret);
+    store.state.settings.imFeishuBoundAt = Date.now();
+    store.state.settings.imEnabled = true;
+    store.persist();
+    broadcast();
+    restartImGateway();
+    try {
+      const token = await feishuClient().token({ force: true });
+      return { ok: true, mode: "app", appId: parsed.appId, tokenLength: token.length, inbound: store.state.settings.imInboundPort || 0 };
+    } catch (err) {
+      return { ok: false, mode: "app", appId: parsed.appId, error: `已保存，但验证失败：${String(err?.message || err)}` };
+    }
+  },
+  /** 自检：机器人当前在哪些群里（确认 bot 是否真的被加进去） */
+  imFeishuChats: async () => {
+    try {
+      const chats = await feishuClient().listChats();
+      return { ok: true, count: chats.length, chats };
+    } catch (err) {
+      return { ok: false, error: String(err?.message || err) };
+    }
+  },
+  /** 给「最近跟 bot 说过话的会话」发一条测试消息（验证出站链路） */
+  imFeishuTest: async () => {
+    const chat = String(store.state.settings?.imFeishuLastChat || "");
+    if (!chat) return { ok: false, error: "还没有会话：先在飞书里给 bot 发一句话（需要事件订阅先打通）" };
+    try {
+      const out = await feishuClient().sendText({
+        receiveId: chat,
+        receiveIdType: chat.startsWith("oc_") ? "chat_id" : "open_id",
+        text: "连接测试：来自 Cockpit Harness",
+      });
+      return { ok: true, messageId: out.messageId, chat };
+    } catch (err) {
+      return { ok: false, error: String(err?.message || err) };
+    }
+  },
+  /** 测试飞书凭据：强刷一次 tenant_access_token（不发送消息、不花额度） */
+  imFeishuProbe: async () => {
+    try {
+      const token = await feishuClient().token({ force: true });
+      return { ok: true, appId: store.state.settings?.imFeishuAppId || "", tokenLength: token.length };
+    } catch (err) {
+      return { ok: false, error: String(err?.message || err) };
+    }
+  },
+  /** 人格 bot：读快照 / 存档案 / 改状态 / 手动跑一次 tick */
+  botSnapshot: async () => { botUnread = 0; return bots().snapshot(); },
+  botRoutineSave: async (patch = {}) => bots().saveRoutine(patch || {}),
+  botRoutineRemove: async ({ id } = {}) => { bots().removeRoutine(String(id || "")); return { ok: true }; },
+  botRoutineStatus: async ({ botId } = {}) => bots().routineStatus(String(botId || "")),
+  /** 把一张提问卡片划掉（"先不管"）：卡片不挡聊天，但也不该一直挂着 */
+  botAskDismiss: async ({ turnId } = {}) => ({ ok: true, changed: bots().settleAsks("", { status: "dismissed", turnId: String(turnId || "") }) }),
+  /** 这个 bot 的持续会话（没有就建），返回 thread id 供 Chat 打开 */
+  botThread: async ({ botId } = {}) => {
+    const bot = bots().list().find((b) => b.id === String(botId || ""));
+    if (!bot) throw new Error("bot 不存在");
+    const thread = bots().threadOf(bot.id) || bots().ensureBotThread(bot);
+    return { ok: true, threadId: thread.id };
+  },
+  /** 老数据搬家：把历史回合补进各自 thread。先 dryRun 看数，再真跑 */
+  botThreadMigrate: async ({ dryRun } = {}) => {
+    const res = bots().migrateThreads({ dryRun: Boolean(dryRun) });
+    if (!res.dryRun) { store.addEvent("bot.thread.migrated", `bot.thread.migrated bots=${res.bots} turns=${res.turns} messages=${res.messages}`); broadcast(); }
+    return res;
+  },
+  botSave: async (patch = {}) => bots().save(patch || {}),
+  botStatus: async ({ id, status, mutedUntil } = {}) => bots().setStatus(String(id || ""), { status, mutedUntil }),
+  botRemove: async ({ id } = {}) => { bots().remove(String(id || "")); return { ok: true }; },
+  botTick: async ({ botId, force } = {}) => bots().tick({ botId: String(botId || ""), force: Boolean(force) }),
+  /** 被动回复：流式把增量推给渲染层（harness:bot-delta），结束返回完整回合 */
+  botChat: async ({ botId, text } = {}) => {
+    const bot = bots().list().find((b) => b.id === String(botId || ""));
+    if (!bot) throw new Error("bot 不存在");
+    const controller = new AbortController();
+    botAborts.set(bot.id, controller);
+    try {
+      return await bots().reply(bot, text, {
+        signal: controller.signal,
+        onDelta: (delta) => { if (win && !win.isDestroyed()) win.webContents.send("harness:bot-delta", { botId: bot.id, delta }); },
+      });
+    } finally {
+      botAborts.delete(bot.id);
+    }
+  },
+  botCancel: async ({ botId } = {}) => {
+    const id = String(botId || "");
+    const controller = botAborts.get(id);
+    if (!controller) return { ok: false, reason: "没有进行中的回复" };
+    controller.abort();
+    return { ok: true };
+  },
+  /** 接受建议：只建 todo（confirmed=false），不起 run —— 起 run 仍由人在桌面点确认 */
+  botAcceptProposal: async ({ turnId } = {}) => {
+    const turn = (store.state.botTurns || []).find((t) => t.id === String(turnId || ""));
+    if (!turn?.proposal) throw new Error("这一轮没有建议");
+    if (turn.todoId) throw new Error("这条建议已经建过任务");
+    const bot = (store.state.bots || []).find((b) => b.id === turn.botId);
+    if (bot?.capability !== "dispatch") throw new Error("当前 bot 是只读档，不能建任务");
+    const todo = actions.createTodo({ title: turn.proposal.title, desc: turn.proposal.desc });
+    turn.todoId = todo.id;
+    turn.proposal = { ...turn.proposal, acceptedAt: Date.now() };
+    store.persist();
+    broadcast();
+    return { ok: true, todoId: todo.id, key: todo.key };
+  },
+  botDismissProposal: async ({ turnId } = {}) => {
+    const turn = (store.state.botTurns || []).find((t) => t.id === String(turnId || ""));
+    if (!turn?.proposal) throw new Error("这一轮没有建议");
+    turn.proposal = { ...turn.proposal, dismissed: true };
+    store.persist();
+    broadcast();
+    return { ok: true };
+  },
   /**
    * 引用写回：资料片段 → 页面 citation。
    * 1) 为文档准备一个 notes source（uri 用文档原路径，删除资料时按 uri 命中）
@@ -3177,40 +3851,27 @@ const actions = {
   },
   memoryTranscriptSearch: async ({ query, limit } = {}) => transcriptSearch(query, limit),
   memoryRunRead: async ({ runId } = {}) => runRead(runId),
-  memoryDream: async () => {
-    let pages = [];
-    let sources = [];
-    try {
-      const list = await pluginHost.invoke("ai.cockpit.notes", "wiki.list", {});
-      sources = list.sources || [];
-      pages = (list.pages || []).map((p) => ({ ...p }));
-      for (const page of pages) {
-        const full = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: page.id });
-        page.summary = full?.summary || "";
-        page.citations = full?.citations || [];
-      }
-    } catch { /* 插件未启用：只做 note/L3 相关建议 */ }
-    const created = memory().dreamScan({ pages, sources });
-    store.addEvent("memory.dream", `memory.dream ${created.length} 条建议`);
-    // 语义 pass：默认关（要调模型），开了也受每日调用预算约束；只产建议
-    const cfg = memory().dreamConfig({});
-    let semantic = null;
-    if (cfg.llmPass) {
-      try {
-        semantic = await dreamSemanticPass(cfg);
-        if (semantic.created?.length) created.push(...semantic.created);
-        if (semantic.calls) store.addEvent("memory.dream", `memory.dream 语义 pass：${semantic.items || 0} 条候选 → ${semantic.created?.length || 0} 条建议`);
-        else if (semantic.skipped && !["empty"].includes(semantic.skipped)) store.addEvent("memory.dream", `memory.dream 语义 pass 跳过（${semantic.skipped}）`);
-      } catch (err) {
-        semantic = { skipped: "error", reason: String(err?.message || err), calls: 0, created: [] };
-      }
-    }
-    return { created, semantic, pending: memory().suggestionList({ status: "pending" }) };
-  },
+  memoryDream: async () => runDreamCycle({ trigger: "manual", force: true }),
   memorySuggestions: async ({ status } = {}) => memory().suggestionList({ status }),
   memorySuggestionResolve: async ({ id, accept = false } = {}) => {
+    if (accept) {
+      const sug = memory().suggestionList({ status: "pending", limit: 500 }).find((s) => s.id === id);
+      // 页面版本在主进程这边校验：页面库在插件里，记忆层自己看不到
+      if (sug?.targetKind === "page" && Number(sug.baseRev) > 0 && pluginHost) {
+        try {
+          const page = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: sug.targetId });
+          const cur = Number(page?.updatedAt) || 0;
+          if (cur && cur !== Number(sug.baseRev)) {
+            const gone = memory().suggestionSuperseded({ id, reason: `页面在建议之后被改过（第 ${sug.baseRev} 版 → ${cur}），不覆盖你的修改` });
+            store.addEvent("memory.suggestion", `memory.suggestion ${sug.action} superseded`);
+            return gone;
+          }
+        } catch { /* 读不到页面就不拦，按原流程走 */ }
+      }
+    }
     const res = memory().suggestionResolve({ id, accept });
     if (!accept) return res;
+    if (res.superseded) { store.addEvent("memory.suggestion", `memory.suggestion ${res.action} superseded`); return res; }
     let applied = { applied: false };
     try { applied = await applyMemorySuggestion(res); } catch (err) { applied = { applied: false, error: String(err?.message || err) }; }
     store.addEvent("memory.suggestion", `memory.suggestion ${res.action} ${accept ? "accepted" : "rejected"} ${applied.applied ? "applied" : "skipped"}`);
@@ -3751,6 +4412,15 @@ const actions = {
     if (!pluginHost) throw new Error("插件宿主未启动");
     return pluginHost.executeCommand(String(pluginId || ""), String(commandId || ""), args || {});
   },
+  pluginCancel: async ({ pluginId } = {}) => (pluginHost ? pluginHost.cancel(String(pluginId || "")) : false),
+  pluginSettings: async ({ id } = {}) => {
+    if (!pluginHost) throw new Error("插件宿主未启动");
+    return pluginHost.settingsFor(String(id || ""));
+  },
+  pluginSetSetting: async ({ id, key, value } = {}) => {
+    if (!pluginHost) throw new Error("插件宿主未启动");
+    return pluginHost.setSetting(String(id || ""), String(key || ""), value);
+  },
   pluginEnable: async ({ id } = {}) => pluginHost?.setEnabled(String(id || ""), true),
   pluginDisable: async ({ id } = {}) => pluginHost?.setEnabled(String(id || ""), false),
   pluginInstall: async () => {
@@ -3782,11 +4452,7 @@ const actions = {
     }
     if ("maxConcurrentRuns" in next) tick();
     // IM 配置改了要重启网关：启动时若 disabled，之后改设置不会自动 listen
-    if (Object.keys(next).some((k) => k.startsWith("im"))) {
-      try { imGateway?.stop(); } catch { /* ignore */ }
-      imGateway = null;
-      try { startImGateway(); } catch (err) { console.warn(`[im] restart failed: ${String(err?.message || err)}`); }
-    }
+    if (Object.keys(next).some((k) => k.startsWith("im"))) restartImGateway();
     return store.state.settings;
   },
   resetSettings: () => {
@@ -4772,6 +5438,7 @@ const actions = {
     const stoppedTodo = store.state.todos.find((t) => t.id === run.todoId);
     if (run.kind === "supervisor" || stoppedTodo?.kind === "mission") {
       for (const [token, record] of mcpTokens) if (record.runId === runId || record.missionId === run.todoId) mcpTokens.delete(token);
+      releaseBrowserTokens(runId);
     }
     if (["running", "queued", "waiting_input", "waiting_plan", "waiting_children"].includes(run.status)) {
       run.status = "cancelled"; run.endedAt = now();
@@ -4785,6 +5452,37 @@ const actions = {
       settlePendingSteers(runId);
       store.addEvent("run.cancelled", `run.cancelled ${todo?.key}`);
     }
+  },
+  /**
+   * 续跑：把中断的 run 放回队列，由 startRun 用 session/resume 接回原来的 ACP 会话。
+   * 只对 ACP run 有效——终端 run 的 pty 早就不在了，没有"续"这回事。
+   */
+  runResume: ({ runId } = {}) => {
+    const run = store.state.runs.find((r) => r.id === String(runId || ""));
+    if (!run) throw new Error("run 不存在");
+    if (!run.acpSession) throw new Error("这个 run 没有可续的 ACP 会话（终端 Agent 或旧版本创建）");
+    if (["running", "queued", "waiting_input"].includes(run.status)) throw new Error("这个 run 还在跑");
+    const todo = store.state.todos.find((t) => t.id === run.todoId);
+    if (!todo) throw new Error("任务不存在");
+    const agent = pickChatAgent(run.agentId, todo.agentId) || defaultChatAgent(todo.projectId || store.state.activeProjectId);
+    if (!agent) throw new Error("没有可用 Agent");
+    const agentErr = chatAgentError(agent);
+    if (agentErr) throw new Error(agentErr);
+    run.resumeSessionId = run.acpSession;
+    run.status = "queued";
+    run.endedAt = null;
+    run.error = null;
+    run.queueReason = null;
+    run.trigger = "resume";
+    run.updatedAt = now();
+    todo.status = "in_progress";
+    todo.lastRunFailed = false;
+    todo.updatedAt = now();
+    store.addMessage(threadForTodo(todo).id, run.id, "system", "system", "续跑：恢复上次中断的 ACP 会话");
+    store.addEvent("run.resume", `run.resume queued ${run.id}`);
+    broadcast();
+    tick();
+    return { ok: true, runId: run.id };
   },
   retry: ({ id }) => {
     const todo = store.state.todos.find((t) => t.id === id);
@@ -4981,11 +5679,40 @@ ipcMain.handle("files:read", (_e, { rel, root } = {}) => {
   if (full !== base && !full.startsWith(base + path.sep)) throw new Error("path outside project");
   const stat = fs.statSync(full);
   if (stat.isDirectory()) throw new Error("is directory");
-  if (stat.size > 2 * 1024 * 1024) return { error: ">2MB" };
-  const ext = path.extname(full).toLowerCase();
-  const image = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"].includes(ext);
-  if (image) return { image: true, dataUrl: `data:image/${ext === ".svg" ? "svg+xml" : ext.slice(1)};base64,${fs.readFileSync(full).toString("base64")}` };
-  return { text: fs.readFileSync(full, "utf8"), size: stat.size, ext };
+  const ext = path.extname(full).toLowerCase().replace(/^\./, "");
+  // 图片 / 音视频 / PDF 交给 webview 原生渲染，不读正文（口径见 electron/file-kinds.mjs）；
+  // 其余按文本解码，二进制 / 非 UTF-8 直接给原因，不再把乱码当正文塞进 DOM。
+  const size = stat.size;
+  const buf = PREVIEW_NATIVE_EXT.has(ext) || size > 2 * 1024 * 1024 ? null : fs.readFileSync(full);
+  return classifyFile({ ext, size, buf });
+});
+
+/** 文档预览：docx / xlsx / pptx… 转成 HTML 或纯文本（渲染层再做一次 DOMPurify） */
+ipcMain.handle("files:previewDoc", async (_e, { rel, root } = {}) => {
+  const base = rootOf(root);
+  const full = path.resolve(base, rel || "");
+  if (full !== base && !full.startsWith(base + path.sep)) throw new Error("path outside project");
+  const stat = fs.statSync(full);
+  if (stat.isDirectory()) throw new Error("is directory");
+  const ext = path.extname(full).toLowerCase().replace(/^\./, "");
+  if (!officeKind(ext)) return { error: "该格式不支持文档预览" };
+  if (stat.size > MAX_DOC_BYTES) return { error: "文档超过 30MB，预览已跳过" };
+  return await renderOffice({ file: full, ext, cacheDir: path.join(app.getPath("userData"), "doc-preview") });
+});
+
+// 预览页站点权限：只由用户显式授权（预览里点「允许本页」/ 设置页），不猜
+ipcMain.handle("preview:permissions:list", () => listSites(store.state.settings?.previewPermissionSites));
+ipcMain.handle("preview:permissions:grant", (_e, { origin, permission } = {}) => {
+  const next = grantPreviewPermission(store.state.settings?.previewPermissionSites, origin, permission);
+  actions.setSettings({ previewPermissionSites: next });
+  broadcast();
+  return { ok: true, sites: listSites(next) };
+});
+ipcMain.handle("preview:permissions:revoke", (_e, { origin, permission } = {}) => {
+  const next = revokePreviewPermission(store.state.settings?.previewPermissionSites, origin, permission);
+  actions.setSettings({ previewPermissionSites: next });
+  broadcast();
+  return { ok: true, sites: listSites(next) };
 });
 
 // ── files：编辑器外的文件操作（右键菜单 / 新建 / 重命名 / 复制 / 删除）──
@@ -5106,8 +5833,11 @@ ipcMain.handle("git:status", async (_e, { root } = {}) => {
     behind = Number.isFinite(b) ? b : 0;
     ahead = Number.isFinite(a) ? a : 0;
   }
+  // WADE worktree 装了 pre-push 门禁：只有 wade implementation-session done 写的
+  // .wade/done@<sha> 才允许推送。面板据此提前提示，而不是等 push 报错才知道。
+  const wadeGate = fs.existsSync(path.join(rootOf(root), ".wade", "githooks", "pre-push"));
   return {
-    isRepo: true, root: rootOf(root), ...meta, ahead, behind,
+    isRepo: true, root: rootOf(root), ...meta, ahead, behind, wadeGate,
     files: parsePorcelainZ(status.stdout),
     ignored: String(ignored.stdout || "").split("\0").filter(Boolean),
   };
@@ -5176,7 +5906,19 @@ ipcMain.handle("git:push", async (_e, { root } = {}) => {
   const meta = parseBranchV2(st.stdout);
   const args = meta.upstream ? ["push"] : ["push", "-u", "origin", "HEAD"];
   const res = await gitRun(root, args, { timeout: 180000 });
-  return { ok: res.ok, output: (res.stdout + res.stderr).trim().slice(0, 4000), error: res.ok ? null : res.error };
+  const text = (res.stdout + res.stderr).trim();
+  // 把 WADE 门禁的原始英文提示翻成「下一步做什么」，其余错误保持原样
+  const wadeGate = !res.ok && /\[wade\] Refusing to push/.test(text);
+  const hint = wadeGate
+    ? "这是 WADE worktree 的推送门禁：先在该 worktree 的终端运行 `wade implementation-session done`（它会完成 push 并更新 PR）。直接在 Harness 里点推送会被 pre-push 拦下；确需绕过用 `git push --no-verify`（不推荐）。"
+    : null;
+  return {
+    ok: res.ok,
+    output: text.slice(0, 4000),
+    error: res.ok ? null : (hint ? `${text.slice(0, 1200)}\n\n${hint}` : res.error),
+    wadeGate,
+    hint,
+  };
 });
 ipcMain.handle("git:pull", async (_e, { root } = {}) => {
   const res = await gitRun(root, ["pull", "--ff-only"], { timeout: 180000 });
@@ -5245,6 +5987,29 @@ function readDocuments(paths = []) {
 }
 
 ipcMain.handle("docs:read", (_e, { paths = [] } = {}) => readDocuments(paths));
+
+// 剪贴板取图：视觉解析的截图入口（⌘V / 「从剪贴板取图」）
+// Electron 45 起 clipboard 是异步 ClipboardItem/Blob API，readImage()/writeImage() 已移除
+ipcMain.handle("clipboard:readImage", async () => {
+  try {
+    for (const item of await clipboard.read()) {
+      const type = (item.types || []).find((value) => String(value).startsWith("image/"));
+      if (!type) continue;
+      const payload = await item.getType(type);
+      const buf = Buffer.from(await payload.arrayBuffer());
+      if (!buf.length) continue;
+      const size = nativeImage.createFromBuffer(buf).getSize();
+      return {
+        ok: true,
+        dataUrl: `data:${type};base64,${buf.toString("base64")}`,
+        size: size.width && size.height ? size : undefined,
+      };
+    }
+    return { ok: false, error: "剪贴板里没有图片（先截图或复制一张图）" };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+});
 
 ipcMain.handle("docs:pick", async () => {
   const res = await dialog.showOpenDialog(win, {
@@ -5557,16 +6322,175 @@ ipcMain.handle("shell:openExternal", async (_e, { url } = {}) => {
   return true;
 });
 
-ipcMain.handle("preview:pick", async (_e, { webContentsId, root } = {}) => {
+ipcMain.handle("preview:pick", async (_e, { webContentsId, root, rootHint } = {}) => {
   let abs;
   if (root) {
     const candidate = path.resolve(String(root));
     try { if (fs.statSync(candidate).isDirectory()) abs = candidate; } catch { /* ignore */ }
   }
-  return pickElement(webContentsId, { root: abs, screenshots: store.state.settings?.elementScreenshots !== false });
+  // 远端预览：元素源码在远端，本地目录可能不存在，只做纯字符串相对化（不 stat）
+  const sourceRoot = abs || (rootHint ? path.resolve(String(rootHint)) : undefined);
+  const ctx = await pickElement(webContentsId, { root: sourceRoot, screenshots: store.state.settings?.elementScreenshots !== false });
+  // 远端预览的 URL 是隧道地址：给 Agent 的必须是远端原始地址，否则它去改本机 127.0.0.1:随机端口
+  const remoteUrl = ctx?.url ? toRemoteUrl(ctx.url) : null;
+  if (remoteUrl) ctx.url = remoteUrl;
+  return ctx;
 });
+ipcMain.handle("preview:active", (_e, { webContentsId } = {}) => {
+  setActivePreview(webContentsId);
+  return { ok: true };
+});
+/** 截图：落盘 + 复制到剪贴板（Agent 用 browser_screenshot，用户用这个按钮） */
+ipcMain.handle("preview:capture", async (_e, { webContentsId, fullPage } = {}) => {
+  try {
+    const shot = await browserScreenshot({ webContentsId, fullPage: Boolean(fullPage) });
+    let copied = false;
+    try {
+      const buf = fs.readFileSync(shot.path);
+      await clipboard.write([new ClipboardItem({ "image/png": new Blob([buf], { type: "image/png" }) })]);
+      copied = true;
+    } catch { /* 剪贴板不可用不影响落盘 */ }
+    return { ok: true, path: shot.path, copied };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+});
+
+/**
+ * 录屏：主进程用 capturePage 抓帧（约 4fps）推给渲染层，
+ * 渲染层画到 canvas + MediaRecorder 编成 webm。不带音频，最长 60 秒。
+ */
+const recordings = new Map(); // id -> { timer, busy, stopped, webContentsId }
+const RECORD_MAX_MS = 60000;
+
+function stopRecording(id, reason = "user") {
+  const rec = recordings.get(id);
+  if (!rec) return false;
+  clearInterval(rec.timer);
+  recordings.delete(id);
+  if (win && !win.isDestroyed()) win.webContents.send("preview:record:ended", { id, reason });
+  return true;
+}
+
+ipcMain.handle("preview:record:start", async (_e, { webContentsId, fps } = {}) => {
+  try {
+    const wc = webContents.fromId(Number(webContentsId));
+    if (!wc || wc.isDestroyed() || wc.getType() !== "webview") throw new Error("请先打开预览页");
+    const id = crypto.randomBytes(8).toString("hex");
+    const intervalMs = Math.min(Math.max(Math.round(1000 / (Number(fps) || 4)), 120), 2000);
+    const rec = { timer: null, busy: false, stopped: false, webContentsId: wc.id };
+    recordings.set(id, rec);
+    const startedAt = Date.now();
+    rec.timer = setInterval(async () => {
+      if (rec.busy || rec.stopped) return;
+      if (Date.now() - startedAt > RECORD_MAX_MS) { stopRecording(id, "limit"); return; }
+      if (!win || win.isDestroyed() || wc.isDestroyed()) { stopRecording(id, "closed"); return; }
+      rec.busy = true;
+      try {
+        const img = await wc.capturePage();
+        if (img && !img.isEmpty()) {
+          const jpeg = img.toJPEG(70).toString("base64");
+          win.webContents.send("preview:record:frame", { id, width: img.getSize().width, height: img.getSize().height, jpeg });
+        }
+      } catch { /* 单帧失败跳过 */ }
+      finally { rec.busy = false; }
+    }, intervalMs);
+    return { ok: true, id, intervalMs };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+});
+
+ipcMain.handle("preview:record:stop", (_e, { id } = {}) => ({ ok: stopRecording(String(id || "")) }));
+ipcMain.handle("preview:record:save", async (_e, { data, mime } = {}) => {
+  try {
+    const buf = Buffer.from(data || []);
+    if (!buf.length) throw new Error("录制内容为空");
+    const dir = path.join(app.getPath("userData"), "recordings");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `preview-${new Date().toISOString().replace(/[:.]/g, "-")}.webm`);
+    fs.writeFileSync(file, buf);
+    return { ok: true, path: file, size: buf.length, mime: String(mime || "video/webm") };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+});
+
 ipcMain.handle("preview:cancel", async (_e, { webContentsId } = {}) => cancelPick(webContentsId));
-ipcMain.handle("preview:detach", (_e, { webContentsId } = {}) => detachPreview(webContentsId));
+ipcMain.handle("preview:detach", (_e, { webContentsId } = {}) => {
+  clearActivePreview(webContentsId);
+  return detachPreview(webContentsId);
+});
+
+// ── 预览会话：持久 partition / 站点权限 / 自签名证书 ────────────────────
+// 独立分区 + persist: 前缀 = 登录态跨重启保留（否则每次启动都要重新登录预览站点）
+const PREVIEW_PARTITION = "persist:preview";
+
+/** 预览页发起的权限请求：按站点白名单放行；被拒时把原因推给渲染层，让用户点一下就能授权 */
+function configurePreviewSession() {
+  const ses = session.fromPartition(PREVIEW_PARTITION);
+
+  // 证书：默认交给 Chromium 校验；设置里开了「忽略证书校验」才信任（自签名 dev server 常见）
+  ses.setCertificateVerifyProc((_request, callback) => {
+    callback(store.state.settings?.previewIgnoreCertErrors ? 0 : -3);
+  });
+
+  const decide = (permission, details = {}) => {
+    const origin = previewOrigin(details.requestingUrl || details.securityOrigin || details.embeddingOrigin || "");
+    return allows(store.state.settings?.previewPermissionSites, origin, permission);
+  };
+  // 同一个页面会被反复 check（轮询 / 每次调用都查），通知要节流，否则渲染层被刷屏
+  const notified = new Map();
+  const notify = (wc, permission, details = {}) => {
+    const origin = previewOrigin(details.requestingUrl || details.securityOrigin || details.embeddingOrigin || "");
+    if (!origin || !wc || wc.isDestroyed()) return;
+    const key = `${wc.id}|${origin}|${permission}`;
+    const last = notified.get(key) || 0;
+    if (Date.now() - last < 4000) return;
+    notified.set(key, Date.now());
+    wc.send("preview:permission", {
+      webContentsId: wc.id,
+      origin,
+      permission,
+      label: describePermission(permission),
+      // USB / 串口 / 屏幕共享这类需要选择器，授权也做不到，直接说明
+      grantable: !["hid", "serial", "usb", "bluetooth", "display-capture", "fileSystem"].includes(permission),
+    });
+  };
+
+  ses.setPermissionRequestHandler((wc, permission, callback, details) => {
+    const ok = decide(permission, details);
+    if (!ok) notify(wc, permission, details);
+    callback(ok);
+  });
+  ses.setPermissionCheckHandler((wc, permission, requestingOrigin, details) => {
+    const ok = decide(permission, { ...details, requestingUrl: details?.requestingUrl || requestingOrigin });
+    if (!ok) notify(wc, permission, { requestingUrl: requestingOrigin });
+    return ok;
+  });
+  ses.setDevicePermissionHandler(() => false);
+  return ses;
+}
+
+// 远端预览：Agent 在 ssh 主机上跑 dev server 时，本机 webview 连不到，只能经 ssh -L
+ipcMain.handle("preview:tunnel:open", async (_e, { hostId, url } = {}) => {
+  try {
+    const host = store.state.hosts.find((h) => h.id === hostId);
+    if (!host || host.kind !== "ssh") throw new Error("当前不是远端主机");
+    const res = await openTunnel({ host, url: String(url || "") });
+    return { ok: true, ...res };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+});
+ipcMain.handle("preview:tunnel:close", (_e, { key } = {}) => {
+  closeTunnel(key);
+  return { ok: true };
+});
+// 隧道是被动断开的（网络断、远端 sshd 重启）：让渲染进程把原因显示出来，别只剩一个白页
+onTunnelClosed((info) => {
+  if (win && !win.isDestroyed()) win.webContents.send("preview:tunnel:closed", info);
+});
 
 // ── Grape HTML：把 spin-grape-html 编辑器作为预览页打开 ─────────────────
 let grapeProc = null;
@@ -5766,10 +6690,41 @@ async function createWindow() {
     delete webPreferences.preload;
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
+    // 不再额外放开 plugins：Electron 45 的 webview 默认就带内置 PDF 阅读器（navigator.pdfViewerEnabled=true）
   });
   win.webContents.on("did-attach-webview", (_event, contents) => {
-    contents.setWindowOpenHandler(() => ({ action: "deny" }));
+    // OAuth / 登录弹窗要能开，否则「预览需要登录的站点」等于不可用；
+    // 只放行 http(s)，子窗口同样不带 preload、共用 persist:preview 会话（cookie 才能回传到页面）
+    contents.setWindowOpenHandler(({ url }) => {
+      if (!/^https?:/i.test(String(url || ""))) return { action: "deny" };
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          width: 520, height: 680, autoHideMenuBar: true, title: "Cockpit Harness — 登录",
+          webPreferences: { partition: PREVIEW_PARTITION, nodeIntegration: false, contextIsolation: true, sandbox: true, webviewTag: false },
+        },
+      };
+    });
     // 预览 webview 有独立焦点，宿主收不到键盘事件：把标签级快捷键转回 TerminalPanel
+    // 预览页的 console 汇总到预览面板（不需要开 DevTools 才能看到红字）
+    contents.on("console-message", (event, level, message, line, sourceId) => {
+      const rawLevel = event && typeof event === "object" && "level" in event ? event.level : level;
+      const text = String((event && typeof event === "object" && "message" in event ? event.message : message) || "");
+      if (!text) return;
+      // Electron 自己的安全告警对页面调试没用，别占满面板
+      if (/^Electron Security Warning/i.test(text)) return;
+      const map = { verbose: 0, debug: 0, info: 1, log: 1, warning: 2, warn: 2, error: 3 };
+      const lvl = typeof rawLevel === "string" ? (map[rawLevel.toLowerCase()] ?? 1) : Number(rawLevel) || 1;
+      if (win && !win.isDestroyed()) {
+        win.webContents.send("preview:console", {
+          webContentsId: contents.id,
+          level: lvl,
+          message: text.slice(0, 2000),
+          line: Number((event && "lineNumber" in event ? event.lineNumber : line)) || 0,
+          source: String((event && "sourceId" in event ? event.sourceId : sourceId) || "").slice(0, 300),
+        });
+      }
+    });
     contents.on("before-input-event", (event, input) => {
       if (input.type !== "keyDown") return;
       const accel = process.platform === "darwin" ? input.meta : input.control;
@@ -5834,6 +6789,8 @@ app.whenReady().then(async () => {
   }
   startMissionMcpServer();
   startWikiMcpServer();
+  // 预览会话必须在使用前配好（持久分区 / 站点权限 / 证书策略）
+  configurePreviewSession();
   await createWindow();
   // 全局快速记录：不切主窗口，直接把剪贴板内容变成 Wiki draft
   try {
@@ -5844,18 +6801,25 @@ app.whenReady().then(async () => {
     pluginHost = new PluginHost({
       app, getWin: () => win, store, actions, dialog,
       onChange: () => broadcast(),
+      seal: encSecret, open: decSecret,
     });
     await pluginHost.start();
   } catch (err) {
     console.warn(`[plugins] host start failed: ${String(err?.message || err)}`);
   }
   try { startImGateway(); } catch (err) { console.warn(`[im] start failed: ${String(err?.message || err)}`); }
+  try { startBotTick(); } catch (err) { console.warn(`[bot] tick start failed: ${String(err?.message || err)}`); }
+  // 空闲整理：没有 run 在跑、且人一段时间没操作时跑一轮 Dream（配置在记忆页，0 = 只手动）
+  dreamIdleTimer = setInterval(() => { void dreamIdleTick(); }, DREAM_IDLE_TICK_MS);
   broadcast();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 app.on("before-quit", () => {
+  try { clearInterval(dreamIdleTimer); } catch { /* ignore */ }
+  for (const id of [...recordings.keys()]) stopRecording(id, "quit");
+  try { closeAllTunnels(); } catch { /* ignore */ }
   try { globalShortcut.unregisterAll(); } catch { /* ignore */ }
   try { captureWin?.close(); } catch { /* ignore */ }
   try { grapeProc?.kill(); } catch { /* ignore */ }

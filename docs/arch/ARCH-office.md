@@ -85,7 +85,7 @@ src/office/
 - **时段光照**：舞台按本地时间分 `dawn / day / dusk / night`，只改变舞台的地面、墙面和灯具，不影响页面其它区域；黄昏与夜间点亮顶灯、台灯、落地灯，窗外换星空 / 月亮 / 城市亮灯。手动覆盖存 `config.prefs.light`（`auto | dawn | day | dusk | night`），默认 `auto`。
 - **区域划分**：工位区 / 主控区 / 审批台 / 验收架 / 机房 / 茶歇区 / 协调台各有低透明地面色块与标牌；色块放在 `z-index:1`，永远在工位、角色之下，不遮挡交互。
 - **作战室 3D**：`prefs.template=warroom` 时舞台换成 three.js 房间。长桌席位 = `desk / lead`，复盘墙 = `review`，发布闸门 = `approval`，主屏 = `meeting`，两侧 = `tea / standby`；姓名牌是投影定位的 DOM 按钮，点开仍是同一个 Inspector。主屏 HUD 用 `model.board / stats` 现画，角色颜色跟随 `tone`。动效档位 / 走位时长 / reduced-motion 都生效；光照跟随应用主题，所以作战室不显示「光照」tab。
-- **航母 3D**：`prefs.template=carrier` 时换成福建舰甲板。弹射位 = 并发 `run`，着舰道 = `review / approval` 串行，失败 = 复飞，待命 = 升降机 / 停机区，主控 = 甲板弹射官。舰载机、姓名牌和引线都由真实角色投影；点姓名牌打开同一个 Inspector。海面 / 天空 / 舰体 / 舰载机的几何与材质移植自 `docs/prototype/carrier-3d.js`，不新增状态字段。
+- **航母 3D**：`prefs.template=carrier` 时换成福建舰甲板。弹射位 = 并发 `run`，着舰道 = `review / approval` 串行，失败 = 复飞，待命 = 升降机 / 停机区，主控 = 甲板弹射官。舰载机、姓名牌和引线都由真实角色投影；点姓名牌打开同一个 Inspector。海面 / 天空 / 舰体 / 舰载机的几何与材质移植自 `docs/prototype/carrier-3d.js`，不新增状态字段。`run` 开始时播放「张紧 → 弹射 → 爬升」（JBD / 尾焰 / 蒸汽 / 镜头震动），起飞后保持空中待命，状态变化时降落到对应甲板位；舞台头「演一遍弹射」可手动触发。
 
 ## 5. 场景 / 配置的当前边界
 

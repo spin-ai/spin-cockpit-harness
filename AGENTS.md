@@ -8,6 +8,7 @@ Cockpit Harness 的 agent / contributor 入口。
 - UI / 视觉 / 布局改动：**必须先读 [`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md)**
 - 架构：`docs/arch/ARCH-*.md`（总图先看 `ARCH-multi-agent-workspace.md`；**五件关键技术的能力边界与判据见 `ARCH-key-tech.md`**）
 - 插件：`docs/arch/ARCH-plugins.md`
+- 第三方源码：`third-part/<repo>/`（本地只读副本，**整个目录被 git 忽略、不入库**，含里面的 `README.md`）。规则：只读不改、一个仓库一个子目录、`docs/` 里写对照时必须标 `仓库 @ commit`（目录随时被删或更新）
 
 ## UI 硬规则
 
@@ -22,6 +23,7 @@ Cockpit Harness 的 agent / contributor 入口。
 9. 禁止整块高亮：编辑器聚焦只加 1px hairline，文本选中用 14% alpha，不要 3px ring / 蓝色闪屏。
 10. 行内低频操作使用 `RowMenu`；不要新增不会自动关闭、可能被滚动容器裁切的 `<details>` 菜单。
 11. 非当前 pane 只弱化 header/toolbar，不要整体降低内容透明度。
+12. **不要用 `window.prompt`**：Electron 不实现它（点了没有任何反应）。新建 / 重命名 / 填地址一律用行内输入或面板里的字段；`npm run verify:design` 会拦。
 
 ## 开发流程（WADE）
 
@@ -42,7 +44,11 @@ wade implement <issue>
 npm run typecheck
 npm run build
 npm run verify:plugins
+# 主进程 IPC 频道查重（重复注册会让应用启动即崩）
+npm run verify:ipc
 npm run verify:docs
+# 隐私守卫（真实账号 / 手机号 / 个人邮箱 / 本机路径 / 密钥；不进 CI 日志）
+npm run verify:privacy
 # 人物画像（接线 / 导入格式 / 生命周期语义，纯后端 + 渲染层预览，不启动窗口）
 npm run verify:persona
 npm run persona:preview

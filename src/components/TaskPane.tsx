@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { State, Todo, TodoStatus } from "../types";
 import { STATUS, activeRun, agentOf, duration, lastRun, timeAgo } from "../ui";
 import { Splitter, useStoredSize } from "./Splitter";
-import { ChevronDownIcon, PanelCollapseIcon } from "./Icons";
+import { ChevronDownIcon, PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon } from "./Icons";
 import { requestTerminalAdopt } from "../terminal-events";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
@@ -39,11 +39,13 @@ function TaskPlan({ items, expanded }: { items: Todo["subtasks"]; expanded: bool
   );
 }
 
-export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts, onAddProject, onManageProjects, onSwitchProject, onCollapse, confirmStop = false, allProjects = false, onToggleScope }: {
+export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts, onAddProject, onManageProjects, onSwitchProject, onCollapse, confirmStop = false, allProjects = false, onToggleScope, maximized = false, onToggleMaximize }: {
   state: State; selectedId: string | null; now: number; act: Act; onSelect: (id: string) => void;
   projectCounts: Record<string, number>;
   onAddProject: () => void; onManageProjects: () => void; onSwitchProject: (id: string) => void;
   onCollapse?: () => void;
+  maximized?: boolean;
+  onToggleMaximize?: () => void;
   confirmStop?: boolean;
   allProjects?: boolean;
   onToggleScope?: () => void;
@@ -192,13 +194,18 @@ export function TaskPane({ state, selectedId, now, act, onSelect, projectCounts,
   };
 
   return (
-    <aside className="todo-pane" tabIndex={0} aria-label="TODO 列表">
-      <div className="pane-head">
+    <aside className={`todo-pane${maximized ? " pane-max-target" : ""}`} tabIndex={0} aria-label="TODO 列表">
+      <div className="pane-head" onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest("button")) onToggleMaximize?.(); }}>
         <span>TODO</span>
         <div className="row gap6">
           <span className="muted">{state.todos.length}</span>
           {onToggleScope && <button className="link tiny" title="切换 TODO 范围" onClick={onToggleScope}>{allProjects ? "全部项目" : "当前项目"}</button>}
           <button className="pane-add" title="收集想法 / 新建任务（一行一条，⌘⇧N）" onClick={() => { setLayout("list"); setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); }}>＋</button>
+          {onToggleMaximize && (
+            <button className="pane-collapse" title={maximized ? "还原（Esc）" : "最大化"} aria-label={maximized ? "还原 TODO" : "最大化 TODO"} onClick={onToggleMaximize}>
+              {maximized ? <PanelRestoreIcon size={13} /> : <PanelExpandIcon size={13} />}
+            </button>
+          )}
           {onCollapse && (
             <button className="pane-collapse" title="收起 TODO" aria-label="收起 TODO" onClick={onCollapse}>
               <PanelCollapseIcon size={13} />
@@ -565,6 +572,9 @@ function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk, onBroadcas
         <button className="btn tiny-btn" title="选择多个 Agent，各自独立 worktree / 终端并行" onClick={onBroadcast}>并行</button>
       )}
       {!active && last && ["failed", "cancelled"].includes(last.status) && <button className="btn tiny-btn" onClick={() => act("retry", { id: todo.id })}>重试</button>}
+      {!active && last && last.status === "interrupted" && Boolean(last.acpSession) && (
+        <button className="btn tiny-btn" title="恢复上次中断的 ACP 会话，继续没做完的部分" onClick={() => act("runResume", { runId: last.id })}>续跑</button>
+      )}
     </div>
   );
 }

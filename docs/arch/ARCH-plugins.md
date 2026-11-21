@@ -3,9 +3,9 @@
 # Arch · Plugins / 插件宿主（提案）
 
 > **状态：P0 已实现，P1/P2 持续中。**
-> 已落地：manifest 发现、utilityProcess 加载、命令、事件、插件私有 storage、Settings → 插件、内置 Notes（first-party）、zip/folder 安装/启用/禁用/卸载。
-> 尚未落地：Executor 注册、Agent tools/MCP、sandbox UI view、签名/市场。
-> 第一个 first-party 插件是 [`PLUGIN-notes.md`](PLUGIN-notes.md)（Obsidian-like Notes）。
+> 已落地：manifest 发现、utilityProcess 加载、命令、事件、插件私有 storage、**contributes.settings → 设置页渲染（secret 不回读且用 safeStorage 加密落盘，启动时把历史明文迁成 `enc:`）**、**contributes.views → state.pluginViews**、**长任务取消通道（主进程 cancel → 插件 abort）**、Settings → 插件、内置 Notes（first-party）、zip/folder 安装/启用/禁用/卸载。
+> 尚未落地：Executor 注册、Agent tools/MCP、sandbox UI view（第三方视图仍需在 renderer 里注册组件）、签名/市场。
+> first-party 插件：[`PLUGIN-notes.md`](PLUGIN-notes.md)（Notes）、[`ARCH-zhulong-integration.md`](ARCH-zhulong-integration.md)（视觉解析）。
 
 ---
 
@@ -58,7 +58,7 @@
 |---|---|---|
 | **Command / Integration** | 命令、事件、HTTP、项目文件、通知、任务导入 | P0 |
 | **Executor** | 注册新的 Agent CLI / ACP 适配器 | P1 |
-| **UI View** | 全页或 side panel，sandbox iframe | P2 |
+| **UI View** | 全页或 side panel；当前为**原生视图**（renderer 注册组件 + manifest 开关），sandbox iframe 属 P2 | P0（原生）/ P2（sandbox） |
 
 一个插件可以同时是多种类型；manifest 的 `contributes` 决定。
 

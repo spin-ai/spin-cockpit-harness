@@ -83,8 +83,12 @@
 | [`product/GAP-chat.md`](product/GAP-chat.md) | 需求 | 记录 | Chat 差距基线 |
 | [`product/TEST-REQ-modules-original.md`](product/TEST-REQ-modules-original.md) | 需求 | 记录 | 需求对应测试用例（未执行） |
 | [`product/DATASET-wechat.md`](product/DATASET-wechat.md) | 需求 | 记录 | 微信语料样本与标注口径 |
+| [`product/COMPARE-user-stories.md`](product/COMPARE-user-stories.md) | 需求 | 记录 | 用户故事级竞品对照：vs Orca / Multica / ZCode 的真差异、缺口与不照抄项 |
+| [`product/COMPARE-knowledge-memory.md`](product/COMPARE-knowledge-memory.md) | 需求 | 记录 | 知识与记忆专项对照：vs WeKnora 与 Anthropic 记忆机制，附 ZCode 参照 |
+| [`product/COMPARE-rakazo.md`](product/COMPARE-rakazo.md) | 需求 | 记录 | vs Rakazo（自托管 AI 同事）**两层合并**对照：产品级 8 组用户故事 + bot 源码级实现（turn / 记忆 / 日程 / 求助 / 通知），含方向决定、12 条可抄、G1–G10 缺口 |
 | [`arch/ARCH-key-tech.md`](arch/ARCH-key-tech.md) | 架构 | 部分落地 | **五件关键技术**：解析 / 编排 / 整理 / 记忆 / 画像的边界、现状、判据、风险与一句话应对 |
 | [`arch/ARCH-tech-landscape.md`](arch/ARCH-tech-landscape.md) | 架构 | 记录 | 五件关键技术的开源 / 闭源实现对照、可复用度、许可证红线 |
+| [`arch/ARCH-benchmark-landscape.md`](arch/ARCH-benchmark-landscape.md) | 架构 | 记录 | 五件关键技术的公开基准盘点：哪些真有数据集、哪些只有分类法、20–50 条本地闸门可抄什么 |
 | [`arch/ARCH-multi-agent-workspace.md`](arch/ARCH-multi-agent-workspace.md) | 架构 | 部分落地 | **总图**：4+1 视图（宿主 / 执行 / 存储 / 远程） |
 | [`arch/ARCH-super-agent.md`](arch/ARCH-super-agent.md) | 架构 | 部分落地 | Mission / Delegation / MCP / 迁移 |
 | [`arch/ARCH-chat-thread.md`](arch/ARCH-chat-thread.md) | 架构 | 已落地 | thread 模型与 send 状态机 |
@@ -102,10 +106,14 @@
 | [`arch/ARCH-wiki-retrieval.md`](arch/ARCH-wiki-retrieval.md) | 架构 | 提案 | 检索质量与 SAG2 评估 |
 | [`arch/ARCH-memory.md`](arch/ARCH-memory.md) | 架构 | 部分落地 | 四层记忆 + Dream |
 | [`arch/ARCH-memory-persona-im.md`](arch/ARCH-memory-persona-im.md) | 架构 | 记录 | 记忆 / 人像 / 知识 / IM 一轮落地记录 |
+| [`arch/ARCH-im-gateway.md`](arch/ARCH-im-gateway.md) | 架构 | 部分落地 | 即时通信网关：渠道范围只做飞书，飞书接入路径 / 现状 / 未做 |
+| [`arch/ARCH-zhulong-integration.md`](arch/ARCH-zhulong-integration.md) | 架构 | 部分落地 | 视觉解析插件：验证台 UI 改造、三种解析后端与插件设置项 |
+| [`arch/ARCH-bot.md`](arch/ARCH-bot.md) | 架构 | 部分落地 | 人格 bot：多 bot 档案、60s tick 与三道闸、回合审计；dispatch / 飞书未做 |
 | [`arch/ARCH-office.md`](arch/ARCH-office.md) | 架构 | 部分落地 | 办公室舞台：状态映射 / 交互 / 协作场景边界 |
 | [`arch/ARCH-usability-pass.md`](arch/ARCH-usability-pass.md) | 架构 | 已落地 | 易用性一轮改动 |
 | [`arch/ARCH-package-size.md`](arch/ARCH-package-size.md) | 架构 | 已落地 | 打包体积与瘦身 |
 | [`guides/USAGE-super-agent.md`](guides/USAGE-super-agent.md) | 指南 | 已落地 | Mission 用法 |
+| [`guides/USAGE-agent-desktop.md`](guides/USAGE-agent-desktop.md) | 指南 | 已落地 | 桌面操作 MCP（agent-desktop）：安装、权限、开启与隐私边界 |
 | [`DESIGN-SYSTEM.md`](DESIGN-SYSTEM.md) | 指南 | 已落地 | UI 视觉与组件硬规则 |
 | [`WADE.md`](WADE.md) | 指南 | 已落地 | WADE 开发流程 |
 | [`articles/ARTICLE-zhihu-multi-agent-terminal.md`](articles/ARTICLE-zhihu-multi-agent-terminal.md) | 叙事 | 记录 | 对外文章：多智能体终端 |

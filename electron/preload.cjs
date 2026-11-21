@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld("harness", {
     return () => ipcRenderer.removeListener("quick-capture:submit", handler);
   },
   clipboardWrite: (text) => ipcRenderer.invoke("clipboard:write", { text }),
+  clipboardReadImage: () => ipcRenderer.invoke("clipboard:readImage"),
   openExternal: (url) => ipcRenderer.invoke("shell:openExternal", { url }),
   filesList: (rel, root) => ipcRenderer.invoke("files:list", { rel, root }),
   filesRead: (rel, root) => ipcRenderer.invoke("files:read", { rel, root }),
@@ -48,9 +49,50 @@ contextBridge.exposeInMainWorld("harness", {
   gitCheckout: (root, branch, create) => ipcRenderer.invoke("git:checkout", { root, branch, create }),
   gitLog: (root) => ipcRenderer.invoke("git:log", { root }),
   gitInit: (root) => ipcRenderer.invoke("git:init", { root }),
-  previewPick: (webContentsId, root) => ipcRenderer.invoke("preview:pick", { webContentsId, root }),
+  previewPick: (webContentsId, root, rootHint) => ipcRenderer.invoke("preview:pick", { webContentsId, root, rootHint }),
   previewCancel: (webContentsId) => ipcRenderer.invoke("preview:cancel", { webContentsId }),
   previewDetach: (webContentsId) => ipcRenderer.invoke("preview:detach", { webContentsId }),
+  /** 告诉主进程「现在用户看的是哪一个预览页」，Agent 的浏览器工具就作用在它上面 */
+  previewActive: (webContentsId) => ipcRenderer.invoke("preview:active", { webContentsId }),
+  // 截图导出（落盘 + 复制到剪贴板）
+  previewCapture: (webContentsId, fullPage) => ipcRenderer.invoke("preview:capture", { webContentsId, fullPage }),
+  // 录屏（主进程抓帧 → 渲染层 MediaRecorder 编 webm）
+  previewRecordStart: (webContentsId, fps) => ipcRenderer.invoke("preview:record:start", { webContentsId, fps }),
+  previewRecordStop: (id) => ipcRenderer.invoke("preview:record:stop", { id }),
+  previewRecordSave: (data, mime) => ipcRenderer.invoke("preview:record:save", { data, mime }),
+  onPreviewRecordFrame: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("preview:record:frame", handler);
+    return () => ipcRenderer.removeListener("preview:record:frame", handler);
+  },
+  onPreviewRecordEnded: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("preview:record:ended", handler);
+    return () => ipcRenderer.removeListener("preview:record:ended", handler);
+  },
+  onPreviewConsole: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("preview:console", handler);
+    return () => ipcRenderer.removeListener("preview:console", handler);
+  },
+  filesPreviewDoc: (rel, root) => ipcRenderer.invoke("files:previewDoc", { rel, root }),
+  // 预览页站点权限（摄像头 / 麦克风 / 剪贴板…）：按站点白名单
+  previewPermissions: () => ipcRenderer.invoke("preview:permissions:list"),
+  previewGrantPermission: (origin, permission) => ipcRenderer.invoke("preview:permissions:grant", { origin, permission }),
+  previewRevokePermission: (origin, permission) => ipcRenderer.invoke("preview:permissions:revoke", { origin, permission }),
+  onPreviewPermission: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("preview:permission", handler);
+    return () => ipcRenderer.removeListener("preview:permission", handler);
+  },
+  // 远端预览：ssh -L 隧道（只绑本机回环）
+  previewTunnel: (hostId, url) => ipcRenderer.invoke("preview:tunnel:open", { hostId, url }),
+  previewTunnelClose: (key) => ipcRenderer.invoke("preview:tunnel:close", { key }),
+  onPreviewTunnelClosed: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("preview:tunnel:closed", handler);
+    return () => ipcRenderer.removeListener("preview:tunnel:closed", handler);
+  },
   ensureGrape: () => ipcRenderer.invoke("grape:ensure"),
   onTerminalData: (cb) => {
     const handler = (_event, payload) => cb(payload);
@@ -66,6 +108,21 @@ contextBridge.exposeInMainWorld("harness", {
     const handler = (_event, payload) => cb(payload);
     ipcRenderer.on("terminal:exit", handler);
     return () => ipcRenderer.removeListener("terminal:exit", handler);
+  },
+  onImPaired: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("harness:im-paired", handler);
+    return () => ipcRenderer.removeListener("harness:im-paired", handler);
+  },
+  onBotDelta: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("harness:bot-delta", handler);
+    return () => ipcRenderer.removeListener("harness:bot-delta", handler);
+  },
+  onBotMessage: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("harness:bot-message", handler);
+    return () => ipcRenderer.removeListener("harness:bot-message", handler);
   },
   onPluginChatDraft: (cb) => {
     const handler = (_event, payload) => cb(payload);

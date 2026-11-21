@@ -47,13 +47,16 @@ function validateManifest(raw, dir) {
 }
 
 export class PluginHost {
-  constructor({ app, getWin, store, actions, dialog, onChange }) {
+  constructor({ app, getWin, store, actions, dialog, onChange, seal, open }) {
     this.app = app;
     this.getWin = getWin;
     this.store = store;
     this.actions = actions;
     this.dialog = dialog;
     this.onChange = onChange;
+    // secret 类型的插件设置用 safeStorage 加密落盘；没有注入时退回明文（测试/无 keychain 环境）
+    this.seal = typeof seal === "function" ? seal : (value) => String(value ?? "");
+    this.open = typeof open === "function" ? open : (value) => String(value ?? "");
     this.children = new Map();
     this.activating = new Map();
     this.pending = new Map();
@@ -75,6 +78,7 @@ export class PluginHost {
     this.started = true;
     fs.mkdirSync(this.userRoot, { recursive: true });
     await this.discover();
+    this.migrateSecrets();
     for (const plugin of this.store.state.plugins || []) {
       if (plugin.enabled) await this.startPlugin(plugin).catch((err) => this.setError(plugin, err));
     }
@@ -138,6 +142,29 @@ export class PluginHost {
     this.store.state.plugins = state.filter((p) => found.some((f) => f.manifest.id === p.id) || !p.path || fs.existsSync(p.path));
   }
 
+  /** 把历史上明文存的 secret 迁成密文；seal 不可用（无钥匙串）时原样保留，不丢值 */
+  migrateSecrets() {
+    let changed = 0;
+    for (const plugin of this.statePlugins()) {
+      const specs = Array.isArray(plugin.manifest?.contributes?.settings) ? plugin.manifest.contributes.settings : [];
+      for (const spec of specs) {
+        if (String(spec.type || "") !== "secret") continue;
+        const key = String(spec.key);
+        const row = this.kv(plugin.id, key, "settings");
+        if (!row || !row.value) continue;
+        if (typeof row.value === "string" && row.value.startsWith("enc:")) continue;
+        const before = String(row.value);
+        this.setKv(plugin.id, key, before, "settings");
+        if (String(this.kv(plugin.id, key, "settings")?.value || "") !== before) changed += 1;
+      }
+    }
+    if (changed) {
+      this.store.persist();
+      console.log(`[plugins] migrated ${changed} secret setting(s) to encrypted storage`);
+    }
+    return changed;
+  }
+
   record(id) {
     return this.statePlugins().find((p) => p.id === id) || null;
   }
@@ -171,10 +198,18 @@ export class PluginHost {
   async command(child, plugin, commandId, args = {}) {
     return new Promise((resolve, reject) => {
       const id = `c${this.nextRequest++}`;
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error("plugin command timeout")); }, 30000);
-      this.pending.set(id, { resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
+      // 120s：视觉解析/云端大模型这类命令本来就慢；30s 会在真正的长任务上误报超时
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error("plugin command timeout")); }, 120000);
+      this.pending.set(id, { pluginId: plugin.id, resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
       child.postMessage({ type: "command", id, commandId, args });
     });
+  }
+
+  /** 中断插件正在跑的长任务；插件自己 abort 请求，命令会以错误结束 */
+  cancel(pluginId) {
+    const child = this.children.get(String(pluginId || ""));
+    if (!child) return false;
+    try { child.postMessage({ type: "cancel" }); return true; } catch { return false; }
   }
 
   async invoke(pluginId, method, params = {}) {
@@ -184,8 +219,8 @@ export class PluginHost {
     const child = await this.startPlugin(plugin);
     return new Promise((resolve, reject) => {
       const id = `v${this.nextRequest++}`;
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error("plugin request timeout")); }, 30000);
-      this.pending.set(id, { resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error("plugin request timeout")); }, 120000);
+      this.pending.set(id, { pluginId: plugin.id, resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
       child.postMessage({ type: "invoke", id, method, params });
     });
   }
@@ -208,6 +243,13 @@ export class PluginHost {
     child.on("message", (message) => this.handleMessage(plugin.id, message));
     child.on("exit", (code) => {
       this.children.delete(plugin.id);
+      this.activating?.delete(plugin.id);
+      // 进程没了还挂着的请求必须立刻失败：否则界面一直「解析中…」，最长卡到 120s 超时
+      for (const [id, entry] of [...this.pending.entries()]) {
+        if (entry.pluginId !== plugin.id) continue;
+        this.pending.delete(id);
+        entry.reject(new Error(`插件进程退出（${code ?? "signal"}），请重试`));
+      }
       const p = this.record(plugin.id);
       if (p && p.enabled) this.appendLog(plugin.id, "warn", `runtime exited (${code})`);
       this.onChange?.();
@@ -295,12 +337,31 @@ export class PluginHost {
     return this.store.state.pluginKv.find((x) => x.pluginId === pluginId && x.key === id) || null;
   }
 
+  /** manifest 里声明的 secret 键：落盘加密、回读解密 */
+  secretSpec(pluginId, key) {
+    const plugin = this.record(pluginId);
+    const specs = Array.isArray(plugin?.manifest?.contributes?.settings) ? plugin.manifest.contributes.settings : [];
+    return specs.find((spec) => String(spec.key) === String(key) && String(spec.type || "") === "secret") || null;
+  }
+
+  /** 读出插件设置值（secret 解密；解密失败返回空串，不把密文当值用） */
+  readSetting(pluginId, key) {
+    const row = this.kv(pluginId, String(key), "settings");
+    if (!row) return null;
+    const raw = row.value;
+    if (!this.secretSpec(pluginId, key)) return raw;
+    if (typeof raw !== "string" || !raw) return "";
+    return this.open(raw);
+  }
+
   setKv(pluginId, key, value, scope = "settings") {
     const id = scope === "storage" ? `storage:${key}` : key;
     if (!Array.isArray(this.store.state.pluginKv)) this.store.state.pluginKv = [];
+    const secret = scope === "settings" && this.secretSpec(pluginId, key);
+    const stored = secret ? (value ? this.seal(String(value)) : "") : value;
     const row = this.store.state.pluginKv.find((x) => x.pluginId === pluginId && x.key === id);
-    if (row) { row.value = value; row.updatedAt = Date.now(); }
-    else this.store.state.pluginKv.push({ pluginId, key: id, value, updatedAt: Date.now() });
+    if (row) { row.value = stored; row.updatedAt = Date.now(); }
+    else this.store.state.pluginKv.push({ pluginId, key: id, value: stored, updatedAt: Date.now() });
     this.store.persist();
   }
 
@@ -309,7 +370,7 @@ export class PluginHost {
     if (!plugin) throw new Error("plugin not found");
     const permission = (name) => (plugin.permissions || []).includes(name);
     switch (method) {
-      case "settings.get": return this.kv(pluginId, String(params.key), "settings")?.value ?? null;
+      case "settings.get": return this.readSetting(pluginId, String(params.key));
       case "settings.set": this.setKv(pluginId, String(params.key), params.value, "settings"); return true;
       case "storage.get": return this.kv(pluginId, String(params.key), "storage")?.value ?? null;
       case "storage.set": this.setKv(pluginId, String(params.key), params.value, "storage"); return true;
@@ -412,6 +473,54 @@ export class PluginHost {
       for (const c of p.manifest?.contributes?.commands || []) out.push({ pluginId: p.id, id: c.id, title: c.title || c.id, description: c.description || "" });
     }
     return out;
+  }
+
+  /** manifest 里声明的设置项（供设置页渲染；值从 plugin kv 读） */
+  settingsFor(pluginId) {
+    const plugin = this.record(pluginId);
+    if (!plugin) throw new Error("plugin not found");
+    const specs = Array.isArray(plugin.manifest?.contributes?.settings) ? plugin.manifest.contributes.settings : [];
+    return specs.map((spec) => {
+      const key = String(spec.key);
+      const row = this.kv(pluginId, key);
+      const type = String(spec.type || "string");
+      return {
+        key,
+        type,
+        title: String(spec.title || key),
+        description: String(spec.description || ""),
+        options: Array.isArray(spec.options) ? spec.options : undefined,
+        placeholder: spec.placeholder ? String(spec.placeholder) : "",
+        // secret 不回读明文：只告诉设置页「已设置」，避免密钥进 renderer state
+        value: type === "secret" ? "" : (row?.value ?? spec.default ?? ""),
+        hasValue: type === "secret" ? Boolean(this.readSetting(pluginId, key)) : undefined,
+      };
+    });
+  }
+
+  setSetting(pluginId, key, value) {
+    const plugin = this.record(pluginId);
+    if (!plugin) throw new Error("plugin not found");
+    const specs = Array.isArray(plugin.manifest?.contributes?.settings) ? plugin.manifest.contributes.settings : [];
+    const spec = specs.find((s) => String(s.key) === String(key));
+    if (!spec) throw new Error(`未声明的插件设置项：${key}`);
+    const type = String(spec.type || "string");
+    let next;
+    if (type === "number") {
+      next = Number(value);
+      if (!Number.isFinite(next)) throw new Error(`${key} 需要数字`);
+    } else if (type === "boolean") {
+      next = Boolean(value);
+    } else if (type === "enum") {
+      const allowed = (spec.options || []).map((o) => String(o?.value ?? o));
+      if (!allowed.includes(String(value))) throw new Error(`${key} 不在可选项内`);
+      next = String(value);
+    } else {
+      next = String(value ?? "").slice(0, 4000);
+    }
+    this.setKv(pluginId, String(key), next);
+    this.onChange?.();
+    return { key: String(key), value: type === "secret" ? "" : next, hasValue: type === "secret" ? Boolean(next) : undefined };
   }
 
   views() {

@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>人格 bot · 原型</title>
+<!--
+  人格 bot 原型（多 bot · 主打主动 · 能起 Agent 任务 · 可读四层记忆）
+  ──────────────────────────────────────────────────────────────
+  为什么做这一页：
+  1. 多 bot：人格、记忆视图、配额、频道 allowlist 按 botId 隔离——左栏是 bot 列表，不是会话列表。
+  2. 主打主动：中间是「回合流」，主动消息与「沉默 / 被拦 / 转人工」并排出现；
+     每条都能展开「为什么说」（触发源 / 注入的记忆 / 过闸结果 / 成本），沉默也要有原因。
+  3. 能起任务：dispatch 档位的 bot 只说「我理解的是 X，要现在开吗」，真正起 run 仍走人的审批。
+  4. 四层记忆：右栏能看当前 bot 读到哪四层、本轮注入了哪几条、预算用了多少；L1 默认只回查。
+  设计约束与 src/design-system.css 一致：一个主面、hairline 分节、一个 primary、中文 ≥11.5px。
+  双击即可打开，无构建、无依赖；右上 ◐ 切亮暗；?theme=light|dark、?bot=golo 定格。
+-->
+<style>
+:root{
+  --font-sans:"Geist Variable","Geist",-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:"Geist Mono Variable","Geist Mono","SF Mono",SFMono-Regular,ui-monospace,Menlo,Consolas,monospace;
+  --radius:10px;--radius-sm:6px;--radius-lg:14px;
+  --shadow-1:0 1px 2px rgba(10,10,10,.045);
+  --shadow-float:0 18px 46px rgba(0,0,0,.22),0 2px 8px rgba(0,0,0,.10);
+  --green:#3f9a68;--green-soft:#edf8f2;--green-line:#d5eedf;
+  --amber:#a97a2f;--amber-soft:#fdf8ee;--amber-line:#f2e3c4;
+  --red:#cf5f5d;--red-soft:#fdf2f2;--red-line:#f4d7d7;
+  --purple:#7d67d1;--purple-soft:#f4f2fd;--purple-line:#e3ddf8;
+}
+:root[data-theme="light"]{
+  --page-canvas:#fafafa;--surface:#ffffff;--surface-hover:#f5f5f5;--surface-selected:#ededed;
+  --sidebar:#fafafa;--border:#e5e5e5;--border-strong:#d4d4d4;--input:#e5e5e5;
+  --fg:#0a0a0a;--fg-2:#3f3f3f;--muted:#5c5c5c;--faint:#8a8a8a;
+  --brand:#171717;--brand-soft:#f2f2f2;--brand-line:#dedede;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --page-canvas:#0a0a0a;--surface:#171717;--surface-hover:#262626;--surface-selected:#2e2e2e;
+  --sidebar:#111111;--border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.14);--input:rgba(255,255,255,.16);
+  --fg:#f0f0f0;--fg-2:#d4d4d4;--muted:#a3a3a3;--faint:#737373;
+  --brand:#e5e5e5;--brand-soft:#262626;--brand-line:#3a3a3a;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{margin:0;background:var(--page-canvas);color:var(--fg);font:13px/1.56 var(--font-sans);letter-spacing:-.006em;-webkit-font-smoothing:antialiased}
+button,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(128,128,128,.28);border-radius:8px;border:3px solid transparent;background-clip:content-box}
+
+.app{display:grid;grid-template-columns:64px 224px minmax(0,1fr) 304px;height:100%}
+
+/* rail：与主应用一致，只做导航提示 */
+.rail{background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;gap:2px;padding:12px 0}
+.rail-btn{width:52px;height:48px;border:0;background:transparent;color:var(--muted);border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:11px;line-height:1}
+.rail-btn.on{background:var(--surface-selected);color:var(--fg)}
+.rail-btn:hover{background:var(--surface-hover);color:var(--fg)}
+.rail-spacer{flex:1}
+
+/* 左：bot 列表 */
+.bots{border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-height:0}
+.bots-head{padding:12px 12px 8px;border-bottom:1px solid var(--border)}
+.bots-head h2{margin:0 0 2px;font-size:12px;letter-spacing:.08em;color:var(--muted);font-weight:600}
+.bots-head .hint{font-size:11.5px;color:var(--faint)}
+.bot-list{overflow:auto;padding:8px 8px 12px;display:flex;flex-direction:column;gap:2px}
+.bot{display:grid;grid-template-columns:26px minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px;border:0;background:transparent;border-radius:8px;text-align:left;color:var(--fg-2)}
+.bot:hover{background:var(--surface-hover)}
+.bot.on{background:var(--surface-selected);box-shadow:inset 2px 0 0 var(--brand)}
+.avatar{width:26px;height:26px;border-radius:999px;display:grid;place-items:center;font-size:12px;font-weight:600;color:#fff}
+.avatar.a{background:#5b6cc0}.avatar.b{background:#3f8f86}.avatar.c{background:#b46a3c}
+.bot-main{min-width:0}
+.bot-main b{display:block;font-size:12.5px;font-weight:600;color:var(--fg)}
+.bot-main span{display:block;font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dot{width:6px;height:6px;border-radius:999px;background:var(--green)}
+.dot.paused{background:var(--faint)}
+.dot.quiet{background:var(--amber)}
+.bot-new{margin:8px;padding:7px 8px;border:1px dashed var(--border-strong);border-radius:8px;background:transparent;color:var(--muted);font-size:12px;text-align:center}
+
+/* 中：回合流 */
+.main{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--page-canvas)}
+.head{display:flex;align-items:center;gap:12px;padding:14px 20px 12px;border-bottom:1px solid var(--border);background:var(--page-canvas)}
+.head-copy{min-width:0;flex:1}
+.kicker{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.head h1{margin:2px 0 0;font-size:22px;font-weight:600;letter-spacing:-.03em}
+.head .sub{margin-top:2px;font-size:11.5px;color:var(--faint);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.head-actions{display:flex;align-items:center;gap:8px}
+.btn{height:30px;padding:0 11px;border:1px solid var(--input);background:var(--surface);color:var(--fg-2);border-radius:6px;display:inline-flex;align-items:center;gap:5px;font-size:13px;white-space:nowrap}
+.btn:hover{background:var(--surface-hover);border-color:var(--border-strong)}
+.btn.primary{background:var(--fg);border-color:var(--fg);color:var(--page-canvas)}
+.btn.tiny{height:24px;padding:0 8px;font-size:12px}
+.btn.danger{color:var(--red);border-color:var(--red-line)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.btn.ghost:hover{background:var(--surface-hover);color:var(--fg)}
+.tag{font-size:11.5px;line-height:17px;padding:0 6px;border-radius:5px;border:1px solid var(--border);background:var(--surface-hover);color:var(--fg-2);white-space:nowrap}
+.tag.ok{color:var(--green);border-color:var(--green-line);background:var(--green-soft)}
+.tag.warn{color:var(--amber);border-color:var(--amber-line);background:var(--amber-soft)}
+.tag.fail{color:var(--red);border-color:var(--red-line);background:var(--red-soft)}
+.tag.ai{color:var(--purple);border-color:var(--purple-line);background:var(--purple-soft)}
+.tag.mono{font-family:var(--mono);font-size:11px}
+
+.stream{flex:1;overflow:auto;padding:16px 20px 24px;display:flex;flex-direction:column;gap:14px}
+.day{display:flex;align-items:center;gap:10px;color:var(--faint);font-size:11px;letter-spacing:.06em}
+.day::after{content:"";flex:1;height:1px;background:var(--border)}
+
+.turn{display:flex;gap:10px;min-width:0}
+.turn .avatar{flex:none;margin-top:2px}
+.turn-body{min-width:0;flex:1}
+.turn-meta{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--faint);flex-wrap:wrap}
+.turn-meta b{font-weight:600;color:var(--fg-2)}
+.bubble{margin-top:5px;padding:9px 11px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);font-size:13.5px;line-height:1.6;color:var(--fg);max-width:min(62ch,100%)}
+.bubble .quote{display:block;margin:6px 0 0;padding-left:8px;border-left:2px solid var(--border-strong);color:var(--muted);font-size:12px}
+.reply-actions{display:flex;gap:6px;margin-top:7px}
+.why{margin-top:6px}
+.why-toggle{border:0;background:transparent;padding:0;font-size:11.5px;color:var(--muted);display:inline-flex;align-items:center;gap:4px}
+.why-toggle:hover{color:var(--fg)}
+.why-toggle i{font-style:normal;transition:transform .12s}
+.why[open] .why-toggle i{transform:rotate(90deg)}
+.why-body{margin-top:6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.why-row{display:grid;grid-template-columns:76px minmax(0,1fr);gap:8px;font-size:11.5px;line-height:1.55}
+.why-row span{color:var(--faint)}
+.why-row b{font-weight:500;color:var(--fg-2)}
+.mem-chip{display:inline-flex;align-items:center;gap:4px;margin:0 4px 4px 0;padding:0 5px;border:1px solid var(--border);border-radius:4px;font-size:11px;color:var(--fg-2);background:var(--surface-hover)}
+.mem-chip em{font-style:normal;color:var(--faint);font-family:var(--mono);font-size:10.5px}
+
+/* 沉默 / 被拦 / 转人工：不画成气泡，避免和"说过的话"混淆 */
+.quiet-row{display:grid;grid-template-columns:26px minmax(0,1fr) auto;align-items:center;gap:10px;padding:6px 2px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--border)}
+.quiet-row:last-child{border-bottom:0}
+.quiet-row .mark{width:26px;height:26px;border-radius:999px;display:grid;place-items:center;border:1px dashed var(--border-strong);color:var(--faint);font-size:11px}
+.quiet-row.blocked .mark{border-color:var(--amber-line);color:var(--amber)}
+.quiet-row.escalated .mark{border-color:var(--purple-line);color:var(--purple)}
+.quiet-row.escalated b{color:var(--fg)}
+.quiet-row b{font-weight:500;color:var(--fg-2);margin-right:6px}
+.quiet-row .why-toggle{font-size:11px}
+
+.composer{border-top:1px solid var(--border);padding:10px 20px 14px;background:var(--page-canvas)}
+.composer-box{display:flex;align-items:flex-end;gap:8px;border:1px solid var(--input);border-radius:10px;background:var(--surface);padding:8px 10px}
+.composer-box textarea{flex:1;resize:none;border:0;background:transparent;outline:none;min-height:22px;max-height:120px;font-size:13.5px;line-height:1.55}
+.composer-hint{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--faint);flex-wrap:wrap}
+
+/* 右：Inspector */
+.side{border-left:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-height:0}
+.tabs{display:flex;gap:2px;padding:10px 10px 0;border-bottom:1px solid var(--border)}
+.tabs button{height:26px;border:0;background:transparent;color:var(--muted);font-size:12px;padding:0 10px;border-radius:6px 6px 0 0}
+.tabs button.on{background:var(--page-canvas);color:var(--fg);font-weight:600;box-shadow:inset 0 -1px 0 var(--border)}
+.tabs button:hover{color:var(--fg)}
+.side-scroll{overflow:auto;padding:12px 14px 20px;display:flex;flex-direction:column;gap:16px}
+.side h3{margin:0 0 6px;font-size:11.5px;font-weight:600;color:var(--faint);letter-spacing:.04em}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 10px;font-size:12px}
+.kv span{color:var(--muted)}
+.kv b{font-weight:500;color:var(--fg-2);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kv b.mono{font-family:var(--mono);font-size:11.5px}
+.bars{display:flex;flex-direction:column;gap:8px}
+.bar-row{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:var(--muted)}
+.bar{height:5px;border-radius:99px;background:var(--surface-hover);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--fg);opacity:.72}
+.bar.warn i{background:var(--amber);opacity:1}
+.note{font-size:11.5px;line-height:1.6;color:var(--muted)}
+.persona-field{display:flex;flex-direction:column;gap:2px;padding:6px 0;border-bottom:1px solid var(--border)}
+.persona-field:last-child{border-bottom:0}
+.persona-field span{font-size:11px;color:var(--faint)}
+.persona-field b{font-weight:500;font-size:12.5px;color:var(--fg-2);line-height:1.5}
+.layer{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px}
+.layer:last-child{border-bottom:0}
+.layer .l{width:26px;font-family:var(--mono);font-size:11px;color:var(--faint)}
+.layer .n{flex:1;min-width:0}
+.layer .n b{display:block;font-weight:500;color:var(--fg-2)}
+.layer .n span{display:block;font-size:11px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.layer .c{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.switch{width:32px;height:18px;border-radius:99px;border:1px solid var(--border-strong);background:var(--surface-hover);position:relative;flex:none;padding:0}
+.switch i{position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:99px;background:var(--faint);transition:left .12s,background .12s}
+.switch.on{background:var(--fg);border-color:var(--fg)}
+.switch.on i{left:16px;background:var(--page-canvas)}
+.row{display:flex;align-items:center;gap:8px}
+.row.between{justify-content:space-between}
+.mono{font-family:var(--mono)}
+.tiny{font-size:11.5px}
+.faint{color:var(--faint)}
+.muted{color:var(--muted)}
+.spacer{flex:1}
+
+/* 审批卡（起任务前的一步确认） */
+.approve{margin-top:8px;border:1px solid var(--purple-line);background:var(--purple-soft);border-radius:8px;padding:9px 10px;display:flex;flex-direction:column;gap:7px}
+.approve b{font-size:12.5px;color:var(--fg)}
+.approve p{margin:0;font-size:12px;color:var(--fg-2);line-height:1.55}
+.approve .row{gap:6px}
+:root[data-theme="dark"] .approve{background:color-mix(in srgb,var(--purple) 14%,var(--surface));border-color:color-mix(in srgb,var(--purple) 40%,var(--border))}
+
+/* 一行提醒：频控/静音生效中 */
+.banner{display:flex;align-items:center;gap:8px;margin:0 20px 0;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:11.5px;color:var(--muted)}
+.banner .dot{background:var(--amber)}
+:root[data-theme="dark"] .banner{background:color-mix(in srgb,var(--amber) 8%,var(--surface))}
+
+@media (max-width:1180px){
+  .app{grid-template-columns:64px 184px minmax(0,1fr)}
+  .side{display:none}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail" aria-label="主导航">
+    <button class="rail-btn"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M3 10h6"/></svg><span>工作区</span></button>
+    <button class="rail-btn"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg><span>项目</span></button>
+    <button class="rail-btn on" aria-current="page"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="3.2"/><path d="M5 20a7 7 0 0 1 14 0"/><path d="M17.5 5.5 19 4"/></svg><span>Bot</span></button>
+    <button class="rail-btn"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z"/></svg><span>知识库</span></button>
+    <button class="rail-btn"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3v18M5 7v10M19 7v10M8.5 5v14M15.5 5v14"/></svg><span>记忆</span></button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9 2 2 0 1 1-2.8 2.8 1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0 1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3 2 2 0 1 1-2.8-2.8 1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9 2 2 0 1 1 2.8-2.8 1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0 1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4"/></svg><span>设置</span></button>
+  </nav>
+
+  <aside class="bots" aria-label="Bot 列表">
+    <div class="bots-head">
+      <h2>BOTS</h2>
+      <div class="hint">3 个在跑 · 2 个主动</div>
+    </div>
+    <div class="bot-list" id="botList"></div>
+    <button class="bot-new">＋ 新建 bot</button>
+  </aside>
+
+  <main class="main">
+    <header class="head">
+      <div class="head-copy">
+        <div class="kicker">Bot</div>
+        <h1 id="botName">戈洛</h1>
+        <div class="sub">
+          <span class="tag" id="botMode">主动</span>
+          <span id="botRole">项目值守 · 记得 342 条</span>
+          <span class="faint">·</span>
+          <span class="faint" id="botQuota">本小时 3 / 8 条</span>
+        </div>
+      </div>
+      <div class="head-actions">
+        <button class="btn" id="pauseBtn">暂停</button>
+        <button class="btn" id="mut" title="静音 1 小时：tick 只记录 silent">静音 1h</button>
+        <button class="btn primary" id="simulate">模拟 1 小时 tick</button>
+        <button class="btn ghost" id="theme" title="切亮/暗">◐</button>
+      </div>
+    </header>
+
+    <div class="banner" id="banner" hidden>
+      <span class="dot"></span>
+      <span id="bannerText">静音中：只记录沉默，不主动开口</span>
+      <span class="spacer"></span>
+      <button class="btn tiny ghost" id="unmute">取消静音</button>
+    </div>
+
+    <div class="stream" id="stream"></div>
+
+    <div class="composer">
+      <div class="composer-box">
+        <textarea id="say" rows="1" placeholder="以 @戈洛 的身份说点什么，或问它一句…"></textarea>
+        <button class="btn primary" id="send">发送</button>
+      </div>
+      <div class="composer-hint">
+        <span>⌘↵ 发送</span>
+        <span>·</span>
+        <span>说过的话进同一个 thread；沉默与被拦只进审计，不进对话</span>
+      </div>
+    </div>
+  </main>
+
+  <aside class="side" aria-label="Bot 详情">
+    <div class="tabs" role="tablist">
+      <button class="on" data-tab="persona">人格卡</button>
+      <button data-tab="memory">记忆</button>
+      <button data-tab="policy">策略</button>
+    </div>
+    <div class="side-scroll" id="sideBody"></div>
+  </aside>
+</div>
+
+<script>
+/* ---------------- 数据 ---------------- */
+const BOTS = [
+  {
+    id: "golo", name: "戈洛", avatar: "戈", avatarClass: "a", mode: "主动", role: "项目值守 · 记得 342 条",
+    persona: {
+      tone: "直接、短句，不用感叹号；不确定就说不确定",
+      address: "叫你「你」，不自称助手",
+      length: "默认 1–2 句；要展开时先给结论",
+      boundary: "不评价你的作息，不替你做对外承诺",
+      habit: "习惯先说「我理解的是…」再动手",
+    },
+    budget: { used: 3, limit: 8, tokens: 1840, tokenLimit: 4000, gap: "12s / 2min", quiet: "23:00–08:00" },
+    layers: [
+      { id: "L4", name: "结论", count: 12, sample: "交付前自己跑完 typecheck / build" },
+      { id: "L3", name: "项目", count: 9, sample: "spin-cockpit-harness · 视觉解析插件在收尾" },
+      { id: "L2", name: "事实", count: 87, sample: "偏好：先说结论再展开" },
+      { id: "L1", name: "原始", count: 234, sample: "会话原文，只回查不注入" },
+    ],
+    policy: { mention: true, maxTurns: 8, minGap: "2 分钟", sensitive: true, escalate: "对外发言 / 删除 / 花钱" },
+    turns: [
+      { kind: "quiet", decision: "silent", time: "10:12", title: "低分事件", reason: "一次普通 run 结束，没有待确认项", why: { trigger: "run.finished · #812", inject: [], gate: "打分 0.31 < 0.5", cost: "没调用模型" } },
+      { kind: "say", time: "10:26", title: "主动", text: "视觉解析那边我看到了两个待确认的核对项，需要我起个任务把它们补完吗？", why: { trigger: "todo.changed · #2960 进入 waiting_input", inject: [["L3", "视觉解析插件在收尾"], ["L2", "偏好：先给结论"]], gate: "静音时段外 · 间隔 14 分钟 · 配额 3/8", cost: "612 tokens · 1.2s" } },
+      { kind: "blocked", decision: "blocked", time: "10:31", title: "被频控拦下", reason: "同一 todo 十分钟内第二次事件", why: { trigger: "todo.changed · #2960 备注更新", inject: [], gate: "minGap 2 分钟 + 同源去重", cost: "没调用模型" } },
+      { kind: "escalated", decision: "escalated", time: "10:33", title: "转人工", reason: "你让我替你在群里发一条对外消息——这条我不自己发", why: { trigger: "mention · 「帮我在飞书群里回一下」", inject: [["L4", "对外承诺必须人来发"]], gate: "escalateRules · 对外发言 → desktop", cost: "没有出站" } },
+      { kind: "say", time: "10:44", title: "主动", text: "我理解的是「把解析结果的块级信息接进知识库」这件事还没动，要现在开一个任务吗？", dispatch: true, why: { trigger: "memory.due · L2「解析结果待接知识库」", inject: [["L2", "解析结果待接知识库"], ["L3", "知识库 Reader 契约是 page + markdown"]], gate: "dispatch 档位 · 需要你确认后才起 run", cost: "905 tokens · 1.8s" } },
+      { kind: "say", time: "11:02", title: "回你", text: "没有，还在等你确认。我不自己起任务。", why: { trigger: "mention · 你问「开了吗」", inject: [["L4", "起任务前必须一句确认"]], gate: "被动回复不受配额限制", cost: "318 tokens · 0.7s" } },
+    ],
+  },
+  {
+    id: "nan", name: "南", avatar: "南", avatarClass: "b", mode: "主动", role: "资料管家 · 记得 96 条",
+    persona: {
+      tone: "温和、给依据，先复述你的问题",
+      address: "叫「你」，偶尔叫你名字",
+      length: "默认 2–3 句，带一条引用",
+      boundary: "不猜你的偏好，只说你记过什么",
+      habit: "回答末尾附一条出处",
+    },
+    budget: { used: 1, limit: 4, tokens: 640, tokenLimit: 3000, gap: "10 分钟", quiet: "22:30–08:30" },
+    layers: [
+      { id: "L4", name: "结论", count: 5, sample: "引用必须能点回原页" },
+      { id: "L3", name: "项目", count: 4, sample: "知识库检索质量评估" },
+      { id: "L2", name: "事实", count: 41, sample: "你用中文写文档" },
+      { id: "L1", name: "原始", count: 46, sample: "会话原文，只回查不注入" },
+    ],
+    policy: { mention: true, maxTurns: 4, minGap: "10 分钟", sensitive: true, escalate: "涉及他人隐私的资料" },
+    turns: [
+      { kind: "say", time: "09:40", title: "主动", text: "昨天你导入的那份 PDF 有 3 页没抽到文字，我标成待看了，要看吗？", why: { trigger: "memory.due · 资料解析失败", inject: [["L3", "知识库检索质量评估"]], gate: "间隔 3 小时 · 配额 1/4", cost: "402 tokens · 0.9s" } },
+      { kind: "quiet", decision: "silent", time: "10:05", title: "低分事件", reason: "新导入了一份资料，没有异常", why: { trigger: "doc.ingested", inject: [], gate: "打分 0.22 < 0.5", cost: "没调用模型" } },
+    ],
+  },
+  {
+    id: "draft", name: "起草机", avatar: "起", avatarClass: "c", mode: "被动", role: "写作 · 记得 18 条",
+    persona: {
+      tone: "克制、书面语，不用网络词",
+      address: "不称呼，直接给文本",
+      length: "按需展开，先给可用的版本",
+      boundary: "不替你做事实性断言，缺依据就留空",
+      habit: "给出两版：短版 / 带解释版",
+    },
+    budget: { used: 0, limit: 2, tokens: 0, tokenLimit: 2000, gap: "30 分钟", quiet: "全天不主动" },
+    layers: [
+      { id: "L4", name: "结论", count: 3, sample: "文风：少形容词" },
+      { id: "L3", name: "项目", count: 2, sample: "对外文章" },
+      { id: "L2", name: "事实", count: 10, sample: "你用知乎发长文" },
+      { id: "L1", name: "原始", count: 3, sample: "会话原文，只回查不注入" },
+    ],
+    policy: { mention: true, maxTurns: 2, minGap: "30 分钟", sensitive: true, escalate: "对外发布" },
+    turns: [
+      { kind: "say", time: "昨天 21:14", title: "回你", text: "短版：把「主动开口」的成本写清楚，比写能力更有说服力。", why: { trigger: "mention · 你让它改开头", inject: [["L4", "文风：少形容词"]], gate: "被动回复", cost: "260 tokens · 0.6s" } },
+    ],
+  },
+];
+
+const state = { botId: "golo", tab: "persona", paused: {}, muted: {} };
+const $ = (sel) => document.querySelector(sel);
+
+const glyph = (kind) => kind === "blocked" ? "✕" : kind === "escalated" ? "↗" : "·";
+const fmtWhy = (turn) => {
+  const why = turn.why || {};
+  const mem = (why.inject || []).length
+    ? why.inject.map(([layer, text]) => `<span class="mem-chip"><em>${layer}</em>${text}</span>`).join("")
+    : '<span class="faint">没有注入记忆（沉默/被拦不组装上下文）</span>';
+  return `
+    <details class="why">
+      <summary class="why-toggle"><i>›</i>为什么${turn.kind === "quiet" ? "沉默" : turn.kind === "blocked" ? "被拦" : turn.kind === "escalated" ? "转人工" : "说"}</summary>
+      <div class="why-body">
+        <div class="why-row"><span>触发源</span><b class="mono">${why.trigger || "—"}</b></div>
+        <div class="why-row"><span>注入记忆</span><span>${mem}</span></div>
+        <div class="why-row"><span>过闸</span><b>${why.gate || "—"}</b></div>
+        <div class="why-row"><span>成本</span><b class="mono">${why.cost || "—"}</b></div>
+      </div>
+    </details>`;
+};
+
+function renderStream() {
+  const bot = BOTS.find((b) => b.id === state.botId);
+  const stream = $("#stream");
+  stream.innerHTML = `<div class="day">今天 · ${bot.turns.length} 个回合</div>`;
+  for (const turn of bot.turns) {
+    if (turn.kind === "quiet" || turn.kind === "blocked" || turn.kind === "escalated") {
+      stream.insertAdjacentHTML("beforeend", `
+        <div class="turn quiet-row ${turn.kind}">
+          <div class="mark">${glyph(turn.kind)}</div>
+          <div><b>${turn.title}</b><span class="muted">${turn.reason || ""}</span>${fmtWhy(turn)}</div>
+          <span class="mono faint tiny">${turn.time}</span>
+        </div>`);
+      continue;
+    }
+    stream.insertAdjacentHTML("beforeend", `
+      <div class="turn">
+        <div class="avatar ${bot.avatarClass}">${bot.avatar}</div>
+        <div class="turn-body">
+          <div class="turn-meta">
+            <b>${bot.name}</b>
+            <span>${turn.time}</span>
+            <span class="tag ${turn.title === "主动" ? "ai" : ""}">${turn.title}</span>
+            ${turn.dispatch ? '<span class="tag warn">dispatch</span>' : ""}
+          </div>
+          <div class="bubble">${turn.text}
+            ${turn.dispatch ? `
+              <div class="approve" data-approve>
+                <b>要我现在开这个任务吗？</b>
+                <p>我会建一条 todo 并起一个 run：把 zhulong 的 blocks.json 接进知识库，引用仍然走页级。跑之前你可以改标题。</p>
+                <div class="row">
+                  <button class="btn tiny primary" data-do="accept">起任务</button>
+                  <button class="btn tiny" data-do="reject">先别</button>
+                  <span class="tiny faint">起任务后仍需你在桌面点一次审批</span>
+                </div>
+              </div>` : ""}
+          </div>
+          ${fmtWhy(turn)}
+        </div>
+      </div>`);
+  }
+  stream.scrollTop = stream.scrollHeight;
+}
+
+function renderBots() {
+  const list = $("#botList");
+  list.innerHTML = "";
+  for (const bot of BOTS) {
+    const paused = state.paused[bot.id];
+    const muted = state.muted[bot.id];
+    const dot = paused ? "paused" : muted ? "quiet" : "";
+    const btn = document.createElement("button");
+    btn.className = `bot ${bot.id === state.botId ? "on" : ""}`;
+    btn.innerHTML = `
+      <span class="avatar ${bot.avatarClass}">${bot.avatar}</span>
+      <span class="bot-main"><b>${bot.name}</b><span>${bot.mode} · ${bot.role}</span></span>
+      <span class="dot ${dot}" title="${paused ? "已暂停" : muted ? "静音中" : "运行中"}"></span>`;
+    btn.addEventListener("click", () => { state.botId = bot.id; renderAll(); });
+    list.appendChild(btn);
+  }
+}
+
+function renderHead() {
+  const bot = BOTS.find((b) => b.id === state.botId);
+  $("#botName").textContent = bot.name;
+  $("#botMode").textContent = state.paused[bot.id] ? "已暂停" : bot.mode;
+  $("#botRole").textContent = bot.role;
+  $("#botQuota").textContent = `本小时 ${bot.budget.used} / ${bot.budget.limit} 条`;
+  $("#pauseBtn").textContent = state.paused[bot.id] ? "恢复" : "暂停";
+  const muted = Boolean(state.muted[bot.id]);
+  $("#banner").hidden = !muted;
+  $("#bannerText").textContent = `${bot.name} 静音中：tick 只记录沉默，不主动开口`;
+}
+
+function renderSide() {
+  const bot = BOTS.find((b) => b.id === state.botId);
+  const body = $("#sideBody");
+  if (state.tab === "persona") {
+    body.innerHTML = `
+      <section>
+        <h3>人格卡（结构化，不是一句 prompt）</h3>
+        <div class="persona-field"><span>语气</span><b>${bot.persona.tone}</b></div>
+        <div class="persona-field"><span>称呼</span><b>${bot.persona.address}</b></div>
+        <div class="persona-field"><span>长短</span><b>${bot.persona.length}</b></div>
+        <div class="persona-field"><span>边界</span><b>${bot.persona.boundary}</b></div>
+        <div class="persona-field"><span>习惯</span><b>${bot.persona.habit}</b></div>
+      </section>
+      <section>
+        <h3>本轮预算</h3>
+        <div class="bars">
+          <div class="bar-row"><span>本小时条数 ${bot.budget.used} / ${bot.budget.limit}</span><div class="bar ${bot.budget.used / bot.budget.limit > 0.75 ? "warn" : ""}"><i style="width:${Math.round(bot.budget.used / bot.budget.limit * 100)}%"></i></div></div>
+          <div class="bar-row"><span>本轮 tokens ${bot.budget.tokens} / ${bot.budget.tokenLimit}</span><div class="bar"><i style="width:${Math.round(bot.budget.tokens / bot.budget.tokenLimit * 100)}%"></i></div></div>
+        </div>
+        <p class="note">超配额时降级为沉默并记 <span class="mono">blocked</span>，不再调用模型。</p>
+      </section>
+      <section>
+        <h3>能力档位</h3>
+        <div class="kv">
+          <span>读取</span><b>记忆 · 资料 · 运行状态</b>
+          <span>起任务</span><b>${bot.mode === "被动" ? "关闭" : "开启（需确认 + 审批）"}</b>
+          <span>改设置</span><b>不允许</b>
+        </div>
+      </section>`;
+  } else if (state.tab === "memory") {
+    body.innerHTML = `
+      <section>
+        <h3>可读四层</h3>
+        ${bot.layers.map((l) => `
+          <div class="layer">
+            <span class="l">${l.id}</span>
+            <span class="n"><b>${l.name}</b><span>${l.sample}</span></span>
+            <span class="c">${l.count}</span>
+          </div>`).join("")}
+        <p class="note">L1 只做回查，默认不进注入；最近一轮注入见左侧「为什么说」。</p>
+      </section>
+      <section>
+        <h3>出站过滤</h3>
+        <div class="row between"><span class="tiny muted">敏感条目外发</span><span class="tag ok">已拦截</span></div>
+        <div class="row between" style="margin-top:6px"><span class="tiny muted">最近一次命中</span><span class="tiny mono faint">L2「住在哪」</span></div>
+        <p class="note" style="margin-top:6px">命中即只在本机说，不出现在 IM 出站内容里。</p>
+      </section>`;
+  } else {
+    body.innerHTML = `
+      <section>
+        <h3>出场规则</h3>
+        <div class="kv">
+          <span>群聊</span><b>只回 @</b>
+          <span>每小时上限</span><b class="mono">${bot.policy.maxTurns}</b>
+          <span>最小间隔</span><b class="mono">${bot.policy.minGap}</b>
+          <span>静音时段</span><b class="mono">${bot.budget.quiet}</b>
+        </div>
+      </section>
+      <section>
+        <h3>转人工</h3>
+        <div class="kv"><span>必须转桌面</span><b>${bot.policy.escalate}</b></div>
+        <p class="note">bot 永远不能替人点审批；dispatch 也只能「发起 + 请确认」。</p>
+      </section>
+      <section>
+        <h3>沉默优先</h3>
+        <p class="note">默认动作是不说。三条闸：打分 → 静音/频控 → 敏感过滤。任何一条不过都记一条 BotTurn（decision = silent / blocked），并在左侧可见。</p>
+        <div class="row between" style="margin-top:8px">
+          <span class="tiny muted">本小时被拦</span><span class="tag warn mono">1</span>
+        </div>
+      </section>`;
+  }
+}
+
+function renderAll() {
+  renderBots();
+  renderHead();
+  renderStream();
+  renderSide();
+}
+
+/* ---------------- 交互 ---------------- */
+$("#theme").addEventListener("click", () => {
+  const root = document.documentElement;
+  root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
+});
+$("#pauseBtn").addEventListener("click", () => {
+  const id = state.botId;
+  state.paused[id] = !state.paused[id];
+  renderAll();
+});
+$("#mut").addEventListener("click", () => { state.muted[state.botId] = true; renderAll(); });
+$("#unmute").addEventListener("click", () => { state.muted[state.botId] = false; renderAll(); });
+
+$("#simulate").addEventListener("click", () => {
+  const bot = BOTS.find((b) => b.id === state.botId);
+  if (state.paused[bot.id]) return;
+  const muted = state.muted[bot.id];
+  const now = new Date();
+  const stamp = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  if (muted) {
+    bot.turns.push({ kind: "quiet", time: stamp, title: "静音中", reason: "你手动静音了这小时", why: { trigger: "schedule · 每小时 tick", inject: [], gate: "quietHours / 手动静音", cost: "没调用模型" } });
+  } else if (bot.budget.used >= bot.budget.limit) {
+    bot.turns.push({ kind: "blocked", time: stamp, title: "被配额拦下", reason: `本小时已用 ${bot.budget.used}/${bot.budget.limit}`, why: { trigger: "todo.changed", inject: [], gate: "maxTurnsPerHour", cost: "没调用模型" } });
+  } else {
+    bot.budget.used += 1;
+    bot.budget.tokens = Math.min(bot.budget.tokenLimit, bot.budget.tokens + 420);
+    bot.turns.push({
+      kind: "say", time: stamp, title: "主动",
+      text: "刚看到 #2960 的备注又被你改了一次，如果只是记一笔，我就不插话了。",
+      why: { trigger: "todo.changed · #2960 备注更新", inject: [["L3", "视觉解析插件在收尾"], ["L2", "偏好：少打扰"]], gate: `静音时段外 · 间隔 ≥ ${bot.policy.minGap} · 配额 ${bot.budget.used}/${bot.budget.limit}`, cost: "486 tokens · 1.1s" },
+    });
+  }
+  renderAll();
+});
+
+$("#send").addEventListener("click", send); 
+$("#say").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } });
+function send() {
+  const el = $("#say");
+  const text = el.value.trim();
+  if (!text) return;
+  const bot = BOTS.find((b) => b.id === state.botId);
+  const now = new Date();
+  const stamp = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  bot.turns.push({
+    kind: "say", time: stamp, title: "回你",
+    text: bot.id === "golo" ? "好，我先不动。要开的时候你说一句，我再建任务。" : "收到，我记下了。",
+    why: { trigger: "mention · 你直接说话", inject: [["L4", "起任务前必须一句确认"]], gate: "被动回复不受配额限制", cost: "284 tokens · 0.6s" },
+  });
+  el.value = "";
+  renderAll();
+}
+
+document.querySelectorAll(".tabs button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b === btn));
+    state.tab = btn.dataset.tab;
+    renderSide();
+  });
+});
+
+/* 起任务：走「一句话确认 → 人工审批」的最小闭环 */
+document.addEventListener("click", (event) => {
+  const doBtn = event.target.closest("[data-do]");
+  if (!doBtn) return;
+  const card = doBtn.closest("[data-approve]");
+  const accept = doBtn.dataset.do === "accept";
+  card.innerHTML = accept
+    ? `<b>已建任务 #3014，等你在桌面审批</b><p class="tiny muted">run 还没起。审批通过后才会真的执行；不点就一直停在待审批。</p><div class="row"><span class="tag warn">waiting_input</span><span class="tiny faint">bot 不能自批</span></div>`
+    : `<b>好，先不开</b><p class="tiny muted">我把这件事留在记忆里，下次同一话题再提。</p>`;
+});
+
+/* 参数：?theme=light|dark、?bot=<id> */
+const params = new URLSearchParams(location.search);
+if (params.get("theme") === "light" || params.get("theme") === "dark") document.documentElement.dataset.theme = params.get("theme");
+const wantBot = params.get("bot");
+if (wantBot && BOTS.some((b) => b.id === wantBot)) state.botId = wantBot;
+
+renderAll();
+</script>
+</body>
+</html>

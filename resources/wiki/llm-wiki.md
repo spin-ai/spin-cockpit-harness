@@ -104,6 +104,29 @@ wiki.maintain
 `wiki.dream` 只是它的兼容壳（默认 dry-run）。整理/模型整理/维护扫描都不直接改 `reviewed`；
 人改过的句子会记成人工结论（claim），整理会动到它们时整页自动整理被拦下，改成待审建议。
 
+## 写入闸门：建议与人工结论
+
+整理的定位不是「自动改对」，而是把低置信度的改动变成**可审阅的建议**。
+
+```text
+wiki.curate（确定性，免费秒级）
+   ├─ draft              → 直接写 + revision(curate:structure)
+   └─ reviewed / stale   → 只产建议，不写盘
+```
+
+建议对象存在 `wiki-index.json` 的 `suggestions[]`（上限 120 条）：`kind = structure / summary / citation / merge / stale-fix`，存**完整渲染正文**（不是 diff 指令）+ `baseHash` + evidence。
+
+闸门（每条都能被单测断言，不靠 prompt 自觉）：
+
+1. 只动确定性、有界的部分：大纲 / 摘要行 / `## 要点` / `## 相关`；用户自己写的小节一律不动；
+2. **不删人写的内容**：已有要点条目、夹在中间的非列表段落、手写 `[[相关]]` 原样保留；原页面每一行非标题正文都必须出现在整理结果里（`wiki:curate:selftest` 断言）；
+3. 批准 = 纯字节拷贝（不重新调模型）+ revision；退回记 feedback；同类 30 天不重复打扰；
+4. 页面在建议之后改过 → 标 `needs_rebase`，不自动合并。
+
+**人工结论（claim）保住「人改的那一句」**：人保存已有页面时，把新增的行记成 claim（标题 / 摘要 / 纯双链 / 短句不算，单页上限 40）；整理若会改写或丢掉其中任一条，连 draft 都不自动写，改成待审建议。判定只有三档（原样 / 改写 / 不见），行级文本 + bigram，不依赖模型；`conflict` / `orphan` 会进「结论待确认」，解除只撤销锁定、不动正文。
+
+另外两条硬边界：`wiki.upsertDraft`（Agent 通道）不能覆盖 `reviewed`，会直接拒绝并提示走审核；资料引用走 `knowledge_cite` 写 citation 快照，不让 Agent 伪造出处。
+
 ## UI
 
 ![Wiki 页面](./wiki/notes-wiki.png)
@@ -137,3 +160,9 @@ wiki.maintain
 - `revisions/<pageId>.ndjson`：修订历史单独追加，不进入索引。
 - `wiki-trash.json`：回收站 metadata；删除时保留正文分片，恢复不丢内容，彻底删除才移除。
 - 旧 `wiki.json` 首次启动自动迁移为 `wiki.json.bak`。
+
+## 继续阅读
+
+- [知识库](#/wiki/knowledge)：资料侧的解析 / 索引 / 检索与引用。
+- [记忆与 Dream](#/wiki/memory)：页面之上的四层与维护扫描。
+- [插件与 LLM Wiki](#/wiki/plugins)：插件宿主、Host API 与 MCP bridge。

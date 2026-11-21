@@ -120,6 +120,67 @@ export async function chat(messages, { key, model = MODELS.fast, temperature = 0
   };
 }
 
+/** 从一条 SSE `data:` 负载里取出增量文本；纯函数，便于自测。 */
+export function parseSseDelta(payload) {
+  const raw = String(payload || "").trim();
+  if (!raw || raw === "[DONE]") return "";
+  try {
+    const json = JSON.parse(raw);
+    const choice = json?.choices?.[0];
+    return String(choice?.delta?.content ?? choice?.message?.content ?? "");
+  } catch { return ""; }
+}
+
+/**
+ * 流式对话：给 bot 的被动回复用。
+ * Ark 的 plan 网关是 OpenAI 兼容的 SSE；如果不是 event-stream（网关降级），
+ * 就退回一次性 JSON，仍然按同一份 onDelta 协议吐一次全文。
+ */
+export async function chatStream(messages, { key, model = MODELS.fast, temperature = 0.6, maxTokens = 700, signal, onDelta } = {}) {
+  if (!key) { const err = new Error("缺少 Ark API key"); err.code = "no-key"; throw err; }
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 120000);
+  if (signal) signal.addEventListener("abort", () => ac.abort(), { once: true });
+  try {
+    const res = await fetch(`${ARK_BASE}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens, stream: true }),
+      signal: ac.signal,
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      const err = new Error(`Ark ${res.status}: ${detail.slice(0, 200)}`);
+      err.code = `http-${res.status}`;
+      throw err;
+    }
+    const type = String(res.headers.get("content-type") || "");
+    if (!type.includes("event-stream")) {
+      const json = await res.json().catch(() => ({}));
+      const text = String(json?.choices?.[0]?.message?.content || "");
+      if (text) onDelta?.(text);
+      return { text, usage: json?.usage || {}, model };
+    }
+    let text = "";
+    let buffer = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of res.body) {
+      buffer += decoder.decode(chunk, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 1);
+        if (!line.startsWith("data:")) continue;
+        const delta = parseSseDelta(line.slice(5));
+        if (delta) { text += delta; onDelta?.(delta); }
+      }
+    }
+    return { text, usage: {}, model };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** 建索引前的自检：key 是否可用于 embedding。 */
 export async function probe({ key } = {}) {
   const k = resolveArkKey(key);

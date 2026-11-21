@@ -25,6 +25,7 @@
 | 在终端中打开 | 目录右键；会打开一个新的终端标签（`harness:open-terminal-at`） |
 | 复制路径 / 相对路径 | 行右键 |
 | 预览操作 | 预览头部：渲染/源码切换、刷新、Finder 显示、复制相对路径、关闭；切回标签时自动重读文件 |
+| 格式支持 | HTML / Markdown / 图片 / 音视频 / PDF / 文本；二进制与超大文件给原因而不是乱码，见 2.5 |
 
 ## 2. Markdown / HTML 渲染
 
@@ -34,6 +35,27 @@
 - **HTML 渲染 = 网页预览同一套能力**：webview 就绪后可以直接「拾取元素」，走 `previewPick(webContentsId, root)`，和 dev server 预览共用 CDP inspect / 源码映射 / 截图，拾取结果直接进 Chat composer。
 - 源码模式：原始文本直接展示（等宽），方便对照 agent 改了哪里。
 - 刷新 / 切回标签会重新读文件；HTML 会重新加载 webview。
+
+## 2.5 格式矩阵（谁能预览、怎么预览）
+
+类型口径只有一份：`electron/file-kinds.mjs`（`IMAGE_EXT` / `VIDEO_EXT` / `AUDIO_EXT` / `PREVIEW_NATIVE_EXT`），渲染层的对应清单位于 `src/components/FileVisual.tsx`，两边由 `npm run verify:preview-format` 校验一致。
+
+| 格式 | 预览方式 | 说明 |
+|---|---|---|
+| `.html` `.htm` | webview `file://` → 渲染 / 可视化 / 源码 | 可拾取元素 |
+| `.md` `.markdown` | `marked` + DOMPurify → 富文本 / 源码 / 目录 | 可编辑并写回 |
+| 图片 `.png/.jpg/.jpeg/.webp/.gif/.svg/.ico/.bmp/.avif/.tif/.tiff` | webview 原生渲染 | 不读正文，不再受 2MB 文本上限影响 |
+| 音视频 `.mp4/.m4v/.webm/.ogv/.mov` · `.mp3/.wav/.m4a/.aac/.ogg/.oga/.flac` | webview 原生播放器 | Chromium 能解的容器；mkv / avi 走系统播放器 |
+| `.pdf` | webview + Chromium 内置 PDF 阅读器 | Electron webview 默认 `navigator.pdfViewerEnabled === true`，不需要放开 `plugins` |
+| `.docx` | `files:previewDoc` → mammoth → HTML | 渲染层再过一次 DOMPurify；图片按 data URI 内嵌 |
+| `.xlsx/.xlsm/.xls/.ods` | `files:previewDoc` → SheetJS → 表格 | 自建表格（不用 `sheet_to_html`）：最多 12 sheet × 400 行 × 60 列，超出标「已截断」 |
+| `.pptx/.pptm/.doc/.odt/.odp/.odg/.rtf/.epub` | 装了 LibreOffice：`soffice --convert-to pdf` → 内置 PDF 阅读器（**版式还原**，按 `路径+mtime+size` 缓存到 `userData/doc-preview/`）；没装：officeparser 抽文本 | 转换失败自动回落文字，不报错卡住 |
+| 普通文本 / 代码 / `.csv` / `.log` | `<pre>` 等宽展示 | 严格 UTF-8 → BOM UTF-16 → GB18030 兜底；非 UTF-8 会在顶部提示「按 GB18030 解码（保存会写成 UTF-8）」 |
+| 二进制（`.docx/.xlsx/.zip/.woff/.db/.wasm` …） | 不给内容，只给原因 | NUL 字节 / 控制字符占比判定；提示用「在 Finder 中显示」交给系统应用 |
+| >2MB 的文本 | 不预览，提示原因 | 避免一次把 2MB 塞进 DOM |
+
+`files:read` 的返回：`{ text, encoding?, size, ext }`、`{ native: true, size, ext }`、`{ binary: true, size, ext, encoding }`、`{ error, size, ext }`。
+**改了什么**：以前所有非图片文件都按 `utf8` 读，GBK / UTF-16 是乱码、docx / zip 把二进制塞进 `<pre>`、`.ico`/`.bmp` 图标显示成图片但预览是乱码、超过 2MB 的图片先被判「太大」、文件名带 `#`/`?` 时 `file://` 被截断（`encodeURI` 不转义）。
 
 ## 3. 右键菜单
 
@@ -47,7 +69,8 @@
 
 | 通道 | 说明 |
 |---|---|
-| `files:list` / `files:read` | 已有：列目录、读文本/图片 |
+| `files:list` / `files:read` | 列目录；读文件并分类（文本 / 原生渲染 / 二进制 / 过大），见 2.5 |
+| `files:previewDoc` | `{ rel, root }` → `{ html, kind, truncated }` 或 `{ error }`；docx / xlsx / pptx…（≤30MB） |
 | `files:create` | `{ rel, kind, name }`；kind=`file`/`folder`；同名报错 |
 | `files:rename` | `{ rel, name }`；禁止重命名项目根目录 / 覆盖同名 |
 | `files:duplicate` | `{ rel }`；目录递归复制，文件 `copyFileSync` |

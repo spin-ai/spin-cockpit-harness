@@ -74,6 +74,9 @@
 | 预览 | `previewHomeUrl` | `http://localhost:5173/` | `PreviewSurface` 地址栏默认值 |
 | 预览 | `elementScreenshots` | `true` | 元素拾取截图（`preview:pick`） |
 | 预览 | `contextDetail` | `standard` | `formatContext`：compact 去掉组件/盒模型/样式/HTML |
+| 预览 | `previewIgnoreCertErrors` | `false` | 预览会话 `setCertificateVerifyProc`：自签名 https dev server 下一次加载生效 |
+| 预览 | `previewPermissionSites` | `""` | 站点权限 JSON（`{ origin: ["media", …] }`）；由预览页「允许并刷新」或设置页撤销写入 |
+| 预览 | `previewAgentControl` | `true` | 是否给 run 挂 `cockpit_browser` MCP（`browser_*` 工具操作预览页） |
 | 数据 | — | — | 打开数据目录、导出 `.db`、重置设置 |
 
 ## 3. 持久化

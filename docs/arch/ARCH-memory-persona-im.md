@@ -47,6 +47,7 @@
 - **L1 索引**：`mem.db` 里建 `transcript_fts`（bigram FTS5）+ `transcript_map`（ref → rowid，用于 upsert）；`openDb({ onTranscript })` 钩子在 `addMessage` / `updateMessage` / `addEvent` 时同步一条（包 try/catch，索引失败不弄坏写入）。启动时 `transcriptSync` 清孤儿 + 补缺失（不用条数相等判断，事件是 300 条滚动窗口）。`run_read` 仍未做，runs 还是内存扫。
 - **Dream 多两项确定性检查**：`merge`（同 kind 观察的 bigram 包含度 ≥ 0.9 且 token ≥ 4，接受后多余那条标 stale）与 `correct`（结论 `invalid_at` 后，支撑它的 note 产「复核观察」建议）；每日建议预算落 `meta.dreamBudget`，默认 200 条，记忆页显示「今日 N / 上限 M」。
 - **改写建议 `rewrite`**：只对 `status = new` 的观察提出（`verified` 是人确认过的，不许被模型改写）；不许引入新事实——新增 token ≤ max(2, 原句 20%) 且原句包含度 ≥ 0.5，两条都过才入队；接受后旧正文进 `note_revisions` 再覆盖，随时可回退。
+- **Dream 循环化（2026-11-16）**：提案带 `diff / base_rev / confidence / dream_id`，接受前校验目标版本（人改过就标 `superseded`，不覆盖）；语义 pass 的候选带证据（观察自己的 L1 出处 + 相关会话片段 + 页面引用原句），`correct` 必须有证据且 ref 必须是给过它的；`dreamFingerprint` 幂等（输入没变不重跑）；空闲触发（`idleMinutes`，无 run 在跑才跑）；每轮写 `dream_runs` 台账，记忆页显示「上次 空闲 · N 分钟前 · 几条 · 耗时」。
 - **语义 pass（默认关）**：`llmPass` 打开后，Dream 多跑一次模型调用（最近 60 条观察），产出 `merge` / `correct` 建议；三道闸门（开关 / key / 当日调用预算 20 次）+ 入队校验（id 必须存在、keep 必须落在 ids、必须有 reason、同组 id 只入队一次）。解析器 `parseDreamItems` 是纯函数，禁得起脏输出。
 - **`run_read`**：单 run 回查（状态 / 耗时 / token / 错误 + 最多 20 条消息 + 提到它的关键事件），与 `memory_search` 分工明确。
 - 回归：`npm run memory:selftest`（临时目录，含老库补列）、`npm run memory:preview`（渲染层预览：断言 + 亮/暗截图，不启动 Electron）。
@@ -190,7 +191,9 @@
 
 ## 5. 即时通信（IM）
 
-- `electron/im/gateway.mjs`：Telegram（`getUpdates` 长轮询，真实可用）+ 飞书/微信出站 webhook + 本地入站 HTTP（`POST {chat_id, text}`）。
+> 渠道范围已收窄为**只做飞书**（2026-11-15）。本节是当时的一轮落地记录；边界、飞书接入路径与未做项以 [`ARCH-im-gateway.md`](ARCH-im-gateway.md) 为准。
+
+- `electron/im/gateway.mjs`：Telegram（`getUpdates` 长轮询，真实可用，现为非目标渠道）+ 飞书/微信出站 webhook + 本地入站 HTTP（`POST {chat_id, text}`）。
 - 安全：只处理 allowlist；陌生会话忽略并留日志；入站要求 `Bearer` token。
 - 入站消息走 `actions.send()` → 同一套 thread/todo/run；`im/sessions.json` 记录 chat ↔ todo。
 - run 结束回传三段式卡片（结果 / 步骤 / 协议身份）；审批时推「回复数字」卡片，数字消息即选择。

@@ -2,7 +2,7 @@
 
 # Arch · 记忆（四层 + 遗忘 + 索引 + Dream）
 
-> **状态（2026-11-15 复核）：四层 + note（kind/置信度/存活期/去重闸门）+ 失效链 + 打分注入 + 注入台账 + L1 bigram 索引 + Dream 建议队列已落地**（`electron/memory/index.mjs`、`electron/db.mjs` 的 `onTranscript` 钩子、`src/components/Memory.tsx`、MCP `memory_*`、`npm run memory:selftest` / `db:selftest`）；**未做**：注入归因升级（现在是标题片段匹配，只能分「从没被用过」）。本文是 [`REQ-modules-original.md`](../product/REQ-modules-original.md) 第 3 节「记忆」的实现设计。
+> **状态（2026-11-15 复核，11-16 补 Dream 循环）：四层 + note（kind/置信度/存活期/去重闸门）+ 失效链 + 打分注入 + 注入台账 + L1 bigram 索引 + Dream 建议队列 + 提案 diff/版本闸门 + 证据链 + 输入指纹幂等 + 空闲触发 + `dream_runs` 台账已落地**（`electron/memory/index.mjs`、`electron/db.mjs` 的 `onTranscript` 钩子、`src/components/Memory.tsx`、MCP `memory_*`、`npm run memory:selftest` / `db:selftest`）；**未做**：注入归因升级（现在是标题片段匹配，只能分「从没被用过」）。本文是 [`REQ-modules-original.md`](../product/REQ-modules-original.md) 第 3 节「记忆」的实现设计。
 > 框架来自 Anthropic《The components of agent memory》：**四层记忆 + 一个 Dream 循环**。叙事版见 [`ARTICLE-zhihu-llm-wiki.md`](../articles/ARTICLE-zhihu-llm-wiki.md)。
 > 关联：[`ARCH-knowledge.md`](ARCH-knowledge.md)（L3 的对象：资料与页面）、[`PLUGIN-notes.md`](PLUGIN-notes.md)、[`ARCH-chat-thread.md`](ARCH-chat-thread.md)。
 
@@ -52,9 +52,9 @@ L1 Transcripts  →  L2 Memory Notes  →  L3 知识（资料 + 页面）  →  
 | L4 | 打分注入（置顶 50 / 有来源 30 / 层级 / 近两周 10 / log 被用）+ note 预留预算 + L1 排除 | — |
 | 台账 | `inject_log`：每次 run 注入了哪些 id、是否被回答用到，回填 `hit_count`，`injectionStats()` 算命中率 | 归因很粗（按标题片段是否出现在回答里） |
 | 失效 | `entries.invalid_at / superseded_by / supersedes` + `entryAsOf` 回看 | 只能显式指定 `supersedes`，不做主题猜测（故意的，见 §4.5） |
-| Dream | 七类确定性检查 + 建议队列 + 每日建议预算；**语义 pass（模型）默认关**，打开后一次调用找「换说法的重复」「已不成立」「该改写的糙句」 | 语义 pass 没有准确率数据（打开的人才知道） |
+| Dream | 七类确定性检查 + 建议队列 + 每日建议预算 + 提案 diff/版本闸门 + 证据链 + 输入指纹幂等 + 空闲触发 + `dream_runs` 台账；**语义 pass（模型）默认关**，打开后一次调用找「换说法的重复」「已不成立」「该改写的糙句」，`correct` 必须有证据 | 语义 pass 没有准确率数据（打开的人才知道）；页面结论对 source 的 claim check 还没做 |
 
-**结论：四层结构成立，遗忘语义与 L1 索引都已补齐；剩下的是注入台账的准度（归因很粗）与 Dream 的语义 pass。**
+**结论：四层结构成立，遗忘语义与 L1 索引都已补齐，Dream 已经是「能看证据、能被人否决、能自己按空闲跑」的循环；剩下的是注入归因的准度（很粗）、语义 pass 的准确率数据，以及页面结论对 source 的 claim check。**
 
 ---
 
@@ -208,6 +208,9 @@ note: score = verified(20)/new(6) + confidence×10 + 近 7 天(5)
 
 ### 6.3 台账、预算与归因
 
+- **owner 维度**：`entries.owner` / `notes.owner` 为空 = 全库共享，`bot:<id>` = 只给这个 bot；`inject({ owner })` 返回「共享 + 自己」，不传则行为不变（全库）。当前只有人格 bot 传它（`electron/bot/index.mjs` 的 `recall()`），bot 的注入也走 `runId = bot:<id>:<turnId>` 落台账；写入侧 `entryUpsert` / `noteAdd` 已接受 `owner`，还没有调用方传；
+- **条目修订与乐观并发**：`entry_revisions` 与 `note_revisions` 同构；`entryRewrite()` 改写前把旧版（title + body）存进修订表，`entryRestoreRevision()` 回滚本身也是一次改写（所以能再回滚回去）。写入与改写都接受 `expectedUpdatedAt`，和库里的 `updated_at` 不一致就抛 `MemoryConflictError`（`code: "memory_conflict"`）——**两个人（或 bot + 人）同时改一条结论时，后来的不能悄悄覆盖**；不传时行为不变（向后兼容）。UI 编辑暂时还不传，接的时候照抄 `entryRewrite` 的用法；
+- **容量账 `usage()`**：返回 `{ budget, chars, ratio, entries, notes, dropped }`；人格 bot 在注入用到 80% 以上时会把「已用 X/Y 字符」写进上下文，让它在保存被拒之前自己合并或删（`electron/bot/index.mjs` 的 `recall()`）；
 - 预算**只有一个来源**：`meta.injectBudget`（默认 12000）。run 注入、MCP `memory_inject`、记忆页预览都走它，不要再在调用处写死（曾经 run 用 6000、UI 用 12000，两边对不上）；
 - `memory_version`：任何写入自增，随 `inject()` 返回；
 - **台账只记真注入**：`inject({ runId })` 才写 `inject_log`，记忆页预览不写（否则「进过上下文」会被预览刷成假数据）；
@@ -240,10 +243,16 @@ note: score = verified(20)/new(6) + confidence×10 + 近 7 天(5)
 ### 7.2 语义 pass（调模型，默认关）
 
 ```text
-输入：dreamCandidates() 取最近 60 条「new / verified 且未过期」的观察（id + kind + body）
-输出：{"items":[{"action":"merge|correct|rewrite","ids":[...],"keep":"...","body":"仅 rewrite","reason":"..."}]}
+输入：dreamCandidates({ withEvidence: true }) 取最近 60 条「new / verified 且未过期」的观察
+     每条 = id + kind + body + evidence（出处片段）
+     evidence 两个来源：观察自己的 source_ref 回 L1 索引取原文（最强）+ 按正文 bigram 检索到的相关会话
+     来源是页面的观察，主进程再补一段页面证据（标题 / 摘要 / 引用原句），只读
+输出：{"items":[{"action":"merge|correct|rewrite","ids":[...],"keep":"...","body":"仅 rewrite","evidence":["ref"],"reason":"..."}]}
 一次扫描 = 1 次模型调用（不是每条一次）；失败回落非 JSON 模式重试一次
 ```
+
+**为什么必须带证据**：只喂一句结论，模型只能凭语感说「这条看着不对」——那不是校正，是猜。
+Anthropic 那个「PokéCenter 记错位置，对照 transcript 改回来」的动作，前提就是模型手里有原文。
 
 三道闸门，任何一道不过就静默跳过并在记忆页看到原因：
 
@@ -255,7 +264,7 @@ note: score = verified(20)/new(6) + confidence×10 + 近 7 天(5)
 
 - 只能引用**存在的** note id（防幻觉 id）；
 - `merge` 至少 2 个 id 且 `keep` 必须落在 ids 里（不合法就回落第一个）；
-- `correct` 只能指 1 个 id；
+- `correct` 只能指 1 个 id，**且必须带 evidence**：ref 必须落在这次真的给过它的证据里（`evidenceRefs` 校验）——不许拿「我觉得」改人的记忆；没给证据就不进队列；
 - `rewrite` 只能指 1 个 `status = new` 的 note（`verified` 是人确认过的，不许被模型改写），且必须过「不引入新事实」两条闸门（见 §7.1）；
 - 必须有 `reason`（≥4 字），没有理由的建议不进队列；
 - 同一组 id 同类建议只入队一次（`sig = llm:action:ids`）；
@@ -264,8 +273,10 @@ note: score = verified(20)/new(6) + confidence×10 + 近 7 天(5)
 ### 7.3 调度与预算
 
 ```text
-触发：手动点「运行 Dream」（空闲自动触发还没做）
-并发：1
+触发：① 手动点「运行 Dream」（force，允许重跑）② 空闲触发（idleMinutes，默认 30 分钟，0 = 关）
+     空闲 = 没有 run 在 queued/running/waiting_*，且 run / 消息 / 事件最后一次活动都超过 idleMinutes
+并发：1（dreamBusy；手动与空闲共用 runDreamCycle 一条路径）
+幂等：inputHash（观察 + L3 + 页面 + 资料的 id@updated_at）与上一轮相同 → 直接返回，不扫描、不调模型
 预算：单次 ≤ maxSuggestions；每日建议 ≤ dayLimit（默认 200）；语义 pass 每日模型调用 ≤ llmDailyCalls（默认 20）
      两笔账都存在 meta.dreamBudget 里（按本地自然日），写的时候必须一起带上，否则会互相覆盖
 范围：只处理候选集（note ≤ 300、L3 条目、reviewed 页面），不做全量历史扫
@@ -275,6 +286,22 @@ note: score = verified(20)/new(6) + confidence×10 + 近 7 天(5)
 - 预算**按建议条数**算，不按模型调用——现在这条链路是确定性的，不花钱；
 - 但上限仍然必要：建议一天刷 500 条，人就再也不看复核队列了，Dream 等于没跑；
 - 预算用尽时**静默返回空**（不报错），记忆页显示「今日 N / 上限 M」。
+
+**台账 `dream_runs`**（每轮一行，与建议是两回事）：
+
+```sql
+CREATE TABLE dream_runs(
+  id TEXT PRIMARY KEY, trigger TEXT,      -- manual | idle | import
+  fingerprint TEXT,                       -- 输入指纹（一样就不重跑）
+  pages INTEGER, sources INTEGER, notes INTEGER,
+  created INTEGER, ms INTEGER,
+  semantic TEXT,                          -- JSON：语义 pass 的 skipped / items / created / reason
+  at INTEGER
+);
+```
+
+没有它就只能回答「现在有几条建议」，回答不了「上次跑出过什么、花了多久、为什么没跑模型」。
+记忆页显示「上次 空闲 · 2 小时前 · 3 条 · 1s」。
 
 ### 7.4 建议队列（不是直接写入）
 
@@ -290,14 +317,24 @@ CREATE TABLE dream_suggestions(
 );
 ```
 
-实现上是 `suggestions` 表（`action / title / detail / target_kind / target_id / sources / sig / status`），`sig` 去重，拒绝写 `rejects`。
+实现上是 `suggestions` 表，比设计稿多三列——**人要看的是「改了什么、基于哪一版」，不是「我改好了」**：
+
+| 列 | 内容 |
+|---|---|
+| `diff` | 逐行 `-` / `+`：这条建议会删掉什么、加回什么（rewrite / merge / correct / promote 都有） |
+| `base_rev` | 建议基于目标的哪一版（note / entry = `updated_at`；页面在主进程用 `wiki.getPage().updatedAt` 校验） |
+| `confidence` | `1` = 确定性检查，`0.5` = 模型判断——两者混在一起人就没法决定看哪条 |
+| `dream_id` | 属于哪一轮 `dream_runs`，出问题能回查那一轮的输入与语义 pass 结果 |
+
+`sig` 去重，拒绝写 `rejects`。
 
 规则：
 
 1. **只产建议，不直接改 `reviewed` 页面、不直接改 L4**；
 2. 每条建议必须能说清依据（`sources` 指向具体 note / 条目 / 资料）——没依据的不进队列；
 3. 拒绝也留痕；同类建议不再重复打扰（`sig` + `rejects`）；
-4. 接受 = 走对应层的正常写入路径（note 标 `stale` / note 改写并留旧版 / draft 创建 / L4 条目）。
+4. 接受 = 走对应层的正常写入路径（note 标 `stale` / note 改写并留旧版 / draft 创建 / L4 条目）；
+5. **接受前校验目标版本**：`base_rev` 与当前版本不一致（人改过 / 另一条建议改过）→ 标 `superseded`，不覆盖、不执行、不进 `rejects`（这不是「人拒绝了它」）。人的编辑永远优先。
 
 ### 7.5 顺序
 
@@ -331,7 +368,8 @@ fix（页面引用）→ build（资料无页面）→ fill（无依据）→ pr
 | 指标 | 看什么 |
 |---|---|
 | 注入命中 | `injectionStats().hitRate`：本轮 L4 注入的条目被回答用到的比例 |
-| 建议采纳率 | Dream 建议 accepted / pending 的比例 |
+| 建议采纳率 | Dream 建议 accepted / pending 的比例；作废（`superseded`）单独算——它衡量「Dream 和人抢写」的频率 |
+| 每轮 Dream | `dream_runs`：trigger / 输入指纹 / 产出条数 / 耗时 / 语义 pass 为什么没跑 |
 | 纠错率 | `correct` 类建议里“确实是错的”占比 |
 | 记忆膨胀 | L2 note 总数、L3 总字符 / 原始资料总字符 |
 | L1 索引 | `transcriptCount()` 与 harness.db 条数（对账每次启动跑，不用列指标）；检索延迟不随消息数线性涨 |
@@ -358,7 +396,9 @@ fix（页面引用）→ build（资料无页面）→ fill（无依据）→ pr
 | M4 | 晋升 + 剪枝（先 A/B 验证收益再上） | 1–2 |
 | **M5** | **遗忘语义：失效链 + note 衰减 + 打分注入（已完成，2026-11-15）** | — |
 | M6 | 写入闸门（来源必填 / 去重）+ 注入台账 + 被引用回填（**已完成，2026-11-15**） | — |
-| M7 | Dream 的确定性 `correct` / `merge` / 每日预算 + **语义 pass（默认关、带调用预算）** + 改写建议（`rewrite`，留旧版可回退）（**已完成 2026-11-15**）；剩下归因升级成模型自评 | 1.5 |
+| M7 | Dream 的确定性 `correct` / `merge` / 每日预算 + **语义 pass（默认关、带调用预算）** + 改写建议（`rewrite`，留旧版可回退）（**已完成 2026-11-15**） | 1.5 |
+| **M8** | **Dream 从「按钮」变成「循环」：提案带 diff / base_rev / confidence + 接受前版本闸门；候选带证据（transcript 原文 + 页面引用），`correct` 必须有证据；输入指纹幂等 + 空闲触发 + `dream_runs` 台账（已完成 2026-11-16）** | 3 |
+| M9 | 剩下：注入归因升级成模型自评；页面结论对 source 的 claim check（现在只做结构检查）；acceptance / 作废率的自动统计 | 2 |
 
 **M0–M2 = 3.5 天**（无模型、零新依赖）；**M3 起开始产生模型成本**。
 
@@ -383,4 +423,4 @@ fix（页面引用）→ build（资料无页面）→ fill（无依据）→ pr
 2. 高置信度 `new` note 自动进注入（现在 ≤4 条、标「未验证」）——是否应该一条都不放，只等人工 `verified`？
 3. 剪枝的第一版只做“提示不做动作”，还是一开始就产合并建议？
 4. `merge` 合并动作怎么落地：合并后的新条目该继承哪一条的 `valid_from`（取早的？）
-5. Dream 是否需要“白天也有一次轻量校正”（现在只在空闲触发）？
+5. ~~Dream 是否需要“白天也有一次轻量校正”~~ → 已做：空闲触发（`idleMinutes`，默认 30 分钟，没有 run 在跑才跑）。仍然只在**空闲**跑，不在会话中间插队——那是 Anthropic 反复警告的反模式（和人抢写、把没稳定的结论反复改写）。

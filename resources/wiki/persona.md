@@ -88,5 +88,6 @@
 ## 继续阅读
 
 - [设计取舍与踩坑](#/wiki/design-notes)：项目级取舍。
+- [记忆与 Dream](#/wiki/memory)：四层怎么流动，哪些动作算「忘」。
 - [LLM Wiki](#/wiki/llm-wiki)：知识库的 Source → Page → Citation → Review。
 - [架构](#/wiki/architecture)：三套库的边界。

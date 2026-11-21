@@ -15,13 +15,15 @@ import { ChatIcon, FilesIcon, ListIcon, TerminalIcon } from "./components/Icons"
 import { Settings } from "./components/Settings";
 import { Guide } from "./components/Guide";
 import { Notes } from "./components/Notes";
+import { Zhulong } from "./components/Zhulong";
+import { BotConsole } from "./components/Bot";
 import { Memory } from "./components/Memory";
 import { Persona } from "./components/Persona";
 import { SceneWorkspace } from "./components/SceneWorkspace";
 import { requestTerminalAdopt, requestTerminalAt } from "./terminal-events";
 import { THEMES, isDarkTheme, resolveTheme } from "./themes";
 
-type View = "workspace" | "scene" | "projects" | "stats" | "hosts" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona";
+type View = "workspace" | "scene" | "projects" | "stats" | "hosts" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "bot";
 type PaneId = "todo" | "chat" | "terminal" | "files";
 const COLLAPSED_PANE_W = 34;
 
@@ -39,6 +41,7 @@ export default function App() {
   const [notesOpenReq, setNotesOpenReq] = useState<{ path: string; n: number } | null>(null);
   const [guidePage, setGuidePage] = useState("home");
   const [now, setNow] = useState(Date.now());
+  const [botUnread, setBotUnread] = useState(0);
   const [todoW, setTodoW] = useStoredSize("cmh.layout.todoW", 220, 180, 520);
   const [chatW, setChatW] = useStoredSize("cmh.layout.chatW", 300, 220, 700);
   const [filesW, setFilesW] = useStoredSize("cmh.layout.filesW", 280, 180, 640);
@@ -62,7 +65,10 @@ export default function App() {
     try { localStorage.setItem("cmh.layout.collapsed", JSON.stringify(collapsed)); } catch { /* ignore */ }
   }, [collapsed]);
   useEffect(() => {
-    const reset = () => setCollapsed({ todo: false, chat: false, terminal: false, files: false });
+    const reset = () => {
+      setCollapsed({ todo: false, chat: false, terminal: false, files: false });
+      setMaximized(null);
+    };
     window.addEventListener("harness:reset-layout", reset);
     return () => window.removeEventListener("harness:reset-layout", reset);
   }, []);
@@ -74,9 +80,32 @@ export default function App() {
     for (const name of events) window.addEventListener(name, expandTerminal);
     return () => { for (const name of events) window.removeEventListener(name, expandTerminal); };
   }, []);
+  // 面板最大化：把面板铺满工作区（绝对定位），其余面板只隐藏不卸载，pty / 标签都保住
+  const [maximized, setMaximized] = useState<PaneId | null>(() => {
+    try {
+      const raw = localStorage.getItem("cmh.layout.maximized");
+      return raw && ["todo", "chat", "terminal", "files"].includes(raw) ? (raw as PaneId) : null;
+    } catch { return null; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("cmh.layout.maximized", maximized ?? ""); } catch { /* ignore */ }
+  }, [maximized]);
+  const toggleMaximize = useCallback((id: PaneId) => {
+    setMaximized((current) => (current === id ? null : id));
+  }, []);
   const togglePane = useCallback((id: PaneId) => {
+    // 收起被最大化的面板时先还原，否则会把整屏收成一条窄带
+    setMaximized((current) => (current === id ? null : current));
     setCollapsed((current) => ({ ...current, [id]: !current[id] }));
   }, []);
+  useEffect(() => {
+    if (!maximized) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); setMaximized(null); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [maximized]);
 
   // 工作区焦点：指针进入某个 pane 后记住它，用于主次降噪。
   const markFocusedPane = useCallback((e: React.SyntheticEvent) => {
@@ -127,7 +156,7 @@ export default function App() {
   useEffect(() => {
     window.harness.getState().then((s) => {
       setState(s);
-      setThreadId((prev) => prev ?? s.threads.find((t) => !t.todoId)?.id ?? s.threads[0]?.id ?? null);
+      setThreadId((prev) => prev ?? s.threads.find((t) => !t.todoId && t.kind !== "bot")?.id ?? s.threads[0]?.id ?? null);
       const dv = s.settings?.defaultView;
       if (dv === "workspace" || dv === "projects" || dv === "stats" || dv === "hosts") setView(dv);
     });
@@ -199,10 +228,15 @@ export default function App() {
     const onPluginView = (detail: { id?: string }) => {
       if (detail?.id === "notes") setView("notes");
     };
+    const offBot = window.harness.onBotMessage((payload) => {
+      if (!payload?.text) return;
+      notify(payload.text.length > 60 ? `${payload.text.slice(0, 60)}…` : payload.text);
+      setBotUnread((n) => n + 1);
+    });
     const offDraft = window.harness.onPluginChatDraft(onDraft);
     const offNotify = window.harness.onPluginNotify(onNotify);
     const offView = window.harness.onPluginOpenView(onPluginView);
-    return () => { offDraft(); offNotify(); offView(); };
+    return () => { offBot(); offDraft(); offNotify(); offView(); };
   }, [notify]);
 
 
@@ -246,12 +280,24 @@ export default function App() {
     const latest = [...runs].reverse().find((r) => r.cwd);
     return running?.cwd || latest?.cwd || selected.cwd || state.projectPath;
   }, [state, selected]);
+  // 预览跟着“这个任务跑在哪台机器上”：远端 Agent 的 dev server 在本机不可达，PreviewSurface 会用 ssh -L 隧道
+  const previewHost = useMemo(() => {
+    if (!state) return null;
+    const runs = selected ? state.runs.filter((r) => r.todoId === selected.id) : [];
+    const running = runs.find((r) => ["running", "waiting_input"].includes(r.status) && r.hostId);
+    const latest = [...runs].reverse().find((r) => r.hostId);
+    const agent = state.agents.find((a) => a.id === (thread?.agentId || selected?.agentId));
+    const host = state.hosts.find((h) => h.id === (running?.hostId || latest?.hostId || agent?.hostId));
+    return host && host.kind === "ssh" ? { id: host.id, name: host.name || host.addr, root: workdir } : null;
+  }, [state, thread, selected, workdir]);
   const projectCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const t of state?.todos ?? []) if (t.projectId && t.kind !== "chat") counts[t.projectId] = (counts[t.projectId] ?? 0) + 1;
     return counts;
   }, [state?.todos]);
   const notesEnabled = Boolean(state?.plugins?.find((p) => p.id === "ai.cockpit.notes")?.enabled);
+  // 只要插件被安装就露出入口：未启用时视图里给出「去设置启用」，否则入口会被藏起来
+  const zhulongAvailable = Boolean(state?.plugins?.find((p) => p.id === "ai.cockpit.zhulong"));
 
   const selectTodo = useCallback(async (todoId: string) => {
     const todo = state?.todos.find((t) => t.id === todoId);
@@ -267,7 +313,7 @@ export default function App() {
     const threads = state.threads.filter((t) => !t.todoId || !t.projectId || t.projectId === state.activeProjectId);
     setThreadId((prev) => {
       if (threads.some((t) => t.id === prev)) return prev;
-      return threads.find((t) => !t.todoId)?.id ?? threads[0]?.id ?? null;
+      return threads.find((t) => !t.todoId && t.kind !== "bot")?.id ?? threads[0]?.id ?? null;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.activeProjectId]);
@@ -287,6 +333,10 @@ export default function App() {
   }, [notesEnabled, notify]);
 
   useEffect(() => {
+    if (view === "bot") setBotUnread(0);
+  }, [view]);
+
+  useEffect(() => {
     const onToast = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       const message = String(typeof detail === "string" ? detail : detail?.message || "");
@@ -304,7 +354,7 @@ export default function App() {
     const onView = (e: Event) => {
       const detail = (e as CustomEvent<string | { view?: string; page?: string }>).detail;
       const next = typeof detail === "string" ? detail : detail?.view;
-      if (!next || !["workspace", "scene", "projects", "stats", "hosts", "settings", "guide", "notes"].includes(next)) return;
+      if (!next || !["workspace", "scene", "projects", "stats", "hosts", "settings", "guide", "notes", "knowledge", "memory", "persona", "zhulong", "bot"].includes(next)) return;
       if (next === "guide" && typeof detail === "object" && detail?.page) setGuidePage(detail.page);
       setView(next as View);
     };
@@ -380,6 +430,7 @@ export default function App() {
       { id: "view-knowledge", label: "资料（知识库 → 文档）", group: "导航", run: () => setView("knowledge") },
       { id: "view-memory", label: "记忆（四层 / Dream）", group: "导航", run: () => setView("memory") },
       { id: "view-persona", label: "人物（建模 / 决策辅助）", group: "导航", run: () => setView("persona") },
+      { id: "view-bot", label: "人格 bot（主动 / 审计）", group: "导航", run: () => setView("bot") },
       { id: "quick-capture", label: "快速记录到知识库", hint: "⌘⇧K", group: "任务", run: () => void act("openQuickCapture") },
       { id: "new-thread", label: "新建会话", hint: "⌘N", group: "任务", run: () => void newThread() },
       { id: "new-task", label: "新建任务", hint: "⌘⇧N", group: "任务", run: () => dispatchInWorkspace(() => new Event("harness:new-task")) },
@@ -394,6 +445,7 @@ export default function App() {
       { id: "open-model-key", label: "配置模型密钥（DEEPSEEK_API_KEY 等）", group: "导航", hint: "设置 → 执行", run: () => window.dispatchEvent(new CustomEvent("harness:open-settings", { detail: { section: "execution", focus: "dshEnv" } })) },
       { id: "open-guide", label: "使用说明 / Super Agent 怎么用", group: "导航", run: () => setView("guide") },
       ...(notesEnabled ? [{ id: "open-notes", label: "打开知识库", group: "插件", run: () => setView("notes") }] : []),
+      ...(zhulongAvailable ? [{ id: "open-zhulong", label: "打开视觉解析", group: "插件", run: () => setView("zhulong") }] : []),
       ...((state.pluginCommands ?? []).map((c) => ({
         id: `plugin-${c.pluginId}-${c.id}`,
         label: c.title,
@@ -514,6 +566,7 @@ export default function App() {
   const railBadges = {
     workspace: state.runs.filter((r) => ["queued", "running", "waiting_input"].includes(r.status)).length,
     hosts: state.hosts.filter((h) => h.status === "offline").length,
+    bot: botUnread,
   };
 
   // 终端默认吃掉剩余宽度；终端收起时，由仍展开的最右侧面板吃掉剩余宽度。
@@ -537,8 +590,8 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className={`main pane-focus-${focusedPane ?? "none"}`} style={{ gridTemplateColumns: gridCols }} onPointerDownCapture={markFocusedPane} onFocusCapture={markFocusedPane}>
-        <Rail view={view} notesEnabled={notesEnabled} badges={railBadges} onChange={(v) => setView(v)} />
+      <div className={`main pane-focus-${focusedPane ?? "none"}${maximized ? " pane-max" : ""}`} style={{ gridTemplateColumns: gridCols }} onPointerDownCapture={markFocusedPane} onFocusCapture={markFocusedPane}>
+        <Rail view={view} notesEnabled={notesEnabled} zhulongAvailable={zhulongAvailable} badges={railBadges} onChange={(v) => setView(v)} />
         {/* 工作区始终挂载、只切显隐：切到项目/统计再回来时，终端 pty、标签、滚动位置都不能丢 */}
         {scoped && (
           <div className="workspace-view" style={{ display: view === "workspace" ? "contents" : "none" }}>
@@ -557,6 +610,8 @@ export default function App() {
                 onManageProjects={() => setView("projects")}
                 onSwitchProject={(id) => void switchProject(id)}
                 onCollapse={() => togglePane("todo")}
+                maximized={maximized === "todo"}
+                onToggleMaximize={() => toggleMaximize("todo")}
                 confirmStop={state.settings?.confirmStop}
                 allProjects={todoAll}
                 onToggleScope={() => setTodoAll((v) => !v)}
@@ -566,13 +621,13 @@ export default function App() {
             {collapsed.chat ? (
               <CollapsedPane label="CHAT" title="Chat" icon={<ChatIcon size={16} />} onExpand={() => togglePane("chat")} />
             ) : (
-              <TaskChat state={scoped} globalState={state} thread={thread} threads={scoped.threads} now={now} act={act} onSelect={selectTodo} onOpenGlobal={(id) => void openTodoFromPalette(id)} onNewThread={() => void newThread()} onOpenThread={(id) => { setThreadId(id); setView("workspace"); }} context={pendingContext} onClearContext={() => setPendingContext(null)} onCollapse={() => togglePane("chat")} enterToSend={state.settings?.enterToSend ?? true} confirmStop={state.settings?.confirmStop ?? false} />
+              <TaskChat state={scoped} globalState={state} thread={thread} threads={scoped.threads} now={now} act={act} onSelect={selectTodo} onOpenGlobal={(id) => void openTodoFromPalette(id)} onNewThread={() => void newThread()} onOpenThread={(id) => { setThreadId(id); setView("workspace"); }} context={pendingContext} onClearContext={() => setPendingContext(null)} onCollapse={() => togglePane("chat")} enterToSend={state.settings?.enterToSend ?? true} confirmStop={state.settings?.confirmStop ?? false} maximized={maximized === "chat"} onToggleMaximize={() => toggleMaximize("chat")} />
             )}
             {sep2 === "6px" ? <Splitter onDelta={resizeChat} /> : <div className="splitter-off" />}
             {/* 收起只隐藏不卸载：保住 pty / 标签 / 文件预览；展开后 ResizeObserver 会重新 fit */}
-            <div className="terminal-slot">
+            <div className={`terminal-slot${maximized === "terminal" ? " pane-max-target" : ""}`}>
               <div className="terminal-slot-main" style={{ display: collapsed.terminal ? "none" : "flex" }}>
-                <TerminalPanel state={state} todo={selected} act={act} onOpenThread={(id) => { setThreadId(id); setView("workspace"); }} onOpenProject={() => void addProject()} onPickedContext={setPendingContext} previewRoot={workdir} onCollapse={() => togglePane("terminal")} terminalFontSize={state.settings?.terminalFontSize} terminalScrollback={state.settings?.terminalScrollback} previewHomeUrl={state.settings?.previewHomeUrl} />
+                <TerminalPanel state={state} todo={selected} act={act} onOpenThread={(id) => { setThreadId(id); setView("workspace"); }} onOpenProject={() => void addProject()} onPickedContext={setPendingContext} previewRoot={workdir} previewHost={previewHost} onCollapse={() => togglePane("terminal")} terminalFontSize={state.settings?.terminalFontSize} terminalScrollback={state.settings?.terminalScrollback} previewHomeUrl={state.settings?.previewHomeUrl} maximized={maximized === "terminal"} onToggleMaximize={() => toggleMaximize("terminal")} />
               </div>
               {collapsed.terminal && (
                 <CollapsedPane label="TERM" title="终端" icon={<TerminalIcon size={16} />} onExpand={() => togglePane("terminal")} />
@@ -589,6 +644,8 @@ export default function App() {
                 notify={notify}
                 onSelectThread={(id) => { setThreadId(id); setView("workspace"); }}
                 onCollapse={() => togglePane("files")}
+                maximized={maximized === "files"}
+                onToggleMaximize={() => toggleMaximize("files")}
               />
             )}
           </>
@@ -625,6 +682,8 @@ export default function App() {
         {view === "knowledge" && <div className="wide"><Notes state={state} act={act} onOpenTodo={selectTodo} openRequest={notesOpenReq} initialTab="docs" /></div>}
         {view === "memory" && <div className="wide"><Memory act={act} /></div>}
         {view === "persona" && <div className="wide"><Persona act={act} /></div>}
+        {view === "bot" && <div className="wide"><BotConsole act={act} notify={notify} onOpenMemory={() => setView("memory")} onOpenThread={(id) => void openThreadFromPalette(id)} /></div>}
+        {view === "zhulong" && <div className="wide"><Zhulong state={state} act={act} notify={notify} onOpenSettings={() => window.dispatchEvent(new CustomEvent("harness:open-settings", { detail: { section: "plugins" } }))} /></div>}
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />

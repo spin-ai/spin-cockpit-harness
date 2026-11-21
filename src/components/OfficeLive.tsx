@@ -108,6 +108,7 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
   const [configOpen, setConfigOpen] = useState(initialMode === "config");
   const [showPaths, setShowPaths] = useState(false);
   const [reduced, setReduced] = useState(false);
+  const [launchSignal, setLaunchSignal] = useState(0);
   const [walkOnly, setWalkOnly] = useState(false);
   const [walking, setWalking] = useState<Set<string>>(new Set());
   const [walkFrom, setWalkFrom] = useState<Record<string, string>>({});
@@ -438,6 +439,7 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
                 ) : null}
                 <span className="hint">{isCarrier ? "点舰载机 → 状态与动效" : isWarRoom ? "点值班席 → 状态与动效" : "点角色 → 状态与动效"}</span>
                 {!is3D ? <button className={`btn tiny ghost ${showPaths ? "on" : ""}`} aria-pressed={showPaths} onClick={() => setShowPaths((v) => !v)} title="画出各角色到目标区域的走位路径">走位路径</button> : null}
+                {isCarrier ? <button className="btn tiny ghost" onClick={() => setLaunchSignal((v) => v + 1)} title="演一遍电磁弹射">演一遍弹射</button> : null}
                 <button className={`btn tiny ghost ${reduced ? "on" : ""}`} aria-pressed={reduced} onClick={() => setReduced((v) => !v)} title="模拟系统 reduced-motion / 动效关闭">模拟 reduced-motion</button>
                 <button className={`btn tiny ghost ${configOpen ? "on" : ""}`} onClick={() => { setConfigOpen((v) => !v); setSelectedId(null); setDetailOpen(false); }}>配置</button>
                 <button className={`btn tiny ${detailOpen ? "on" : ""}`} aria-pressed={detailOpen} onClick={() => setDetailOpen((v) => !v)}>详情</button>
@@ -456,6 +458,7 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
                         onSelect={select}
                         motion={motion}
                         reduced={reduced}
+                        launchSignal={launchSignal}
                       />
                     ) : (
                       <WarRoom3D

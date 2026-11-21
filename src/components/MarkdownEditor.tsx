@@ -89,6 +89,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, {
   const changeRef = useRef(onChange);
   changeRef.current = onChange;
   const [slash, setSlash] = useState<{ x: number; y: number } | null>(null);
+  /** 行内链接输入（替代 Electron 里不存在的 window.prompt） */
+  const [linkDraft, setLinkDraft] = useState<{ label: string; href: string } | null>(null);
   const [stats, setStats] = useState({ chars: 0 });
 
   const editor = useEditor({
@@ -155,12 +157,26 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, {
     }
   };
 
+  /**
+   * 链接：**不弹 window.prompt**（Electron 不实现它，点了没有任何反应）。
+   * 改成工具栏下方一条行内输入：⌘K 打开 → 填地址 → Enter 应用 / Esc 取消；清空 = 取消链接。
+   */
   const setLink = () => {
-    const prev = editor.getAttributes("link").href as string | undefined;
-    const url = window.prompt("链接地址（https://… 或相对路径）", prev || "https://");
-    if (url == null) return;
-    if (!url.trim()) { editor.chain().focus().extendMarkRange("link").unsetLink().run(); return; }
-    editor.chain().focus().extendMarkRange("link").setLink({ href: url.trim() }).run();
+    const href = editor.getAttributes("link").href as string | undefined;
+    const { from, to } = editor.state.selection;
+    const label = from === to ? "链接文字" : editor.state.doc.textBetween(from, to, " ");
+    setLinkDraft({ label, href: href || "https://" });
+  };
+
+  const applyLink = () => {
+    if (!linkDraft) return;
+    const href = linkDraft.href.trim();
+    const existing = editor.getAttributes("link").href as string | undefined;
+    const chain = editor.chain().focus();
+    if (!href || href === "https://") chain.extendMarkRange("link").unsetLink().run();
+    else if (existing) chain.extendMarkRange("link").setLink({ href }).run();
+    else chain.insertContent({ type: "text", text: linkDraft.label || href, marks: [{ type: "link", attrs: { href } }] }).run();
+    setLinkDraft(null);
   };
 
   const T = ({ label, title, on, run, cls }: { label: string; title: string; on?: boolean; run: () => void; cls?: string }) => (
@@ -192,6 +208,23 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, {
         <span className="spacer" />
         <span className="md-toolbar-hint">{stats.chars} 字 · 输入 / 插入块 · ⌘⇧M 切源码</span>
       </div>
+
+      {linkDraft && (
+        <div className="md-linkbar" onMouseDown={(e) => e.preventDefault()}>
+          <input
+            autoFocus
+            value={linkDraft.href}
+            placeholder="https://… 或相对路径（清空 = 取消链接）"
+            onChange={(e) => setLinkDraft({ ...linkDraft, href: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); applyLink(); }
+              else if (e.key === "Escape") { e.preventDefault(); setLinkDraft(null); }
+            }}
+          />
+          <button type="button" className="btn tiny primary" onClick={applyLink}>应用</button>
+          <button type="button" className="btn tiny" onClick={() => setLinkDraft(null)}>取消</button>
+        </div>
+      )}
 
       <div className="md-editor-surface" onKeyDown={onKeyDown}>
         <EditorContent editor={editor} />

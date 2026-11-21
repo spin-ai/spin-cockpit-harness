@@ -1,0 +1,130 @@
+{
+  "id": "ai.cockpit.zhulong",
+  "name": "视觉解析",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "engines": {
+    "cockpit": ">=0.2.0"
+  },
+  "main": "main.mjs",
+  "defaultEnabled": true,
+  "activation": [
+    "onView:zhulong",
+    "onCommand:zhulong.parse",
+    "onCommand:zhulong.probe"
+  ],
+  "permissions": [
+    "ui:view",
+    "net",
+    "state:read",
+    "fs:project"
+  ],
+  "contributes": {
+    "views": [
+      {
+        "id": "zhulong",
+        "title": "视觉解析",
+        "location": "main",
+        "icon": "scan"
+      }
+    ],
+    "commands": [
+      {
+        "id": "zhulong.parse",
+        "title": "解析图片为 block JSON",
+        "description": "把手绘架构图 / 界面截图 / PDF 页面解析成区块 + 关系"
+      },
+      {
+        "id": "zhulong.probe",
+        "title": "探测视觉解析后端",
+        "description": "检查配置的解析服务是否可达"
+      }
+    ],
+    "settings": [
+      {
+        "key": "backend",
+        "type": "enum",
+        "title": "解析后端",
+        "description": "zhulong-vl = 自部署的视觉解析服务；外部 API = OpenAI 兼容的多模态接口；自定义 = 任意 HTTP 解析服务",
+        "default": "zhulong",
+        "options": [
+          {
+            "value": "zhulong",
+            "label": "zhulong-vl 部署"
+          },
+          {
+            "value": "openai",
+            "label": "外部 API（多模态）"
+          },
+          {
+            "value": "custom",
+            "label": "自定义 HTTP"
+          }
+        ]
+      },
+      {
+        "key": "endpoint",
+        "type": "string",
+        "title": "服务地址",
+        "description": "zhulong-vl：服务根地址，会请求 /api/parse 与 /api/health；外部 API：OpenAI 兼容根地址（自动补 /chat/completions）——https://api.openai.com/v1、https://ark.cn-beijing.volces.com/api/v3、https://ark.cn-beijing.volces.com/api/plan/v3、或直接贴完整 .../chat/completions；自定义：完整 POST 地址",
+        "default": "http://127.0.0.1:8000",
+        "placeholder": "https://ark.cn-beijing.volces.com/api/plan/v3"
+      },
+      {
+        "key": "apiKey",
+        "type": "secret",
+        "title": "API Key",
+        "description": "外部 API 用；zhulong-vl 本地部署通常留空。只存本机，不回传到界面"
+      },
+      {
+        "key": "model",
+        "type": "string",
+        "title": "模型名",
+        "description": "外部 API 的模型 id，必须支持图像输入（如 doubao-seed-2.1-turbo / kimi-k2.6 / glm-5-3-flash）；zhulong-vl 后端忽略此项",
+        "placeholder": "doubao-seed-2.1-turbo"
+      },
+      {
+        "key": "weights",
+        "type": "string",
+        "title": "权重路径",
+        "description": "zhulong-vl 部署侧的权重路径；留空则由服务自己决定默认权重",
+        "placeholder": "runs/detect/.../weights/best.pt"
+      },
+      {
+        "key": "imgsz",
+        "type": "number",
+        "title": "推理边长",
+        "description": "检测器输入长边；越大越准也越慢",
+        "default": 800
+      },
+      {
+        "key": "conf",
+        "type": "number",
+        "title": "置信度阈值",
+        "description": "低于该值的检测框不返回",
+        "default": 0.35
+      },
+      {
+        "key": "relations",
+        "type": "boolean",
+        "title": "构建关系",
+        "description": "架构图场景下额外做箭头端点配对",
+        "default": true
+      },
+      {
+        "key": "ocr",
+        "type": "boolean",
+        "title": "识别文字",
+        "description": "对文字区块做 OCR；关掉只保留检测框",
+        "default": true
+      },
+      {
+        "key": "timeoutMs",
+        "type": "number",
+        "title": "超时（毫秒）",
+        "description": "单次解析请求的超时；CPU 推理建议不低于 60000",
+        "default": 60000
+      }
+    ]
+  }
+}

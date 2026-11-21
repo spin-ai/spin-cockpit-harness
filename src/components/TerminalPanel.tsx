@@ -9,7 +9,7 @@ import { TaskDetail } from "./TaskDetail";
 import { PreviewSurface } from "./PreviewSurface";
 import { takeTerminalAdopt, takeTerminalRequests } from "../terminal-events";
 import { Splitter } from "./Splitter";
-import { ChevronDownIcon, ChevronUpIcon, EyeIcon, PanelCollapseIcon, SearchIcon, SplitDownIcon, SplitRightIcon, XIcon } from "./Icons";
+import { ChevronDownIcon, ChevronUpIcon, EyeIcon, PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon, SearchIcon, SplitDownIcon, SplitRightIcon, XIcon } from "./Icons";
 
 /** 一个终端窗格 = 一个 pty（重启会新建 pty） */
 type PaneState = {
@@ -193,11 +193,15 @@ function cleanTitle(raw: string) {
   return String(raw || "").replace(/[\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
-export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, previewRoot, onCollapse, terminalFontSize = 12, terminalScrollback = 5000, previewHomeUrl, onOpenThread, act }: {
+export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, previewRoot, previewHost, onCollapse, terminalFontSize = 12, terminalScrollback = 5000, previewHomeUrl, onOpenThread, act, maximized = false, onToggleMaximize }: {
   state: State; todo: Todo | null; onOpenProject: () => void;
   onPickedContext: (ctx: ElementContext) => void;
   previewRoot?: string;
+  /** 当前任务的 Agent 跑在远端主机时：预览地址要走 ssh -L 隧道（root 是远端项目绝对路径） */
+  previewHost?: { id: string; name: string; root?: string } | null;
   onCollapse?: () => void;
+  maximized?: boolean;
+  onToggleMaximize?: () => void;
   terminalFontSize?: number;
   terminalScrollback?: number;
   previewHomeUrl?: string;
@@ -398,8 +402,8 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
 
   // 显式新建预览：最多 3 个，避免后台 webview 太多
   const newPreviewTab = useCallback((url?: string) => {
-    if (previewCount(tabs) >= 3) {
-      window.dispatchEvent(new CustomEvent("harness:toast", { detail: "最多同时打开 3 个预览页；先关闭一个再新建" }));
+    if (previewCount(tabs) >= 6) {
+      window.dispatchEvent(new CustomEvent("harness:toast", { detail: "最多同时打开 6 个预览页；先关闭一个再新建" }));
       return;
     }
     const target = (url || activeUrl || lastUrl || previewHomeUrl || "http://localhost:5173/").trim();
@@ -670,8 +674,8 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
   }, [active, tabs.length]);
 
   return (
-    <section className="terminal-pane" tabIndex={0} aria-label="终端">
-      <div className="terminal-bar">
+    <section className={`terminal-pane${maximized ? " pane-max-target" : ""}`} tabIndex={0} aria-label="终端">
+      <div className="terminal-bar" onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest("button,select,input")) onToggleMaximize?.(); }}>
         <div className="row gap6" style={{ minWidth: 0 }}>
           <span className="term-brand" title="终端区：pty 会话与任务详情共用这块区域">Terminal</span>
           <div className="seg term-slot-switch" role="group" aria-label="终端区域视图">
@@ -720,6 +724,11 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
           )}
           <button className="btn tiny-btn" onClick={newTerminal}>＋ 终端</button>
           <button className="btn tiny-btn" title="新建预览（默认复用已有预览；这里显式开新标签，最多 3 个）" onClick={() => newPreviewTab()}>＋ 预览</button>
+          {onToggleMaximize && (
+            <button className="pane-collapse dark" title={maximized ? "还原（Esc）" : "最大化"} aria-label={maximized ? "还原终端" : "最大化终端"} onClick={onToggleMaximize}>
+              {maximized ? <PanelRestoreIcon size={13} /> : <PanelExpandIcon size={13} />}
+            </button>
+          )}
           {onCollapse && (
             <button className="pane-collapse dark" title="收起终端" aria-label="收起终端" onClick={onCollapse}>
               <PanelCollapseIcon size={13} />
@@ -756,6 +765,10 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
               && (rec.todoId && t.taskId ? rec.todoId === t.taskId : rec.cwd === t.cwd)) && (
               <span className="term-stalled" title="这个终端 5 分钟没有新输出，可能卡住了">⚠</span>
             )}
+            {(state.terminals || []).some((rec) => rec.controlBy === "user"
+              && (rec.todoId && t.taskId ? rec.todoId === t.taskId : rec.cwd === t.cwd)) && (
+              <span className="term-control" title="你正在接管这条终端：Agent 的写入会被拒绝，交回后它要重新看输出">✋</span>
+            )}
             {renaming === t.id ? (
               <input
                 className="term-rename"
@@ -787,6 +800,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
                   file={isFileTab ? { name: t.title, rel: t.rel || "", root: t.rootDir } : undefined}
                   url={t.url}
                   root={previewRoot}
+                  remoteHost={previewHost}
                   defaultUrl={previewHomeUrl || "http://localhost:5173/"}
                   autoOpenUrl={isFileTab ? undefined : previewReq?.url}
                   autoOpenKey={previewReq?.n}
@@ -814,6 +828,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
                           active={t.id === active}
                           previewRoot={previewRoot}
                           previewHomeUrl={previewHomeUrl}
+                          previewHost={previewHost}
                           onOpenUrl={(url) => patchPane(t.id, pane.id, { kind: "preview", url, rel: undefined, rootDir: undefined, title: previewTitle(url) })}
                           onPicked={onPickedContext}
                           onClose={() => closePane(t.id, pane.id)}
@@ -843,6 +858,13 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
                           onUrl={(url) => setUrlByPane((map) => ({ ...map, [pane.id]: url }))}
                           onTitle={(title) => onPaneTitle(t.id, pane.id, title)}
                           onBell={() => { if (t.id !== active) patchTab(t.id, { attention: true }); }}
+                          controlBy={(state.terminals || []).find((x) => x.id === pane.terminalId)?.controlBy || null}
+                          onToggleControl={() => {
+                            const termId = pane.terminalId;
+                            if (!termId) return;
+                            const taken = (state.terminals || []).find((x) => x.id === termId)?.controlBy === "user";
+                            void act?.(taken ? "terminalReleaseControl" : "terminalTakeControl", { id: termId });
+                          }}
                         />
                   )}
                   onRatio={(splitId, delta) => changeRatio(t.id, splitId, delta)}
@@ -990,8 +1012,9 @@ function SplitSurface({ node, focusedId, renderPane, onRatio, onPaneDrop }: {
   );
 }
 
-function PreviewPane({ pane, active, previewRoot, previewHomeUrl, onOpenUrl, onPicked, onClose }: {
+function PreviewPane({ pane, active, previewRoot, previewHomeUrl, previewHost, onOpenUrl, onPicked, onClose }: {
   pane: PaneState; active: boolean; previewRoot?: string; previewHomeUrl?: string;
+  previewHost?: { id: string; name: string; root?: string } | null;
   onOpenUrl: (url: string) => void; onPicked: (ctx: ElementContext) => void; onClose: () => void;
 }) {
   const isFile = pane.kind === "file" && Boolean(pane.rel);
@@ -1003,6 +1026,7 @@ function PreviewPane({ pane, active, previewRoot, previewHomeUrl, onOpenUrl, onP
         url={pane.url}
         autoOpenUrl={isFile ? undefined : pane.url}
         root={previewRoot}
+        remoteHost={previewHost}
         defaultUrl={previewHomeUrl || "http://localhost:5173/"}
         active={active}
         onOpenUrl={onOpenUrl}
@@ -1104,9 +1128,12 @@ type TermTabProps = {
   onUrl: (url: string) => void;
   onTitle: (title: string) => void;
   onBell: () => void;
+  /** 这条 pty 现在谁在用：null = 空着（Agent 可写），"user" = 你接管中 */
+  controlBy?: string | null;
+  onToggleControl: () => void;
 };
 
-function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSize, scrollback, onOpenSearch, onCloseSearch, onNewTab, onClosePane, onSplit, onOpenPreview, onFocusDir, onFocus, onCycleTab, onGotoTab, onZoom, onTermId, onUrl, onTitle, onBell }: TermTabProps) {
+function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSize, scrollback, onOpenSearch, onCloseSearch, onNewTab, onClosePane, onSplit, onOpenPreview, onFocusDir, onFocus, onCycleTab, onGotoTab, onZoom, onTermId, onUrl, onTitle, onBell, controlBy, onToggleControl }: TermTabProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -1411,6 +1438,12 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
         { label: "向右拆分", hint: "⌘D", run: () => onSplit("row") },
         { label: "向下拆分", hint: "⇧⌘D", run: () => onSplit("col") },
         { label: "在右侧打开预览", run: onOpenPreview },
+        "sep",
+        {
+          // 接管 = 这条 pty 归你：接管期间 Chat 里的纠偏会被拒绝（不排队），交回后 Agent 要重新看输出
+          label: controlBy === "user" ? "交回终端给 Agent" : "接管终端（Agent 暂停写入）",
+          run: onToggleControl,
+        },
         "sep",
         { label: "新建终端", hint: "⌘T", run: onNewTab },
         { label: multi ? "关闭窗格" : "关闭标签", hint: "⌘W", run: onClosePane },

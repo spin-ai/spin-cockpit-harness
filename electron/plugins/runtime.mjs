@@ -16,6 +16,7 @@ let dataDir = "";
 const api = new Map();
 const commands = new Map();
 const listeners = new Map();
+const cancelers = new Set();
 const pending = new Map();
 let nextId = 1;
 
@@ -50,6 +51,13 @@ const ctx = {
     register(id, handler) {
       commands.set(String(id), handler);
       return () => commands.delete(String(id));
+    },
+  },
+  cancel: {
+    /** 长任务（视觉解析）要能被用户中断：主进程发 cancel，插件 abort 自己的请求 */
+    register(handler) {
+      cancelers.add(handler);
+      return () => cancelers.delete(handler);
     },
   },
   events: {
@@ -97,6 +105,14 @@ const ctx = {
       const res = await fetch(url, init);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
+    },
+    /** 需要 multipart / 非 JSON 响应（视觉解析上传图片）时用；同样需要 net 权限 */
+    fetch: async (url, init) => {
+      const permissions = Array.isArray(manifest?.permissions) ? manifest.permissions : [];
+      if (!permissions.includes("net")) throw new Error("permission denied: net");
+      const res = await fetch(url, init);
+      const text = await res.text();
+      return { ok: res.ok, status: res.status, contentType: String(res.headers.get("content-type") || ""), text };
     },
   },
   executors: { register: () => { throw new Error("executor plugins are not enabled yet"); } },
@@ -178,6 +194,12 @@ function onMessage(event) {
     }
     return;
   }
+  if (msg.type === "cancel") {
+    for (const handler of cancelers) {
+      try { handler(); } catch (err) { send({ type: "log", level: "warn", message: `cancel: ${String(err?.message || err)}` }); }
+    }
+    return;
+  }
   if (msg.type === "deactivate") {
     Promise.resolve(moduleRef?.deactivate?.()).finally(() => process.exit(0));
   }
@@ -185,5 +207,9 @@ function onMessage(event) {
 
 port?.on("message", onMessage);
 port?.start?.();
+// MessagePort 不 ref 事件循环：不加这个，插件空闲几十秒后进程就自己退了，
+// 下一条命令要重新 fork + activate（还会让「正在跑的请求」被半路掐断）。
+const keepAlive = setInterval(() => { /* 仅为保持事件循环 */ }, 1 << 30);
+keepAlive.unref?.();
 process.on("uncaughtException", (err) => send({ type: "log", level: "error", message: String(err?.stack || err) }));
 process.on("unhandledRejection", (err) => send({ type: "log", level: "error", message: String(err?.stack || err) }));

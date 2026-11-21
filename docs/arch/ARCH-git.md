@@ -75,6 +75,16 @@ Git                                    main → origin/main · ↑2 ↓0
 - 分支下拉切换；「＋ 分支」基于当前 HEAD 新建；有改动时先确认
 - 非 Git 仓库：给一个「初始化仓库」按钮
 
+### 3.1 WADE worktree 的推送门禁（2026-11）
+
+WADE 会在每个 worktree 里装 `pre-push` 钩子（`core.hooksPath=.wade/githooks`）：只有当 `.wade/done@<sha>` 存在（由 `wade implementation-session done` 写入）时才允许推送该分支，否则拒绝并打印 `[wade] Refusing to push …: no completion marker`。
+
+面板的处理：
+
+- `git:status` 返回 `wadeGate`（检测 `.wade/githooks/pre-push` 是否存在），Git 页顶部显示提示条，说明「先跑 `wade implementation-session done`」，而不是让人以为推送坏了；
+- `git:push` 失败且命中 `[wade] Refusing to push` 时，返回 `wadeGate: true` + `hint`，把原始输出和「下一步做什么」一起贴到输出区；
+- **不提供一键 `--no-verify`**：绕过门禁是 WADE 明确不鼓励的动作，需要时自己在终端加参数（钩子注释里也写了这一点）。
+
 ## 4. 明确不做（当前）
 
 | 不做 | 原因 |

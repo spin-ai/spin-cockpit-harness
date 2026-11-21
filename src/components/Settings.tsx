@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Settings as SettingsModel, State } from "../types";
+import type { PluginRecord, Settings as SettingsModel, State } from "../types";
 import { THEMES } from "../themes";
 import { PageHeader } from "./PageHeader";
 
@@ -26,7 +26,7 @@ const DEFAULTS: Partial<Record<keyof SettingsModel, unknown>> = {
   maxConcurrentRuns: 0, approvalPolicy: "ask", dshBinary: "", dshHome: "", model: "", effort: "",
   superAgentEnabled: true, maxSupervisorRuns: 1, maxMissionChildren: 4, missionBudgetMinutes: 30,
   shellPath: "", terminalFontSize: 12, terminalScrollback: 5000, autoDetectDevServerUrl: true,
-  previewHomeUrl: "http://localhost:5173/", elementScreenshots: true, contextDetail: "standard", worktreeMode: "auto",
+  previewHomeUrl: "http://localhost:5173/", elementScreenshots: true, previewIgnoreCertErrors: false, previewPermissionSites: "", previewAgentControl: true, contextDetail: "standard", worktreeMode: "auto",
   knowledgeCloudIndex: false,
   dshEnv: "",
   imEnabled: false, imTelegramToken: "", imTelegramAllow: "", imWebhookUrl: "", imWebhookToken: "", imInboundPort: 0, imAllowIds: "",
@@ -40,7 +40,7 @@ const SECTION_KEYS: Partial<Record<Section, (keyof SettingsModel)[]>> = {
   execution: ["maxConcurrentRuns", "approvalPolicy", "dshBinary", "dshHome", "dshEnv", "model", "effort", "personaDatasetDir",
     "superAgentEnabled", "maxSupervisorRuns", "maxMissionChildren", "missionBudgetMinutes", "worktreeMode"],
   terminal: ["shellPath", "terminalFontSize", "terminalScrollback", "autoDetectDevServerUrl"],
-  preview: ["previewHomeUrl", "elementScreenshots", "contextDetail"],
+  preview: ["previewHomeUrl", "elementScreenshots", "previewIgnoreCertErrors", "previewPermissionSites", "previewAgentControl", "contextDetail"],
   im: ["imEnabled", "imTelegramToken", "imTelegramAllow", "imWebhookUrl", "imWebhookToken", "imInboundPort", "imAllowIds"],
 };
 
@@ -76,6 +76,9 @@ const SEARCH_INDEX: { section: Section; title: string; hint?: string; k?: string
   { section: "preview", title: "保存截图", k: "elementScreenshots", hint: "拾取元素时截图" },
   { section: "data", title: "云端向量索引", k: "knowledgeCloudIndex", hint: "开启后资料正文分块会发往 Ark embedding" },
   { section: "preview", title: "上下文详细度", k: "contextDetail", hint: "注入 Chat 的 UI 上下文详略" },
+  { section: "preview", title: "忽略证书校验", k: "previewIgnoreCertErrors", hint: "自签名 https 的 dev server" },
+  { section: "preview", title: "Agent 可操作预览", k: "previewAgentControl", hint: "browser_* 工具：导航 / 点击 / 输入 / 截图" },
+  { section: "preview", title: "站点权限", hint: "摄像头 / 麦克风 / 剪贴板等按站点授权" },
   { section: "plugins", title: "已安装插件", hint: "Notes / 本地插件" },
   { section: "plugins", title: "安装插件包", hint: ".cockpit-plugin / 包含 plugin.json 的目录" },
   { section: "data", title: "数据库文件", hint: "harness.db 路径" },
@@ -93,6 +96,54 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
   const [section, setSection] = useState<Section>("general");
   const [query, setQuery] = useState("");
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [pair, setPair] = useState<{ qr: string; url: string; expiresAt: number } | null>(null);
+  const [setupText, setSetupText] = useState("");
+  const [setupBusy, setSetupBusy] = useState(false);
+  const [setupStatus, setSetupStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  const [advanced, setAdvanced] = useState(false);
+  const [imInfo, setImInfo] = useState<{ ws?: boolean; wsReady?: boolean; wsError?: string; feishu?: boolean; inbound?: number; recent?: { at: number; line: string }[] } | null>(null);
+
+  const runSetup = async () => {
+    setSetupBusy(true);
+    setSetupStatus(null);
+    try {
+      const res = (await act("imFeishuSetup", { text: setupText })) as { ok?: boolean; mode?: string; error?: string; note?: string; appId?: string } | null;
+      if (res?.ok) {
+        setSetupStatus({ ok: true, text: res.mode === "webhook" ? (res.note || "已保存 webhook") : `凭据可用（${res.appId || "app_id 已保存"}），可以回群里试一句` });
+        setSetupText("");
+        notify(res.mode === "webhook" ? "已保存自定义机器人 webhook" : "飞书应用凭据已保存并验证通过");
+      } else {
+        setSetupStatus({ ok: false, text: res?.error || "配置失败" });
+      }
+    } catch (err) {
+      setSetupStatus({ ok: false, text: String((err as Error)?.message || err) });
+    } finally {
+      setSetupBusy(false);
+    }
+  };
+
+  // 扫码配置：手机提交成功后主进程发事件，这里关掉二维码
+  useEffect(() => {
+    const off = window.harness.onImPaired(() => {
+      setPair(null);
+      notify("飞书凭据已写入（secret 已加密存储）");
+    });
+    return off;
+  }, [notify]);
+
+  const startPair = async () => {
+    try {
+      const res = (await act("imPairStart", {})) as { ok?: boolean; qr?: string; url?: string; expiresAt?: number } | null;
+      if (!res?.ok || !res.qr) throw new Error("没有拿到二维码");
+      setPair({ qr: res.qr, url: res.url || "", expiresAt: res.expiresAt || 0 });
+    } catch (err) {
+      notify(String((err as Error)?.message || err));
+    }
+  };
+  const stopPair = async () => {
+    setPair(null);
+    try { await act("imPairCancel", {}); } catch { /* ignore */ }
+  };
   const searchRef = useRef<HTMLInputElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const settings = state.settings;
@@ -346,6 +397,19 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
               </Row>
             </Card>
 
+            <Card title="桌面操作（agent-desktop）">
+              <Row k="agentDesktopEnabled" title="允许 Agent 操作桌面应用" hint="挂载 agent-desktop 的 MCP（读 accessibility tree、点按控件）。默认关；开启后 Agent 能读到当前窗口里的文字。">
+                <Toggle value={Boolean(settings.agentDesktopEnabled)} onChange={(v) => {
+                  if (v && !window.confirm("开启后，Agent 可以读取你桌面上任意窗口的可访问性内容，并点击/输入。只在受控环境下开启。确认开启？")) return;
+                  void set({ agentDesktopEnabled: v });
+                }} />
+              </Row>
+              <div className="settings-note">
+                依赖外部 CLI：<code>npm i -g agent-desktop</code>（不在安装包里）。macOS 首次需要授予「辅助功能」权限：
+                <code>agent-desktop permissions --guide</code>。截图能力需要「屏幕录制」权限，本集成只用可访问性树，不需要截图。
+              </div>
+            </Card>
+
             <Card title="Runtime 派生视图">
               <div className="settings-note">Host + CLI + caps 的只读视图；Agent 仍只存 hostId + cli。出现共享并发 / 多账号 / 远程治理时再建 runtimes 表。</div>
               {(state.runtimes || []).map((runtime) => (
@@ -518,12 +582,21 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
               <Row k="elementScreenshots" title="保存截图">
                 <Toggle value={settings.elementScreenshots} onChange={(v) => void set({ elementScreenshots: v })} />
               </Row>
+              <Row k="previewIgnoreCertErrors" title="忽略证书校验">
+                <Toggle value={settings.previewIgnoreCertErrors} onChange={(v) => void set({ previewIgnoreCertErrors: v })} />
+              </Row>
+              <Row k="previewAgentControl" title="Agent 可操作预览">
+                <Toggle value={settings.previewAgentControl} onChange={(v) => void set({ previewAgentControl: v })} />
+              </Row>
               <Row k="contextDetail" title="上下文详细度">
                 <select className="settings-control" value={settings.contextDetail} onChange={(e) => void set({ contextDetail: e.target.value as SettingsModel["contextDetail"] })}>
                   <option value="compact">简洁</option>
                   <option value="standard">标准</option>
                 </select>
               </Row>
+            </Card>
+            <Card title="站点权限">
+              <div data-set-key="站点权限"><PreviewPermissions /></div>
             </Card>
             <Card title="源码定位">
               <div className="settings-note">
@@ -535,35 +608,117 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
 
         {section === "im" && (
           <>
-            <Card title="网关">
+            <Card title="飞书">
               <Row k="imEnabled" title="启用即时通信">
                 <Toggle value={Boolean(settings.imEnabled)} onChange={(v) => void set({ imEnabled: v })} />
               </Row>
-              <Row k="imTelegramToken" title="Telegram bot token" hint="走 getUpdates 长轮询；桌面关闭时消息留在 Telegram 队列，下次启动继续。">
+
+              <div className="im-quick">
+                <label className="im-quick-label">
+                  <b>一次粘贴就配好</b>
+                  <span>把飞书的 App ID + App Secret 一起粘进来（分行、冒号、等号都行）；只想收通知就粘自定义机器人的 webhook 地址。</span>
+                </label>
+                <textarea
+                  value={setupText}
+                  rows={2}
+                  spellCheck={false}
+                  placeholder="cli_xxxxxxxx  +  App Secret（可分成两行）&#10;或  https://open.feishu.cn/open-apis/bot/v2/hook/…"
+                  onChange={(event) => setSetupText(event.target.value)}
+                />
+                <div className="im-quick-actions">
+                  <button className="btn tiny-btn" disabled={setupBusy || !setupText.trim()} onClick={() => void runSetup()}>{setupBusy ? "验证中…" : "保存并测试"}</button>
+                  <button className="btn tiny-btn" onClick={() => void (pair ? stopPair() : startPair())}>{pair ? "关闭二维码" : "用手机扫码"}</button>
+                  <button className="btn tiny-btn" onClick={async () => {
+                    setSetupBusy(true);
+                    setSetupStatus(null);
+                    try {
+                      const res = (await act("imFeishuSetupFromClipboard", {})) as { ok?: boolean; mode?: string; appId?: string; error?: string } | null;
+                      setSetupStatus({ ok: Boolean(res?.ok), text: res?.ok ? `已从剪贴板读入（${res.mode === "webhook" ? "webhook" : res.appId || "app 凭据"}）` : (res?.error || "读取失败") });
+                      if (res?.ok) notify("已从剪贴板写入飞书配置");
+                    } finally { setSetupBusy(false); }
+                  }}>从剪贴板读入</button>
+                  <button className="btn tiny-btn" onClick={async () => {
+                    const res = (await act("imFeishuTest", {})) as { ok?: boolean; error?: string; chat?: string } | null;
+                    notify(res?.ok ? `已发到 ${res.chat}（看飞书里有没有收到）` : `发送失败：${res?.error || "未知错误"}`);
+                  }}>发送测试消息</button>
+                  <button className="btn tiny-btn" onClick={async () => {
+                    const res = (await act("imStatus", {})) as { result?: { ws?: boolean; wsReady?: boolean; wsError?: string; feishu?: boolean; inbound?: number; recent?: { at: number; line: string }[] } } | null;
+                    setImInfo(res?.result || null);
+                  }}>检查连接</button>
+                  <button className="btn tiny-btn ghost" onClick={() => setAdvanced((v) => !v)}>{advanced ? "收起高级" : "高级"}</button>
+                  <span className="tiny muted">{String(settings.imFeishuAppId || "") ? `已配置 ${String(settings.imFeishuAppId).slice(0, 12)}…` : settings.imWebhookUrl ? "已配置 webhook" : "未配置"}</span>
+                </div>
+                {setupStatus && <div className={`im-quick-status ${setupStatus.ok ? "ok" : "fail"}`}>{setupStatus.text}</div>}
+                {imInfo && (
+                  <div className="im-quick-status">
+                    长连接 {imInfo.wsReady ? "已就绪" : imInfo.ws ? "连接中" : "未建立"}{imInfo.wsError ? `（${imInfo.wsError}）` : ""} · 凭据 {imInfo.feishu ? "已配置" : "未配置"} · 入站端口 {imInfo.inbound || 0}
+                    {(imInfo.recent || []).slice(-6).map((row) => (
+                      <div key={`${row.at}-${row.line}`} className="mono tiny faint">{new Date(row.at).toLocaleTimeString("zh-CN")} · {row.line}</div>
+                    ))}
+                    {(imInfo.recent || []).length === 0 && <div className="tiny faint">还没有事件。到飞书里给 bot 发一句话再看。</div>}
+                  </div>
+                )}
+                {String(settings.imFeishuAppId || "") ? (
+                  <div className="settings-note">
+                    下一步（只在飞书后台做一次）：权限开通 <code>im:message</code> 与 <code>im:message:send_as_bot</code> → 事件订阅填回调地址 <code>/feishu/event</code>（需公网或内网穿透，入站端口 {Number(settings.imInboundPort) || 0}）并订阅 <code>im.message.receive_v1</code> → 把机器人加进群或开单聊 → 在飞书里发一句话，回来点「发送测试消息」。
+                  </div>
+                ) : null}
+                {pair && (
+                  <div className="im-pair">
+                    <img src={pair.qr} alt="扫码配置二维码" width={200} height={200} />
+                    <div className="im-pair-text">
+                      <b>手机扫码，填一次就完成</b>
+                      <span>需与电脑同一网络；页面上粘贴 App ID 与 App Secret。</span>
+                      <span className="mono tiny ellipsis" title={pair.url}>{pair.url}</span>
+                      <span className="faint tiny">一次性链接，10 分钟内有效；成功后立即失效</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {advanced && (
+                <>
+                  <Row k="imFeishuMode" title="事件接收方式" hint="ws = 长连接（飞书后台推荐，不需要公网域名）；http = 公网回调（需要隧道）。改了会重启网关。">
+                    <select className="settings-control" value={String(settings.imFeishuMode || "ws")} onChange={(e) => void set({ imFeishuMode: e.target.value as "ws" | "http" })}>
+                      <option value="ws">长连接（推荐）</option>
+                      <option value="http">公网回调</option>
+                    </select>
+                  </Row>
+                  <Row k="imFeishuVerificationToken" title="事件校验 Token（可选）" hint="开放平台「事件订阅」里的 Verification Token；填了就校验，不填则只靠 allowlist。">
+                    <TextSetting value={String(settings.imFeishuVerificationToken || "")} placeholder="可选" onCommit={(v) => void set({ imFeishuVerificationToken: v })} />
+                  </Row>
+                  <Row k="imWebhookUrl" title="出站 Webhook" hint="飞书自定义机器人地址；只发它所在的群，收不到 @。">
+                    <TextSetting value={settings.imWebhookUrl || ""} placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…" onCommit={(v) => void set({ imWebhookUrl: v })} />
+                  </Row>
+                  <Row k="imWebhookToken" title="Webhook Token" hint="出站放在 Authorization 头；入站要求同值。">
+                    <TextSetting value={settings.imWebhookToken || ""} placeholder="可选" onCommit={(v) => void set({ imWebhookToken: v })} />
+                  </Row>
+                  <Row k="imAllowIds" title="允许的 open_id / chat_id" hint="留空 = 允许第一个跟它说话的会话（会写日志）；填了就只认这些。">
+                    <TextSetting value={settings.imAllowIds || ""} placeholder="ou_xxx, oc_xxx" onCommit={(v) => void set({ imAllowIds: v })} />
+                  </Row>
+                </>
+              )}
+              <div className="settings-note">
+                粘贴的是应用凭据时，secret 用 safeStorage 加密存本机；入站需要公网或内网穿透（长连接未做），桌面关闭期间的消息不会被处理。
+              </div>
+            </Card>
+            <Card title="入站（自定义 HTTP）">
+              <Row k="imInboundPort" title="入站端口" hint="本地 POST { chat_id, text }，只绑 127.0.0.1；这不是飞书事件协议，0 = 关闭。">
+                <NumberSetting value={Number(settings.imInboundPort) || 0} min={0} max={65535} onCommit={(v) => void set({ imInboundPort: v })} />
+              </Row>
+            </Card>
+            <Card title="非目标渠道（实验）">
+              <Row k="imTelegramToken" title="Telegram bot token" hint="非目标渠道：国内网络不可用，代码保留但不投入；桌面关闭时消息留在 Telegram 队列。">
                 <TextSetting value={settings.imTelegramToken || ""} placeholder="123456:ABC…" onCommit={(v) => void set({ imTelegramToken: v })} />
               </Row>
               <Row k="imTelegramAllow" title="允许的 chat id" hint="留空则忽略所有消息；支持多个，逗号分隔，* 表示全部。" >
                 <TextSetting value={settings.imTelegramAllow || ""} placeholder="123456789" onCommit={(v) => void set({ imTelegramAllow: v })} />
               </Row>
             </Card>
-            <Card title="飞书 / 微信（Webhook）">
-              <Row k="imWebhookUrl" title="出站 Webhook" hint="把结果按「结果 / 步骤 / 身份」三段式 POST 到这里。">
-                <TextSetting value={settings.imWebhookUrl || ""} placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…" onCommit={(v) => void set({ imWebhookUrl: v })} />
-              </Row>
-              <Row k="imWebhookToken" title="Webhook Token" hint="出站放在 Authorization 头；入站要求同值。">
-                <TextSetting value={settings.imWebhookToken || ""} placeholder="可选" onCommit={(v) => void set({ imWebhookToken: v })} />
-              </Row>
-              <Row k="imInboundPort" title="入站端口" hint="本地 HTTP 回调：POST { chat_id, text }；需要公网可达或内网转发。0 = 关闭。">
-                <NumberSetting value={Number(settings.imInboundPort) || 0} min={0} max={65535} onCommit={(v) => void set({ imInboundPort: v })} />
-              </Row>
-              <Row k="imAllowIds" title="额外允许 id" hint="飞书 open_id / 微信会话 id。">
-                <TextSetting value={settings.imAllowIds || ""} placeholder="ou_xxx" onCommit={(v) => void set({ imAllowIds: v })} />
-              </Row>
-            </Card>
             <Card title="规则">
               <div className="settings-note">
                 陌生会话一律忽略并留日志；审批卡一次只问一个问题，回复数字即选择；敏感的人物事实默认不推 IM。
-                移动端不保存凭据，token 只存在本机设置里。
+                移动端不保存凭据，token 只存在本机设置里（当前是明文存储，共享机器上不要填写）。
               </div>
             </Card>
           </>
@@ -626,6 +781,7 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
                     </div>
                     <div className="settings-plugin-meta">{plugin.id} · {(plugin.permissions || []).join(" · ") || "无权限"}</div>
                     {plugin.lastError && <div className="settings-plugin-error">{plugin.lastError}</div>}
+                    <PluginSettings act={act} plugin={plugin} />
                   </div>
                   <div className="settings-plugin-actions">
                     <button className="btn tiny-btn" onClick={() => void act(plugin.enabled ? "pluginDisable" : "pluginEnable", { id: plugin.id })}>{plugin.enabled ? "禁用" : "启用"}</button>
@@ -682,8 +838,7 @@ export function Settings({ state, act, notify }: { state: State; act: Act; notif
   );
 }
 
-const SHORTCUTS = [
-  { keys: "⌘ K", label: "命令面板" },
+const SHORTCUTS = [  { keys: "⌘ K", label: "命令面板" },
   { keys: "⌘ N", label: "新建会话" },
   { keys: "⌘ ⇧ N", label: "新建任务" },
   { keys: "⌘ T", label: "新建终端标签" },
@@ -782,5 +937,172 @@ function NumberSetting({ value, min, max, step = 1, onCommit }: { value: number;
       onBlur={commit}
       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commit(); (e.target as HTMLInputElement).blur(); } }}
     />
+  );
+}
+
+/** 插件设置：渲染 manifest 里 contributes.settings 声明的项；值存在 plugin kv，secret 不回读 */
+function PluginSettings({ act, plugin }: { act: Act; plugin: PluginRecord }) {
+  const specs = plugin.manifest?.contributes?.settings || [];
+  const probeCommand = (plugin.manifest?.contributes?.commands || []).find((c) => c.id.endsWith(".probe"));
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<SettingRow[] | null>(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open || !plugin.enabled) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const loaded = (await act("pluginSettings", { id: plugin.id })) as SettingRow[] | null;
+        if (alive) setRows(loaded || []);
+      } catch (err) {
+        if (alive) setNote(String((err as Error)?.message || err));
+      }
+    })();
+    return () => { alive = false; };
+  }, [act, open, plugin.enabled, plugin.id]);
+
+  if (!specs.length) return null;
+
+  const save = async (key: string, value: unknown, type: string) => {
+    try {
+      await act("pluginSetSetting", { id: plugin.id, key, value });
+      setRows((prev) => prev?.map((row) => (row.key === key
+        ? { ...row, value: type === "secret" ? "" : value, hasValue: type === "secret" ? Boolean(value) : row.hasValue }
+        : row)) ?? prev);
+      setNote("");
+    } catch (err) {
+      setNote(String((err as Error)?.message || err));
+    }
+  };
+
+  const probe = async () => {
+    if (!probeCommand) return;
+    setBusy(true);
+    setNote("");
+    try {
+      const res = (await act("pluginRunCommand", { pluginId: plugin.id, commandId: probeCommand.id, args: {} })) as { ok?: boolean; detail?: string } | null;
+      setNote(res?.detail || (res?.ok ? "后端可达" : "后端不可用"));
+    } catch (err) {
+      setNote(String((err as Error)?.message || err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="settings-plugin-settings">
+      <div className="row" style={{ gap: 8 }}>
+        <button className="btn tiny-btn" onClick={() => setOpen((v) => !v)}>{open ? "收起配置" : "配置"}</button>
+        {probeCommand && <button className="btn tiny-btn" disabled={!plugin.enabled || busy} onClick={() => void probe()}>{busy ? "探测中…" : "探测后端"}</button>}
+        {!plugin.enabled && <span className="muted small">启用后可配置</span>}
+      </div>
+      {open && plugin.enabled && (
+        <div className="settings-plugin-fields">
+          {!rows && <span className="muted small">读取中…</span>}
+          {(rows || []).map((row) => (
+            <Row key={row.key} title={row.title || row.key} hint={row.description}>
+              {row.type === "enum" ? (
+                <select className="settings-control" value={String(row.value ?? "")} onChange={(event) => void save(row.key, event.target.value, row.type)}>
+                  {(row.options || []).map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              ) : row.type === "boolean" ? (
+                <Toggle value={Boolean(row.value)} onChange={(value) => void save(row.key, value, row.type)} />
+              ) : row.type === "number" ? (
+                <NumberSetting value={Number(row.value) || 0} min={0} max={600000} onCommit={(value) => void save(row.key, value, row.type)} />
+              ) : row.type === "secret" ? (
+                <SecretSetting hasValue={Boolean(row.hasValue)} placeholder={row.placeholder} onCommit={(value) => void save(row.key, value, row.type)} />
+              ) : (
+                <TextSetting value={String(row.value ?? "")} placeholder={row.placeholder} onCommit={(value) => void save(row.key, value, row.type)} />
+              )}
+            </Row>
+          ))}
+          {note && <div className="settings-note">{note}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 密钥输入：不回显已存值，只提示「已设置」；留空提交表示不改 */
+function SecretSetting({ hasValue, placeholder, onCommit }: { hasValue: boolean; placeholder?: string; onCommit: (value: string) => void }) {
+  const [draft, setDraft] = useState("");
+  const commit = () => {
+    const value = draft.trim();
+    if (!value) return;
+    onCommit(value);
+    setDraft("");
+  };
+  return (
+    <input
+      className="settings-control settings-text"
+      type="password"
+      value={draft}
+      placeholder={hasValue ? "已设置（留空不改）" : (placeholder || "可选")}
+      spellCheck={false}
+      autoComplete="off"
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => { if (event.key === "Enter") commit(); }}
+    />
+  );
+}
+
+type SettingRow = {
+  key: string;
+  type: string;
+  title: string;
+  description?: string;
+  options?: { value: string; label: string }[];
+  placeholder?: string;
+  value: unknown;
+  hasValue?: boolean;
+};
+
+/** 预览页站点权限：只由用户显式授权，这里只做查看与撤销 */
+function PreviewPermissions() {
+  const [sites, setSites] = useState<{ origin: string; permissions: { key: string; label: string }[] }[]>([]);
+  const [busy, setBusy] = useState("");
+  useEffect(() => {
+    let alive = true;
+    window.harness.previewPermissions().then((list) => { if (alive) setSites(list); }).catch(() => { /* 主进程未就绪 */ });
+    return () => { alive = false; };
+  }, []);
+  if (!sites.length) {
+    return (
+      <div className="settings-note">
+        还没有授权记录。预览页请求摄像头 / 麦克风 / 剪贴板 / 通知时，会在预览顶部出现「允许并刷新」。
+      </div>
+    );
+  }
+  const revoke = async (origin: string, permission: string) => {
+    setBusy(`${origin}|${permission}`);
+    try {
+      const res = await window.harness.previewRevokePermission(origin, permission);
+      setSites(res.sites || []);
+    } finally { setBusy(""); }
+  };
+  return (
+    <div className="settings-note" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {sites.map((site) => (
+        <div key={site.origin} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <code>{site.origin}</code>
+          {site.permissions.map((p) => (
+            <button
+              key={p.key}
+              className="btn tiny-btn"
+              disabled={busy === `${site.origin}|${p.key}`}
+              title={`撤销「${p.label}」授权`}
+              onClick={() => void revoke(site.origin, p.key)}
+            >
+              {p.label} ✕
+            </button>
+          ))}
+        </div>
+      ))}
+    </div>
   );
 }

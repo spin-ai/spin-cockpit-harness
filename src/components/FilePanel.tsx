@@ -4,7 +4,7 @@ import { agentOf, timeAgo } from "../ui";
 import {
   BotIcon, ChevronDownIcon, ChevronRightIcon, CollapseIcon, EyeIcon, EyeOffIcon,
   FileIcon, FilePlusIcon, FilesIcon, GitIcon, FolderIcon,
-  FolderOpenIcon, FolderPlusIcon, HistoryIcon, InfoIcon, PanelCollapseIcon, RefreshIcon,
+  FolderOpenIcon, FolderPlusIcon, HistoryIcon, InfoIcon, PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon, RefreshIcon,
   SearchIcon, UserIcon, WrenchIcon, XIcon,
 } from "./Icons";
 import { FileVisual } from "./FileVisual";
@@ -68,12 +68,14 @@ function dayStart(ts: number) {
  * - 会话历史：按时间分组，点击回到对应 Chat 会话
  * - 预览：点击文件后出现，可关闭
  */
-export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify = () => {} }: {
+export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify = () => {}, maximized = false, onToggleMaximize }: {
   state: State;
   root?: string;
   now: number;
   onSelectThread?: (threadId: string) => void;
   onCollapse?: () => void;
+  maximized?: boolean;
+  onToggleMaximize?: () => void;
   notify?: (m: string) => void;
 }) {
   const base = root || state.projectPath;
@@ -572,8 +574,8 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
   };
 
   return (
-    <aside className="files-pane right-panel" tabIndex={0} aria-label="资源管理器">
-      <div className="right-tabs">
+    <aside className={`files-pane right-panel${maximized ? " pane-max-target" : ""}`} tabIndex={0} aria-label="资源管理器">
+      <div className="right-tabs" onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest("button,select,input")) onToggleMaximize?.(); }}>
         <button
           className={`icon-tab ${tab === "explorer" ? "on" : ""}`}
           title="资源管理器"
@@ -599,6 +601,16 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
           <HistoryIcon size={16} />
           {state.threads.length > 0 && <span className="tab-count">{state.threads.length}</span>}
         </button>
+        {onToggleMaximize && (
+          <button
+            className="icon-tab tab-collapse"
+            title={maximized ? "还原（Esc）" : "最大化"}
+            aria-label={maximized ? "还原资源管理器" : "最大化资源管理器"}
+            onClick={onToggleMaximize}
+          >
+            {maximized ? <PanelRestoreIcon size={15} /> : <PanelExpandIcon size={15} />}
+          </button>
+        )}
         {onCollapse && (
           <button
             className="icon-tab tab-collapse"

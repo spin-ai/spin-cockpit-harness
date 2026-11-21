@@ -30,18 +30,30 @@ Cockpit Harness 的起点就是这句话：能不能把「对话、任务、终�
 - **Terminal 是真实执行现场**：node-pty 拉起真实 shell，可多标签、可拆分、可直接输入。
 - **项目就是本地目录**：一个目录一个项目；git 仓库会自动使用 worktree 隔离。
 - **执行引擎外置**：Agent CLI 通过适配器接入；目前 Chat 派活走 dsh 的 ACP profile。
+- **场景是运行状态的空间投影**：办公室 / 作战室 / 航母只读现有状态，不新建表、不伪造任务。
+- **知识库与记忆分开**：资料只读、页面可审核；记忆是四层 + Dream；人物画像是另一套库。
 - **LLM Wiki**：笔记插件把资料变成可追溯的 Source → Page → Citation → Review，Agent 可检索、人负责审核。
 - **数据本地**：SQLite + 本地文件；模型配置和凭据不随 App 分发。
 
-## 三大能力
+## 五个主打特性
 
-<div class="wiki-gallery three">
-<figure><img src="./wiki/cover-terminal.png" alt="多智能体终端" loading="lazy" /><figcaption><b>多智能体终端</b><span>Chat、真实 PTY、TODO、worktree 在同一套状态机里。</span></figcaption></figure>
-<figure><img src="./wiki/cover-super-agent.png" alt="Super Agent" loading="lazy" /><figcaption><b>Super Agent</b><span>Mission / Plan / Delegation / Supervisor，把多个子任务组织起来。</span></figcaption></figure>
-<figure><img src="./wiki/cover-llm-wiki.png" alt="LLM Wiki" loading="lazy" /><figcaption><b>LLM Wiki</b><span>笔记插件：Source → Page → Citation → Review，Agent 可检索、人可审核。</span></figcaption></figure>
+<div class="wiki-gallery">
+<figure><img src="./wiki/cover-terminal.png" alt="多智能体终端" loading="lazy" /><figcaption><b>多智能体终端</b><span>Chat / TODO / 真实 PTY / worktree</span></figcaption></figure>
+<figure><img src="./wiki/cover-super-agent.png" alt="Super Agent 编排" loading="lazy" /><figcaption><b>Super Agent 编排</b><span>Mission / Plan / Delegation / Supervisor</span></figcaption></figure>
+<figure><img src="./wiki/cover-office.png" alt="场景与办公室" loading="lazy" /><figcaption><b>场景与办公室</b><span>状态落到舞台，时间轴记录真实变化</span></figcaption></figure>
+<figure><img src="./wiki/cover-llm-wiki.png" alt="知识库" loading="lazy" /><figcaption><b>知识库</b><span>Source → Page → Citation → Review</span></figcaption></figure>
+<figure><img src="./wiki/cover-memory.png" alt="记忆与人物画像" loading="lazy" /><figcaption><b>记忆与人物画像</b><span>四层 + Dream；画像另成一套库</span></figcaption></figure>
 </div>
 
-[多智能体终端](#/wiki/home) · [Super Agent](#/wiki/super-agent) · [LLM Wiki](#/wiki/llm-wiki)
+不是五个产品，是同一套任务、run、消息和本地数据：
+
+1. **多智能体终端**：Chat 派活、TODO、真实 PTY、worktree；运行中继续说话就是纠偏，完成后人点确认。见 [工作流](#/wiki/workflow)。
+2. **Super Agent 编排**：主管不是更强的 worker —— 出计划、人批准、委派、汇总；子任务在独立 worktree 执行。见 [Super Agent / Mission](#/wiki/super-agent)。
+3. **场景与办公室**：run / 审批 / 验收映射成工位、审批台、验收架；办公室 2.5D 与作战室、航母 3D 共用一份 `OfficeModel`。见 [场景与办公室](#/wiki/office)。
+4. **知识库**：资料只读、页面可审核；解析 → 索引 → 检索 → 引用共用一套可重建索引。见 [知识库](#/wiki/knowledge) 和 [LLM Wiki](#/wiki/llm-wiki)。
+5. **记忆与人物画像**：四层记忆管「记什么、忘什么」，画像管「这个人随时间什么是真的」。见 [记忆与 Dream](#/wiki/memory) 和 [人物画像](#/wiki/persona)。
+
+这五件事也对应五个真正的技术难点（解析 / 编排 / 整理 / 记忆 / 画像），见 [五个技术难点](#/wiki/tech)。
 
 ## 你的一天大概会这样
 
@@ -60,7 +72,7 @@ Cockpit Harness 的起点就是这句话：能不能把「对话、任务、终�
 
 | 区域 | 职责 |
 |---|---|
-| 导航 | 工作区 / 场景 / 项目 / 统计 / 主机 / Git / 知识库 / 设置 |
+| 导航 | 工作区 / 场景 / 项目 / 统计 / 主机 / Git / 知识库 / 记忆 / 人物 / 说明 / 设置 |
 | TODO LIST | 按状态分组的任务列表；行内派活、停止、确认、重试 |
 | Chat | 分派、纠偏、投递回执；agent / project / 元素上下文 |
 | Terminal | 真实 pty、多标签、窗格拆分、预览与元素拾取 |
@@ -97,6 +109,10 @@ Chat 说一句话
 - [工作流](#/wiki/workflow)：一条任务如何从派活走到确认。
 - [界面与流程](#/wiki/gallery)：一页看完工作台、ACP、调度、Mission 和打包。
 - [架构](#/wiki/architecture)：Main / Renderer / Executor / Storage 的边界。
+- [五个技术难点](#/wiki/tech)：解析 / 编排 / 整理 / 记忆 / 画像现在到哪了。
+- [场景与办公室](#/wiki/office)：状态怎么落到舞台，三套模板各对应什么。
+- [知识库](#/wiki/knowledge)：资料与页面共用一套索引，写入侧分权。
+- [记忆与 Dream](#/wiki/memory)：四层、四种「忘」与打分注入。
 - [Super Agent / Mission](#/wiki/super-agent)：多个 Agent 由谁组织。
 - [LLM Wiki](#/wiki/llm-wiki)：Source → Page → Citation → Review。
 - [人物画像](#/wiki/persona)：谁是什么样、什么时候会变、什么时候该忘。

@@ -93,6 +93,28 @@ export class AcpClient extends EventEmitter {
     return res;
   }
 
+  /**
+   * 已存在的会话列表：dsh 的 `session/list`（对应 agentCapabilities.sessionCapabilities.list）。
+   * 跨进程有效——它是"应用重启后还能找回哪些会话"的唯一入口。
+   */
+  async listSessions() {
+    const res = await this.request("session/list", {});
+    return Array.isArray(res?.sessions) ? res.sessions : [];
+  }
+
+  /**
+   * 续上一个已存在的会话（`session/resume`，实测参数必须带 cwd；缺了报 Invalid params）。
+   *
+   * 两条实测约束（2026-11-20 用 resources/dsh 探过）：
+   *  - 同一进程里"正在活跃"的 session 不能 resume（报 `session is already active`），所以它只用于重启后恢复；
+   *  - 返回值里没有 sessionId，只有 configOptions —— 所以 sessionId 要用入参那个。
+   */
+  async resumeSession(sessionId, cwd = this.cwd) {
+    const res = await this.request("session/resume", { sessionId, cwd, mcpServers: this.mcpServers || [] });
+    this.sessionId = sessionId;
+    return res || {};
+  }
+
   async configure() {
     const model = this.model;
     const effort = this.effort;

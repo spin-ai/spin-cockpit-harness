@@ -26,9 +26,17 @@
     "postinstall": "electron-builder install-app-deps && node scripts/fix-pty-perms.mjs",
     "typecheck": "tsc --noEmit",
     "verify:mission": "node scripts/verify-mission.mjs",
+    "verify:acp-resume": "node scripts/acp-resume-selftest.mjs",
     "verify:plugins": "node scripts/verify-plugins.mjs",
     "verify:design": "node scripts/verify-design.mjs",
     "verify:docs": "node scripts/verify-docs.mjs",
+    "verify:ipc": "node scripts/verify-ipc.mjs",
+    "verify:privacy": "node scripts/verify-privacy.mjs",
+    "verify:preview-tunnel": "node scripts/preview-tunnel-selftest.mjs",
+    "verify:preview-format": "node scripts/preview-format-selftest.mjs",
+    "verify:preview-doc": "node scripts/preview-doc-selftest.mjs",
+    "verify:preview-permissions": "node scripts/preview-permissions-selftest.mjs",
+    "verify:browser-tools": "node scripts/browser-tools-selftest.mjs",
     "test:e2e:requirements": "node scripts/e2e-requirements.mjs",
     "test:e2e:requirements:list": "node scripts/e2e-requirements.mjs --list",
     "wiki:publish": "node scripts/publish-wiki.mjs",
@@ -51,6 +59,7 @@
     "memory:preview": "node scripts/preview-memory.mjs",
     "knowledge:engines:selftest": "node scripts/knowledge-engines-selftest.mjs",
     "verify:pty": "node scripts/verify-pty.mjs",
+    "zhulong:selftest": "node scripts/zhulong-selftest.mjs",
     "import:wechat": "node scripts/import-wechat.mjs",
     "db:bench": "node scripts/db-bench.mjs",
     "db:selftest": "node scripts/db-selftest.mjs",
@@ -58,9 +67,15 @@
     "wiki:plugin:selftest": "node scripts/wiki-plugin-selftest.mjs",
     "video:douyin": "electron scripts/video/render-douyin.cjs",
     "video:wide": "electron scripts/video/render-douyin.cjs --wide --reuse-audio",
-    "video:pages": "node scripts/video/publish-web.cjs"
+    "video:pages": "node scripts/video/publish-web.cjs",
+    "video:covers": "electron scripts/video/render-covers.cjs",
+    "bot:selftest": "node scripts/bot-selftest.mjs",
+    "verify:bot": "node scripts/bot-selftest.mjs",
+    "verify:im-pairing": "node scripts/im-pairing-selftest.mjs",
+    "verify:feishu": "node scripts/feishu-selftest.mjs"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.76.0",
     "@napi-rs/canvas": "^1.1.1",
     "adm-zip": "^0.6.1",
     "epub2": "^3.0.2",
@@ -68,6 +83,7 @@
     "node-pty": "^1.1.0",
     "officeparser": "^8.4.1",
     "pdfjs-dist": "^6.2.108",
+    "qrcode": "^1.5.4",
     "unpdf": "^2.1.0",
     "xlsx": "^0.18.5"
   },
@@ -159,12 +175,17 @@
       {
         "from": "plugins/notes",
         "to": "plugins/notes"
+      },
+      {
+        "from": "plugins/zhulong",
+        "to": "plugins/zhulong"
       }
     ],
     "asar": true,
     "asarUnpack": [
       "node_modules/node-pty/**",
       "electron/mcp-bridge.mjs",
+      "electron/browser-mcp-bridge.mjs",
       "electron/plugins/runtime.mjs",
       "electron/wiki-mcp-bridge.mjs"
     ],

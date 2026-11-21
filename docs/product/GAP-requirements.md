@@ -154,7 +154,7 @@
   位置：`plugins/notes/main.mjs`、`Notes.tsx`
 
 - [x] **P1 记忆四层补齐**（核对：2026-11-14）
-  L1 检索通道 = MCP `memory_search`；L2 独立 note = `noteAdd` / `promoteNote`；Dream 建议队列 = `dreamScan` + `maxSuggestions`（仍只有确定性检查，无语义 pass）。
+  L1 检索通道 = MCP `memory_search`；L2 独立 note = `noteAdd` / `promoteNote`；Dream = 确定性扫描 + 语义 pass（默认关、带证据、带调用预算）+ 建议队列（`diff` / `base_rev` / 版本闸门）+ 空闲触发 + `dream_runs` 台账。
   方案：`docs/arch/ARCH-memory.md`；需求：`docs/product/REQ-modules-original.md` 第 3 节。
 
 - [x] **P0 知识合并：资料 + 页面一个库**（核对：2026-11-14，K0 范围内；K2–K5 未做）

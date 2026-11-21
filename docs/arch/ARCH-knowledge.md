@@ -54,7 +54,10 @@ userData/knowledge/
   kb.db                     # node:sqlite，索引 + 映射（可重建）
   files/<doc_id>/orig.*     # 原始文件
   files/<doc_id>/p<nn>.png  # 页图（引用预览用）
+  files/<doc_id>/blocks.json # 可选：块级 sidecar（视觉解析结果，不参与索引）
 ```
+
+`blocks.json` 由解析侧写（`saveBlocks(docId, payload)`，读 `blocks(docId)`），存 `blocks/relations/checks` 与 bbox；**不进 chunk、不进向量**，Reader 契约仍是 `Page[] = { page_no, markdown }`。
 
 `pages/*.md`、`sources/*` 仍由 Notes 插件维护在原 vault 目录，不搬进 `files/`。
 
@@ -180,6 +183,8 @@ userData/knowledge/engines.json   # 0600；密钥字段经 safeStorage 加密（
 ### 3.5 引用定位
 
 **定为「页级 + 段序号」，不做 bbox。** VLM 返回的坐标不稳定，画框反而误导。原文预览用 `page_no` 跳页图。
+
+块级信息只以 sidecar 旁挂（`files/<doc_id>/blocks.json`），用于「点引用 → 在原图上高亮这个块」的后续升级；在没有稳定坐标的解析器上不画框。
 
 ---
 

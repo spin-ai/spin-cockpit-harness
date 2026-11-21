@@ -4,6 +4,7 @@
 
 > 本文不描述实现细节（各子系统有独立 ARCH），只回答一件事：**这个产品真正的技术面是哪几块、现在到哪了、做到什么程度算做到。**
 > 生态对照（有哪些开源/闭源实现、能不能打包）→ [`ARCH-tech-landscape.md`](ARCH-tech-landscape.md)。
+> 评测基准（有没有公认数据集、本地闸门抄什么）→ [`ARCH-benchmark-landscape.md`](ARCH-benchmark-landscape.md)。
 > 模块设计：知识 → [`ARCH-knowledge.md`](ARCH-knowledge.md) · 记忆 → [`ARCH-memory.md`](ARCH-memory.md) · 人像 → [`ARCH-memory-persona-im.md`](ARCH-memory-persona-im.md) · 编排 → [`ARCH-multi-agent-workspace.md`](ARCH-multi-agent-workspace.md) / [`ARCH-super-agent.md`](ARCH-super-agent.md) · 整理 → [`ARCH-wiki-retrieval.md`](ARCH-wiki-retrieval.md) / [`PLUGIN-notes.md`](PLUGIN-notes.md)。
 
 
@@ -124,12 +125,12 @@
 |       |                                                                                                                  |
 | ----- | ---------------------------------------------------------------------------------------------------------------- |
 | 目标    | 做过的事分层沉淀，下次会话注入「对的东西」，顶层永远保持小                                                                                    |
-| 现在的实现 | 四层（结论 / 项目 / 事实 / 原始）+ 未验证 note + Dream 建议队列 + 注入预算（≤12k）+ 回查（`memory_search`，MCP 内）+ `memory().inject()` 单一注入来源 |
+| 现在的实现 | 四层（结论 / 项目 / 事实 / 原始）+ 未验证 note + Dream 循环（建议队列 + 提案 diff/版本闸门 + 证据链 + 输入指纹幂等 + 空闲触发 + 台账）+ 注入预算（≤12k）+ 回查（`memory_search`，MCP 内）+ `memory().inject()` 单一注入来源 |
 | 真难点   | **什么该记、什么该忘**。参照 Anthropic 的对照：413 个文件只拿 1 个徽章，9 个文件拿 4 个 —— 记得越多越差                                              |
 | 关键设计  | 越高层越小；L1 不可写（Dream 的 ground truth）；晋升必须可追溯且人工接受；Dream 可关、有预算                                                     |
 | 判据    | 开 / 关 Dream 的返工次数对比；L4 注入条目被实际引用的比例                                                                              |
 | 头号风险  | 自动晋升污染**每一次**会话 —— 因此晋升只能产建议，且要能回到上一个 `memory_version`                                                           |
-| 优先级   | P1（已可用，差 LLM Dreaming 的校正/晋升）                                                                                    |
+| 优先级   | P1（已可用；差的是语义 pass 的准确率数据、页面结论对 source 的 claim check）                                                                                    |
 
 
 ---
@@ -180,7 +181,7 @@
 | 引入 PaddleOCR / RAGFlow 服务 | 要 Python + 服务进程，与「极小资源」冲突；质量优势只在复杂版式，且 VLM 可覆盖 |
 | 让 LLM 整篇重写原文 | 贵，且**不可引用**（无法保证与原文对应） |
 | 全量页走 VLM | 每页一次调用；数字原生 PDF 纯属浪费 |
-| 追 bbox 级引用定位 | 坐标不稳，页级 + 段级已足够核对（zhulong 接入后可升级为块级） |
+| 追 bbox 级引用定位 | 坐标不稳，页级 + 段级已足够核对（视觉解析插件已接解析后端，但**块级引用仍未做**，见 [`ARCH-zhulong-integration.md`](ARCH-zhulong-integration.md)） |
 | 为记忆 / 画像引入独立向量库 | 个人语料规模下 `node:sqlite` + 暴力 cosine 足够（20k×1024 实测 15ms） |
 
 ## 9. 已验证的前提（避免被当成猜测）

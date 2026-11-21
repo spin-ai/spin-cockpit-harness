@@ -35,24 +35,41 @@ Notes 不是 Obsidian vault 浏览器，而是 **Source → Page → Citation �
 
 Agent 只能写 draft；reviewed 页面不会被静默覆盖。写入会追加 revision 和 log。
 
+后台整理**不直接改页面**，只写建议队列：
+
+- `wiki.curate`（确定性、免费秒级）：draft 直接写并记 revision，`reviewed / stale` 只产建议；
+- `wikiCurateLLM`：结果变成 `summary` 待审建议，缓存按整理前正文 hash 去重；
+- `wiki.maintain`：漏引用 / 疑似重复进同一条建议队列，`wiki.dream` 是它的兼容壳；
+- 建议带 `baseHash` + evidence，人看逐行 diff 才落盘；批准 = 字节拷贝；页面已改过 → `needs_rebase`；
+- 人改过的句子记成**人工结论（claim）**，整理会动到它们时整页自动整理被拦下，改成待审建议；
+- 页面进回收站 → claim 标 `orphan`，恢复时按正文重新核对。
+
+资料侧的解析 / 索引 / 检索见 [知识库](#/wiki/knowledge)。
+
 ## MCP tools
 
-Wiki 通过 MCP bridge 向 dsh 暴露工具：
+Wiki / 知识库 / 记忆 / 画像共用一条 MCP bridge；每个 run 一个子进程 + 一个 token，run 结束回收：
 
 ![MCP bridge](./wiki/mcp-bridge.png)
 
-*图：dsh / MCP 工具 ↔ 主进程 HTTP bridge ↔ 插件。*
+*图：dsh / MCP 工具 ↔ 主进程 HTTP bridge ↔ 插件与领域动作。*
 
 ```text
-wiki_search
-wiki_list_sources
-wiki_read_source
-wiki_read_page
-wiki_upsert_draft
-wiki_add_citation
+Wiki      wiki_search · wiki_list_sources · wiki_read_source · wiki_read_page
+          wiki_upsert_draft · wiki_add_citation
+知识库    knowledge_search · knowledge_ask · knowledge_docs · knowledge_read · knowledge_cite
+记忆      memory_inject · memory_search · memory_note_write · memory_entry_write
+          memory_promote_note · run_read
+画像      persona_lookup · persona_review
 ```
 
-典型流程：导入 source → 发送到 Chat → Curator 用工具整理 draft → 人审核。
+约定：
+
+- 写入工具只到 draft / note；`reviewed` 与晋升仍由人或审核门完成；
+- 资料导入不暴露给 Agent，只能人显式导入；
+- 读 source 内容视为不可信数据。
+
+典型流程：导入 source（或知识库资料）→ 发送到 Chat → 工具整理 draft / 补引用 → 人审核。
 
 ## Mission MCP
 

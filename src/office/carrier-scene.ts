@@ -18,6 +18,7 @@ interface MountOptions {
 }
 
 export interface Carrier3DApi {
+  launch: () => void;
   update: () => void;
   setSelected: (id: string | null) => void;
   setTheme: (theme: Theme) => void;
@@ -1026,14 +1027,16 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
     ship.add(w);
   });
 
-  // JBD panels
+  // JBD panels（弹射时抬起，平时卧倒）
   const jbdMat = new THREE.MeshStandardMaterial({ color: 0x414a4e, roughness: 0.85, metalness: 0.15 });
+  const jbds: THREE.Mesh[] = [];
   [[-4.2, 11.8], [2.2, 11.8], [-12.4, -13.8]].forEach(([x, z]) => {
     const j = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.55, 1.2), jbdMat);
     j.position.set(x, 0.28, z);
     j.rotation.x = -0.34;
     j.castShadow = true;
     ship.add(j);
+    jbds.push(j);
   });
 
   // jets
@@ -1651,11 +1654,13 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
   const TONE_HEX: Record<OfficeTone, number> = {
     run: 0x5fc89a, wait: 0xd9b878, review: 0x9c8ae0, fail: 0xd97a78, lead: 0x6fd6f5, neutral: 0x8f9aa3,
   };
-  interface Slot { x: number; z: number; rot: number }
+  const EXHAUST_TEX = glowTexture("rgba(255,214,150,1)");
+  const STEAM_TEX = glowTexture("rgba(235,248,255,1)");
+  interface Slot { x: number; z: number; rot: number; dx?: number; dz?: number }
   const CAT: Slot[] = [
-    { x: -4.2, z: 25, rot: 0 },
-    { x: 2.2, z: 24, rot: 0 },
-    { x: -11.4, z: -10, rot: -0.32 },
+    { x: -4.2, z: 25, rot: 0, dx: 0, dz: 1 },
+    { x: 2.2, z: 24, rot: 0, dx: 0, dz: 1 },
+    { x: -11.4, z: -10, rot: -0.32, dx: 0.52, dz: 0.85 },
   ];
   const HOLD: Slot[] = [
     { x: 6.4, z: -20, rot: -0.1 },
@@ -1682,11 +1687,17 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
     label: HTMLButtonElement;
     line: SVGLineElement;
     dot: SVGCircleElement;
+    exhaust?: THREE.Sprite;
+    steam?: THREE.Sprite;
     anchorX: number;
     anchorY: number;
     target: Slot;
-    cur: { x: number; z: number; rot: number };
+    cur: { x: number; y: number; z: number; rot: number };
     tone: OfficeTone;
+    prevTone: OfficeTone;
+    prevCat: number;
+    flight: { start: number; cat: number; mode: "auto" | "demo" } | null;
+    airborne: boolean;
   }
   const entries = new Map<string, Entry>();
 
@@ -1767,7 +1778,7 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
       crew.position.set(LEAD.x, 0, LEAD.z);
       ship.add(crew);
       label.addEventListener("click", () => onSelect(actor.agent.id));
-      return { crew, ring: ringFor(tone, 1.2), label, line, dot, anchorX: 0, anchorY: 0, target: LEAD, cur: { x: LEAD.x, z: LEAD.z, rot: 0 }, tone };
+      return { crew, ring: ringFor(tone, 1.2), label, line, dot, anchorX: 0, anchorY: 0, target: LEAD, cur: { x: LEAD.x, y: 0, z: LEAD.z, rot: 0 }, tone, prevTone: tone, prevCat: -1, flight: null, airborne: false };
     }
     const kind = planeKind(actor, index);
     const mesh = makeJet(kind, false);
@@ -1784,8 +1795,48 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
     ao.position.y = -0.675;
     mesh.add(ao);
     ship.add(mesh);
+    const exhaust = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: EXHAUST_TEX, color: 0xffb45e, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0,
+    }));
+    exhaust.scale.set(2.2, 2.2, 1);
+    exhaust.position.set(0, 0, -3.6);
+    mesh.add(exhaust);
     label.addEventListener("click", () => onSelect(actor.agent.id));
-    return { plane: mesh, ring: ringFor(tone, 2.2), label, line, dot, anchorX: 0, anchorY: 0, target: CAT[0], cur: { x: CAT[0].x, z: CAT[0].z, rot: CAT[0].rot }, tone };
+    return { plane: mesh, ring: ringFor(tone, 2.2), label, line, dot, exhaust, anchorX: 0, anchorY: 0, target: CAT[0], cur: { x: CAT[0].x, y: 0.74, z: CAT[0].z, rot: CAT[0].rot }, tone, prevTone: tone, prevCat: -1, flight: null, airborne: false };
+  }
+
+  let firstSync = true;
+  function startFlight(entry: Entry, catIdx: number, mode: "auto" | "demo") {
+    if (!entry.plane || !entry.exhaust) return;
+    if (motion.tier === "off" || motion.reduced) return;
+    const base = CAT[catIdx] || CAT[0];
+    entry.flight = { start: tFlight, cat: Math.max(0, catIdx), mode };
+    entry.airborne = false;
+    entry.cur.x = base.x;
+    entry.cur.z = base.z;
+    entry.cur.y = 0.74;
+    entry.cur.rot = base.rot;
+    entry.plane.position.set(base.x, 0.74, base.z);
+    entry.plane.rotation.set(0, Math.PI + base.rot, 0);
+    entry.ring.position.set(base.x, 0.11, base.z);
+    entry.ring.visible = false;
+    if (entry.steam) { entry.steam.removeFromParent(); entry.steam = undefined; }
+    const steam = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: STEAM_TEX, color: 0xeaf6ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0,
+    }));
+    steam.position.set(base.x, 0.5, base.z);
+    steam.scale.set(2.4, 2.4, 1);
+    ship.add(steam);
+    entry.steam = steam;
+  }
+
+  function launchDemo() {
+    const list = [...entries.values()].filter((e) => e.plane && !e.flight);
+    if (!list.length) return;
+    const running = list.find((e) => e.tone === "run" && CAT.includes(e.target));
+    const target = running ?? list[0];
+    const idx = Math.max(0, CAT.indexOf(target.target));
+    startFlight(target, idx, "demo");
   }
 
   function escapeHtml(s: string) {
@@ -1811,7 +1862,22 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
       entry.label.title = `${actor.displayName} · ${ZONE_LABEL[actor.zone]} · ${actor.statusLabel}`;
       entry.label.classList.toggle("sel", getSelected() === actor.agent.id);
       (entry.ring.material as THREE.MeshBasicMaterial).color.setHex(TONE_HEX[actor.tone] ?? 0x8f9aa3);
+      const catIdx = CAT.indexOf(target);
+      if (entry.plane) {
+        if (entry.flight && catIdx < 0) entry.flight = null;
+        if (entry.airborne && (actor.tone !== "run" || catIdx < 0)) {
+          entry.airborne = false;
+        }
+        const becameRun = actor.tone === "run" && entry.prevTone !== "run";
+        const enteredCat = actor.tone === "run" && catIdx >= 0 && entry.prevCat !== catIdx;
+        if (!firstSync && !entry.flight && !entry.airborne && (becameRun || enteredCat)) {
+          startFlight(entry, Math.max(0, catIdx), "auto");
+        }
+      }
+      entry.prevTone = actor.tone;
+      entry.prevCat = catIdx;
     });
+    firstSync = false;
     for (const [id, entry] of entries) {
       if (seen.has(id)) continue;
       entry.label.remove();
@@ -1971,14 +2037,20 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
 
   const clock = new THREE.Clock();
   let tAnim = 0;
+  let tFlight = 0;
   let rafId = 0;
   let disposed = false;
   function animate() {
     if (disposed) return;
     rafId = requestAnimationFrame(animate);
-    const dt = Math.min(clock.getDelta(), 0.05);
+    const rawDt = clock.getDelta();
+    const dt = Math.min(rawDt, 0.05);
     const anim = motion.tier !== "off" && !motion.reduced;
-    if (anim) tAnim += dt;
+    if (anim) {
+      tAnim += dt;
+      /* 弹射用独立时钟：卡帧时放慢而不是直接跳到结尾，60fps 下就是真实时间 */
+      tFlight += Math.min(rawDt, 0.2);
+    }
     seaUniforms.uTime.value = tAnim;
     skyUniforms.uTime.value = tAnim;
     const amp = anim ? 1.1 : 0;
@@ -2001,18 +2073,99 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
       e.m.rotation.z = Math.sin(tAnim * 0.41 + i) * 0.006 * mv;
     });
     const speed = anim ? Math.min(1, dt * (1000 / Math.max(300, motion.walk)) * 1.8) : 1;
+    const launchingCats = new Set<number>();
+    let shake = 0;
     for (const entry of entries.values()) {
+      if (!entry.plane) continue;
       const t = entry.target;
-      entry.cur.x += (t.x - entry.cur.x) * speed;
-      entry.cur.z += (t.z - entry.cur.z) * speed;
-      entry.cur.rot += (t.rot - entry.cur.rot) * speed;
-      if (entry.plane) {
-        entry.plane.position.x = entry.cur.x;
-        entry.plane.position.z = entry.cur.z;
+      if (entry.flight) {
+        const flight = entry.flight;
+        const base = CAT[flight.cat] || CAT[0];
+        const dx = base.dx ?? 0;
+        const dz = base.dz ?? 1;
+        const el = tFlight - flight.start;
+        let y = 0.74;
+        let dist = 0;
+        let pitch = 0;
+        if (el < 0.8) {
+          launchingCats.add(flight.cat);
+          if (entry.exhaust) entry.exhaust.material.opacity = (el / 0.8) * 0.55;
+        } else if (el < 2.2) {
+          launchingCats.add(flight.cat);
+          const p = (el - 0.8) / 1.4;
+          const e = p * p;
+          dist = e * 20;
+          y = 0.74 + e * 0.22;
+          pitch = -0.04 * e;
+          shake = Math.max(shake, (1 - p) * 0.9);
+          if (entry.exhaust) {
+            entry.exhaust.material.opacity = 0.9;
+            entry.exhaust.scale.setScalar(2.4 + e * 0.9);
+          }
+        } else if (el < 3.4) {
+          const p = (el - 2.2) / 1.2;
+          const e = 1 - Math.pow(1 - p, 3);
+          dist = 20 + e * 5;
+          y = 0.74 + e * 2.6;
+          pitch = -0.04 - e * 0.22;
+          if (entry.exhaust) {
+            entry.exhaust.material.opacity = 0.9 * (1 - p) + 0.25;
+            entry.exhaust.scale.setScalar(3.3 - e * 0.6);
+          }
+        } else {
+          if (flight.mode === "auto") {
+            entry.airborne = true;
+            entry.ring.visible = false;
+            dist = 25;
+            y = 3.34;
+            pitch = -0.26;
+          } else {
+            entry.flight = null;
+            entry.airborne = false;
+          }
+          if (entry.exhaust) entry.exhaust.material.opacity = flight.mode === "auto" ? 0.28 : 0;
+        }
+        entry.cur.x = base.x + dx * dist;
+        entry.cur.z = base.z + dz * dist;
+        entry.cur.y = y;
+        entry.cur.rot = base.rot;
+        entry.plane.position.set(entry.cur.x, y, entry.cur.z);
+        entry.plane.rotation.y = Math.PI + base.rot;
+        entry.plane.rotation.x = pitch;
+        entry.ring.position.set(base.x, 0.11, base.z);
+        if (entry.steam) {
+          const sp = Math.min(1, el / 2.4);
+          entry.steam.material.opacity = Math.max(0, 0.45 * (1 - sp));
+          entry.steam.scale.setScalar(2.4 + sp * 5.5);
+          if (el > 2.6) { entry.steam.removeFromParent(); entry.steam = undefined; }
+        }
+      } else if (entry.airborne) {
+        entry.cur.y = 3.34 + Math.sin(tAnim * 1.6 + entry.cur.x) * 0.08;
+        entry.plane.position.set(entry.cur.x, entry.cur.y, entry.cur.z);
+        entry.plane.rotation.x = -0.26;
+        entry.ring.visible = false;
+        if (entry.exhaust) entry.exhaust.material.opacity = 0.16;
+      } else {
+        entry.cur.x += (t.x - entry.cur.x) * speed;
+        entry.cur.z += (t.z - entry.cur.z) * speed;
+        entry.cur.y += (0.74 - entry.cur.y) * speed;
+        entry.cur.rot += (t.rot - entry.cur.rot) * speed;
+        entry.plane.position.set(entry.cur.x, entry.cur.y, entry.cur.z);
         entry.plane.rotation.y = Math.PI + entry.cur.rot;
+        entry.plane.rotation.x += (0 - entry.plane.rotation.x) * speed;
+        entry.ring.visible = entry.cur.y < 1.4;
+        if (entry.exhaust) entry.exhaust.material.opacity = 0;
       }
       entry.ring.position.x = entry.cur.x;
       entry.ring.position.z = entry.cur.z;
+    }
+    jbds.forEach((j, i) => {
+      const up = launchingCats.has(i) ? -1.18 : -0.34;
+      j.rotation.x += (up - j.rotation.x) * Math.min(1, dt * 7);
+    });
+    if (shake > 0) {
+      camera.position.x += Math.sin(tAnim * 96) * 0.18 * shake;
+      camera.position.y += Math.cos(tAnim * 83) * 0.12 * shake;
     }
     scene.updateMatrixWorld(true);
     renderer.render(scene, camera);
@@ -2023,6 +2176,10 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
   animate();
 
   return {
+    launch() {
+      if (disposed) return;
+      launchDemo();
+    },
     update() {
       if (disposed) return;
       syncActors();

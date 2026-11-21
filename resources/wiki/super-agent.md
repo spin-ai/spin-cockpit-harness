@@ -178,3 +178,4 @@ Plan JSON 的核心是 `steps[]`：每步有 `key` / `title` / `brief` / `accept
 - Mission 用 Mission 卡片 / 计划卡片 / 委派卡片表达状态。
 - 输入框语义保持单一：计划未批准时发消息 = 修订计划；子任务运行中 = 纠偏；Mission 完成 = 仅记录。
 - 统计按 supervisor / worker run 分开，Mission 级事件不混进普通任务成功率。
+- 场景页只读这些状态：主管位 / 协调台按 `mission_state` 落位，详见 [场景与办公室](#/wiki/office)。

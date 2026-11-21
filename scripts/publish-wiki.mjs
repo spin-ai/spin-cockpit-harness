@@ -27,9 +27,15 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PAGES = [
   { id: "home", file: "Home.md", source: "resources/wiki/home.md", group: "开始", label: "项目介绍" },
   { id: "workflow", file: "Workflow.md", source: "resources/wiki/workflow.md", group: "开始", label: "工作流" },
+  { id: "gallery", file: "Gallery.md", source: "resources/wiki/gallery.md", group: "开始", label: "界面与流程" },
+  { id: "llm-wiki", file: "LLM-Wiki.md", source: "resources/wiki/llm-wiki.md", group: "开始", label: "LLM Wiki" },
   { id: "architecture", file: "Architecture.md", source: "resources/wiki/architecture.md", group: "系统", label: "架构" },
   { id: "agents", file: "Agents.md", source: "resources/wiki/agents.md", group: "系统", label: "Agent 与执行适配器" },
   { id: "super-agent", file: "Super-Agent.md", source: "resources/wiki/super-agent.md", group: "系统", label: "Super Agent / Mission" },
+  { id: "office", file: "Office.md", source: "resources/wiki/office.md", group: "系统", label: "场景与办公室" },
+  { id: "memory", file: "Memory.md", source: "resources/wiki/memory.md", group: "系统", label: "记忆与 Dream" },
+  { id: "knowledge", file: "Knowledge.md", source: "resources/wiki/knowledge.md", group: "系统", label: "知识库" },
+  { id: "tech", file: "Tech.md", source: "resources/wiki/tech.md", group: "系统", label: "五个技术难点" },
   { id: "design-notes", file: "Design-Notes.md", source: "resources/wiki/design-notes.md", group: "系统", label: "设计取舍与踩坑" },
   { id: "persona", file: "Persona.md", source: "resources/wiki/persona.md", group: "系统", label: "人物画像与记忆语义" },
   { id: "terminal", file: "Terminal.md", source: "resources/wiki/terminal.md", group: "系统", label: "终端与预览" },
@@ -75,6 +81,8 @@ function rewrite(markdown) {
   });
   if (rawBase) {
     out = out.replace(/!\[([^\]]*)\]\(\.\/wiki\/([^)]+)\)/g, (_full, alt, file) => `![${alt}](${rawBase}public/wiki/${file})`);
+    // 首页 / gallery 用 <figure><img> 写图，也要把相对地址改写到 raw
+    out = out.replace(/(<img\b[^>]*?\bsrc=")\.\/wiki\/([^"]+)"/g, (_full, head, file) => `${head}${rawBase}public/wiki/${file}"`);
   }
   return out;
 }
