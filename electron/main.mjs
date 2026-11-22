@@ -4017,10 +4017,16 @@ const actions = {
       msgs.push(msg);
       return msg;
     };
-    push("owner", null, value);
+    const ownerMsg = push("owner", null, value);
     // 先把「你说的这句」落盘 + 广播：群里多个 bot 可能各想十几秒，不能等全跑完才出现
     store.persist(); broadcast();
     const out = [];
+    /** 这一轮 owner 之后其他人说的：主管先回，下面的成员就能看到分配再讨论 */
+    const contextOf = (bot) => msgs
+      .filter((m) => (m.seq || 0) > (ownerMsg.seq || 0) && m.botId !== bot.id && m.author === "bot")
+      .map((m) => `${m.botName || "成员"}：${String(m.text || "").slice(0, 400)}`)
+      .join("\n")
+      .slice(-2000);
     /** 一个成员：开跑前先发 thinking，回完只落这一行 + 增量下发，不整包广播 */
     const respond = async (bot) => {
       const base = { botId: bot.id, groupId: gid, name: bot.name };
@@ -4031,6 +4037,7 @@ const actions = {
       try {
         const turn = await bots().reply(bot, value, {
           signal: controller.signal,
+          groupContext: contextOf(bot),
           onDelta: (delta) => sendDelta(base, delta),
           onTool: (tool) => sendTool(base, tool),
         });

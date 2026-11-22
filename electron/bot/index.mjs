@@ -897,7 +897,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
   }
 
   /** 被动回复：同一个 bot、同一份记忆，流式吐字；落一条 decision=replied 的回合 */
-  async function reply(bot, text, { onDelta, onTool, signal, threadId = "" } = {}) {
+  async function reply(bot, text, { onDelta, onTool, signal, threadId = "", groupContext = "" } = {}) {
     const clean = String(text || "").trim().slice(0, 2000);
     if (!clean) throw new Error("说点什么");
     if (typeof chatStream !== "function") throw new Error("当前环境不支持流式回复");
@@ -950,8 +950,11 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     };
     let res;
     try {
+      const groupNote = String(groupContext || "").trim();
       res = await chatStreamWithTools([
         { role: "system", content: buildSystemPrompt(bot, markdown, { proactive: false, recentProactive: recentSaid(bot) }) },
+        // 群聊里已经说过的话：让 SE 能看到 PM 的分配再讨论，而不是各说各的
+        ...(groupNote ? [{ role: "system", content: `群聊里其他人这轮已经说的（只作讨论上下文，不要冒充他们，也不要重复他们的整段）：\n${groupNote}` }] : []),
         ...history,
         { role: "user", content: clean },
       ], bot, onDeltaTracked, signal, onTool);
