@@ -635,9 +635,9 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   /** 群聊：主进程增量下发的消息；全量 snapshot 还没到的时候先拼在本地 */
   const [groupLive, setGroupLive] = useState<BotGroupMessage[]>([]);
   /** 群聊：自己刚发出去的那句先就地显示，不等后端返回 */
-  const [pendingOwner, setPendingOwner] = useState<string | null>(null);
+  const [pendingOwner, setPendingOwner] = useState<{ text: string; at: number } | null>(null);
   /** 1:1：自己刚发出去的那句先就地显示；回合落库后让位 */
-  const [pendingUser, setPendingUser] = useState<string | null>(null);
+  const [pendingUser, setPendingUser] = useState<{ text: string; at: number } | null>(null);
   const groupIdRef = useRef("");
   /** 输入法：composition 期间的回车只上屏（Candidate 里按 Enter 不该发送） */
   const composingRef = useRef(false);
@@ -697,7 +697,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   const turnCount = snapshot?.turns?.length ?? 0;
   const streamText = streaming?.text?.length ?? 0;
   /** 群聊的流式长度：自己那句 + 每个成员的增量，用来触发贴底滚动 */
-  const groupStreamText = groupStream.reduce((n, s) => n + s.text.length, 0) + (pendingOwner?.length ?? 0);
+  const groupStreamText = groupStream.reduce((n, s) => n + s.text.length, 0) + (pendingOwner?.text.length ?? 0);
   // 换 bot = 换一条时间线：重新贴底
   /** 「交给机器人」从别的页面指过来：跟着 initialBotId 切人，而不是只在首次挂载时生效 */
   useEffect(() => {
@@ -856,7 +856,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     return [...base, ...groupLive.filter((m) => m.groupId === group?.id && !seen.has(m.id))].sort((a, b) => a.seq - b.seq);
   }, [state?.botGroupMessages, group?.id, groupLive]);
   /** 自己那句：后端回声一到就用真的那条，别和乐观气泡同时出现 */
-  const awaitingOwnerEcho = Boolean(pendingOwner) && !groupMessages.some((m) => m.author === "owner" && m.text === pendingOwner);
+  const awaitingOwnerEcho = Boolean(pendingOwner) && !groupMessages.some((m) => m.author === "owner" && m.text === pendingOwner!.text && m.createdAt >= pendingOwner!.at - 1500);
   const groupPhaseCount = Object.keys(groupPhases).length;
   // 贴底：回合流自己滚（整页填充时），群聊的回声 / 流式 / 跑完都不掉队。
   // scrollTop 写入放进 rAF，避免每帧同步 layout。
@@ -888,7 +888,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     return mine.filter((t) => (t.threadId ?? defaultThreadId) === openThreadId);
   }, [snapshot, bot?.id, isGroup, openThreadId, defaultThreadId]);
   /** 1:1 同理：回合落库后让位给真正的用户消息 */
-  const awaitingUserEcho = Boolean(pendingUser) && !turns.some((t) => t.input === pendingUser);
+  const awaitingUserEcho = Boolean(pendingUser) && !turns.some((t) => t.input === pendingUser!.text && t.createdAt >= pendingUser!.at - 1500);
   /** 把回合切成「IM 行」：日期分隔 / 连续的沉默合并成一行 / 同一人连说合并头像 */
   const rows = useMemo(() => {
     type Row =
@@ -1002,7 +1002,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
       setDraft("");
       setError("");
       // 自己的话和「正在回」的占位立刻出来：群里每个成员都要想一会儿，不能整段空白
-      setPendingOwner(text);
+      setPendingOwner({ text, at: Date.now() });
       setGroupStream([]);
       setGroupPhases({});
       revealRef.current.group.clear();
@@ -1034,7 +1034,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     setAttachments([]);
     setError("");
     // 自己的话立刻上屏；bot 回合结束、落库后由 awaitingUserEcho 自动让位
-    setPendingUser(text);
+    setPendingUser({ text, at: Date.now() });
     revealRef.current.one = { target: "", shown: 0 };
     setStreaming({ botId: sendTo, text: "", phase: "thinking" });
     stickRef.current = true;
@@ -2173,7 +2173,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
             )}
             {isGroup && awaitingOwnerEcho && (
               <div className="ds-user ds-pending">
-                <div className="ds-bubble">{pendingOwner}</div>
+                <div className="ds-bubble">{pendingOwner?.text}</div>
                 <div className="ds-actions ds-actions-user"><span className="ds-time">发送中…</span></div>
               </div>
             )}
@@ -2350,7 +2350,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
             })}
             {!isGroup && awaitingUserEcho && (
               <div className="ds-user ds-pending">
-                <div className="ds-bubble">{pendingUser}</div>
+                <div className="ds-bubble">{pendingUser?.text}</div>
                 <div className="ds-actions ds-actions-user"><span className="ds-time">发送中…</span></div>
               </div>
             )}
