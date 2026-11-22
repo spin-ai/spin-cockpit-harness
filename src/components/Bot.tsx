@@ -537,7 +537,7 @@ const hm = (ts: number) => {
 const GroupMessageRow = memo(function GroupMessageRow({ m, senderName, state }: { m: BotGroupMessage; senderName?: string; state?: State | null }) {
   if (m.author === "owner") {
     return (
-      <div className="ds-user">
+      <div className="ds-user" role="article" aria-label={`你 · ${hm(m.createdAt)}`}>
         <div className="ds-bubble">{m.text}</div>
         <div className="ds-actions ds-actions-user"><span className="ds-time">{hm(m.createdAt)}</span></div>
       </div>
@@ -545,7 +545,7 @@ const GroupMessageRow = memo(function GroupMessageRow({ m, senderName, state }: 
   }
   const spoke = ["answered", "replied", "reported", "asked"].includes(m.decision);
   return (
-    <div className="ds-assistant">
+    <div className="ds-assistant" role="article" aria-label={`${m.botName || senderName || "机器人"} · ${hm(m.createdAt)}`}>
       <div className="ds-bot-attr">
         <b>{m.botName || senderName}</b>
         <span className="ds-time">{hm(m.createdAt)}</span>
@@ -647,6 +647,12 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   /** 回合流自己滚：贴底时跟着新内容走，用户主动往上翻就不抢 */
   const streamRef = useRef<HTMLDivElement | null>(null);
   const stickRef = useRef(true);
+  /** 跟随阈值 24px（dsh 同口径）；上翻多少就不跟随，由读者的手势说了算 */
+  const FOLLOW_PX = 24;
+  /** 不在贴底时累积的新块数，用来画「N 条新消息 ↓」 */
+  const [pendingCount, setPendingCount] = useState(0);
+  const pendingCountRef = useRef(0);
+  const setPending = (n: number) => { pendingCountRef.current = n; setPendingCount(n); };
 
   const turnCount = snapshot?.turns?.length ?? 0;
   const streamText = streaming?.text?.length ?? 0;
@@ -810,12 +816,21 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   const groupPhaseCount = Object.keys(groupPhases).length;
   // 贴底：回合流自己滚（整页填充时），群聊的回声 / 流式 / 跑完都不掉队。
   // scrollTop 写入放进 rAF，避免每帧同步 layout。
+  const contentKey = `${turnCount}|${groupMessages.length}|${streamText > 0}|${groupStreamText > 0}|${pendingUser ? 1 : 0}|${pendingOwner ? 1 : 0}|${groupPhaseCount}|${streaming?.phase || ""}`;
+  const lastContentKeyRef = useRef(contentKey);
   useEffect(() => {
     const el = streamRef.current;
-    if (!el || !stickRef.current) return;
+    if (!el) return;
+    const changed = lastContentKeyRef.current !== contentKey;
+    lastContentKeyRef.current = contentKey;
+    if (!stickRef.current) {
+      // 不在贴底：内容变了就攒一条「N 条新消息」，别抢读者的位置
+      if (changed) setPending(pendingCountRef.current + 1);
+      return;
+    }
     const raf = requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
     return () => cancelAnimationFrame(raf);
-  }, [turnCount, streamText, groupStreamText, groupMessages.length, busy, botId, openThreadId, pendingUser, pendingOwner, groupPhaseCount, streaming?.phase]);
+  }, [contentKey, botId, openThreadId]);
   const bot = useMemo(() => (isGroup ? null : snapshot?.bots.find((b) => b.id === botId) ?? snapshot?.bots[0] ?? null), [snapshot, botId, isGroup]);
   const members = snapshot?.bots ?? [];
   const botOf = useCallback((id?: string) => members.find((b) => b.id === id) ?? null, [members]);
@@ -2048,10 +2063,23 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
           <div
             className="bot-stream"
             ref={streamRef}
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions text"
+            aria-label={isGroup ? "群聊记录" : "对话记录"}
+            tabIndex={-1}
             onScroll={(event) => {
               const el = event.currentTarget;
-              stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+              const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+              stickRef.current = gap <= FOLLOW_PX;
+              if (stickRef.current && pendingCountRef.current) setPending(0);
               syncActiveTurn();
+            }}
+            onWheel={(event) => { if (event.deltaY < 0) stickRef.current = false; }}
+            onTouchStart={() => { stickRef.current = false; }}
+            onKeyDown={(event) => {
+              // 键盘上翻也算读者意图：PgUp / ↑ / Home 立刻退出跟随
+              if (["PageUp", "ArrowUp", "Home"].includes(event.key)) stickRef.current = false;
             }}
           >
             {!isGroup && !turns.length && (
@@ -2090,6 +2118,11 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
               />
             ))}
             {/* 群聊：自己刚发的那句 + 每个正在回的成员一块（逐字长出来） */}
+            {pendingCount > 0 && !stickRef.current && (
+              <button className="ds-new-msg" onClick={() => { stickRef.current = true; setPending(0); const el = streamRef.current; if (el) el.scrollTo({ top: el.scrollHeight, behavior: "instant" }); }}>
+                {pendingCount} 条新消息 ↓
+              </button>
+            )}
             {isGroup && awaitingOwnerEcho && (
               <div className="ds-user ds-pending">
                 <div className="ds-bubble">{pendingOwner}</div>
@@ -2246,7 +2279,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
 
               if (turn.decision === "replied") {
                 return (
-                  <div className="ds-turn" data-turn-id={turn.id} key={row.key}>
+                  <div className="ds-turn" role="article" aria-label={`${bot?.name || "助手"} · ${hm(turn.createdAt)}`} data-turn-id={turn.id} key={row.key}>
                     <div className="ds-user">
                       <div className="ds-bubble">{turn.input}</div>
                       <div className="ds-actions ds-actions-user">
@@ -2262,7 +2295,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
               }
 
               return (
-                <div className="ds-assistant" data-turn-id={turn.id} key={row.key}>
+                <div className="ds-assistant" role="article" aria-label={`${bot?.name || "助手"} · ${hm(turn.createdAt)}`} data-turn-id={turn.id} key={row.key}>
                   {bubble}
                 </div>
               );
@@ -2373,6 +2406,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
             <textarea
               className="ds-composer-input"
               ref={composerRef}
+              aria-label={isGroup ? "在群里说一句" : "说点什么"}
               value={draft}
               rows={1}
               placeholder={isGroup

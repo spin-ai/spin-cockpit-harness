@@ -32,14 +32,14 @@
 | US-Chat-02 | 说到一半我能叫停（判据：点「停止」≤1s 内该轮停止；那条消息留痕为「已停止」，不是凭空消失）                                              | ◐ 1:1 断掉后不留半截                 | dsh：中断保留已生成前缀                          | P0，改 |
 | US-Chat-03 | 跑的时候我知道它在干什么（判据：工具调用发生时，聊天里出现「正在调用 X」，完成后同一行变成结果摘要 + 耗时；不用等整轮结束）                             | ✗ 工具事件无人订阅                    | dsh 工具卡随流程生长；Orca 工具行同流                | P0，改 |
 | US-Chat-04 | 长会话不卡（判据：200 轮的会话首屏可交互 ≤1.5s；滚动 p95 帧 ≤16ms；DOM 节点 ≤3000）                                    | ✗ 36 条 = 2415 节点              | dsh 分页 + 虚拟化；Orca `virtualizer` 常驻     | P0，改 |
-| US-Chat-05 | 窗口跟着新内容走，但不抢我的位置（判据：贴底时自动跟随；我上翻 ≥24px 后不再跟随；有新内容时出现「N 条新消息 ↓」，点它回底）                          | ◐ 只有布尔 + 48px                 | dsh `ScrollFollow`（阈值 24 + 手势归属）       | P1，改 |
+| US-Chat-05 | 窗口跟着新内容走，但不抢我的位置（判据：贴底时自动跟随；我上翻 ≥24px 后不再跟随；有新内容时出现「N 条新消息 ↓」，点它回底）                          | ✅ 阈值 24 + 手势归属 + 「N 条新消息」 | dsh `ScrollFollow`（阈值 24 + 手势归属）       | P1，改 |
 | US-Chat-06 | 切走再回来还在原处（判据：切会话 / 重开应用回到上次位置 ±80px）                                                         | ✗ 回到顶部                        | dsh 位置采样 500ms + 恢复                    | P1，改 |
 | US-Chat-07 | 我打了一半的字不会丢（判据：切会话、崩溃重启后草稿还在；发送失败原文回填输入框）                                                     | ◐ 失败回填 ✅，切会话丢                 | Orca 草稿（IndexedDB + journal）           | P1，改 |
 | US-Chat-08 | 中文输入不出错（判据：拼音候选里按回车只上屏，不发送；Shift+Enter 换行；⌘/Ctrl+Enter 发送）                                   | ✗ 没有 composing 判断             | dsh `keyboard-composition.ts`          | P0，改 |
 | US-Chat-09 | 对一条消息能重试、追问、分支（判据：重试用同一条输入重跑且不重复原消息；引用只带 1–3 行；分支复制到新会话而源会话不动）                               | ◐ 有引用 / 分支，无重试                | dsh `MessageIconActions`（复制 / 分支 / 用量） | P1，改 |
 | US-Chat-10 | 出错时我在聊天里就能看到并重试（判据：失败卡写明原因 + 「重试」；草稿不丢；不只剩页头一条 banner）                                       | ✗ 只有页头 banner                 | Orca `messages/notices/`；dsh 失败卡       | P1，改 |
 | US-Chat-11 | 上下文快满时我提前知道（判据：占用 >80% 时 composer 上方有提示；压缩后留下「已压缩 N 轮 → 摘要」卡）                                | ✗ 静默截断                        | dsh compaction 卡 + quota 提示            | P2，改 |
-| US-Chat-12 | 读屏和键盘也能完整用（判据：转录是 `role=log` 且 `aria-live`；每条有可读发送者 / 状态；输入框有 `aria-label`；Esc 停止；发送后焦点回输入框） | ✗ 转录容器无 role；textarea 无 label | dsh 大量 `aria-live` / 语义角色              | P1，改 |
+| US-Chat-12 | 读屏和键盘也能完整用（判据：转录是 `role=log` 且 `aria-live`；每条有可读发送者 / 状态；输入框有 `aria-label`；Esc 停止；发送后焦点回输入框） | ◐ role=log / article / label 已做；Esc 停止与焦点恢复未做 | dsh 大量 `aria-live` / 语义角色              | P1，改 |
 | US-Chat-13 | 群聊里每条回复独立可读、可单独处置（判据：谁回的 / 何时 / 状态标签齐全；能单独停止；失败能单独重试）                                        | ◐ 有标签与停止，无重试                  | Orca 消息卡（sender chip / peer card）      | P2，改 |
 
 ---
@@ -182,7 +182,7 @@
 | SR-Chat-11 | **群聊单条重试**：`botGroupRetry({ messageId })` 只让原 `botId` 重答同一句，追加新消息（`retryOf` 指回原条）；失败条同样可重试                                                                                  | ✗           | US-Chat-13，改    |
 | SR-Chat-12 | **增量广播**：新增 `harness:bot-patch`（只推 bot 相关切片：`botTurns` 尾部、`botGroupMessages` 尾部、`botChats` 摘要）；`harness:state` 全量保留做兜底与首帧                                                   | ✗ 每次全量      | US-Chat-04，改    |
 | SR-Chat-13 | **性能闸门**：`preview-bot.mjs` 断言 200 轮时渲染节点 ≤3000、首屏 `performance.now()` ≤1.5s；基线写进 `COMPARE-chat-window.md` §6                                                                | ◐ 只有功能断言    | US-Chat-04，改    |
-| SR-Chat-14 | **可访问性**：转录 `role=log` + `aria-live=polite`；每轮 `aria-label`；textarea / 附件 / 停止按钮均有 `aria-label`；焦点恢复；正文对比度 ≥4.5:1                                                           | ✗           | IR-Chat-03/07，改 |
+| SR-Chat-14 | **可访问性**：转录 `role=log` + `aria-live=polite`；每轮 `aria-label`；textarea / 附件 / 停止按钮均有 `aria-label`；焦点恢复；正文对比度 ≥4.5:1                                                           | ◐ role=log / article / textarea label 已做；Esc 与焦点恢复未做 | IR-Chat-03/07，改 |
 
 ---
 

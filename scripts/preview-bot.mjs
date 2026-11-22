@@ -586,6 +586,36 @@ await run(`document.querySelector(".ds-load-earlier")?.dispatchEvent(new MouseEv
 const w2 = JSON.parse((await winStats()) || "{}");
 check("窗口化：加载更早后多出一页", w2.blocks > w1.blocks, JSON.stringify(w2));
 
+// 跟随阈值 24 + 「N 条新消息」chip（SR-Chat-04/05、IR-Chat-05/11）
+await run(`
+  window.dispatchEvent(new CustomEvent("harness:view", { detail: "bot" }));
+  await new Promise((r) => setTimeout(r, 400));
+  const item = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("项目群"));
+  if (item) { item.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 300)); }
+  const s = document.querySelector(".bot-stream");
+  s.scrollTop = 0;
+  s.dispatchEvent(new Event("scroll", { bubbles: true }));
+  // 读者往上滚一轮：follow 必须立刻退出
+  s.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+  await new Promise((r) => setTimeout(r, 60));
+  window.__delta?.({ botId: "b1", groupId: "g1", name: "PM · 项目经理", delta: "（新消息）" });
+  await new Promise((r) => setTimeout(r, 250));
+  return true;`);
+const chip = await ev(`(() => { const b = document.querySelector(".ds-new-msg"); return JSON.stringify({ shown: !!b, text: b ? b.textContent.trim() : "", top: document.querySelector(".bot-stream")?.scrollTop }); })()`);
+const chipObj = JSON.parse(chip || "{}");
+check("跟随：上翻后出新消息有「N 条新消息」", chipObj.shown === true && /条新消息/.test(chipObj.text), chip);
+await run(`document.querySelector(".ds-new-msg")?.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 400)); return true;`);
+const afterJump = await ev(`(() => { const s = document.querySelector(".bot-stream"); return JSON.stringify({ chip: !!document.querySelector(".ds-new-msg"), gap: Math.round(s.scrollHeight - s.scrollTop - s.clientHeight) }); })()`);
+const jumpObj = JSON.parse(afterJump || "{}");
+check("跟随：点 chip 回到底部并收起提示", jumpObj.chip === false && jumpObj.gap <= 8, afterJump);
+
+// 可访问性：转录是 log，每轮有可读标签（SR-Chat-14）
+const a11y = await ev(`(() => { const s = document.querySelector(".bot-stream"); const box = document.querySelector(".ds-composer textarea"); return JSON.stringify({ role: s.getAttribute("role"), live: s.getAttribute("aria-live"), label: s.getAttribute("aria-label"), articles: document.querySelectorAll('[role="article"]').length, inputLabel: box?.getAttribute("aria-label") || "" }); })()`);
+const a11yObj = JSON.parse(a11y || "{}");
+check("可访问性：转录 role=log + aria-live", a11yObj.role === "log" && a11yObj.live === "polite", a11y);
+check("可访问性：每轮有 role=article 标签", a11yObj.articles > 0, a11y);
+check("可访问性：输入框有 aria-label", Boolean(a11yObj.inputLabel), a11y);
+
 check("没有控制台报错", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 
 

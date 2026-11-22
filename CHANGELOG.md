@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### Fixed（聊天窗口 M2：跟随阈值 / 新消息提示 / 可访问性）
+- **跟随不再抢位置**：阈值 48px → **24px**，退出跟随由读者手势决定（滚轮上滚 / `touchstart` / PgUp·↑·Home），程序滚动不改变意图（REQ-bot-chat IR-Chat-11）
+- **「N 条新消息 ↓」**：不在贴底时新内容按块累积，右下角浮起 chip（sticky，28px），点了直接落底并恢复跟随（IR-Chat-05）
+- **转录语义**：`.bot-stream` = `role="log"` + `aria-live="polite"` + `aria-relevant` + 可读 `aria-label`；1:1 回合与群聊每条消息都是 `role="article"` + 「谁 · 时间」；composer `textarea` 补 `aria-label`（SR-Chat-14 主体）
+- `preview-bot.mjs` 新增 5 条断言：chip 出现 / 点它回底并收起 / role=log / 每轮 article / 输入框 label
+
 ### Fixed（聊天窗口 M1：输入法 / 中断留痕 / 长会话按页加载）
 - **中文输入法不再误发**：composer 用 `compositionstart/end` + `isComposing` + `keyCode 229` 三重判断，候选态回车只上屏；结合 `enterToSend`，Shift+Enter 仍是换行（REQ-bot-chat SR-Chat-10）
 - **中断留痕**：`bots().reply()` 被 abort 时不再删回合，而是落成 `decision: "interrupted"` 并保留已生成前缀（≤4000 字），聊天里显示「被打断」+ 半截；非取消的报错仍然不落账（SR-Chat-08）
