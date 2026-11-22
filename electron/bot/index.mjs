@@ -982,7 +982,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     }
     Object.assign(pending, {
       reply: answer.slice(0, 4000), decision: "replied",
-      cost: { tokens: res?.usage?.total_tokens ?? null, ms: now() - started, model: res?.model || "" },
+      cost: { tokens: res?.usage?.total_tokens ?? null, ms: now() - started, ttftMs: res?.ttft ?? null, model: res?.model || "" },
     });
     // 新话题的第一句话就是标题：Chats 列表里不出现一排“新话题”
     if (thread.title === "新话题") {

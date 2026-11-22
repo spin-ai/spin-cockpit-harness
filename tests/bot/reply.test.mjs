@@ -51,6 +51,21 @@ await test("被动回复：流式增量按顺序到，落库 decision=replied �
   assert.equal(store.state.botTurns.at(-1).id, turn.id);
 });
 
+await test("被动回复：首字延迟落进 cost.ttftMs", async () => {
+  const ttftStore = { state: { bots: [], botTurns: [] }, persist() {} };
+  const fast = createBots({
+    store: ttftStore,
+    now: () => NOON,
+    memory: () => ({ inject: () => ({ items: [] }) }),
+    chatStream: async () => ({ text: "好", usage: { total_tokens: 3 }, ttft: 120 }),
+    key: () => "k",
+  });
+  fast.ensureSeed();
+  const turn = await fast.reply(fast.list()[0], "在吗");
+  assert.equal(turn.cost.ttftMs, 120);
+  assert.equal(turn.cost.tokens, 3);
+});
+
 await test("被动回复：没有 key 直接报错，不落回合", async () => {
   const noKey = createBots({ store, now: () => NOON, memory: () => ({ inject: () => ({ items: [] }) }), chatStream: async () => ({ text: "x" }), key: () => "" });
   const before = store.state.botTurns.length;

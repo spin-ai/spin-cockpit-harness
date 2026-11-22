@@ -3900,6 +3900,8 @@ const actions = {
       id: t.id, key: t.key, title: t.title, status: t.status, missionState: t.missionState || null, agentId: t.agentId || null,
     }));
     // 可监视的任务：最近 30 条（供「任务」页签里的选择器用）
+    // 草稿 / 阅读位置：聊天面自己的小状态，跟 bot 快照一起下发最省一次 IPC
+    snap.botUi = store.state.botUi || {};
     snap.recentTodos = [...(store.state.todos || [])]
       .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
       .slice(0, 30)
@@ -4072,6 +4074,20 @@ const actions = {
     }
     store.persist(); broadcast();
     return { messages: out };
+  },
+  /**
+   * 聊天面的小状态：草稿（切会话不丢）与阅读位置。
+   * 只写 bot_ui 一行，不广播整份 state；不回 {ok} 之外的东西。
+   */
+  botUiSave: async ({ key, draft, scroll } = {}) => {
+    const k = String(key || "");
+    if (!k) return { ok: false };
+    if (typeof store.saveBotUi === "function") store.saveBotUi(k, { draft, scroll });
+    else {
+      store.state.botUi = { ...(store.state.botUi || {}), [k]: { draft: String(draft ?? "").slice(0, 8000), scroll: scroll ?? null, updatedAt: Date.now() } };
+      store.persist();
+    }
+    return { ok: true };
   },
   botChat: async ({ botId, text, threadId } = {}) => {
     const bot = bots().list().find((b) => b.id === String(botId || ""));

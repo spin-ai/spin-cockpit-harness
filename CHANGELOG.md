@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### Changed（聊天窗口 M3：草稿 / 首字延迟 / Esc 停止）
+- **草稿不再随会话消失**：新增 `bot_ui` 表（`k / draft / scroll / updated_at` + `saveBotUi` 单行写），渲染层输入 500ms 节流落盘，切 bot / 切会话自动取回（REQ-bot-chat SR-Chat-03）
+- **首字延迟可见**：`bots().reply()` 把 `res.ttft` 落进 `cost.ttftMs`，消息用量行显示「· 首字 0.8s」（SR-Chat-07）
+- **Esc 停止**：聊天面按 Esc = 停止当前生成（1:1 与群聊都按在场成员逐个 abort）；发送后焦点回输入框（SR-Chat-14 剩余项）
+- `botSnapshot` 带上 `botUi`，少一次 IPC；`tests/bot/reply.test.mjs` 增 1 条 ttft 用例，`preview-bot.mjs` 增 2 条草稿断言
+
 ### Fixed（聊天窗口 M2：跟随阈值 / 新消息提示 / 可访问性）
 - **跟随不再抢位置**：阈值 48px → **24px**，退出跟随由读者手势决定（滚轮上滚 / `touchstart` / PgUp·↑·Home），程序滚动不改变意图（REQ-bot-chat IR-Chat-11）
 - **「N 条新消息 ↓」**：不在贴底时新内容按块累积，右下角浮起 chip（sticky，28px），点了直接落底并恢复跟随（IR-Chat-05）

@@ -113,7 +113,9 @@ const MOCK = String.raw`
     recentTodos: [{ id: "td1", key: "FEAT-1", title: "首页标题改大", status: "in_review", missionState: null }],
   };
   const calls = [];
+  const draftStore = {};
   // 窗口化用例：把快照里的回合撑到 n 条（渲染层只该画最近 40 个块）
+  snapshot.botUi = draftStore;
   window.__fillTurns = (n) => {
     snapshot.turns = Array.from({ length: n }, (_, i) => turn({
       id: "tbig" + i, decision: i % 2 ? "replied" : "answered",
@@ -133,6 +135,7 @@ const MOCK = String.raw`
       else if (type === "botChatNew") result = { id: "th-bot-b1-3", title: "新话题" };
       else if (type === "botChatFork") result = { thread: { id: "th-bot-b1-fork" }, copied: 2 };
       else if (type === "botChat") result = { ok: true, result: turns[0] };
+      else if (type === "botUiSave") { draftStore[payload.key] = { draft: payload.draft || "", scroll: payload.scroll ?? null, updatedAt: Date.now() }; result = { ok: true }; }
       else if (type === "botGroupSend") {
         // 模拟群聊：先落自己的话，再逐个成员流式回（和主进程 botGroupSend 一样）
         const text = (head) => head + "\n\n" + "这是一段用来把回合流撑出滚动的正文，验证新内容进来时窗口会不会跟着往下走。\n".repeat(12);
@@ -583,6 +586,7 @@ check("窗口化：200 轮只渲染最近 40 个块", w1.blocks > 0 && w1.blocks
 check("窗口化：DOM 节点没爆（≤3000）", w1.nodes <= 3000, JSON.stringify(w1));
 check("窗口化：顶上给出「加载更早」", w1.hasEarlier === true, JSON.stringify(w1));
 await run(`document.querySelector(".ds-load-earlier")?.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 250)); return true;`);
+await shot(path.join(OUT, "bot-windowed.png"));
 const w2 = JSON.parse((await winStats()) || "{}");
 check("窗口化：加载更早后多出一页", w2.blocks > w1.blocks, JSON.stringify(w2));
 
@@ -604,6 +608,7 @@ await run(`
 const chip = await ev(`(() => { const b = document.querySelector(".ds-new-msg"); return JSON.stringify({ shown: !!b, text: b ? b.textContent.trim() : "", top: document.querySelector(".bot-stream")?.scrollTop }); })()`);
 const chipObj = JSON.parse(chip || "{}");
 check("跟随：上翻后出新消息有「N 条新消息」", chipObj.shown === true && /条新消息/.test(chipObj.text), chip);
+await shot(path.join(OUT, "bot-new-msg.png"));
 await run(`document.querySelector(".ds-new-msg")?.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 400)); return true;`);
 const afterJump = await ev(`(() => { const s = document.querySelector(".bot-stream"); return JSON.stringify({ chip: !!document.querySelector(".ds-new-msg"), gap: Math.round(s.scrollHeight - s.scrollTop - s.clientHeight) }); })()`);
 const jumpObj = JSON.parse(afterJump || "{}");
@@ -615,6 +620,29 @@ const a11yObj = JSON.parse(a11y || "{}");
 check("可访问性：转录 role=log + aria-live", a11yObj.role === "log" && a11yObj.live === "polite", a11y);
 check("可访问性：每轮有 role=article 标签", a11yObj.articles > 0, a11y);
 check("可访问性：输入框有 aria-label", Boolean(a11yObj.inputLabel), a11y);
+
+// 草稿：打一半切到别的 bot 再切回来还在（SR-Chat-03）
+await run(`
+  window.dispatchEvent(new CustomEvent("harness:view", { detail: "bot" }));
+  await new Promise((r) => setTimeout(r, 400));
+  const b1 = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("PM"));
+  if (b1) { b1.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 300)); }
+  const box = document.querySelector(".ds-composer textarea");
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+  setter.call(box, "打了一半的草稿");
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 800)); // 等 500ms 节流落盘
+  return true;`);
+const draftSaved = await ev(`JSON.stringify(window.__calls.filter((c) => c.type === "botUiSave").map((c) => c.payload.draft))`);
+check("草稿：输入 500ms 后落盘", /打了一半的草稿/.test(draftSaved || ""), draftSaved);
+await run(`
+  const b2 = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("DE-A"));
+  if (b2) { b2.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 350)); }
+  const b1 = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("PM"));
+  if (b1) { b1.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 400)); }
+  return true;`);
+const draftRestored = await ev(`document.querySelector(".ds-composer textarea")?.value || ""`);
+check("草稿：切走再回来还在", draftRestored === "打了一半的草稿", JSON.stringify(draftRestored));
 
 check("没有控制台报错", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 

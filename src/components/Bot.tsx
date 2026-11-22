@@ -43,7 +43,7 @@ type Turn = {
   todoId?: string | null;
   runId?: string | null;
   proposal?: { title: string; desc: string; dismissed?: boolean; acceptedAt?: number } | null;
-  reason?: string; cost?: { tokens?: number | null; ms?: number };
+  reason?: string; cost?: { tokens?: number | null; ms?: number; ttftMs?: number | null; model?: string };
   /** 这一轮用过的工具（只读）：name / args / ms / ok / preview */
   tools?: { name: string; args?: string; argsRaw?: string; result?: string; at?: number; ms?: number; ok?: boolean; rejected?: boolean; preview?: string }[];
   /** 结构化轨迹：每次模型请求（usage / TTFT 可算）+ 每次工具调用（原始参数 / 完整输出） */
@@ -503,6 +503,8 @@ type Snapshot = {
   agents?: { id: string; name: string; alias: string; cli: string; role: string }[];
   tasks?: { id: string; key: string; title: string; status: string; missionState: string | null; agentId: string | null }[];
   recentTodos?: { id: string; key: string; title: string; status: string; missionState: string | null }[];
+  /** 聊天面的小状态：草稿与阅读位置（key = botId:threadId / group:groupId） */
+  botUi?: Record<string, { draft?: string; scroll?: { turnId?: string; offset?: number } | null; updatedAt?: number }>;
 };
 
 const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "汇报", watching: "监视中", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工" };
@@ -995,6 +997,23 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     if (res?.id) setBotId(res.id);
   };
 
+  /** 草稿键：1:1 按 bot + 会话，群聊按群；切走再回来草稿还在 */
+  const draftKey = isGroup && group ? `group:${group.id}` : `${botId || ""}:${openThreadId || "default"}`;
+  // 切会话 / 切 bot：先把这一格的草稿取回来（只在 key 变时跑，不覆盖正在输入的内容）
+  useEffect(() => {
+    if (!draftKey) return;
+    setDraft(snapshot?.botUi?.[draftKey]?.draft || "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
+  // 输入 500ms 后落一次盘（只写 bot_ui 一行，不广播整份 state）
+  useEffect(() => {
+    if (!draftKey) return;
+    const key = draftKey;
+    const text = draft;
+    const timer = setTimeout(() => { void act("botUiSave", { key, draft: text }); }, 500);
+    return () => clearTimeout(timer);
+  }, [draft, draftKey, act]);
+
   const send = async () => {
     const text = draft.trim();
     if (!text) return;
@@ -1050,6 +1069,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
       setPendingUser(null);
     } finally {
       setStreaming(null);
+      composerRef.current?.focus();
       setPendingUser(null);
       revealRef.current.one = { target: "", shown: 0 };
     }
@@ -1336,6 +1356,18 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     }
     catch (err) { notify(String((err as Error)?.message || err)); }
   };
+
+  // Esc = 停止当前生成（聊天面里最常按的那个键）
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (!streaming && !groupStream.length) return;
+      event.preventDefault();
+      void cancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [streaming, groupStream.length, cancel]);
 
   const acceptProposal = (turn: Turn) => run("proposal", async () => {
     const res = (await act("botAcceptProposal", { turnId: turn.id })) as { ok?: boolean; key?: string } | null;
@@ -2304,7 +2336,10 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                     {openThreadId && <button className="ds-action" title="复制到新会话，换个说法重开" aria-label="分支到新会话" onClick={() => forkChat(openThreadId)}><GitIcon size={15} /></button>}
                     <span className="ds-time">{hm(turn.createdAt)}</span>
                     {typeof turn.cost?.tokens === "number" && turn.cost.tokens > 0 && (
-                      <span className="ds-usage">{turn.cost.tokens >= 1000 ? `${(turn.cost.tokens / 1000).toFixed(1)}k` : turn.cost.tokens} tokens</span>
+                      <span className="ds-usage">
+                        {turn.cost.tokens >= 1000 ? `${(turn.cost.tokens / 1000).toFixed(1)}k` : turn.cost.tokens} tokens
+                        {typeof turn.cost.ttftMs === "number" && turn.cost.ttftMs > 0 ? ` · 首字 ${(turn.cost.ttftMs / 1000).toFixed(1)}s` : ""}
+                      </span>
                     )}
                   </div>
                   <details className="bot-why">

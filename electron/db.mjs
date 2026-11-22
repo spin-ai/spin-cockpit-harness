@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS bot_groups (id TEXT PRIMARY KEY, name TEXT, reply_mod
 CREATE TABLE IF NOT EXISTS bot_group_members (group_id TEXT, bot_id TEXT, PRIMARY KEY (group_id, bot_id));
 CREATE TABLE IF NOT EXISTS bot_group_messages (id TEXT PRIMARY KEY, group_id TEXT, seq INTEGER, author TEXT, bot_id TEXT, bot_name TEXT, text TEXT, decision TEXT, created_at INTEGER, meta TEXT);
 CREATE TABLE IF NOT EXISTS routines (id TEXT PRIMARY KEY, bot_id TEXT, kind TEXT, data TEXT, updated_at INTEGER);
+-- 聊天面的小状态：草稿与阅读位置（key = botId:threadId / group:groupId）
+CREATE TABLE IF NOT EXISTS bot_ui (k TEXT PRIMARY KEY, draft TEXT, scroll TEXT, updated_at INTEGER);
 `;
 
 /** 应用设置默认值。缺失的键一律从这里补齐。 */
@@ -316,6 +318,9 @@ export async function openDb(dir, { onTranscript } = {}) {
     decision: r.decision || "answered", createdAt: r.created_at || 0,
     meta: J(r.meta, null),
   }));
+  state.botUi = Object.fromEntries(rows("SELECT * FROM bot_ui").map((r) => [r.k, {
+    draft: r.draft || "", scroll: J(r.scroll, null), updatedAt: r.updated_at || 0,
+  }]));
   state.botTurns = rows("SELECT * FROM bot_turns ORDER BY created_at DESC LIMIT 300").map((r) => ({
     id: r.id, botId: r.bot_id, channel: r.channel || "local",
     trigger: J(r.trigger, {}), input: r.input || "", injected: J(r.injected, []),
@@ -526,6 +531,23 @@ export async function openDb(dir, { onTranscript } = {}) {
         row.createdAt || Date.now(), row.todoId || null, row.proposal ? JSON.stringify(row.proposal) : null, JSON.stringify(row.tools || []), row.threadId || null, JSON.stringify(row.trace || [])],
     );
   };
+  /**
+   * 聊天面的小状态（草稿 / 阅读位置）：只写这一行。
+   * 草稿每 500ms 写一次，走整库 persist 会把这个库写热。
+   */
+  const saveBotUi = (k, patch = {}) => {
+    if (!k) return;
+    const prev = state.botUi?.[k] || { draft: "", scroll: null, updatedAt: 0 };
+    const next = {
+      draft: patch.draft !== undefined ? String(patch.draft).slice(0, 8000) : prev.draft,
+      scroll: patch.scroll !== undefined ? patch.scroll : prev.scroll,
+      updatedAt: Date.now(),
+    };
+    state.botUi = { ...(state.botUi || {}), [k]: next };
+    run("INSERT OR REPLACE INTO bot_ui (k,draft,scroll,updated_at) VALUES (?,?,?,?)",
+      [k, next.draft, next.scroll ? JSON.stringify(next.scroll) : null, next.updatedAt]);
+    return next;
+  };
   /** 群聊一条消息落库：同理，只写一行，避免每回完一个成员就整库重写 */
   const saveGroupMessage = (m) => {
     if (!m?.id) return;
@@ -536,5 +558,5 @@ export async function openDb(dir, { onTranscript } = {}) {
   };
 
   if (migrated) persist();
-  return { db, state, persist, flush, close, nextId, addEvent, addMessage, updateMessage, saveBotTurn, saveGroupMessage, file };
+  return { db, state, persist, flush, close, nextId, addEvent, addMessage, updateMessage, saveBotTurn, saveGroupMessage, saveBotUi, file };
 }
