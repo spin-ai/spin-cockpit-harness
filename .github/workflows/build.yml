@@ -28,6 +28,9 @@ jobs:
           - os: windows-2022
             name: windows-x64
     runs-on: ${{ matrix.os }}
+    # Linux 不是硬要求：装不出来（libarchive / AppImage / dsh 运行时缺件）就只记一笔，
+    # 不拖累整个 workflow，也不挡 tag 发布——mac / win 的产物照常上传。
+    continue-on-error: ${{ matrix.name == 'linux-x64' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -75,6 +78,8 @@ jobs:
         run: npm run dist -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # CI 上不需要把产物装进 /Applications（本地才有意义）
+          SKIP_LOCAL_INSTALL: "1"
 
       - uses: actions/upload-artifact@v7
         with:
