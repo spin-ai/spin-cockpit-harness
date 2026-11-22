@@ -644,6 +644,50 @@ await run(`
 const draftRestored = await ev(`document.querySelector(".ds-composer textarea")?.value || ""`);
 check("草稿：切走再回来还在", draftRestored === "打了一半的草稿", JSON.stringify(draftRestored));
 
+// 阅读位置：滚上去停 500ms 记一次，切走再回来落回原处（SR-Chat-04）
+await run(`
+  const b2 = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("DE-A"));
+  if (b2) { b2.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 350)); }
+  const b1 = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("PM"));
+  if (b1) { b1.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 500)); }
+  const s = document.querySelector(".bot-stream");
+  s.scrollTop = Math.round(s.scrollHeight * 0.4);
+  // 采样的节流是 500ms：连发几次滚动，保证有一次真的落盘
+  for (let i = 0; i < 4; i++) {
+    s.dispatchEvent(new Event("scroll", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 260));
+  }
+  window.__savedScroll = Math.round(s.scrollTop);
+  window.__savedKey = (window.__calls.filter((c) => c.type === "botUiSave" && c.payload.scroll).at(-1) || {}).payload?.key || "";
+  return true;`);
+const scrollSaved = await ev(`JSON.stringify({ saved: window.__savedScroll, calls: window.__calls.filter((c) => c.type === "botUiSave" && c.payload.scroll).map((c) => c.payload.scroll) })`);
+check("阅读位置：滚动 500ms 后落盘 turnId + offset", /turnId/.test(scrollSaved || "") && /offset/.test(scrollSaved || ""), scrollSaved);
+await run(`
+  const b2 = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("DE-A"));
+  if (b2) { b2.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 350)); }
+  const b1 = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("PM"));
+  if (b1) { b1.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 500)); }
+  // 回到同一个会话：草稿 / 阅读位置是按「bot + 会话」存的
+  const row = [...document.querySelectorAll(".bot-chat-row-main")].find((b) => b.textContent.includes("发布节奏"));
+  if (row) { row.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 700)); }
+  return true;`);
+const restored = await ev(`(() => {
+  const s = document.querySelector(".bot-stream");
+  const saved = window.__calls.filter((c) => c.type === "botUiSave" && c.payload.scroll).at(-1);
+  const turnId = saved?.payload?.scroll?.turnId;
+  const node = turnId ? s.querySelector('[data-turn-id="' + turnId + '"]') : null;
+  return JSON.stringify({
+    top: Math.round(s.scrollTop),
+    turn: turnId,
+    wantOffset: saved?.payload?.scroll?.offset ?? null,
+    nodeFound: !!node,
+    nodeTop: node ? Math.round(node.getBoundingClientRect().top - s.getBoundingClientRect().top) : null,
+  });
+})()`);
+const restoredObj = JSON.parse(restored || "{}");
+check("阅读位置：切走再回来后那一轮还在同一个视口位置（±120px）",
+  restoredObj.nodeFound === true && Math.abs((restoredObj.nodeTop ?? 9999) - (restoredObj.wantOffset ?? 0)) <= 120, restored);
+
 check("没有控制台报错", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 
 

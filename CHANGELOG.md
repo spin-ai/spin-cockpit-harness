@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed（聊天窗口 M4：阅读位置）
+- **切走再回来接着读**：滚动停 500ms 采样一次 `{ turnId, offset }`，落进 `bot_ui.scroll`（单行写、贴底时不算）；重进同一 bot / 会话时把那一轮放回同一视口位置，找不到就落到最新（REQ-bot-chat SR-Chat-04）
+- `preview-bot.mjs` 增 2 条断言：滚动 500ms 落盘 turnId+offset / 切回来那一轮在 ±120px 内回到原位
+
 ### Changed（聊天窗口 M3：草稿 / 首字延迟 / Esc 停止）
 - **草稿不再随会话消失**：新增 `bot_ui` 表（`k / draft / scroll / updated_at` + `saveBotUi` 单行写），渲染层输入 500ms 节流落盘，切 bot / 切会话自动取回（REQ-bot-chat SR-Chat-03）
 - **首字延迟可见**：`bots().reply()` 把 `res.ttft` 落进 `cost.ttftMs`，消息用量行显示「· 首字 0.8s」（SR-Chat-07）

@@ -947,17 +947,21 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   };
   /** 回合轨只画细线不写数字：靠 dark 一条标出「现在读的是第几轮」 */
   const [activeTurnId, setActiveTurnId] = useState("");
-  const syncActiveTurn = useCallback(() => {
-    const root = streamRef.current;
-    if (!root) return;
+  /** 视口顶上是哪一轮：滚动同步与阅读位置都用它（纯读 DOM，不依赖 state） */
+  const currentTurnIdOf = (root: HTMLElement) => {
     const nodes = Array.from(root.querySelectorAll<HTMLElement>("[data-turn-id]"));
-    if (!nodes.length) { setActiveTurnId(""); return; }
+    if (!nodes.length) return "";
     const rootTop = root.getBoundingClientRect().top;
     let currentId = nodes[0].dataset.turnId || "";
     for (const node of nodes) {
       if (node.getBoundingClientRect().top - rootTop <= 32) currentId = node.dataset.turnId || currentId;
     }
-    setActiveTurnId(currentId);
+    return currentId;
+  };
+  const syncActiveTurn = useCallback(() => {
+    const root = streamRef.current;
+    if (!root) return;
+    setActiveTurnId(currentTurnIdOf(root));
   }, []);
   useEffect(() => {
     if (chatView === "chat") syncActiveTurn();
@@ -999,6 +1003,34 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
 
   /** 草稿键：1:1 按 bot + 会话，群聊按群；切走再回来草稿还在 */
   const draftKey = isGroup && group ? `group:${group.id}` : `${botId || ""}:${openThreadId || "default"}`;
+  /** 阅读位置采样：滚动停下 500ms 记一次（贴底时不记，回到底部就是默认） */
+  const lastScrollSaveRef = useRef(0);
+  const saveScroll = () => {
+    const el = streamRef.current;
+    if (!el || !draftKey || stickRef.current) return;
+    const turnId = currentTurnIdOf(el);
+    if (!turnId) return;
+    const node = el.querySelector(`[data-turn-id="${turnId}"]`) as HTMLElement | null;
+    if (!node) return;
+    const offset = Math.round(node.getBoundingClientRect().top - el.getBoundingClientRect().top);
+    void act("botUiSave", { key: draftKey, scroll: { turnId, offset } });
+  };
+  /** 打开会话时把上次的阅读位置放回去；找不到那一轮就落到最新 */
+  const restoredForRef = useRef("");
+  useEffect(() => {
+    const el = streamRef.current;
+    if (!el || !draftKey || restoredForRef.current === draftKey) return;
+    restoredForRef.current = draftKey;
+    const saved = snapshot?.botUi?.[draftKey]?.scroll;
+    if (!saved?.turnId) return;
+    stickRef.current = false;
+    requestAnimationFrame(() => {
+      const node = el.querySelector(`[data-turn-id="${saved.turnId}"]`) as HTMLElement | null;
+      if (!node) return;
+      el.scrollTop = node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop + (saved.offset || 0);
+    });
+  }, [draftKey, snapshot]);
+
   // 切会话 / 切 bot：先把这一格的草稿取回来（只在 key 变时跑，不覆盖正在输入的内容）
   useEffect(() => {
     if (!draftKey) return;
@@ -2154,6 +2186,8 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
               stickRef.current = gap <= FOLLOW_PX;
               if (stickRef.current && pendingCountRef.current) setPending(0);
               syncActiveTurn();
+              const now = Date.now();
+              if (now - lastScrollSaveRef.current > 500) { lastScrollSaveRef.current = now; saveScroll(); }
             }}
             onWheel={(event) => { if (event.deltaY < 0) stickRef.current = false; }}
             onTouchStart={() => { stickRef.current = false; }}

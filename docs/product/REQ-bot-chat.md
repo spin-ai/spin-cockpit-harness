@@ -33,7 +33,7 @@
 | US-Chat-03 | 跑的时候我知道它在干什么（判据：工具调用发生时，聊天里出现「正在调用 X」，完成后同一行变成结果摘要 + 耗时；不用等整轮结束）                             | ✗ 工具事件无人订阅                    | dsh 工具卡随流程生长；Orca 工具行同流                | P0，改 |
 | US-Chat-04 | 长会话不卡（判据：200 轮的会话首屏可交互 ≤1.5s；滚动 p95 帧 ≤16ms；DOM 节点 ≤3000）                                    | ✗ 36 条 = 2415 节点              | dsh 分页 + 虚拟化；Orca `virtualizer` 常驻     | P0，改 |
 | US-Chat-05 | 窗口跟着新内容走，但不抢我的位置（判据：贴底时自动跟随；我上翻 ≥24px 后不再跟随；有新内容时出现「N 条新消息 ↓」，点它回底）                          | ✅ 阈值 24 + 手势归属 + 「N 条新消息」 | dsh `ScrollFollow`（阈值 24 + 手势归属）       | P1，改 |
-| US-Chat-06 | 切走再回来还在原处（判据：切会话 / 重开应用回到上次位置 ±80px）                                                         | ✗ 回到顶部                        | dsh 位置采样 500ms + 恢复                    | P1，改 |
+| US-Chat-06 | 切走再回来还在原处（判据：切会话 / 重开应用回到上次位置 ±80px）                                                         | ✅ turnId + offset，500ms 采样，切回来落原处 | dsh 位置采样 500ms + 恢复                    | P1，改 |
 | US-Chat-07 | 我打了一半的字不会丢（判据：切会话、崩溃重启后草稿还在；发送失败原文回填输入框）                                                     | ✅ 500ms 节流落库 + 切会话取回 | Orca 草稿（IndexedDB + journal）           | P1，改 |
 | US-Chat-08 | 中文输入不出错（判据：拼音候选里按回车只上屏，不发送；Shift+Enter 换行；⌘/Ctrl+Enter 发送）                                   | ✗ 没有 composing 判断             | dsh `keyboard-composition.ts`          | P0，改 |
 | US-Chat-09 | 对一条消息能重试、追问、分支（判据：重试用同一条输入重跑且不重复原消息；引用只带 1–3 行；分支复制到新会话而源会话不动）                               | ◐ 有引用 / 分支，无重试                | dsh `MessageIconActions`（复制 / 分支 / 用量） | P1，改 |
@@ -172,7 +172,7 @@
 | SR-Chat-01 | **工具事件订阅**：渲染层订阅 `harness:bot-tool`，维护 `liveTools: Map<botId, ToolRun[]>`；payload `{ botId, groupId?, name, phase: start|done, args?, result?, ok?, ms? }`；`done` 时合并同名未完成项 | ✗ 无人订阅      | IR-Chat-02，改    |
 | SR-Chat-02 | **历史分页**：`botTurnsPage({ botId, threadId, beforeTurnId, limit=40 })` → `{ turns, hasMore, headTurnId }`；会话面默认只取最近 40 轮，滚到顶再取一页；`botSnapshot` 不再返回全部 `botTurns`              | ✗ 全量        | US-Chat-04，改    |
 | SR-Chat-03 | **草稿持久化**：`bot_drafts(botId, threadId, text, attachments, updatedAt)`；输入 500ms 节流写；上限 8k 字符；发送成功即清；同一 bot 多 thread 各一份                                                      | ✅ `bot_ui` 表 + `saveBotUi` 单行写 | IR-Chat-07，改    |
-| SR-Chat-04 | **阅读位置**：`bot_threads.scroll = { turnId, offset }`；滚动采样 500ms 或 `scrollend` 写一次；打开会话时按 `turnId` 定位（找不到则回底）                                                                  | ✗           | US-Chat-06，改    |
+| SR-Chat-04 | **阅读位置**：`bot_threads.scroll = { turnId, offset }`；滚动采样 500ms 或 `scrollend` 写一次；打开会话时按 `turnId` 定位（找不到则回底）                                                                  | ✅ `bot_ui.scroll` = `{ turnId, offset }` | US-Chat-06，改    |
 | SR-Chat-05 | **重试**：`botRetry({ turnId })` 复用原 `turn.input` + 原 `threadId`，新建一轮（不改写原轮）；同一轮重复点击幂等（带 `retryOf`）                                                                            | ✗           | IR-Chat-06，改    |
 | SR-Chat-06 | **反馈**：`bot_turns.feedback ∈ {up, down}` + `feedbackNote`；`botFeedback({ turnId, value })`，同一轮可改不可叠加                                                                        | ✗           | IR-Chat-06，改    |
 | SR-Chat-07 | **用量字段**：`turn.cost` 增 `ttftMs`（首个增量时间）与 `model`；UI 只读，不估算费用                                                                                                                | ✅ tokens / ms / ttftMs / model | IR-Chat-06/09，改 |
