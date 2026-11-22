@@ -3,10 +3,10 @@ import { useT } from "../i18n";
 /**
  * rail：只放「对象」和「库」，不放入口性的容器（原型 owner-workspaces.html）。
  *
- *   BOT · 终端 │ 场景 │ 记忆 · 知识 · 人物 │ 视觉
+ *   机器人 · 工作台 │ 场景 │ 记忆 · 知识 · 人物 │ 视觉
  *
- * 项目 / 机器人 是两个 BOT / 终端工作台里的左栏列表（不占 rail），
- * Git 在终端的右栏「文件 / 会话 / Git」里。
+ * 项目 / 机器人 是两个 机器人 / 工作台 页面里的左栏列表（不占 rail），
+ * Git 在工作台的右栏「文件 / 会话 / Git」里。
  */
 type View = "workspace" | "terminal" | "scene" | "projects" | "bots" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "bot";
 

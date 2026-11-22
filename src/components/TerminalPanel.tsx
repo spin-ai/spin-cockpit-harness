@@ -53,6 +53,11 @@ type Tab = {
 const PREVIEW_MIME = "application/x-cockpit-preview";
 /** 任务详情是标签栏里的一入固定标签（id 固定，不会重复开） */
 const TASK_TAB_ID = "task";
+/**
+ * Chat 是终端的另一种显示方式：固定在标签栏第一位、不进 tabs（不落盘、不跟 pty 走），
+ * 内容跟着“当前选中的任务”变。⌘J 直达。
+ */
+const CHAT_TAB_ID = "chat";
 
 /** 每个项目的标签集合落盘：关掉应用再开，各项目的终端还在（pty 会新建，cwd / 标题 / 拆分保留） */
 const TABS_STORE_KEY = "cmh.terminal.tabs.v1";
@@ -232,8 +237,14 @@ function cleanTitle(raw: string) {
   return String(raw || "").replace(/[\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
-export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previewHost, onCollapse, terminalFontSize = 12, terminalScrollback = 5000, previewHomeUrl, onOpenThread, act, maximized = false, onToggleMaximize }: {
+export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previewHost, onCollapse, terminalFontSize = 12, terminalScrollback = 5000, previewHomeUrl, onOpenThread, act, maximized = false, onToggleMaximize, chat, onContinueInChat, onOpenRunFocus }: {
   state: State; todo: Todo | null;
+  /** 对话器：工作台的 Chat 已收进这里，作为标签栏第一个标签（不落盘，不进 tabs） */
+  chat?: ReactNode;
+  /** 终端标签 → 对话面：点「在对话里继续」时把这次运行交给对话（同一次 run 的另一面） */
+  onContinueInChat?: (taskId: string) => void;
+  /** 运行记录里点一行：切到对话面看这次运行的产出 */
+  onOpenRunFocus?: (runId: string) => void;
   onPickedContext: (ctx: ElementContext) => void;
   previewRoot?: string;
   /** 当前任务的 Agent 跑在远端主机时：预览地址要走 ssh -L 隧道（root 是远端项目绝对路径） */
@@ -335,6 +346,7 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
         const sig = `${projectKey}|${p.kind}|${p.taskId || ""}|${p.title}|${p.cwd}`;
         if (seen.has(sig)) continue;
         seen.add(sig);
+        if (p.kind === "task") continue; // 任务详情标签按需重建，不从落盘恢复
         const root = p.root ? buildRestoredNode(p.root) : undefined;
         made.push({
           id: `t${seq.current++}`, ownerKey: projectKey || null, kind: p.kind, title: p.title,
@@ -372,6 +384,8 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
         const key = String(resolveOwner(t) ?? "");
         const entry = byProject[key] || (byProject[key] = { tabs: [], activeIndex: 0 });
         if (entry.tabs.length >= 12) continue;
+        // 任务详情按需重建：不落盘，否则重启会恢复出第二、第三个同名标签
+        if (t.kind === "task") continue;
         entry.tabs.push({
           kind: t.kind, title: t.title, cwd: t.cwd, taskId: t.taskId, branch: t.branch ?? null,
           renamed: t.renamed, url: t.url, rel: t.rel, rootDir: t.rootDir,
@@ -391,6 +405,8 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
     const key = state.activeProjectId ?? null;
     if (prevProjectKey.current === key) return;
     prevProjectKey.current = key;
+    // 对话跟着项目走，不被“上次看的是哪个终端标签”抢走
+    if (active === CHAT_TAB_ID) return;
     const mine = tabs.filter((t) => resolveOwner(t) === key);
     if (!mine.length) return;
     const want = activeByProject.current[String(key)];
@@ -398,6 +414,13 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.activeProjectId]);
   const activeTab = tabs.find((t) => t.id === active) ?? null;
+  /**
+   * 这条终端属于哪个任务：标签上的 taskId 优先，其次问终端记录（重启恢复的标签只有记录里还有 todoId）。
+   * 「在对话里继续」用它，不再依赖标签上那个会丢的字段。
+   */
+  const continueTaskId = activeTab?.taskId
+    || (state.terminals || []).find((t) => t.id === (activeTab?.root ? firstPane(activeTab.root).terminalId : null))?.todoId
+    || null;
   const activeFocusedId = activeTab?.root ? (activeTab.focusedPaneId ?? firstPane(activeTab.root).id) : null;
   const activePane = activeTab?.root && activeFocusedId ? findPaneById(activeTab.root, activeFocusedId) : null;
   const activeUrl = activePane ? urlByPane[activePane.id] : undefined;
@@ -501,14 +524,25 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
     setFocusToken((n) => n + 1);
   }, []);
 
-  /** 任务详情不再占工具栏：它是标签栏里的一个固定标签（已开则切过去） */
-  const openTaskTab = useCallback(() => {
-    setTabs((list) => (list.some((t) => t.id === TASK_TAB_ID)
-      ? list
-      : [...list, { id: TASK_TAB_ID, kind: "task" as const, ownerKey: todo?.projectId ?? state.activeProjectId ?? null, cwd: state.projectPath, title: "任务" }]));
-    setActive(TASK_TAB_ID);
-    setFocusToken((n) => n + 1);
-  }, [state.projectPath]);
+  /**
+   * 任务详情是标签栏里的一个固定标签（和「对话」并列的前两个之一）。
+   * ensure=true 时只保证它存在、不抢焦点——选中任务后就一直能看见「任务详情 · #KEY」，
+   * 不用再猜「详情去哪了」。
+   */
+  const ensureTaskTab = useCallback((focus: boolean) => {
+    // 恢复出来的老标签 id 不是固定的：按 kind 去重，保证全应用只有一个「任务详情」
+    const existing = tabs.find((t) => t.kind === "task");
+    if (existing) {
+      if (focus) { setActive(existing.id); setFocusToken((n) => n + 1); }
+      return;
+    }
+    setTabs((list) => [
+      ...list.filter((t) => t.kind !== "task"),
+      { id: TASK_TAB_ID, kind: "task" as const, ownerKey: todo?.projectId ?? state.activeProjectId ?? null, cwd: state.projectPath, title: "任务" },
+    ]);
+    if (focus) { setActive(TASK_TAB_ID); setFocusToken((n) => n + 1); }
+  }, [tabs, state.projectPath, todo?.projectId, state.activeProjectId]);
+  const openTaskTab = useCallback(() => ensureTaskTab(true), [ensureTaskTab]);
 
   // 从 TODO 的「详情」动作切过来
   useEffect(() => {
@@ -516,6 +550,19 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
     window.addEventListener("harness:task-detail", on);
     return () => window.removeEventListener("harness:task-detail", on);
   }, [openTaskTab]);
+
+  /** 对话标签（Chat）不是真标签：不进 tabs、不落盘，只是同一个窗格里的另一种显示 */
+  const openChatTab = useCallback(() => {
+    setActive(CHAT_TAB_ID);
+    setFocusToken((n) => n + 1);
+  }, []);
+
+  // ⌘J / 命令面板 / 任务行「对话」都落到这个标签
+  useEffect(() => {
+    const on = () => openChatTab();
+    window.addEventListener("harness:chat-tab", on);
+    return () => window.removeEventListener("harness:chat-tab", on);
+  }, [openChatTab]);
 
   const patchTab = useCallback((tabId: string, patch: Partial<Tab>) => {
     setTabs((list) => list.map((t) => (t.id === tabId ? { ...t, ...patch } : t)));
@@ -741,11 +788,12 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
   }, [activeTab, close, closeFocusedPane]);
 
   const cycleTab = useCallback((dir: 1 | -1) => {
-    if (!tabs.length) return;
-    const idx = Math.max(0, tabs.findIndex((t) => t.id === active));
-    const next = tabs[(idx + dir + tabs.length) % tabs.length];
-    if (next) activate(next.id);
-  }, [tabs, active, activate]);
+    const order = chat ? [CHAT_TAB_ID, ...tabs.map((t) => t.id)] : tabs.map((t) => t.id);
+    if (!order.length) return;
+    const idx = Math.max(0, order.indexOf(String(active)));
+    const next = order[(idx + dir + order.length) % order.length];
+    if (next) activate(next);
+  }, [tabs, active, activate, chat]);
 
   const changeRatio = useCallback((tabId: string, splitId: string, delta: number) => {
     setTabs((list) => list.map((t) => {
@@ -803,6 +851,8 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
     const reuse = tabs.find((t) => !t.taskId && t.kind === "terminal" && t.cwd === state.projectPath);
     if (reuse) { setActive(reuse.id); return; } // 该项目还没有终端时才走下面新建
     addTab({ cwd: state.projectPath, title: basename(state.projectPath) });
+    // 首次进这个项目：先落在对话上（以前工作台左侧就是 Chat，行为不变）
+    if (chat) setActive(CHAT_TAB_ID);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.projectPath]);
 
@@ -820,12 +870,16 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
     if (bound) {
       setActive(bound.id);
       setFocusToken((n) => n + 1);
-      if (!isTerminal) openTaskTab();
+      if (!isTerminal) ensureTaskTab(false);
       return;
     }
     if (isTerminal) return;
+    // 选中任务：任务详情标签始终在位；当前既不在对话、也不是这个任务的标签时，切到详情
+    // （原来停在某个终端 / 预览上，点任务却什么都不变，是「看不到详情」的主因）
+    ensureTaskTab(false);
     const current = tabs.find((t) => t.id === active);
-    if (current?.taskId && current.taskId !== todo.id) openTaskTab();
+    const showingThisTask = active === CHAT_TAB_ID || current?.kind === "task" || current?.taskId === todo.id;
+    if (!showingThisTask) openTaskTab();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [todo?.id]);
 
@@ -900,6 +954,7 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
   }, []);
 
   const newSurfaceItems: MenuItem[] = [
+    { label: "对话（派活 / 纠偏）", hint: "⌘J", disabled: !chat, run: openChatTab },
     { label: "新建终端", hint: "⌘T", run: newTerminal },
     { label: "新建预览页", run: () => newPreviewTab() },
     { label: todo ? `任务详情（${todo.key}）` : "任务详情", disabled: !todo, run: openTaskTab },
@@ -918,12 +973,22 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
         onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest("button,input")) onToggleMaximize?.(); }}
       >
       <div className="term-tabs" ref={tabsRef}>
+        {chat && (
+          <div
+            data-tab-id={CHAT_TAB_ID}
+            className={`term-tab ${active === CHAT_TAB_ID ? "on" : ""}`}
+            title={todo ? `${todo.key} ${todo.title} · 对话（派活 / 纠偏）` : "对话（派活 / 纠偏）"}
+            onClick={() => activate(CHAT_TAB_ID)}
+          >
+            <span className="ellipsis">{todo?.key ? `对话 · ${todo.key}` : "对话"}</span>
+          </div>
+        )}
         {projectTabs.map((t) => (
           <div
             key={t.id}
             data-tab-id={t.id}
             className={`term-tab ${t.id === active ? "on" : ""} ${t.attention ? "attention" : ""} ${t.kind === "preview" || t.kind === "file" ? "preview-drag" : ""}`}
-            title={t.kind === "task" ? (todo ? `${todo.key} ${todo.title}` : "任务详情") : t.kind === "preview" ? `${t.url || (t.rel ? `${t.rootDir || ""}/${t.rel}` : "预览")} · 可拖到拆分的窗格` : `${t.cwd}${t.branch ? ` · ${t.branch}` : ""}`}
+            title={t.kind === "task" ? (todo ? `${todo.key} ${todo.title} · 任务详情` : "任务详情") : t.kind === "preview" ? `${t.url || (t.rel ? `${t.rootDir || ""}/${t.rel}` : "预览")} · 可拖到拆分的窗格` : `${t.cwd}${t.branch ? ` · ${t.branch}` : ""}`}
             draggable={t.kind === "preview" || t.kind === "file"}
             onDragStart={(e) => {
               if (t.kind !== "preview" && t.kind !== "file") return;
@@ -966,7 +1031,7 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
                 }}
               />
             ) : (
-              <span className="ellipsis">{t.kind === "task" ? (todo ? todo.title : "任务详情") : (t.title || (t.kind === "preview" ? "预览" : "终端"))}</span>
+              <span className="ellipsis">{t.kind === "task" ? (todo ? `任务详情 · ${todo.key}` : "任务详情") : (t.title || (t.kind === "preview" ? "预览" : "终端"))}</span>
             )}
             <span className="term-close" title="关闭标签" onClick={(e) => { e.stopPropagation(); close(t.id); }}><XIcon size={11} /></span>
           </div>
@@ -978,6 +1043,9 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
         )}
         {activeTab?.kind === "terminal" && activePane?.terminalId && todo && activeTab.taskId !== todo.id && (
           <button className="link" title="把当前终端接到选中的任务，接管后的运行会显示在 TODO" onClick={() => void attachToTask()}>接入 {todo.key}</button>
+        )}
+        {activeTab?.kind === "terminal" && onContinueInChat && continueTaskId && (
+          <button className="link" title="这条终端接着某个任务：在对话里看它的产出并继续" onClick={() => onContinueInChat(continueTaskId)}>在对话里继续</button>
         )}
         <button
           className="term-tab add"
@@ -1000,6 +1068,11 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
       </div>
       </div>
       <div className="term-body">
+        {chat && (
+          <div className="term-tab-surface chat-surface" style={{ display: active === CHAT_TAB_ID ? "flex" : "none" }}>
+            {chat}
+          </div>
+        )}
         {tabs.map((t) => {
           if (t.kind === "task") {
             return (
@@ -1009,6 +1082,7 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
                   todo={todo}
                   act={act ?? (async () => null)}
                   onOpenThread={(id) => onOpenThread?.(id)}
+                  onOpenRun={(runId) => onOpenRunFocus?.(runId)}
                 />
               </div>
             );

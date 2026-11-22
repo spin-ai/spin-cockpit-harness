@@ -88,7 +88,7 @@
 | 内容 | 位置 |
 |---|---|
 | Chat 窗口（项目 / 任务会话） | `src/components/TaskChat.tsx`（`ChatMessage` / `ThoughtBlock` / `ToolGroup` / `ToolRow` / `LiveStatus` / composer） |
-| Chat 在终端页的挂载位置 | `src/App.tsx` `.left-stack`：上段 Chat、下段任务列表，中间横向分隔条（`.left-stack > .chat-pane`，高度 `--left-chat-h`） |
+| Chat 的挂载位置 | 工作台里它是**终端窗格的第一个标签**（`TerminalPanel` 的 `CHAT_TAB_ID`，内容由 `src/App.tsx` 传 `chat` 节点）：跟当前选中的任务走，⌘J 直达；左栏只剩任务 / 项目两段 |
 | 机器人的会话面（BOT 页） | `src/components/Bot.tsx`（`bot-stream` / `bot-composer`） |
 | 共用视觉 | `src/styles.css` 末尾「Chat 窗口：照搬 deepseek-harness」一节（`.ds-*`） |
 | 圆角 token | `src/design-system.css` 的 `--radius-chat-bubble` / `--radius-chat-composer` |

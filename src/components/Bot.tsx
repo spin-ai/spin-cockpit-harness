@@ -6,7 +6,8 @@ import { RowMenu } from "./RowMenu";
 import { CopyIcon, FileTextIcon, GitIcon, LinkIcon, PencilIcon, PlusIcon, QuoteIcon, RefreshIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, WrenchIcon, XIcon } from "./Icons";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "./Icons";
 import { useT } from "../i18n";
-import { RichText } from "./TaskChat";
+import { RichText, MissionOverview } from "./TaskChat";
+import { relTime } from "../ui";
 import { assignmentsForBot } from "../selectors/assignments";
 import { requestTerminalAdopt } from "../terminal-events";
 import type { BotGroupMessage, State } from "../types";
@@ -17,8 +18,8 @@ type Persona = { mission?: string; tone?: string; address?: string; length?: str
   /** 职责卡：目标 / 范围 / 交付物 / 不做 / 汇报口径（进 system prompt，见 buildSystemPrompt） */
   duty?: { goal?: string; scope?: string; deliverable?: string; forbidden?: string; report?: string } };
 type Routine = {
-  id: string; botId: string; name?: string; kind?: "daily" | "every" | "watch";
-  atHour?: number; everyMs?: number; enabled?: boolean;
+  id: string; botId: string; name?: string; kind?: "daily" | "every" | "once" | "watch";
+  atHour?: number; everyMs?: number; onceAt?: number; prompt?: string; enabled?: boolean;
   /** alongside = 到点就跑；in-chat = 等这个 bot 空下来（最多等 5 分钟） */
   mode?: "alongside" | "in-chat"; waitingSince?: number;
   watch?: { kind?: "file" | "cmd"; path?: string; cmd?: string };
@@ -34,6 +35,7 @@ type Bot = {
   model?: string; effort?: string;
   policy?: Policy; budget?: { tokensPerTurn?: number; tokensPerHour?: number };
   status?: "active" | "paused"; mutedUntil?: number;
+  createdAt?: number; updatedAt?: number;
 };
 type Turn = {
   id: string; botId: string; channel?: string;
@@ -43,14 +45,29 @@ type Turn = {
   todoId?: string | null;
   runId?: string | null;
   proposal?: { title: string; desc: string; dismissed?: boolean; acceptedAt?: number } | null;
-  reason?: string; cost?: { tokens?: number | null; ms?: number; ttftMs?: number | null; model?: string };
+  reason?: string; cost?: { tokens?: number | null; ms?: number; ttftMs?: number | null; model?: string; rounds?: number | null; toolCalls?: number | null };
+  /** 这一轮为什么停（轮数 / 循环 / 预算 / 超时）；空 = 正常说完 */
+  stopReason?: string;
+  /** 上下文账：注入了多少字符、记忆占多少、是否带摘要 */
+  context?: { chars?: number; memory?: number; memoryRaw?: number; history?: number; digest?: boolean; sections?: Record<string, number> };
   /** 这一轮用过的工具（只读）：name / args / ms / ok / preview */
   tools?: { name: string; args?: string; argsRaw?: string; result?: string; at?: number; ms?: number; ok?: boolean; rejected?: boolean; preview?: string }[];
   /** 结构化轨迹：每次模型请求（usage / TTFT 可算）+ 每次工具调用（原始参数 / 完整输出） */
   trace?: TraceEvent[];
+  /** 这一轮落下的日程建议：模型只出草稿，人点「建日程」后才写 routines */
+  routineProposal?: { name?: string; kind?: string; prompt?: string; when?: string; mode?: string; atHour?: number; everyMs?: number; onceAt?: number; watch?: { kind?: string; path?: string; cmd?: string }; dismissed?: boolean; acceptedAt?: number } | null;
+  /** 已确认建成的日程 id（卡片改显示「已建」） */
+  routineId?: string | null;
   /** 这一轮落在哪个会话（ORCA 的 Chats）；老回合为空 = 默认会话 */
   threadId?: string | null;
   createdAt: number;
+};
+/** 记忆整理计划（主进程算，UI 只展示与确认） */
+type TidyPlan = {
+  ready: boolean; ratio: number; used: number; budget: number; target: number;
+  need: number; freed: number; short?: boolean; reason?: string;
+  picks: { id: string; layer: string; title: string; chars: number; score: number }[];
+  usage?: { entries?: number; notes?: number; dropped?: number };
 };
 /** 一个 bot 的会话（照搬 ORCA 的 Chats）：标题 / 最后一句 / 条数 */
 type Chat = { id: string; title: string; createdAt: number; updatedAt: number; count: number; last: string; lastAt: number };
@@ -82,13 +99,64 @@ type TraceStep = {
   ok?: boolean;
 };
 
-type RailTab = "messages" | "settings";
+type RailTab = "messages" | "schedule" | "settings";
 
 function BotRailTabs({ tab, onTab }: { tab: RailTab; onTab: (t: RailTab) => void }) {
   return (
     <div className="bot-rail-tabs">
       <button className={tab === "messages" ? "on" : ""} onClick={() => onTab("messages")}>消息</button>
+      <button className={tab === "schedule" ? "on" : ""} onClick={() => onTab("schedule")}>调度</button>
       <button className={tab === "settings" ? "on" : ""} onClick={() => onTab("settings")}>设置</button>
+    </div>
+  );
+}
+
+/**
+ * 调度：跨项目的 Mission 与未绑定任务的会话。
+ *
+ * 为什么放在机器人页：Mission 是「谁带着干」的事（主管 + 子任务），
+ * 不是某个项目的终端里的事；跨项目会话同理——它们不属于任何一栏任务列表。
+ */
+function SchedulePanel({ state, act, onOpenThread }: { state?: State | null; act: Act; onOpenThread: (id: string) => void }) {
+  const [openIds, setOpenIds] = useState<string[]>([]);
+  if (!state) return <div className="bot-aside-body"><p className="bot-note">还没有项目数据。</p></div>;
+  const missions = (state.todos ?? []).filter((t) => t.kind === "mission")
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 6);
+  const loose = (state.threads ?? []).filter((t) => !t.todoId && t.kind !== "bot")
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 8);
+  const latestPlan = (missionId: string) => [...(state.missionPlans ?? [])]
+    .filter((p) => p.missionId === missionId)
+    .sort((a, b) => b.revision - a.revision)[0] ?? null;
+  const toggle = (id: string) => setOpenIds((list) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]));
+
+  return (
+    <div className="bot-aside-body bot-schedule">
+      <div className="bot-sched-label">Mission 调度</div>
+      {missions.length === 0 ? (
+        <p className="inline-empty">还没有 Mission。在对话里让主管拆目标，计划会先落到这里等审批。</p>
+      ) : missions.map((m) => (
+        <MissionOverview
+          key={m.id}
+          mission={m}
+          plan={latestPlan(m.id)}
+          delegations={(state.delegations ?? []).filter((d) => d.missionId === m.id)}
+          state={state}
+          act={act}
+          onOpenThread={onOpenThread}
+          open={openIds.includes(m.id)}
+          onToggle={() => toggle(m.id)}
+        />
+      ))}
+
+      <div className="bot-sched-label">跨项目会话</div>
+      {loose.length === 0 ? (
+        <p className="inline-empty">没有未绑定任务的会话。</p>
+      ) : loose.map((t) => (
+        <button key={t.id} className="bot-sched-row" onClick={() => onOpenThread(t.id)} title={t.title || "新任务"}>
+          <span className="ellipsis">{t.title || "新会话"}</span>
+          <span className="tiny faint">{relTime(t.updatedAt || t.createdAt)}</span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -511,6 +579,9 @@ const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "
 /** 只读工具 → 人话；流式期间显示「正在查任务」比空窗好 */
 const TOOL_LABEL: Record<string, string> = {
   memory_search: "查记忆", knowledge_search: "查资料", todo_list: "查任务", run_status: "查运行",
+  workspace_list: "看目录", workspace_read: "读文件", workspace_grep: "搜代码",
+  git_status: "看 git 状态", git_log: "看提交", git_diff: "看改动", run_log: "读运行结果",
+  memory_write: "记一条", memory_forget: "忘一条", task_create: "建任务",
 };
 const toolLabel = (tool?: string) => TOOL_LABEL[tool || ""] || "用工具";
 const GLYPH: Record<string, string> = { asked: "?", streaming: "…", interrupted: "⏸", silent: "·", blocked: "✕", escalated: "↗" };
@@ -544,6 +615,9 @@ const GroupMessageRow = memo(function GroupMessageRow({ m, senderName, state }: 
         <div className="ds-actions ds-actions-user"><span className="ds-time">{hm(m.createdAt)}</span></div>
       </div>
     );
+  }
+  if (m.author === "system") {
+    return <div className="ds-system-note" role="note">{m.text}</div>;
   }
   const spoke = ["answered", "replied", "reported", "asked"].includes(m.decision);
   return (
@@ -588,6 +662,12 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   const t = useT();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [memoryOverview, setMemoryOverview] = useState<{ byLayer?: Record<string, number>; notes?: number; injectable?: number } | null>(null);
+  /** 人格 / 职责 / 配额的历史（改坏了可恢复） */
+  const [revisions, setRevisions] = useState<{ id: string; at: number; by?: string; name?: string; mission?: string }[]>([]);
+  /** 某条历史与当前版本的字段差异 */
+  const [revisionDiff, setRevisionDiff] = useState<{ id: string; rows: { label: string; from: unknown; to: unknown }[] } | null>(null);
+  /** 记忆整理计划：到 80% 才给候选，人点「归档」才动 */
+  const [tidy, setTidy] = useState<TidyPlan | null>(null);
   const [botId, setBotId] = useState("");
   /** 机器人列表搜索：按名字 / 职责 / 能力档 / 执行体过滤（群聊按名字） */
   const [botQuery, setBotQuery] = useState("");
@@ -607,7 +687,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   /** 会话（ORCA 的 Chats）：null = 看列表，有值 = 在那条会话里 */
   const [openThreadId, setOpenThreadId] = useState<string | null>(null);
   /** 右栏：消息（会话列表）或设置（人格 / 日程 / 配额） */
-  const [railTab, setRailTab] = useState<"messages" | "settings">("messages");
+  const [railTab, setRailTab] = useState<"messages" | "schedule" | "settings">("messages");
   /** 中栏：对话 / 轨迹 */
   const [chatView, setChatView] = useState<"chat" | "trajectory">("chat");
   const [chatQuery, setChatQuery] = useState("");
@@ -627,7 +707,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   const [renameFocus, setRenameFocus] = useState(0);
   /** 日程的新建表单（不再用 window.prompt 连环弹窗） */
   const [routineDraft, setRoutineDraft] = useState<{
-    kind: "daily" | "every" | "watch"; name: string; atHour: number; minutes: number; path: string;
+    kind: "daily" | "every" | "once" | "watch"; name: string; prompt: string; atHour: number; minutes: number; onceAt: string; path: string;
   } | null>(null);
   const [streaming, setStreaming] = useState<{ botId: string; text: string; phase: "thinking" | "tool" | "streaming"; tool?: string } | null>(null);
   /** 群聊：每个成员一条流式块（主进程逐个回，不能只存一条） */
@@ -878,6 +958,28 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     return () => cancelAnimationFrame(raf);
   }, [contentKey, botId, openThreadId]);
   const bot = useMemo(() => (isGroup ? null : snapshot?.bots.find((b) => b.id === botId) ?? snapshot?.bots[0] ?? null), [snapshot, botId, isGroup]);
+
+  useEffect(() => {
+    if (!bot?.id) { setRevisions([]); return; }
+    let alive = true;
+    void act("botRevisions", { botId: bot.id })
+      .then((rows) => { if (alive) setRevisions(Array.isArray(rows) ? rows : []); })
+      .catch(() => { /* 没有历史不影响主流程 */ });
+    return () => { alive = false; };
+  }, [act, bot?.id, snapshot?.bots]);
+
+  const refreshTidy = useCallback(async () => {
+    if (!bot?.id) { setTidy(null); return; }
+    try {
+      setTidy((await act("botMemoryTidyPlan", { botId: bot.id })) as TidyPlan | null);
+    } catch {
+      setTidy(null);
+    }
+  }, [act, bot?.id]);
+
+  useEffect(() => {
+    if (tab === "memory") void refreshTidy();
+  }, [tab, refreshTidy, snapshot?.turns]);
   const members = snapshot?.bots ?? [];
   const botOf = useCallback((id?: string) => members.find((b) => b.id === id) ?? null, [members]);
   /** 默认会话 = 老回合与主动开口的落点；新开的会话只装自己的回合 */
@@ -977,6 +1079,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   };
   const answered = turns.filter((t) => t.decision === "answered");
   const lastInjected = [...answered].reverse().find((t) => (t.injected || []).length)?.injected || [];
+  const lastContext = [...turns].reverse().find((t) => t.context)?.context || null;
   const muted = Boolean(bot?.mutedUntil && bot.mutedUntil > Date.now());
 
   const run = async (label: string, fn: () => Promise<unknown>) => {
@@ -1207,8 +1310,14 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
 
   const savePatch = async (patch: Record<string, unknown>) => {
     if (!bot) return;
-    try { await act("botSave", { id: bot.id, ...patch }); await load(); }
-    catch (err) { notify(String((err as Error)?.message || err)); }
+    try {
+      await act("botSave", { id: bot.id, expectedUpdatedAt: bot.updatedAt, ...patch });
+      await load();
+    } catch (err) {
+      // 并发：另一个人 / 另一个页签先改了；刷新后让人重试，不悄悄覆盖
+      notify(String((err as Error)?.message || err));
+      await load();
+    }
   };
   const savePersona = (key: keyof Persona, value: string) => savePatch({ persona: { ...(bot?.persona || {}), [key]: value } });
   const saveDuty = (key: "goal" | "scope" | "deliverable" | "forbidden" | "report", value: string) =>
@@ -1311,13 +1420,15 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   }, [snapshot?.asks, snapshot?.turns, myRoutines, bot?.id, defaultThreadId]);
 
   /** 新建日程：开一张行内表单（Electron 不实现 window.prompt，之前点了没反应） */
-  const startRoutine = (kind: "daily" | "every" | "watch") => {
+  const startRoutine = (kind: "daily" | "every" | "once" | "watch") => {
     if (!bot) return;
     setRoutineDraft({
       kind,
-      name: kind === "daily" ? "早报" : kind === "every" ? "定时汇报" : "盯住变化",
+      name: kind === "daily" ? "早报" : kind === "every" ? "定时汇报" : kind === "once" ? "提醒" : "盯住变化",
+      prompt: "",
       atHour: 9,
       minutes: 60,
+      onceAt: "",
       path: "",
     });
   };
@@ -1327,9 +1438,14 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     const name = routineDraft.name.trim();
     if (!name) { notify("先在表单里写个名字"); return; }
     if (routineDraft.kind === "watch" && !routineDraft.path.trim()) { notify("要盯哪个文件？填绝对路径"); return; }
-    const patch: Record<string, unknown> = { botId: bot.id, name, kind: routineDraft.kind };
+    const patch: Record<string, unknown> = { botId: bot.id, name, kind: routineDraft.kind, prompt: routineDraft.prompt.trim() };
     if (routineDraft.kind === "daily") patch.atHour = routineDraft.atHour;
     if (routineDraft.kind === "every") patch.everyMs = Math.max(1, routineDraft.minutes) * 60_000;
+    if (routineDraft.kind === "once") {
+      const at = new Date(routineDraft.onceAt).getTime();
+      if (!Number.isFinite(at) || at <= Date.now()) { notify("选一个未来的时间"); return; }
+      patch.onceAt = at;
+    }
     if (routineDraft.kind === "watch") patch.watch = { kind: "file", path: routineDraft.path.trim() };
     void run("routine", async () => {
       await act("botRoutineSave", patch);
@@ -1416,6 +1532,34 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   });
 
   const dismissProposal = (turn: Turn) => run("proposal", () => act("botDismissProposal", { turnId: turn.id }));
+
+  const acceptRoutine = (turn: Turn) => run("routine", async () => {
+    const res = (await act("botAcceptRoutineProposal", { turnId: turn.id })) as { ok?: boolean; routine?: { name?: string; when?: string } } | null;
+    if (res?.ok) notify(`已建日程「${res.routine?.name || "日程"}」${res.routine?.when ? ` · ${res.routine.when}` : ""}`);
+  });
+
+  const dismissRoutine = (turn: Turn) => run("routine", () => act("botDismissRoutineProposal", { turnId: turn.id }));
+
+  const restoreRevision = (rev: { id: string; at: number }) => run("revision", async () => {
+    await act("botRestoreRevision", { botId: bot?.id, revisionId: rev.id });
+    notify(`已恢复到 ${relTime(rev.at)} 的版本`);
+    setRevisionDiff(null);
+    await load();
+  });
+
+  const showRevisionDiff = (rev: { id: string; at: number }) => run("revision", async () => {
+    const rows = (await act("botRevisionDiff", { botId: bot?.id, revisionId: rev.id })) as { label: string; from: unknown; to: unknown }[] | null;
+    setRevisionDiff({ id: rev.id, rows: Array.isArray(rows) ? rows : [] });
+  });
+
+  const applyTidy = () => run("tidy", async () => {
+    if (!tidy?.picks?.length) return;
+    const res = (await act("botMemoryTidyApply", { botId: bot?.id, ids: tidy.picks.map((p) => p.id) })) as { ok?: boolean; archived?: number; freed?: number; error?: string } | null;
+    if (!res?.ok) { notify(res?.error || "没有可归档的条目"); return; }
+    notify(`已归档 ${res.archived ?? 0} 条，释放约 ${res.freed ?? 0} 字符（记忆页可恢复）`);
+    await load();
+    await refreshTidy();
+  });
 
   const tick = () => run("tick", async () => {
     const out = (await act("botTick", { botId: bot?.id, force: false })) as Turn[] | null;
@@ -1551,7 +1695,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                   <span>角色</span>
                   <div className="bot-seg">
                     {(["supervisor", "worker"] as const).map((r) => (
-                      <button key={r} className={bot?.role === r ? "on" : ""} disabled={Boolean(busy)} onClick={() => void run("role", () => act("botSave", { id: bot?.id, role: r }))}>
+                      <button key={r} className={bot?.role === r ? "on" : ""} disabled={Boolean(busy)} onClick={() => void run("role", () => act("botSave", { id: bot?.id, role: r, expectedUpdatedAt: bot?.updatedAt }))}>
                         {r === "supervisor" ? "主管" : "员工"}
                       </button>
                     ))}
@@ -1601,6 +1745,45 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                   <span>能力</span><b>{CAP_LABEL[bot?.capability || "read"]}</b>
                   <span>频道</span><b>{(bot?.channels || ["local"]).join(" · ")}</b>
                 </div>
+                <div className="bot-field">
+                  <span>思考档</span>
+                  <div className="bot-seg">
+                    {([["quick", "快速"], ["", "标准"], ["deep", "深入"]] as const).map(([id, label]) => (
+                      <button
+                        key={label}
+                        className={(bot?.effort || "") === id ? "on" : ""}
+                        disabled={Boolean(busy)}
+                        title={id === "quick" ? "最多 4 轮工具" : id === "deep" ? "最多 12 轮工具，工具轮更低温" : "默认 8 轮工具"}
+                        onClick={() => void savePatch({ effort: id })}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="bot-note">思考档只改「最多查几轮 / 工具轮温度」，不改单轮 token 上限。</p>
+                <div className="bot-label" style={{ marginTop: 14 }}>历史（改坏了可恢复）</div>
+                {revisions.length ? revisions.slice(0, 6).map((r) => (
+                  <div className="bot-mem-row" key={r.id}>
+                    <span className="mono">{relTime(r.at)}</span>
+                    <span>
+                      {r.name || "（未命名）"}
+                      <em className="faint"> · {r.mission || "没有职责"}</em>
+                    </span>
+                    <button className="btn tiny" disabled={Boolean(busy)} onClick={() => void showRevisionDiff(r)}>对比</button>
+                    <button className="btn tiny" disabled={Boolean(busy)} onClick={() => void restoreRevision(r)}>恢复</button>
+                  </div>
+                )) : <p className="bot-note">还没有历史。改名字 / 职责 / 配额时，上一版会自动存下来。</p>}
+                {revisionDiff && (
+                  revisionDiff.rows.length ? revisionDiff.rows.map((r) => (
+                    <div className="bot-mem-row" key={`${revisionDiff.id}-${r.label}`}>
+                      <span className="mono">{r.label}</span>
+                      <span className="ellipsis" title={`${String(r.from || "（空）")} → ${String(r.to || "（空）")}`}>
+                        {String(r.from || "（空）")} → {String(r.to || "（空）")}
+                      </span>
+                    </div>
+                  )) : <p className="bot-note">这一版与现在没有可见差异。</p>
+                )}
               </>
             )}
             {tab === "memory" && (
@@ -1619,8 +1802,31 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                 <p className="bot-note">注入按预算裁剪；被裁掉的条目在记忆页能看到原因。可注入字符数：{memoryOverview?.injectable ?? 0}。</p>
                 <div className="bot-kv">
                   <span>本轮注入</span><b>{lastInjected.length} 条</b>
-                  <span>预算</span><b>{bot?.budget?.tokensPerTurn ?? 700} tokens / 轮</b>
+                  <span>上下文</span><b>{lastContext ? `${lastContext.chars ?? 0} 字符 · 记忆 ${lastContext.memory ?? 0}${lastContext.digest ? " · 含摘要" : ""}` : "还没有记录"}</b>
+                  <span>预算</span><b>{bot?.budget?.tokensPerTurn ?? 2048} tokens / 轮</b>
                 </div>
+                <div className="bot-label" style={{ marginTop: 14 }}>整理</div>
+                {tidy?.ready ? (
+                  <>
+                    <p className="bot-note">
+                      已用 {Math.round((tidy.ratio || 0) * 100)}%（{tidy.used}/{tidy.budget} 字符）。归档这 {tidy.picks.length} 条可释放约 {tidy.freed} 字符
+                      {tidy.short ? "（候选不够，仍可能高于目标）" : ""}；归档后可在记忆页恢复。
+                    </p>
+                    {tidy.picks.slice(0, 5).map((p) => (
+                      <div className="bot-mem-row" key={p.id}>
+                        <span className="mono">{p.layer}</span>
+                        <span className="ellipsis" title={p.title}>{p.title}</span>
+                        <em className="faint">{p.chars} 字符</em>
+                      </div>
+                    ))}
+                    <button className="btn tiny" disabled={Boolean(busy)} onClick={() => void applyTidy()}>归档这 {tidy.picks.length} 条</button>
+                  </>
+                ) : (
+                  <p className="bot-note">
+                    {tidy ? `占用 ${Math.round((tidy.ratio || 0) * 100)}% · ${tidy.reason || "不需要整理"}` : "正在算占用…"}
+                    （到 80% 才给候选；只归档，不删除）
+                  </p>
+                )}
                 <div className="bot-label" style={{ marginTop: 14 }}>最近一次注入</div>
                 {lastInjected.length ? lastInjected.map((m) => (
                   <div className="bot-mem-row" key={`${m.layer}-${m.id}`}>
@@ -1644,6 +1850,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                           {r.due ? " · 到点了" : r.nextAt ? ` · 下次 ${hm(r.nextAt)}` : ""}
                           {r.lastFiredAt ? ` · 上次 ${hm(r.lastFiredAt)}` : " · 还没跑过"}
                         </span>
+                        {r.prompt && <span className="tiny faint ellipsis" title={r.prompt}>要它做：{r.prompt}</span>}
                         {r.lastError && <span className="tiny faint">上次失败：{r.lastError}</span>}
                       </div>
                       <span className={`tag ${r.enabled ? "ok" : ""}`}>{r.enabled ? "启用" : "停用"}</span>
@@ -1668,6 +1875,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                 <div className="row" style={{ marginTop: 10, gap: 8 }}>
                   <button className="btn tiny" disabled={Boolean(busy)} onClick={() => startRoutine("daily")}>＋ 每天</button>
                   <button className="btn tiny" disabled={Boolean(busy)} onClick={() => startRoutine("every")}>＋ 每隔</button>
+                  <button className="btn tiny" disabled={Boolean(busy)} onClick={() => startRoutine("once")}>＋ 一次</button>
                   <button className="btn tiny" disabled={Boolean(busy)} onClick={() => startRoutine("watch")}>＋ 变化才跑</button>
                 </div>
                 {routineDraft && (
@@ -1701,6 +1909,16 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                         />
                       </label>
                     )}
+                    {routineDraft.kind === "once" && (
+                      <label className="bot-num">
+                        <span>什么时候</span>
+                        <input
+                          type="datetime-local"
+                          value={routineDraft.onceAt}
+                          onChange={(e) => setRoutineDraft({ ...routineDraft, onceAt: e.target.value })}
+                        />
+                      </label>
+                    )}
                     {routineDraft.kind === "watch" && (
                       <label className="bot-num">
                         <span>看哪个文件（绝对路径）</span>
@@ -1712,6 +1930,15 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                         />
                       </label>
                     )}
+                    <label className="bot-num">
+                      <span>到点要它做什么</span>
+                      <input
+                        value={routineDraft.prompt}
+                        placeholder="例如：汇总今天的待确认任务和失败运行，先结论再风险"
+                        onChange={(e) => setRoutineDraft({ ...routineDraft, prompt: e.target.value })}
+                        onKeyDown={(e) => { if (e.key === "Enter") saveRoutineDraft(); }}
+                      />
+                    </label>
                     <div className="row" style={{ gap: 8 }}>
                       <button className="btn tiny primary" disabled={Boolean(busy)} onClick={saveRoutineDraft}>保存</button>
                       <button className="btn tiny" onClick={() => setRoutineDraft(null)}>取消</button>
@@ -1724,16 +1951,19 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
             )}
             {tab === "connectors" && (
               <>
-                <div className="bot-label">只读工具（{bot?.capability === "read" ? "只读档未开启" : "已连接"}）</div>
-                {([["memory_search", "记忆"], ["knowledge_search", "资料库"], ["todo_list", "任务"], ["run_status", "运行"]] as const).map(([id, label]) => (
+                <div className="bot-label">只读工具（{bot?.capability === "read" ? "只读档可用" : "已连接"}）</div>
+                {([["workspace_list", "看目录"], ["workspace_read", "读文件"], ["workspace_grep", "搜代码"], ["git_status", "git 状态"], ["git_log", "提交历史"], ["git_diff", "未提交改动"], ["run_log", "运行结果"], ["memory_search", "记忆"], ["knowledge_search", "资料库"], ["todo_list", "任务"], ["run_status", "运行"]] as const).map(([id, label]) => (
                   <div className="bot-mem-row" key={id}>
                     <span className="mono">{id}</span>
                     <span>
                       {label}
-                      <em className="faint"> · {bot?.capability === "read" ? "要 dispatch / work 档才能用" : "已连接"}</em>
+                      <em className="faint"> · 只读</em>
                     </span>
                   </div>
                 ))}
+                <div className="bot-mem-row"><span className="mono">memory_write</span><span>记自己的记忆<em className="faint"> · 只写本 bot 的 owner</em></span></div>
+                <div className="bot-mem-row"><span className="mono">memory_forget</span><span>删自己的记忆<em className="faint"> · 只能删自己的</em></span></div>
+                <div className="bot-mem-row"><span className="mono">task_create</span><span>建任务<em className="faint"> · {bot?.capability === "read" ? "只读档不可用" : "起 run 仍需你确认"}</em></span></div>
                 <div className="bot-label" style={{ marginTop: 12 }}>通道</div>
                 <div className="bot-mem-row"><span className="mono">local</span><span>桌面 Chat / Bot 页<em className="faint"> · 已连接</em></span></div>
                 <div className="bot-mem-row"><span className="mono">group</span><span>群聊<em className="faint"> · {groups.length} 个群</em></span></div>
@@ -1805,7 +2035,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                       className={bot?.capability === cap ? "on" : ""}
                       disabled={Boolean(busy)}
                       onClick={() => void run("cap", async () => {
-                        await act("botSave", { id: bot?.id, capability: cap });
+                        await act("botSave", { id: bot?.id, capability: cap, expectedUpdatedAt: bot?.updatedAt });
                         notify(cap === "work" ? "已开启：可以直接起 run（点「开跑」即授权）" : cap === "dispatch" ? "已开启：可以提议建任务（仍需你确认）" : "已切回只读");
                       })}
                     >
@@ -1818,7 +2048,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                   <select
                     className="bot-exec"
                     value={bot?.executorAgentId || ""}
-                    onChange={(event) => void run("exec", () => act("botSave", { id: bot?.id, executorAgentId: event.target.value }))}
+                    onChange={(event) => void run("exec", () => act("botSave", { id: bot?.id, executorAgentId: event.target.value, expectedUpdatedAt: bot?.updatedAt }))}
                   >
                     <option value="">未绑定</option>
                     {(snapshot.agents || []).filter((a) => a.role !== "supervisor").map((a) => (
@@ -2363,6 +2593,22 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                       )
                   )}
                   {turn.proposal?.dismissed && <div className="ds-system-note">建议已忽略（留在回合记录里）</div>}
+                  {turn.routineProposal && !turn.routineProposal.dismissed && (
+                    turn.routineId
+                      ? <div className="ds-note-card">已建日程「{turn.routineProposal.name || "日程"}」· 到点只开口，不会自己起 Agent</div>
+                      : (
+                        <div className="ds-note-card">
+                          <b>{turn.routineProposal.name}</b>
+                          <p>{turn.routineProposal.when}{turn.routineProposal.prompt ? ` · ${turn.routineProposal.prompt}` : ""}</p>
+                          <div className="ds-note-actions">
+                            <button className="ds-action-text primary" disabled={Boolean(busy)} onClick={() => void acceptRoutine(turn)}>建日程</button>
+                            <button className="ds-action-text" disabled={Boolean(busy)} onClick={() => void dismissRoutine(turn)}>先别</button>
+                            <span>到点只开口；起任务仍要你确认</span>
+                          </div>
+                        </div>
+                      )
+                  )}
+                  {turn.routineProposal?.dismissed && <div className="ds-system-note">日程建议已忽略</div>}
                   {turn.decision === "reported" && turn.runId && (state?.artifacts || []).filter((a) => a.runId === turn.runId).length > 0 && (
                     <div className="ds-artifacts">
                       {(state?.artifacts || []).filter((a) => a.runId === turn.runId).slice(0, 4).map((a) => (
@@ -2401,6 +2647,17 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                         </b>
                       </div>
                       <div><span>成本</span><b className="mono">{turn.cost?.tokens ? `${turn.cost.tokens} tokens` : "—"}{turn.cost?.ms ? ` · ${(turn.cost.ms / 1000).toFixed(1)}s` : ""}</b></div>
+                      {turn.stopReason && <div><span>停止</span><b>{turn.stopReason}</b></div>}
+                      {turn.context && (
+                        <div>
+                          <span>上下文</span>
+                          <b className="mono">
+                            {turn.context.chars ?? 0} 字符 · 记忆 {turn.context.memory ?? 0}
+                            {turn.context.digest ? " · 含摘要" : ""}
+                            {turn.cost?.rounds ? ` · ${turn.cost.rounds} 轮` : ""}
+                          </b>
+                        </div>
+                      )}
                     </div>
                   </details>
                 </>
@@ -2675,6 +2932,12 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
             </div>
           ) : asideContent}
         </aside>
+        )}
+        {!isGroup && chatView === "chat" && railTab === "schedule" && (
+          <aside className="bot-aside">
+            <BotRailTabs tab={railTab} onTab={setRailTab} />
+            <SchedulePanel state={state} act={act} onOpenThread={onOpenThread} />
+          </aside>
         )}
         {!isGroup && chatView === "chat" && railTab === "settings" && (
           <aside className="bot-aside">

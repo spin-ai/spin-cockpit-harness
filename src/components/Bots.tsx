@@ -12,6 +12,10 @@ type Act = (type: string, payload?: unknown) => Promise<any>;
 type Layout = "cards" | "list";
 type Filter = "all" | "bound" | "unbound" | "quiet";
 type Sort = "recent" | "name" | "turns";
+type Template = {
+  id: string; name: string; avatar?: string; avatarClass?: string; line: string; capability?: string;
+  routine?: { kind: string; name?: string; atHour?: number; everyMs?: number } | null;
+};
 
 const CAP_LABEL: Record<string, string> = { read: "只读", dispatch: "可起任务", work: "能执行" };
 const DECISION_LABEL: Record<string, string> = {
@@ -57,6 +61,9 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
   const [layout, setLayout] = useState<Layout>(() => {
     try { return localStorage.getItem("ymh.bots.layout") === "list" ? "list" : "cards"; } catch { return "cards"; }
   });
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [creating, setCreating] = useState("");
   useEffect(() => { try { localStorage.setItem("ymh.bots.layout", layout); } catch { /* ignore */ } }, [layout]);
 
   const bots = state.bots ?? [];
@@ -113,15 +120,30 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
   const quiet = enriched.filter((e) => e.muted || e.paused).length;
   const filterLabel = { all: "全部", bound: "已绑定执行体", unbound: "未绑定执行体", quiet: "静音或暂停" }[filter];
 
-  const create = async () => {
+  useEffect(() => {
+    let alive = true;
+    void act("botTemplates")
+      .then((rows) => { if (alive) setTemplates(Array.isArray(rows) ? rows : []); })
+      .catch(() => { /* 模板拉不到就只留空白入口 */ });
+    return () => { alive = false; };
+  }, [act]);
+
+  const create = async (templateId?: string) => {
     try {
-      const created = (await act("botSave", { name: "" })) as Bot | null;
+      setCreating(templateId || "blank");
+      const res = templateId
+        ? (await act("botCreateFromTemplate", { templateId })) as { bot?: Bot; routine?: unknown } | null
+        : { bot: (await act("botSave", { name: "" })) as Bot | null };
+      const created = res?.bot;
       if (created?.id) {
-        notify("已新建机器人，去会话里选它改名字与人格");
+        setShowTemplates(false);
+        notify(templateId ? `已按模板新建：${created.name}（预置日程默认停用）` : "已新建机器人，去会话里选它改名字与人格");
         onOpenBot(created.id);
       }
     } catch (err) {
       notify(String((err as Error)?.message || err));
+    } finally {
+      setCreating("");
     }
   };
 
@@ -193,9 +215,35 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
               { id: "list", label: (<><ListIcon size={12} /> {t("action.list")}</>), title: "列表视图" },
             ]}
           />
-          <button className="btn primary" onClick={() => void create()}>＋ {t("action.newBot")}</button>
+          <button className="btn primary" onClick={() => setShowTemplates((v) => !v)}>＋ {t("action.newBot")}</button>
         </div>}
       />
+
+      {showTemplates && (
+        <section className="panel list-panel" aria-label="从模板新建">
+          <div className="list-head">
+            <div className="row gap8"><b>从模板新建</b><span className="tiny faint">{templates.length} 个模板</span></div>
+            <span className="tiny faint">只预置人格 / 职责 / 一条停用日程；创建后不跟随模板更新</span>
+          </div>
+          {templates.map((tpl) => (
+            <div className="bot-auto" key={tpl.id}>
+              <div className="bot-auto-main">
+                <b>{tpl.avatar || "🤖"} {tpl.name}</b>
+                <span className="tiny faint">{tpl.line}</span>
+                {tpl.routine && <span className="tiny faint">预置日程：{tpl.routine.name || tpl.routine.kind}（默认停用）</span>}
+              </div>
+              <button className="btn tiny primary" disabled={Boolean(creating)} onClick={() => void create(tpl.id)}>用这个</button>
+            </div>
+          ))}
+          <div className="bot-auto">
+            <div className="bot-auto-main">
+              <b>空白机器人</b>
+              <span className="tiny faint">从零开始，先问它要做什么</span>
+            </div>
+            <button className="btn tiny" disabled={Boolean(creating)} onClick={() => void create()}>空白</button>
+          </div>
+        </section>
+      )}
 
       <Overview items={[
         { label: "机器人", value: bots.length },
@@ -238,7 +286,7 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
             compact
             title={query ? "没有匹配的机器人" : "还没有机器人"}
             desc={query ? "换个关键词试试。" : "建一个机器人，给它写职责、绑执行体，它就会按出场规则自己开口。"}
-            action={!query ? <button className="btn primary" onClick={() => void create()}>＋ 新建机器人</button> : undefined}
+            action={!query ? <button className="btn primary" onClick={() => setShowTemplates(true)}>＋ 新建机器人</button> : undefined}
           />
         ) : layout === "cards" ? (
           <div className="bots-grid">

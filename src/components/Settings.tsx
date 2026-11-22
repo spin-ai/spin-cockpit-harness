@@ -5,6 +5,7 @@ import { PageHeader } from "./PageHeader";
 import { Hosts, Stats } from "./Views";
 import { useT } from "../i18n";
 import { ChevronDownIcon, XIcon } from "./Icons";
+import { Segmented } from "./Tabs";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 export type SettingsSection = "general" | "appearance" | "execution" | "terminal" | "preview" | "im" | "hosts" | "stats" | "plugins" | "data" | "shortcuts" | "about";
@@ -439,6 +440,23 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
                   <option value="never">never · 原地目录</option>
                 </select>
               </Row>
+            </Card>
+
+            <Card title="Agent 开启方式">
+              <p className="set-note">对话 = 富文本 + 审批；终端 = 这个 CLI 自己的界面。改完对下一次派活生效，主管只能是对话。</p>
+              {state.agents.filter((a) => !a.terminalId).slice(0, 12).map((a) => (
+                <Row key={a.id} title={a.name} hint={`${a.cli} · ${(a.role || "worker") === "supervisor" ? "主管" : "worker"}`}>
+                  <Segmented
+                    ariaLabel={`${a.name} 的开启方式`}
+                    value={a.chatRuntime === "terminal" ? "terminal" : "acp"}
+                    onChange={(id) => void act("updateAgent", { id: a.id, chatRuntime: id })}
+                    items={[
+                      { id: "acp", label: "对话", title: "富文本对话（结构化流 / 审批 / 纠偏）" },
+                      { id: "terminal", label: "终端", title: "在该 CLI 自己的终端界面里跑", disabled: (a.role || "worker") === "supervisor" || a.chatRunnable === false },
+                    ]}
+                  />
+                </Row>
+              ))}
             </Card>
 
             <Card title="dsh 运行时">

@@ -9,7 +9,7 @@
 
 ## 1. 目标
 
-harness 的 Terminal 是「Agent 干活 + 人直接敲命令」的同一个 pane。原实现只有多标签和一个「新建终端」按钮，日常使用有四个明显摩擦：
+harness 的 Terminal 是「Agent 干活 + 人直接敲命令」的同一个 pane —— 导航里这一页叫**工作台**（英文 Workbench），pane 内部仍是终端。原实现只有多标签和一个「新建终端」按钮，日常使用有四个明显摩擦：
 
 1. 输出找不到（没有查找、没有回到底部）。
 2. 标签多了没有快捷切换，关闭只能点 ×。
@@ -180,3 +180,37 @@ node --check electron/preload.cjs
 - 标签上出现 ✋（`.term-control`），右键菜单变成「交回终端给 Agent」；
 - 不做的事：屏幕截帧、鼠标键盘注入（那是桌面电脑的语义，本项目执行面是终端 / ACP，见 `product/COMPARE-rakazo.md` §1.2）。
 
+
+---
+
+## 7. 一次运行的两面：对话 / 终端（2026-11-22）
+
+同一个 run 有两种呈现面，过去只有一只眼睛能看：ACP 跑出来的正文进 `messages`（富文本），pty 跑出来的只有终端字节流。现在两面都挂在 **run** 上，不再挂在「选中的任务」上。
+
+| 面 | 挂载点 | 数据 |
+|---|---|---|
+| 对话 | 终端窗格的第一个标签（`CHAT_TAB_ID`，不落盘） | `run.result`（`resultSource = acp_text`）+ `messages` |
+| 终端 | 普通标签（pty） | `run.terminalId` 对应的 pty 缓冲区 |
+
+**产出落库**：`queueRun` 建 run 时带 `result / resultSource / resultAt / resultTruncated`；`setRunResult()` 在三种收尾处写入——ACP 完成（`lastAgentText`）、pty 结算（`info.recent`，`pty_tail`）、失败（`error`）。上限 8KB，超了标 `resultTruncated`，UI 上写「只保留尾部」。**终端尾巴不得冒充报告正文**：来源不同，UI 必须标出来。
+
+**两面互相迁移**（不再加第二个开关）：
+
+- 运行记录点一行 → 对话面聚焦这次 run（`focusRunId` → `RunFocusCard`）；
+- 对话面的产出卡片「在终端里继续」→ 打开这次 run 绑定的 pty；
+- 终端标签的「在对话里继续」→ 切到对话面并聚焦该任务的最近一次 run。
+
+**Agent 开启方式**：设置 → 执行 → 「Agent 开启方式」（对话 / 终端），落 `agent.chatRuntime`（`updateAgent` 接受该字段，主管强制 ACP）。这是「这条 Agent 的对话用哪种面」的默认值，改完对下一次派活生效。
+
+## 8. 退出时拆 pty（2026-11-22 崩溃）
+
+现象：开着终端退出应用，主进程 `SIGABRT`，CrashReporter 里是
+`node::Environment::CleanupHandles() → uv__async_io → Napi::ThreadSafeFunction::CallJS → Napi::Error::ThrowAsJavaScriptException → __cxa_throw → abort`
+（`pty.node` 里的 `SetupExitCallback` 那个 TSFN）。崩完单实例锁会留下一个没窗口的进程，下次 `open` 起不来。
+
+原因：`before-quit` 里只 `term.kill()`（SIGHUP 子进程），**没有关读流**。fd 还开着 → 退出过程中 pty 继续推数据 / 触发 exit 回调 → 往已经进入清理的 V8 环境里回调 → napi 抛 C++ 异常 → terminate。
+
+修法（`electron/main.mjs`）：
+
+1. `destroyPty(term)`：先 `removeAllListeners()`，再 `destroy()`（关读流 + SIGHUP）——只 `kill()` 不够；
+2. `before-quit` 跑两趟：第一趟只拆 pty 并 `event.preventDefault()`，200ms 后再 `app.quit()`，让 exit 回调在 JS 环境还在时落地；第二趟做原有结算（run 标 `interrupted` / 终端结算 / 关 store）。

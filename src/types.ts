@@ -207,6 +207,11 @@ export interface Run {
   delegationId?: string | null;
   /** 从终端启动的 run：绑定 pty id，停止 / 退出时用它结算 */
   terminalId?: string | null;
+  /** 这次运行的可读产出（尾端最多 8KB）；来源见 resultSource */
+  result?: string | null;
+  resultSource?: "acp_text" | "pty_tail" | "error" | null;
+  resultTruncated?: boolean;
+  resultAt?: number | null;
 }
 export interface PluginManifest {
   id: string; name: string; version: string; apiVersion: number;
@@ -343,7 +348,7 @@ export interface BotGroupMessage {
   id: string;
   groupId: string;
   seq: number;
-  author: "owner" | "bot";
+  author: "owner" | "bot" | "system";
   botId: string | null;
   botName: string;
   text: string;

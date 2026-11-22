@@ -372,6 +372,28 @@ button{cursor:pointer}
 .term-tab.on .term-tab-icon{color:#d4d4d8}
 .term-host,.xterm,.xterm-viewport,.xterm-screen{background-color:#101012}
 .term-tab-surface{height:100%;min-width:0;min-height:0;display:flex}
+/* 对话面顶上的「这次运行的产出」：来源必须写清楚（文字结论 / 终端尾部 / 失败原因） */
+.run-focus{flex:none;max-height:34%;overflow:auto;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface)}
+.run-focus-head{display:flex;align-items:center;gap:8px;min-width:0}
+.run-focus-head .spacer{flex:1 1 auto}
+.run-focus-body{margin-top:6px;font-size:11.5px;line-height:1.6;color:var(--fg-2);max-height:200px;overflow:auto}
+.run-focus-body.is-mono pre{margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:var(--muted)}
+/* 对话为空时的引导：别让一片空白把「详情在另一个标签」这件事藏起来 */
+.chat-empty-hint{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px 0}
+.chat-empty-hint .inline-empty{flex:1 1 auto;min-width:0}
+/* 运行记录里的一行可点：切到对话面看这次运行的产出 */
+.td-run-row{cursor:pointer;border-radius:6px}
+.td-run-row:hover{background:var(--surface-hover)}
+.td-run-row:focus-visible{outline:1px solid var(--border-strong);outline-offset:-1px}
+/* 对话标签：占满窗格，不再带左栏那层右描边 */
+.chat-surface{flex:1 1 auto;min-height:0;overflow:hidden}
+.chat-surface>.chat-pane{flex:1 1 auto;min-width:0;min-height:0;height:auto;max-height:none;border-right:0}
+/* 嵌在标签里：不占一行 chrome，只把「会话与进展」浮在右上角（区域名由标签承担） */
+.chat-pane.is-embedded{position:relative}
+.chat-float-head{position:absolute;top:6px;right:10px;z-index:4;display:flex;justify-content:flex-end;pointer-events:none}
+.chat-float-head>*{pointer-events:auto}
+.chat-float-head .btn.row-menu-trigger{width:20px;height:20px;min-width:20px;padding:0;border:0;background:color-mix(in srgb,var(--surface) 82%, transparent);color:var(--muted);display:grid;place-items:center;border-radius:8px;box-shadow:var(--shadow-1)}
+.chat-float-head .btn.row-menu-trigger:hover{background:var(--surface-hover);color:var(--fg)}
 .term-split-canvas{position:relative;flex:1;width:100%;height:100%;min-width:0;min-height:0}
 .term-pane-leaf{position:absolute;display:flex;min-width:0;min-height:0}
 .term-pane-leaf > .term-instance{flex:1;min-width:0;min-height:0}
@@ -1255,12 +1277,9 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 /* composer 里的 ⋯ 只当溢出入口，不自带按钮外观 */
 .composer-actions .row-menu-trigger{height:24px;width:24px;min-width:24px;padding:0;border:0;background:transparent;color:var(--muted);display:grid;place-items:center}
 .composer-actions .row-menu-trigger:hover{background:var(--surface-hover);color:var(--fg)}
-/* 终端模式左栏：上段 Chat（派活 / 纠偏），下段任务列表；中间横条拖高度 */
+/* 工作台左栏：只剩任务列表（Chat 已收进终端窗格，作为它的第一个标签） */
 .left-stack{min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}
-.left-stack > .chat-pane{flex:none;height:var(--left-chat-h,320px);max-height:calc(100% - 172px);min-height:0}
-.left-stack.todo-collapsed > .chat-pane{flex:1 1 auto;height:auto;max-height:none}
 .left-stack > .todo-pane{flex:1 1 auto;min-height:0}
-.left-stack > .splitter.horizontal{flex:none}
 .left-stack > .collapsed-pane{flex:none;height:34px;min-height:34px;flex-direction:row;justify-content:flex-start;gap:8px;padding:0 10px;border-right:0}
 .left-stack > .collapsed-pane .collapsed-label{writing-mode:horizontal-tb}
 /* 收起后的段头：和 pane-head 同一张卡，只留标题 + 展开箭头 */
@@ -1270,10 +1289,8 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .stack-head .spacer{flex:1 1 auto}
 /* 任务段收起后，腾出的高度交给展开的项目列表 */
 .todo-pane.tasks-folded .project-panel:not(.collapsed){flex:1 1 auto;max-height:none}
-/* 任务段收起、项目也收起：腾出的高度给 Chat，避免左栏底部留一大片空白 */
-.left-stack:has(> .todo-pane.tasks-folded) > .chat-pane{flex:1 1 auto;height:auto;max-height:none}
+/* 任务段收起、项目也收起：任务列表不再吃掉全部高度 */
 .left-stack:has(> .todo-pane.tasks-folded) > .todo-pane{flex:0 0 auto}
-.left-stack:has(> .todo-pane.tasks-folded .project-panel:not(.collapsed)) > .chat-pane{flex:none;height:var(--left-chat-h,320px);max-height:calc(100% - 172px)}
 .left-stack:has(> .todo-pane.tasks-folded .project-panel:not(.collapsed)) > .todo-pane{flex:1 1 auto}
 .main.pane-max .left-stack > *{visibility:hidden}
 .main.pane-max .left-stack > .pane-max-target{visibility:visible;position:absolute;inset:0 0 0 64px;z-index:12;border:0;background:var(--surface);height:auto}
@@ -4648,6 +4665,12 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
 .bot-aside .bot-tabs{flex-wrap:wrap;overflow:visible;gap:2px;padding-bottom:4px}
 .bot-aside .bot-tabs button{flex:none;white-space:nowrap;height:26px;padding:0 8px}
 .bot-aside .bot-aside-body{min-width:0}
+/* 调度：Mission 面板（复用 TaskChat 的 MissionOverview）+ 未绑定任务的会话 */
+.bot-schedule{gap:8px}
+.bot-sched-label{font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--muted);margin-top:4px}
+.bot-sched-row{display:flex;align-items:center;gap:8px;width:100%;min-width:0;height:26px;padding:0 8px;border:0;border-radius:8px;background:transparent;color:var(--fg-2);font-size:11.5px;text-align:left}
+.bot-sched-row:hover{background:var(--surface-hover);color:var(--fg)}
+.bot-sched-row .ellipsis{flex:1 1 auto;min-width:0}
 .bot-aside .bot-field,.bot-aside .bot-kv,.bot-aside .bot-grid2,.bot-aside .bot-note{min-width:0}
 /* 轨迹：工具专属卡 / 用量 / 回合导航 / 独立账本 */
 .ds-usage{font-size:12px;line-height:24px;color:var(--faint);padding:0 4px;white-space:nowrap;font-variant-numeric:tabular-nums}

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Delegation, ElementContext, Message, MissionPlanRecord, State, Thread, Todo } from "../types";
+import type { Delegation, ElementContext, Message, MissionPlanRecord, Run, State, Thread, Todo } from "../types";
 import { RUN_STATUS, STATUS, agentOf, duration, lastRun, missingKeyInfo, timeAgo } from "../ui";
 import { ChevronDownIcon, CopyCheckIcon, CopyIcon, FileTextIcon, LinkIcon, PanelExpandIcon, PanelRestoreIcon, PencilIcon, RefreshIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, WrenchIcon } from "./Icons";
 import { requestTerminalAdopt } from "../terminal-events";
@@ -29,7 +29,60 @@ const modelCatalogCache = new Map<string, ModelCatalog>();
  * - 已派活但没运行：发一句话 = 新起一次运行
  * 任务状态与操作按钮只在 TODO LIST 行内维护，这里不再重复。
  */
-export function TaskChat({ state, globalState, thread, now, act, onSelect, onNewThread, onOpenThread, onOpenGlobal, threads = [], context, onClearContext, onCollapse, enterToSend = true, confirmStop = false, maximized = false, onToggleMaximize, onOpenBotSettings }: {
+/** 一次运行的可读产出：来源必须标清楚（文字结论 / 终端尾部 / 失败原因），不许拿终端日志冒充报告 */
+function runSourceLabel(source?: string | null, error?: string | null) {
+  if (source === "acp_text") return "文字结论";
+  if (source === "pty_tail") return "终端输出 · 尾部";
+  if (source === "error") return "失败原因";
+  return error ? "失败原因" : "运行记录";
+}
+
+const RUN_FOCUS_CLAMP = 900;
+
+function RunFocusCard({ run, todo, onOpenTerminal, onClose }: {
+  run: Run; todo: Todo | null;
+  onOpenTerminal: (opts: { terminalId: string; cwd: string; title: string; taskId?: string }) => void;
+  onClose?: () => void;
+}) {
+  const text = String(run.result || run.error || "");
+  const [open, setOpen] = useState(false);
+  const long = text.length > RUN_FOCUS_CLAMP;
+  const shown = open || !long ? text : `${text.slice(0, RUN_FOCUS_CLAMP)}…`;
+  return (
+    <section className={`run-focus is-${run.resultSource || "none"}`} aria-label="运行产出">
+      <div className="run-focus-head">
+        <span className="mono tiny">{run.id}</span>
+        <span className={`pill status ${run.status === "failed" ? "failed" : run.status === "completed" ? "done" : "running"}`}>{RUN_STATUS[run.status] || run.status}</span>
+        <span className="tiny muted">{runSourceLabel(run.resultSource, run.error)}{run.resultTruncated ? " · 只保留尾部" : ""}</span>
+        <span className="spacer" />
+        {run.terminalId && (
+          <button
+            className="link tiny"
+            title="这次运行绑定了终端：去终端里继续看 / 接着干"
+            onClick={() => onOpenTerminal({ terminalId: run.terminalId!, cwd: run.cwd || todo?.cwd || "", title: todo?.title || "终端", taskId: run.todoId })}
+          >在终端里继续</button>
+        )}
+        {long && (
+          <button
+            className="icon-btn"
+            title={open ? "收起全文" : "展开全文"}
+            aria-label={open ? "收起全文" : "展开全文"}
+            aria-expanded={open}
+            onClick={() => setOpen((v) => !v)}
+          ><ChevronDownIcon size={12} className={open ? "rot-180" : ""} /></button>
+        )}
+        {onClose && (
+          <button className="icon-btn" title="收起这次运行的产出" aria-label="收起这次运行的产出" onClick={onClose}><XIcon size={12} /></button>
+        )}
+      </div>
+      <div className={`run-focus-body${run.resultSource === "pty_tail" ? " is-mono" : ""}`}>
+        {run.resultSource === "pty_tail" ? <pre>{shown}</pre> : <RichText text={shown} />}
+      </div>
+    </section>
+  );
+}
+
+export function TaskChat({ state, globalState, thread, now, act, onSelect, onNewThread, onOpenThread, onOpenGlobal, threads = [], context, onClearContext, onCollapse, enterToSend = true, confirmStop = false, maximized = false, onToggleMaximize, onOpenBotSettings, embedded = false, focusRun = null, onClearFocusRun }: {
   state: State; globalState?: State; thread: Thread | null; now: number; act: Act; onSelect: (id: string) => void; onNewThread: () => void; onOpenThread?: (id: string) => void; onOpenGlobal?: (id: string) => void; threads?: Thread[];
   context: ElementContext | null; onClearContext: () => void;
   onCollapse?: () => void;
@@ -37,6 +90,11 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   onToggleMaximize?: () => void;
   enterToSend?: boolean;
   confirmStop?: boolean;
+  /** 嵌在终端标签里（工作台）：不写区域名、不占 pane 控制 */
+  embedded?: boolean;
+  /** 这次对话聚焦哪一次运行：它决定「产出物」那一条显示谁的结论 */
+  focusRun?: Run | null;
+  onClearFocusRun?: () => void;
   /** 机器人会话：在工作区右侧打开配置抽屉 */
   onOpenBotSettings?: () => void;
 }) {
@@ -635,9 +693,10 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   };
 
   return (
-    <section className={`chat-pane${maximized ? " pane-max-target" : ""}`} tabIndex={0} aria-label="Chat">
-      <div className="pane-head" onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest("button")) onToggleMaximize?.(); }}>
-        <span>Chat</span>
+    <section className={`chat-pane${embedded ? " is-embedded" : ""}${maximized ? " pane-max-target" : ""}`} tabIndex={0} aria-label="Chat">
+      {/* 嵌入终端标签时不再占一行 chrome：区域名由标签承担，只把「会话与进展」浮在右上角 */}
+      <div className={embedded ? "chat-float-head" : "pane-head"} onDoubleClick={(event) => { if (!embedded && !(event.target as HTMLElement).closest("button")) onToggleMaximize?.(); }}>
+        {!embedded && <span>Chat</span>}
         <div className="row gap6">
           <RowMenu title="会话与进展">
             {historyThreads.length > 1 && (
@@ -663,12 +722,12 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
               {progressOpen ? "收起全局进展" : `全局进展${progressCount > 0 ? ` ${progressCount}` : ""}`}
             </button>
           </RowMenu>
-          {onToggleMaximize && (
+          {onToggleMaximize && !embedded && (
             <button className="pane-collapse" title={maximized ? "还原（Esc）" : "最大化"} aria-label={maximized ? "还原 Chat" : "最大化 Chat"} onClick={onToggleMaximize}>
               {maximized ? <PanelRestoreIcon size={13} /> : <PanelExpandIcon size={13} />}
             </button>
           )}
-          {onCollapse && (
+          {onCollapse && !embedded && (
             <button className="pane-collapse" title="收起 Chat" aria-label="收起 Chat" aria-expanded={true} onClick={onCollapse}>
               <ChevronDownIcon size={13} className="rot-180" />
             </button>
@@ -801,6 +860,35 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                 onToggle={toggleMission}
               />
             </div>
+          )}
+
+          {(() => {
+            // 「看起来是空的」有三种：真没聊过 / 只有系统事件 / 全被「隐藏工具与思考」收起来了。
+            // 第三种最坑：会话有 100 多步工具调用，界面上却只剩两条分隔线。
+            const talk = msgs.some((m) => (m.role === "user" || m.role === "agent") && m.kind !== "thought" && String(m.content || "").trim());
+            if (talk) return null;
+            const steps = msgs.filter((m) => m.role === "tool" || m.kind === "thought").length;
+            if (steps > 0 && !showTool) {
+              return (
+                <div className="chat-empty-hint">
+                  <span className="inline-empty">这段会话有 {steps} 步工具与思考，现在收起着；没有文字结论{todo ? "，任务说明和验收在「任务详情」标签里" : ""}。</span>
+                  <button className="btn tiny" title="展开工具调用与思考过程" onClick={() => setShowTool(true)}>显示工具与思考</button>
+                </div>
+              );
+            }
+            if (steps > 0) return null;
+            return (
+              <div className="chat-empty-hint">
+                <span className="inline-empty">这条任务还没有对话记录{todo ? "；任务说明和验收在「任务详情」标签里" : ""}。</span>
+                {todo && (
+                  <button className="btn tiny" title="看任务的描述 / 验收 / 环境 / 产物" onClick={() => window.dispatchEvent(new Event("harness:task-detail"))}>任务详情</button>
+                )}
+              </div>
+            );
+          })()}
+
+          {focusRun && (focusRun.result || focusRun.error) && (
+            <RunFocusCard run={focusRun} todo={todo} onOpenTerminal={openGlobalTerminal} onClose={onClearFocusRun} />
           )}
 
           <div className="chat-body-wrap">
@@ -1146,7 +1234,7 @@ function missionPillClass(value?: string | null) {
   return "running";
 }
 
-function MissionOverview({ mission, plan, delegations, state, act, onOpenThread, open, onToggle }: {
+export function MissionOverview({ mission, plan, delegations, state, act, onOpenThread, open, onToggle }: {
   mission: Todo; plan: MissionPlanRecord | null;
   delegations: Delegation[]; state: State;
   act: Act; onOpenThread?: (id: string) => void;

@@ -50,7 +50,7 @@ function TaskPlan({ items, expanded }: { items: Todo["subtasks"]; expanded: bool
 }
 
 export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, projectCounts, onAddProject, onManageProjects, onSwitchProject, onCollapse, confirmStop = false, allProjects = false, onToggleScope, maximized = false, onToggleMaximize, onOpenBot, onManageBots, botUnread = 0, activeBotId = null }: {
-  /** BOT 模式：机器人列表 + 它接的活；终端模式：项目列表 + TODO 总览 */
+  /** BOT 模式：机器人列表 + 它接的活；工作台模式：项目列表 + TODO 总览 */
   mode?: "bot" | "terminal";
   state: State; selectedId: string | null; now: number; act: Act; onSelect: (id: string) => void;
   projectCounts: Record<string, number>;
@@ -589,7 +589,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
         <section className={`bot-panel ${botsCollapsed ? "collapsed" : ""}`}>
           <div className="bot-panel-head">
             <span className="bot-panel-title">
-              <span>BOT <em>{state.bots!.length}</em></span>
+              <span>机器人 <em>{state.bots!.length}</em></span>
               {botUnread > 0 && <span className="bot-panel-badge">{botUnread > 99 ? "99+" : botUnread}</span>}
             </span>
             <div className="row gap8">

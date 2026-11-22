@@ -17,11 +17,13 @@ const RUN_TONE: Record<string, string> = {
  * 把「详情」塞进去会让关闭标签、拆分、拖拽预览都要多问一句「这个 tab 有 pty 吗」。
  * 这里做成终端槽位的两个视图（终端 / 任务），pty 一直挂着，切视图不丢会话。
  */
-export function TaskDetail({ state, todo, act, onOpenThread }: {
+export function TaskDetail({ state, todo, act, onOpenThread, onOpenRun }: {
   state: State;
   todo: Todo | null;
   act: (type: string, payload?: unknown) => Promise<any>;
   onOpenThread: (threadId: string) => void;
+  /** 点一行运行：切到对话面看这次运行的产出（对话 / 终端是同一次 run 的两面） */
+  onOpenRun?: (runId: string) => void;
 }) {
   const runs = useMemo(
     () => (todo ? state.runs.filter((r) => r.todoId === todo.id).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)) : []),
@@ -153,7 +155,15 @@ export function TaskDetail({ state, todo, act, onOpenThread }: {
                 {runs.slice(0, 8).map((r) => {
                   const note = r.error || r.queueReason || "";
                   return (
-                    <div className="td-tr" key={r.id}>
+                    <div
+                      className={`td-tr${onOpenRun ? " td-run-row" : ""}`}
+                      key={r.id}
+                      title={onOpenRun ? "在对话里看这次运行的产出" : undefined}
+                      role={onOpenRun ? "button" : undefined}
+                      tabIndex={onOpenRun ? 0 : undefined}
+                      onClick={onOpenRun ? () => onOpenRun(r.id) : undefined}
+                      onKeyDown={onOpenRun ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpenRun(r.id); } } : undefined}
+                    >
                       <span><span className={`pill status ${RUN_TONE[r.status] || "todo"}`}>{RUN_STATUS[r.status] || r.status}</span></span>
                       <span className="td-cell-dim">{relTime(r.endedAt || r.startedAt || r.createdAt || 0)}</span>
                       <span className="num mono td-cell-dim">{fmtMs(r.durationMs ?? (r.startedAt && r.endedAt ? r.endedAt - r.startedAt : null))}</span>

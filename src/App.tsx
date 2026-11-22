@@ -13,7 +13,7 @@ import { CommandPalette, type Command } from "./components/CommandPalette";
 import { Splitter, useStoredSize } from "./components/Splitter";
 import { LangProvider } from "./i18n";
 import { CollapsedPane } from "./components/CollapsedPane";
-import { ChatIcon, ChevronDownIcon, FilesIcon, ListIcon, TerminalIcon, XIcon } from "./components/Icons";
+import { FilesIcon, ListIcon, TerminalIcon, XIcon } from "./components/Icons";
 import { Settings, type SettingsSection } from "./components/Settings";
 import { Guide } from "./components/Guide";
 import { Notes } from "./components/Notes";
@@ -27,7 +27,7 @@ import { requestTerminalAdopt, requestTerminalAt } from "./terminal-events";
 import { THEMES, isDarkTheme, resolveTheme } from "./themes";
 
 type View = "workspace" | "terminal" | "scene" | "projects" | "bots" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "bot";
-type PaneId = "todo" | "chat" | "terminal" | "files";
+type PaneId = "todo" | "terminal" | "files";
 const COLLAPSED_PANE_W = 34;
 
 export default function App() {
@@ -54,9 +54,9 @@ export default function App() {
   const [botDrawerId, setBotDrawerId] = useState<string | null>(null);
   /** 预览里拾取的元素上下文：随下一次派活发出去 */
   const [pendingContext, setPendingContext] = useState<ElementContext | null>(null);
+  /** 对话面聚焦哪一次运行（点运行记录 / 从终端「在对话里继续」进来时设它） */
+  const [focusRunId, setFocusRunId] = useState<string | null>(null);
   const [todoW, setTodoW] = useStoredSize("cmh.layout.todoW.v2", 360, 240, 560);
-  // 左栏上下两段：上面 Chat、下面任务列表；中间分隔条可拖高度
-  const [chatH, setChatH] = useStoredSize("cmh.layout.chatH", 320, 140, 900);
   const [filesW, setFilesW] = useStoredSize("cmh.layout.filesW", 280, 180, 640);
   const [focusedPane, setFocusedPane] = useState<PaneId | null>(null);
   // 窗口变窄（或整窗放大）时，固定宽度的侧栏要跟着收，否则工作区会横向溢出
@@ -70,9 +70,9 @@ export default function App() {
     try {
       const raw = JSON.parse(localStorage.getItem("cmh.layout.collapsed.v2") || "{}");
       // 右栏（文件 / 会话 / Git）默认收起：终端吃满剩下的宽度，需要时点窄条或打开文件再展开
-      return { todo: !!raw.todo, chat: !!raw.chat, terminal: !!raw.terminal, files: raw.files !== false };
+      return { todo: !!raw.todo, terminal: !!raw.terminal, files: raw.files !== false };
     } catch {
-      return { todo: false, chat: false, terminal: false, files: true };
+      return { todo: false, terminal: false, files: true };
     }
   });
   useEffect(() => {
@@ -80,7 +80,7 @@ export default function App() {
   }, [collapsed]);
   useEffect(() => {
     const reset = () => {
-      setCollapsed({ todo: false, chat: false, terminal: false, files: false });
+      setCollapsed({ todo: false, terminal: false, files: false });
       setMaximized(null);
     };
     window.addEventListener("harness:reset-layout", reset);
@@ -98,7 +98,7 @@ export default function App() {
   const [maximized, setMaximized] = useState<PaneId | null>(() => {
     try {
       const raw = localStorage.getItem("cmh.layout.maximized");
-      return raw && ["todo", "chat", "terminal", "files"].includes(raw) ? (raw as PaneId) : null;
+      return raw && ["todo", "terminal", "files"].includes(raw) ? (raw as PaneId) : null;
     } catch { return null; }
   });
   useEffect(() => {
@@ -123,11 +123,10 @@ export default function App() {
 
   // 工作区焦点：指针进入某个 pane 后记住它，用于主次降噪。
   const markFocusedPane = useCallback((e: React.SyntheticEvent) => {
-    const el = (e.target as HTMLElement).closest<HTMLElement>(".todo-pane,.chat-pane,.terminal-pane,.files-pane");
+    const el = (e.target as HTMLElement).closest<HTMLElement>(".todo-pane,.terminal-pane,.files-pane");
     const next = el?.classList.contains("todo-pane") ? "todo"
-      : el?.classList.contains("chat-pane") ? "chat"
-        : el?.classList.contains("terminal-pane") ? "terminal"
-          : el?.classList.contains("files-pane") ? "files" : null;
+      : el?.classList.contains("terminal-pane") ? "terminal"
+        : el?.classList.contains("files-pane") ? "files" : null;
     if (next) setFocusedPane(next);
   }, []);
 
@@ -149,19 +148,18 @@ export default function App() {
     return () => window.removeEventListener("harness:open-settings", onOpen);
   }, []);
 
-  /** 打开一条会话：终端模式的左栏上段 Chat 就作用在这个 thread 上 */
+  /** 打开一条会话：对话现在是终端窗格的第一个标签（⌘J 同一条路） */
   const openSession = useCallback((threadId?: string | null) => {
     if (threadId) setThreadId(threadId);
-    // 显式「打开会话」才展开 Chat；点任务行不算（不许悄悄重排 / 改展开态）
-    setCollapsed((c) => (c.chat ? { ...c, chat: false } : c));
     setView("terminal");
+    window.setTimeout(() => window.dispatchEvent(new Event("harness:chat-tab")), 30);
   }, []);
 
-  // 「问清楚」/ 点任务 / 插件草稿都落到会话：Chat 收着就先展开，再切到终端页
+  // 「问清楚」/ 点任务 / 插件草稿都落到会话：先切到终端页，再定位到对话标签
   useEffect(() => {
     const onFocusChat = () => {
-      setCollapsed((c) => (c.chat ? { ...c, chat: false } : c));
       setView("terminal");
+      window.setTimeout(() => window.dispatchEvent(new Event("harness:chat-tab")), 30);
     };
     window.addEventListener("harness:focus-chat", onFocusChat);
     return () => window.removeEventListener("harness:focus-chat", onFocusChat);
@@ -295,6 +293,17 @@ export default function App() {
 
   const thread = useMemo(() => scoped?.threads.find((t) => t.id === threadId) ?? null, [scoped, threadId]);
   const selected = useMemo(() => (thread?.todoId ? scoped?.todos.find((t) => t.id === thread.todoId) ?? null : null), [scoped, thread]);
+  /**
+   * 对话面的「当前运行」：显式点过某条运行就用它，否则用这条任务最近一次运行。
+   * 对话和终端说的是同一次 run 的两面——这是把两边对齐的那根轴。
+   */
+  const focusRun = useMemo(() => {
+    if (!state) return null;
+    if (focusRunId) return state.runs.find((r) => r.id === focusRunId) ?? null;
+    if (!selected) return null;
+    const mine = state.runs.filter((r) => r.todoId === selected.id);
+    return mine.length ? mine[mine.length - 1] : null;
+  }, [state, focusRunId, selected]);
   // 文件预览跟随任务的真实工作目录（run 的 worktree 优先），否则看不到 agent 的改动
   const workdir = useMemo(() => {
     if (!state) return "";
@@ -484,8 +493,8 @@ export default function App() {
   const commands: Command[] = useMemo(() => {
     if (!state) return [];
     const list: Command[] = [
-      { id: "view-bot", label: "BOT：机器人工作台（回合流 + 人格 / 记忆）", group: "导航", run: () => setView("workspace") },
-      { id: "view-terminal", label: "终端：项目 / 终端 / 任务表", group: "导航", run: () => setView("terminal") },
+      { id: "view-bot", label: "机器人：回合流 + 人格 / 记忆", group: "导航", run: () => setView("workspace") },
+      { id: "view-terminal", label: "工作台：项目 / 终端 / 任务表", group: "导航", run: () => setView("terminal") },
       { id: "view-scene", label: "场景", group: "导航", run: () => setView("scene") },
       { id: "view-projects", label: "项目花名册（统计 / 场景 / 切换）", group: "导航", run: () => setView("projects") },
       { id: "view-stats", label: "统计", group: "导航", hint: "设置 → 统计", run: () => openSettingsSection("stats") },
@@ -494,7 +503,7 @@ export default function App() {
       { id: "view-knowledge", label: "资料（知识库 → 文档）", group: "导航", run: () => setView("knowledge") },
       { id: "view-memory", label: "记忆（四层 / Dream）", group: "导航", run: () => setView("memory") },
       { id: "view-persona", label: "人物（建模 / 决策辅助）", group: "导航", run: () => setView("persona") },
-      { id: "view-bots", label: "机器人（配置：人设 / 执行体 / 日程）", group: "导航", run: () => setView("bots") },
+      { id: "view-bots", label: "机器人库（配置：人设 / 执行体 / 日程）", group: "导航", run: () => setView("bots") },
       { id: "quick-capture", label: "快速记录到知识库", hint: "⌘⇧K", group: "任务", run: () => void act("openQuickCapture") },
       { id: "new-thread", label: "新建会话", hint: "⌘N", group: "任务", run: () => void newThread() },
       { id: "new-task", label: "新建任务", hint: "⌘⇧N", group: "任务", run: () => dispatchInWorkspace(() => new Event("harness:new-task")) },
@@ -586,7 +595,9 @@ export default function App() {
       if (mod && e.key === ",") { e.preventDefault(); setView("settings"); return; }
       if (mod && !e.shiftKey && e.key.toLowerCase() === "j" && view === "terminal") {
         e.preventDefault();
-        document.querySelector<HTMLTextAreaElement>(".dispatch-input")?.focus();
+        // Chat 现在是终端的第一个标签：⌘J 原意不变，切到对话并把光标放进输入框
+        window.dispatchEvent(new Event("harness:chat-tab"));
+        window.setTimeout(() => document.querySelector<HTMLTextAreaElement>(".dispatch-input")?.focus(), 40);
         return;
       }
       if (mod && /^[1-9]$/.test(e.key)) {
@@ -655,10 +666,10 @@ export default function App() {
   const todoCol = paneCol("todo", shrunk(todoW), 140);
   const terminalCol = collapsed.terminal ? `${COLLAPSED_PANE_W}px` : "minmax(240px, 1fr)";
   const filesCol = paneCol("files", shrunk(filesW), 140);
-  // 终端模式没有 chat 列，sep1 变成 TODO 与终端之间的分隔条（否则左栏在终端模式没法拖宽）
+  // 左栏只剩任务列表：Chat 已合进终端窗格，作为它的第一个标签（⌘J 直达）
   const sep1 = !collapsed.todo && !collapsed.terminal ? "6px" : "0px";
   const sep3 = !collapsed.terminal && !collapsed.files ? "6px" : "0px";
-  // 网格只有：TODO · 终端（主面）· 文件；Chat 在终端底部 dock 里
+  // 网格只有：TODO · 终端（主面）· 文件；Chat 是终端窗格里的第一个标签
   const gridCols = `64px ${todoCol} ${sep1} ${terminalCol} ${sep3} ${filesCol}`;
 
   return (
@@ -671,42 +682,7 @@ export default function App() {
         {scoped && (
           <div className="workspace-view" style={{ display: view === "terminal" ? "contents" : "none" }}>
           <>
-            <div className={`left-stack${collapsed.todo ? " todo-collapsed" : ""}`} style={{ ["--left-chat-h" as string]: `${chatH}px` }}>
-            {/* 左栏上段：Chat（派活 / 纠偏） */}
-            {collapsed.chat ? (
-              <button
-                className="stack-head"
-                title="展开 Chat"
-                aria-label="展开 Chat"
-                aria-expanded={false}
-                onClick={() => togglePane("chat")}
-              >
-                <span className="stack-head-title"><ChatIcon size={15} />Chat</span>
-                <span className="spacer" />
-                <ChevronDownIcon size={13} />
-              </button>
-            ) : (
-              <TaskChat
-                state={scoped}
-                globalState={state}
-                thread={thread}
-                threads={scoped.threads}
-                now={now}
-                act={act}
-                onSelect={selectTodo}
-                onOpenGlobal={(id) => void openTodoFromPalette(id)}
-                onNewThread={() => void newThread()}
-                onOpenThread={openSession}
-                context={pendingContext}
-                onClearContext={() => setPendingContext(null)}
-                onCollapse={() => togglePane("chat")}
-                enterToSend={state.settings?.enterToSend ?? true}
-                confirmStop={state.settings?.confirmStop ?? false}
-                maximized={maximized === "chat"}
-                onToggleMaximize={() => toggleMaximize("chat")}
-              />
-            )}
-            {!collapsed.chat && !collapsed.todo && <Splitter orientation="horizontal" onDelta={(d) => setChatH((h) => h + d)} />}
+            <div className={`left-stack${collapsed.todo ? " todo-collapsed" : ""}`}>
             {collapsed.todo ? (
               <CollapsedPane label="TODO" title="TODO 列表" icon={<ListIcon size={16} />} onExpand={() => togglePane("todo")} />
             ) : (
@@ -745,10 +721,10 @@ export default function App() {
                 </div>
               )}
               <div className="terminal-slot-main" style={{ display: collapsed.terminal ? "none" : "flex" }}>
-                <TerminalPanel state={state} todo={selected} act={act} onOpenThread={openSession} onPickedContext={setPendingContext} previewRoot={workdir} previewHost={previewHost} onCollapse={() => togglePane("terminal")} terminalFontSize={state.settings?.terminalFontSize} terminalScrollback={state.settings?.terminalScrollback} previewHomeUrl={state.settings?.previewHomeUrl} maximized={maximized === "terminal"} onToggleMaximize={() => toggleMaximize("terminal")} />
+                <TerminalPanel state={state} todo={selected} act={act} onOpenThread={openSession} onPickedContext={setPendingContext} previewRoot={workdir} previewHost={previewHost} onCollapse={() => togglePane("terminal")} terminalFontSize={state.settings?.terminalFontSize} terminalScrollback={state.settings?.terminalScrollback} previewHomeUrl={state.settings?.previewHomeUrl} maximized={maximized === "terminal"} onToggleMaximize={() => toggleMaximize("terminal")} chat={<TaskChat state={scoped} globalState={state} thread={thread} threads={scoped.threads} now={now} act={act} onSelect={selectTodo} onOpenGlobal={(id) => void openTodoFromPalette(id)} onNewThread={() => void newThread()} onOpenThread={openSession} context={pendingContext} onClearContext={() => setPendingContext(null)} enterToSend={state.settings?.enterToSend ?? true} confirmStop={state.settings?.confirmStop ?? false} embedded focusRun={focusRun} onClearFocusRun={() => setFocusRunId(null)} />} onOpenRunFocus={(runId) => { setFocusRunId(runId); window.setTimeout(() => window.dispatchEvent(new Event("harness:chat-tab")), 20); }} onContinueInChat={(taskId) => { const runs = state.runs.filter((r) => r.todoId === taskId); const last = runs.length ? runs[runs.length - 1] : null; setFocusRunId(last?.id ?? null); const th = state.threads.find((t) => t.todoId === taskId); if (th) setThreadId(th.id); window.setTimeout(() => window.dispatchEvent(new Event("harness:chat-tab")), 20); }} />
               </div>
               {collapsed.terminal && (
-                <CollapsedPane label="TERM" title="终端" icon={<TerminalIcon size={16} />} onExpand={() => togglePane("terminal")} />
+                <CollapsedPane label="工作" title="工作台" icon={<TerminalIcon size={16} />} onExpand={() => togglePane("terminal")} />
               )}
             </div>
             {sep3 === "6px" ? <Splitter onDelta={resizeFiles} /> : <div className="splitter-off" />}

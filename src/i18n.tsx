@@ -4,8 +4,8 @@ export type Lang = "zh" | "en";
 type Dict = Record<string, string>;
 
 const ZH: Dict = {
-  "nav.workspace": "BOT",
-  "nav.terminal": "终端",
+  "nav.workspace": "机器人",
+  "nav.terminal": "工作台",
   "nav.scene": "场景",
   "nav.projects": "项目",
   "nav.bots": "机器人",
@@ -22,7 +22,7 @@ const ZH: Dict = {
   "page.stats": "统计",
   "page.git": "Git",
   "page.wiki": "项目 Wiki",
-  "page.bots": "机器人",
+  "page.bots": "机器人库",
   "page.memory": "记忆",
   "page.people": "人物",
   "page.knowledge": "知识库",
@@ -119,8 +119,8 @@ const ZH: Dict = {
 };
 
 const EN: Dict = {
-  "nav.workspace": "BOT",
-  "nav.terminal": "Terminal",
+  "nav.workspace": "Robots",
+  "nav.terminal": "Workbench",
   "nav.scene": "Scene",
   "nav.projects": "Projects",
   "nav.bots": "Bots",
@@ -137,7 +137,7 @@ const EN: Dict = {
   "page.stats": "Stats",
   "page.git": "Git",
   "page.wiki": "Project Wiki",
-  "page.bots": "Bots",
+  "page.bots": "Bot library",
   "page.memory": "Memory",
   "page.people": "People",
   "page.knowledge": "Knowledge",

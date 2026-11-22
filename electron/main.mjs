@@ -569,6 +569,9 @@ function queueRun(todo, agent, trigger = "assign", parentRunId = null, kind = "w
     hostId: agent.hostId || null, createdAt: Date.now(), tokensIn: null, tokensOut: null,
     usageSource: "unknown", errorClass: null, exitCode: null, queueWaitMs: null, durationMs: null, queueReason: null,
     runtime: chatRuntimeOf(agent),
+    // 一个 run 的「产出」：只有一份可读正文，外加它是从哪来的（ACP 文本 / pty 尾巴 / 报错）
+    // 没有这个字段，「这次跑出了什么」就只能靠翻终端缓冲区或猜（见 ARCH-bot §3.3 的工具边界）
+    result: null, resultSource: null, resultTruncated: false, resultAt: null,
   };
   store.state.runs.push(run);
   todo.status = "queued";
@@ -920,7 +923,8 @@ function tick() {
       if (hostBusy >= hostCap) { run.queueReason = `主机并发已满 · ${host.name}`; continue; }
     }
     const busy = state.runs.filter((r) => (r.kind || "worker") !== "supervisor" && r.agentId === agent.id && activeWorkerStatuses.includes(r.status)).length;
-    if (busy >= (agent.max || 1)) continue;
+    // 这两条以前是静默 continue：界面上只显示「排队」，看不到为什么。原因必须写进 queueReason。
+    if (busy >= (agent.max || 1)) { run.queueReason = `等待同一个 Agent · ${agent.alias || agent.name}`; continue; }
     if (todo.blockedBy?.length) {
       const pending = todo.blockedBy.filter((id) => {
         const dep = state.todos.find((t) => t.id === id);
@@ -929,12 +933,16 @@ function tick() {
       if (pending.length) { run.queueReason = `等待依赖 · ${pending.length}`; continue; }
     }
     // Mission 子任务各有 worktree，可以并行；普通任务保持同 cwd 串行。
-    const sameCwd = run.trigger !== "broadcast" && !todo.parentId && state.runs.some((r) => {
+    const sameCwdRun = run.trigger !== "broadcast" && !todo.parentId ? state.runs.find((r) => {
       if ((r.kind || "worker") === "supervisor" || !activeWorkerStatuses.includes(r.status)) return false;
       const t = state.todos.find((x) => x.id === r.todoId);
       return t && (t.cwd || agent.cwd) === (todo.cwd || agent.cwd);
-    });
-    if (sameCwd) continue;
+    }) : null;
+    if (sameCwdRun) {
+      const blocker = state.todos.find((x) => x.id === sameCwdRun.todoId);
+      run.queueReason = `同目录有任务在跑 · ${blocker?.key || sameCwdRun.id}`;
+      continue;
+    }
     run.queueReason = null;
     void startRun(run, todo, agent);
   }
@@ -952,6 +960,7 @@ async function startRun(run, todo, agent) {
     run.endedAt = Date.now();
     run.error = executorErr;
     run.errorClass = "unsupported_cli";
+    setRunResult(run, executorErr, "error");
     todo.status = "todo";
     todo.lastRunFailed = true;
     store.addMessage(thread.id, run.id, "system", "error", `run 失败：${executorErr}`);
@@ -981,6 +990,7 @@ async function startRun(run, todo, agent) {
     if (worktree.error && String(worktree.error).includes("always")) {
       const message = `worktree 配置为 always，但当前目录不是 git 仓库：${baseCwd}`;
       run.status = "failed"; run.endedAt = Date.now(); run.error = message; run.errorClass = "worktree";
+      setRunResult(run, message, "error");
       todo.status = "todo"; todo.lastRunFailed = true;
       store.addMessage(thread.id, run.id, "system", "error", message);
       store.addEvent("run.failed", `run.failed todo=${todo.key} ${message}`);
@@ -1008,6 +1018,7 @@ async function startRun(run, todo, agent) {
     if (isRemote) {
       const message = "终端 Agent 暂不支持远端主机；请使用本机 Agent 或 ACP";
       run.status = "failed"; run.endedAt = Date.now(); run.error = message; run.errorClass = "terminal_required";
+      setRunResult(run, message, "error");
       todo.status = "todo"; todo.lastRunFailed = true;
       store.addMessage(thread.id, run.id, "system", "error", message);
       store.addEvent("run.failed", `run.failed todo=${todo.key} ${message}`);
@@ -1023,6 +1034,7 @@ async function startRun(run, todo, agent) {
     } catch (err) {
       const message = `终端 Agent 启动失败：${String(err?.message || err)}`;
       run.status = "failed"; run.endedAt = Date.now(); run.error = message; run.errorClass = "terminal_required";
+      setRunResult(run, message, "error");
       todo.status = "todo"; todo.lastRunFailed = true;
       store.addMessage(thread.id, run.id, "system", "error", message);
       store.addEvent("run.failed", `run.failed todo=${todo.key} ${message}`);
@@ -1228,6 +1240,7 @@ async function startRun(run, todo, agent) {
     run.status = "completed";
     run.endedAt = Date.now();
     applyRunUsage(run, res);
+    setRunResult(run, lastAgentText(thread.id, run.id), "acp_text");
     const otherActive = store.state.runs.some((r) => r.id !== run.id && r.todoId === todo.id && ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"].includes(r.status));
     todo.status = otherActive ? "in_progress" : "in_review";
     void imNotifyRun(todo, run, handle).catch(() => {});
@@ -1272,6 +1285,7 @@ async function startRun(run, todo, agent) {
       run.error = (detail ? `${base} · ${detail}` : base).slice(0, 800);
       run.errorClass = classifyError(run.error, err?.code ?? err?.exitCode);
       run.errorMeta = missingKeyInfo(run.error);
+      setRunResult(run, run.error, "error");
       run.exitCode = Number.isFinite(err?.exitCode) ? err.exitCode : null;
       todo.status = "todo";
       todo.lastRunFailed = true;
@@ -2455,6 +2469,7 @@ async function afterSupervisorPrompt(run, mission, handle) {
     run.status = "completed";
     run.endedAt = now();
     if (run.startedAt) run.durationMs = Math.max(0, run.endedAt - run.startedAt);
+    setRunResult(run, lastAgentText(missionThread(mission).id, run.id), "acp_text");
     store.addMessage(missionThread(mission).id, run.id, "system", "system", "计划已退回；请输入修改意见或重试，让主管重新规划");
     store.addEvent("mission.plan.rework_waiting", `mission.plan.rework_waiting ${mission.key}`);
     broadcast();
@@ -5705,7 +5720,7 @@ const actions = {
     store.addEvent("agent.created", `agent.created ${agent.name} @${agent.alias} (${executor.id}/${safeRole}/${runtime})`);
     return agent;
   },
-  updateAgent: ({ id, role, instructions, maxChildren }) => {
+  updateAgent: ({ id, role, instructions, maxChildren, chatRuntime }) => {
     const agent = store.state.agents.find((a) => a.id === id);
     if (!agent) throw new Error("agent not found");
     if (role !== undefined) {
@@ -5716,7 +5731,13 @@ const actions = {
     }
     if (instructions !== undefined) agent.instructions = String(instructions || "").slice(0, 4000);
     if (maxChildren !== undefined) agent.maxChildren = Math.max(1, Math.min(12, Number(maxChildren) || 4));
-    store.addEvent("agent.updated", `agent.updated ${agent.name} role=${agent.role || "worker"}`);
+    // 开启方式（对话 / 终端）是「这条 Agent 的对话用什么面」：主管强制 ACP，worker 可改
+    if (chatRuntime !== undefined) {
+      const next = chatRuntime === "terminal" ? "terminal" : "acp";
+      if ((agent.role || "worker") === "supervisor" && next !== "acp") throw new Error("主管只能使用 ACP（对话）");
+      agent.chatRuntime = next;
+    }
+    store.addEvent("agent.updated", `agent.updated ${agent.name} role=${agent.role || "worker"} surface=${chatRuntimeOf(agent)}`);
     return agent;
   },
   // ── 会话：单一输入路径 ────────────────────────────────────────────────
@@ -7017,6 +7038,18 @@ function stripAnsi(text) {
   return String(text || "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "");
 }
 
+/** run 结论的落库口径：截尾 8KB、去 ANSI、标来源；结果为空就不写（不要伪造「已完成」） */
+const RUN_RESULT_CAP = 8000;
+function setRunResult(run, text, source) {
+  if (!run) return;
+  const clean = stripAnsi(String(text || "")).replace(/\u001b\[[0-9;?]*[a-zA-Z]/g, "").trim();
+  if (!clean) { run.result = run.result ?? null; run.resultSource = run.resultSource ?? null; return; }
+  run.result = clean.slice(-RUN_RESULT_CAP);
+  run.resultTruncated = clean.length > RUN_RESULT_CAP;
+  run.resultSource = source;
+  run.resultAt = run.endedAt || Date.now();
+}
+
 function settleTerminalRun(info, status) {
   if (!info?.runId) return;
   const run = store.state.runs.find((r) => r.id === info.runId);
@@ -7026,6 +7059,8 @@ function settleTerminalRun(info, status) {
   run.endedAt = now();
   if (run.startedAt) run.durationMs = Math.max(0, run.endedAt - run.startedAt);
   run.exitCode = typeof info.exitCode === "number" ? info.exitCode : null;
+  // pty 跑出来的没有「结论段」，只有尾巴：存下来并标清来源，别让它冒充成报告的正文
+  setRunResult(run, info.recent, "pty_tail");
   const delegation = run.delegationId ? store.state.delegations.find((d) => d.id === run.delegationId) : null;
   if (delegation) {
     if (status === "completed") {
