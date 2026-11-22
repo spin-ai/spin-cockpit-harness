@@ -2542,7 +2542,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                   <button className="link tiny" onClick={() => setReplyMode({ kind: "bot", botId: m.id })}>只它回</button>
                 </div>
               ))}
-              <p className="bot-note">群聊是聚合视图：每个成员仍然是自己的会话与记忆，不会互相看到。要谁回应就「发给」谁。</p>
+              <p className="bot-note">群聊里能看到本轮其他人已经说的；会话与记忆仍各自独立。要谁回应就「发给」谁。</p>
             </div>
           ) : asideContent}
         </aside>
