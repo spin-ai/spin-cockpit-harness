@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT, path TEXT, 
 CREATE TABLE IF NOT EXISTS hosts (id TEXT PRIMARY KEY, name TEXT, kind TEXT, addr TEXT, status TEXT, heartbeat INTEGER, version TEXT, port INTEGER, user TEXT, caps TEXT, last_probe INTEGER, latency_ms INTEGER, max_concurrency INTEGER, default_cwd TEXT, probe_error TEXT);
 CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT, host_id TEXT, cli TEXT, cwd TEXT, max_concurrency INTEGER, approval TEXT, color TEXT, skills TEXT, alias TEXT, project_id TEXT, terminal_id TEXT, role TEXT DEFAULT 'worker', instructions TEXT DEFAULT '', max_children INTEGER DEFAULT 4);
 CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, key TEXT, title TEXT, desc TEXT, acceptance TEXT, status TEXT, agent_id TEXT, priority TEXT, due TEXT, parent_id TEXT, tags TEXT, subtasks TEXT, blocked_by TEXT, missing_writeback INTEGER, last_run_failed INTEGER, cwd TEXT, created_at INTEGER, updated_at INTEGER, confirmed INTEGER, project_id TEXT, kind TEXT DEFAULT 'task', mission_state TEXT, bot_id TEXT);
-CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, todo_id TEXT, agent_id TEXT, status TEXT, trigger TEXT, started_at INTEGER, ended_at INTEGER, cost REAL, tokens INTEGER, error TEXT, parent_run_id TEXT, cwd TEXT, branch TEXT, host_id TEXT, created_at INTEGER, tokens_in INTEGER, tokens_out INTEGER, usage_source TEXT, error_class TEXT, exit_code INTEGER, queue_wait_ms INTEGER, duration_ms INTEGER, queue_reason TEXT, kind TEXT DEFAULT 'worker', delegation_id TEXT, terminal_id TEXT, runtime TEXT, worktree_cleaned INTEGER, acp_session TEXT);
+CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, todo_id TEXT, agent_id TEXT, status TEXT, trigger TEXT, started_at INTEGER, ended_at INTEGER, cost REAL, tokens INTEGER, error TEXT, parent_run_id TEXT, cwd TEXT, branch TEXT, host_id TEXT, created_at INTEGER, tokens_in INTEGER, tokens_out INTEGER, usage_source TEXT, error_class TEXT, exit_code INTEGER, queue_wait_ms INTEGER, duration_ms INTEGER, queue_reason TEXT, kind TEXT DEFAULT 'worker', delegation_id TEXT, terminal_id TEXT, runtime TEXT, worktree_cleaned INTEGER, acp_session TEXT, result TEXT, result_source TEXT, result_truncated INTEGER, result_at INTEGER);
 CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, todo_id TEXT, title TEXT, project_id TEXT, project TEXT, agent_id TEXT, created_at INTEGER, updated_at INTEGER, model TEXT, model_name TEXT, effort TEXT, kind TEXT DEFAULT 'chat', bot_id TEXT);
 CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, todo_id TEXT, run_id TEXT, role TEXT, kind TEXT, content TEXT, injected INTEGER, created_at INTEGER, thread_id TEXT, delivery TEXT, context TEXT, meta TEXT);
 CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, todo_id TEXT, run_id TEXT, kind TEXT, title TEXT, origin TEXT, ref TEXT, deep_link TEXT, created_at INTEGER);
@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS bot_group_messages (id TEXT PRIMARY KEY, group_id TEX
 CREATE TABLE IF NOT EXISTS routines (id TEXT PRIMARY KEY, bot_id TEXT, kind TEXT, data TEXT, updated_at INTEGER);
 -- 聊天面的小状态：草稿与阅读位置（key = botId:threadId / group:groupId）
 CREATE TABLE IF NOT EXISTS bot_ui (k TEXT PRIMARY KEY, draft TEXT, scroll TEXT, updated_at INTEGER);
+-- 人格 / 职责 / 配额的历史：每次改存上一版，恢复 = 生成新一版（不删旧记录）
+CREATE TABLE IF NOT EXISTS bot_revisions (id TEXT PRIMARY KEY, bot_id TEXT, at INTEGER, by TEXT, data TEXT);
 `;
 
 /** 应用设置默认值。缺失的键一律从这里补齐。 */
@@ -153,6 +155,8 @@ export async function openDb(dir, { onTranscript } = {}) {
     "ALTER TABLE bot_turns ADD COLUMN tools TEXT",
     // 一个 bot 多个会话（ORCA 的 Chats 列表）：回合归到具体那条 thread
     "ALTER TABLE bot_turns ADD COLUMN thread_id TEXT",
+    // 长对话摘要（纯函数压缩，24 条以上才生成；只作背景，不是事实来源）
+    "ALTER TABLE threads ADD COLUMN digest TEXT",
     // bot 绑定执行体：work 档位起 run 时用它当 agent
     "ALTER TABLE bots ADD COLUMN executor_agent_id TEXT",
     // bot 的角色：主管（拆解/分派）/ 员工（接任务）
@@ -167,6 +171,13 @@ export async function openDb(dir, { onTranscript } = {}) {
     "ALTER TABLE messages ADD COLUMN superseded_by TEXT",
     "ALTER TABLE messages ADD COLUMN meta TEXT",
     "ALTER TABLE bot_turns ADD COLUMN trace TEXT",
+    // 一轮为什么停（轮数 / 循环 / 预算 / 超时）+ 上下文占用（给 UI 看「它带了多少东西」）
+    "ALTER TABLE bot_turns ADD COLUMN stop_reason TEXT",
+    "ALTER TABLE bot_turns ADD COLUMN context TEXT",
+    // 日程建议：模型只出草稿，人点「建日程」后才写 routines
+    "ALTER TABLE bot_turns ADD COLUMN routine_proposal TEXT",
+    // 群聊交接：这一轮把活交给了谁（审计 + 防双答）
+    "ALTER TABLE bot_turns ADD COLUMN handoff TEXT",
     // 群消息的回合明细：{ turnId, runId, cost, ms } —— 点开能看这一句对应的 run 轨迹
     "ALTER TABLE bot_group_messages ADD COLUMN meta TEXT",
     // 主机：能力矩阵 / 探测时间 / 负载上限 / 默认远端目录（见 docs/arch/ARCH-hosts-stats.md）
@@ -200,6 +211,12 @@ export async function openDb(dir, { onTranscript } = {}) {
     "ALTER TABLE runs ADD COLUMN terminal_id TEXT",
     "ALTER TABLE runs ADD COLUMN runtime TEXT",
     "ALTER TABLE runs ADD COLUMN worktree_cleaned INTEGER",
+    // 一次运行的「产出」：可读正文 + 它从哪来（ACP 文本 / pty 尾巴 / 报错）。
+    // 只存在内存里的话，重启后「这次跑出了什么」就没了（见 ARCH-terminal-ux §7）。
+    "ALTER TABLE runs ADD COLUMN result TEXT",
+    "ALTER TABLE runs ADD COLUMN result_source TEXT",
+    "ALTER TABLE runs ADD COLUMN result_truncated INTEGER",
+    "ALTER TABLE runs ADD COLUMN result_at INTEGER",
     // 修复历史错位：bot_turns 的 todo_id 曾被写成 cost 的 JSON（{}），这类行其余字段也已错位，
     // 无法可靠还原，直接丢弃（回合审计上限 300 条，下一次 persist 会写回正序）
     "DELETE FROM bot_turns WHERE todo_id LIKE {%",
@@ -257,12 +274,14 @@ export async function openDb(dir, { onTranscript } = {}) {
     kind: r.kind || "worker", delegationId: r.delegation_id || null, terminalId: r.terminal_id || null,
     runtime: r.runtime || null, worktreeCleaned: !!r.worktree_cleaned,
     acpSession: r.acp_session || null,
+    result: r.result || null, resultSource: r.result_source || null,
+    resultTruncated: !!r.result_truncated, resultAt: num(r.result_at),
   }));
   state.threads = rows("SELECT * FROM threads").map((r) => ({
     id: r.id, todoId: r.todo_id || null, title: r.title || "", projectId: r.project_id || null,
     project: r.project || "", agentId: r.agent_id || null,
     model: r.model || "", modelName: r.model_name || "", effort: r.effort || "",
-    kind: r.kind || "chat", botId: r.bot_id || null,
+    kind: r.kind || "chat", botId: r.bot_id || null, digest: r.digest || "",
     createdAt: r.created_at || Date.now(), updatedAt: r.updated_at || r.created_at || Date.now(),
   }));
   state.messages = rows("SELECT * FROM messages").map((r) => ({
@@ -307,6 +326,9 @@ export async function openDb(dir, { onTranscript } = {}) {
     status: r.status || "active", mutedUntil: r.muted_until || 0,
     createdAt: r.created_at || 0, updatedAt: r.updated_at || 0,
   }));
+  state.botRevisions = rows("SELECT * FROM bot_revisions ORDER BY at DESC LIMIT 500").map((r) => ({
+    id: r.id, botId: r.bot_id, at: r.at || 0, by: r.by || "owner", data: J(r.data, {}),
+  }));
   state.botGroups = rows("SELECT * FROM bot_groups").map((r) => ({
     id: r.id, name: r.name || "群聊", replyMode: J(r.reply_mode, { kind: "mentions" }),
     memberIds: rows("SELECT bot_id FROM bot_group_members WHERE group_id=?", [r.id]).map((x) => x.bot_id),
@@ -326,7 +348,7 @@ export async function openDb(dir, { onTranscript } = {}) {
     trigger: J(r.trigger, {}), input: r.input || "", injected: J(r.injected, []),
     reply: r.reply || "", decision: r.decision || "silent", reason: r.reason || "",
     runId: r.run_id || null, todoId: r.todo_id || null, proposal: J(r.proposal, null), tools: J(r.tools, []), trace: J(r.trace, []),
-    threadId: r.thread_id || null,
+    threadId: r.thread_id || null, stopReason: r.stop_reason || "", context: J(r.context, {}), routineProposal: J(r.routine_proposal, null), handoff: J(r.handoff, null),
     cost: J(r.cost, {}), createdAt: r.created_at || 0,
   })).reverse();
   state.routines = rows("SELECT * FROM routines").map((r) => {
@@ -393,7 +415,7 @@ export async function openDb(dir, { onTranscript } = {}) {
     if (closed) return;
     db.exec("BEGIN IMMEDIATE");
     try {
-    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "coordination_scenes", "terminals", "context", "settings", "meta", "bots", "bot_turns", "routines", "bot_groups", "bot_group_members", "bot_group_messages"]) run(`DELETE FROM ${t}`);
+    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "coordination_scenes", "terminals", "context", "settings", "meta", "bots", "bot_turns", "routines", "bot_groups", "bot_group_members", "bot_group_messages", "bot_revisions"]) run(`DELETE FROM ${t}`);
     for (const h of state.hosts) run(
       "INSERT INTO hosts (id,name,kind,addr,status,heartbeat,version,port,user,caps,last_probe,latency_ms,max_concurrency,default_cwd,probe_error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [h.id, h.name, h.kind, h.addr, h.status, h.heartbeat || 0, h.version || "—", h.port || 22, h.user || "",
@@ -403,20 +425,20 @@ export async function openDb(dir, { onTranscript } = {}) {
     for (const a of state.agents) run("INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [a.id, a.name, a.hostId, a.cli, a.cwd, a.max, a.approval, a.color, JSON.stringify(a.skills || []), a.alias || "", a.projectId || "", a.terminalId || "", a.role || "worker", a.instructions || "", a.maxChildren ?? 4]);
     for (const t of state.todos) run("INSERT INTO todos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.key, t.title, t.desc || "", JSON.stringify(t.acceptance || []), t.status, t.agentId || null, t.priority, t.due || "", t.parentId || null, JSON.stringify(t.tags || []), JSON.stringify(t.subtasks || []), JSON.stringify(t.blockedBy || []), t.missingWriteback ? 1 : 0, t.lastRunFailed ? 1 : 0, t.cwd || "", t.createdAt || Date.now(), t.updatedAt || Date.now(), t.confirmed ? 1 : 0, t.projectId || null, t.kind || "task", t.missionState || null, t.botId || null]);
     for (const r of state.runs) run(
-      "INSERT INTO runs (id,todo_id,agent_id,status,trigger,started_at,ended_at,cost,tokens,error,parent_run_id,cwd,branch,host_id,created_at,tokens_in,tokens_out,usage_source,error_class,exit_code,queue_wait_ms,duration_ms,queue_reason,kind,delegation_id,terminal_id,runtime,worktree_cleaned,acp_session) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO runs (id,todo_id,agent_id,status,trigger,started_at,ended_at,cost,tokens,error,parent_run_id,cwd,branch,host_id,created_at,tokens_in,tokens_out,usage_source,error_class,exit_code,queue_wait_ms,duration_ms,queue_reason,kind,delegation_id,terminal_id,runtime,worktree_cleaned,acp_session,result,result_source,result_truncated,result_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [r.id, r.todoId, r.agentId, r.status, r.trigger || "assign", r.startedAt || null, r.endedAt || null, r.cost || 0,
         r.tokens ?? null, r.error || null, r.parentRunId || null, r.cwd || "", r.branch || null, r.hostId || null,
         r.createdAt || null, r.tokensIn ?? null, r.tokensOut ?? null, r.usageSource || "unknown", r.errorClass || null,
         r.exitCode ?? null, r.queueWaitMs ?? null, r.durationMs ?? null, r.queueReason || null,
         r.kind || "worker", r.delegationId || null, r.terminalId || null, r.runtime || null, r.worktreeCleaned ? 1 : 0,
-        r.acpSession || null],
+        r.acpSession || null, r.result || null, r.resultSource || null, r.resultTruncated ? 1 : 0, r.resultAt ?? null],
     );
     // 显式列名：老库经 ALTER 追加过 kind / bot_id，物理列序与新建库不同，位置插入会把两列写反
     for (const t of state.threads) run(
-      "INSERT INTO threads (id,todo_id,title,project_id,project,agent_id,created_at,updated_at,model,model_name,effort,kind,bot_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO threads (id,todo_id,title,project_id,project,agent_id,created_at,updated_at,model,model_name,effort,kind,bot_id,digest) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [t.id, t.todoId || null, t.title || "", t.projectId || null, t.project || "", t.agentId || null,
         t.createdAt || Date.now(), t.updatedAt || Date.now(), t.model || null, t.modelName || null, t.effort || null,
-        t.kind || "chat", t.botId || null],
+        t.kind || "chat", t.botId || null, t.digest || ""],
     );
     for (const m of state.messages) run("INSERT INTO messages (id,todo_id,run_id,role,kind,content,injected,created_at,thread_id,delivery,context,superseded_by,meta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [m.id, m.todoId || null, m.runId || null, m.role, m.kind || "text", m.content, m.injected ? 1 : 0, m.createdAt, m.threadId || null, m.delivery || null, m.context ? JSON.stringify(m.context) : null, m.supersededBy || null, m.meta ? JSON.stringify(m.meta) : null]);
     for (const a of state.artifacts) run("INSERT INTO artifacts VALUES (?,?,?,?,?,?,?,?,?)", [a.id, a.todoId, a.runId, a.kind, a.title, a.origin, a.ref, a.deepLink, a.createdAt || Date.now()]);
@@ -435,6 +457,7 @@ export async function openDb(dir, { onTranscript } = {}) {
     );
     for (const g of state.botGroups || []) run("INSERT INTO bot_groups VALUES (?,?,?,?,?)", [g.id, g.name || "群聊", JSON.stringify(g.replyMode || { kind: "mentions" }), g.createdAt || Date.now(), g.updatedAt || Date.now()]);
     for (const g of state.botGroups || []) for (const botId of g.memberIds || []) run("INSERT INTO bot_group_members VALUES (?,?)", [g.id, botId]);
+    for (const rv of state.botRevisions || []) run("INSERT INTO bot_revisions VALUES (?,?,?,?,?)", [rv.id, rv.botId, rv.at || Date.now(), rv.by || "owner", JSON.stringify(rv.data || {})]);
     for (const m of state.botGroupMessages || []) run(
       "INSERT INTO bot_group_messages (id,group_id,seq,author,bot_id,bot_name,text,decision,created_at,meta) VALUES (?,?,?,?,?,?,?,?,?,?)",
       [m.id, m.groupId, m.seq || 0, m.author || "owner", m.botId || null, m.botName || "", m.text || "", m.decision || "answered", m.createdAt || Date.now(), m.meta ? JSON.stringify(m.meta) : null],
@@ -443,10 +466,11 @@ export async function openDb(dir, { onTranscript } = {}) {
     // 显式列名：todo_id / proposal 是后加的列，物理上在 cost / created_at 之后；
     // 以前按位置写会把 cost/created_at/todo_id/proposal 整个错位（todo_id 变成 cost 的 JSON）
     for (const t of state.botTurns || []) run(
-      "INSERT INTO bot_turns (id,bot_id,channel,trigger,input,injected,reply,decision,reason,run_id,cost,created_at,todo_id,proposal,tools,thread_id,trace) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO bot_turns (id,bot_id,channel,trigger,input,injected,reply,decision,reason,run_id,cost,created_at,todo_id,proposal,tools,thread_id,trace,stop_reason,context,routine_proposal,handoff) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [t.id, t.botId, t.channel || "local", JSON.stringify(t.trigger || {}), t.input || "", JSON.stringify(t.injected || []),
         t.reply || "", t.decision || "silent", t.reason || "", t.runId || null, JSON.stringify(t.cost || {}),
-        t.createdAt || Date.now(), t.todoId || null, t.proposal ? JSON.stringify(t.proposal) : null, JSON.stringify(t.tools || []), t.threadId || null, JSON.stringify(t.trace || [])],
+        t.createdAt || Date.now(), t.todoId || null, t.proposal ? JSON.stringify(t.proposal) : null, JSON.stringify(t.tools || []), t.threadId || null, JSON.stringify(t.trace || []),
+        t.stopReason || "", t.context ? JSON.stringify(t.context) : null, t.routineProposal ? JSON.stringify(t.routineProposal) : null, t.handoff ? JSON.stringify(t.handoff) : null],
     );
     for (const tm of state.terminals || []) run("INSERT INTO terminals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [tm.id, tm.projectId || null, tm.todoId || null, tm.runId || null, tm.agentId || null, tm.cwd || "", tm.kind || "shell", tm.title || "", tm.status || "exited", tm.exitCode ?? null, tm.tail || "", tm.createdAt || Date.now(), tm.endedAt ?? null]);
     run("INSERT INTO context VALUES ('current', ?)", [JSON.stringify(state.context)]);

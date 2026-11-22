@@ -64,6 +64,13 @@ try {
     id: "m1", threadId: "th1", todoId: "t1", runId: null, role: "user", kind: "text",
     content: "hello", injected: false, createdAt: 7, delivery: null, context: { a: 1 },
   });
+  // 一次运行的可读产出：只存在内存里的话，重启后「这次跑出了什么」就没了
+  db.state.runs.push({
+    id: "r1", todoId: "t1", agentId: "a1", status: "failed", trigger: "assign",
+    startedAt: 10, endedAt: 20, cost: 0, tokens: null, error: "boom", cwd: "", branch: null,
+    hostId: null, createdAt: 10, kind: "worker",
+    result: "TypeError: x is not a function", resultSource: "error", resultTruncated: true, resultAt: 20,
+  });
   // undefined / boolean：不能把整批写坏
   db.state.events.push({ id: "e1", ts: 8, type: "test", text: undefined });
   db.state.pluginKv.push({ pluginId: "ai.cockpit.notes", key: "k", value: { nested: true }, updatedAt: 9 });
@@ -86,6 +93,11 @@ try {
   assert.deepEqual(again.state.messages[0].context, { a: 1 });
   assert.equal(again.state.events[0].type, "test");
   assert.equal(again.state.events[0].text, null, "undefined 应归一化成 null，而不是让整批写入失败");
+  const runRt = again.state.runs.find((r) => r.id === "r1");
+  assert.equal(runRt?.result, "TypeError: x is not a function", "runs.result 要能往返（重启后还能看这次跑出了什么）");
+  assert.equal(runRt?.resultSource, "error", "runs.result_source 要能往返（来源不能丢）");
+  assert.equal(runRt?.resultTruncated, true, "runs.result_truncated 要能往返");
+  assert.equal(runRt?.resultAt, 20, "runs.result_at 要能往返");
   assert.deepEqual(again.state.pluginKv[0].value, { nested: true });
   assert.equal(again.state.settings.theme, "dark");
   assert.equal(again.state.seq, 200);
@@ -138,10 +150,15 @@ try {
   // cost / created_at / todo_id / proposal 整体错位（todo_id 变成「{}」，起任务永远报「已经建过」。
   const rt = await openDb(dir);
   rt.state.threads.push({ id: "th-rt", todoId: null, title: "机器人会话", projectId: null, project: "", agentId: null,
-    createdAt: 1, updatedAt: 2, model: "", modelName: "", effort: "", kind: "bot", botId: "bot-rt" });
+    createdAt: 1, updatedAt: 2, model: "", modelName: "", effort: "", kind: "bot", botId: "bot-rt",
+    digest: "更早的对话：用户问过 A，我答过 B" });
   rt.state.botTurns.push({ id: "bt-rt", botId: "bot-rt", channel: "local", trigger: { kind: "tick" }, input: "in",
     injected: [], reply: "out", decision: "silent", reason: "no-signal", runId: null, todoId: null,
-    proposal: { title: "建议" }, cost: { total: 3 }, createdAt: 1700000000000, threadId: "th-rt" });
+    proposal: { title: "建议" }, cost: { total: 3 }, createdAt: 1700000000000, threadId: "th-rt",
+    stopReason: "达到 8 轮工具上限", context: { chars: 1234, memory: 600, digest: true },
+    routineProposal: { name: "早报", kind: "daily", prompt: "汇总" },
+    handoff: { to: "b2", toName: "小B", task: "查部署" } });
+  rt.state.botRevisions.push({ id: "rev-rt", botId: "bot-rt", at: 1700000000000, by: "owner", data: { name: "旧名字", persona: { mission: "旧职责" } } });
   rt.persist(); rt.flush(); rt.close();
   const rt2 = await openDb(dir);
   const turn = (rt2.state.botTurns || []).find((t) => t.id === "bt-rt");
@@ -151,8 +168,15 @@ try {
   assert.deepEqual(turn?.cost, { total: 3 }, "bot_turns.cost 要能往返");
   assert.equal(turn?.createdAt, 1700000000000, "bot_turns.created_at 要能往返");
   assert.equal(turn?.threadId, "th-rt", "bot_turns.thread_id 要能往返（多会话靠它分组）");
+  assert.equal(turn?.stopReason, "达到 8 轮工具上限", "bot_turns.stop_reason 要能往返");
+  assert.deepEqual(turn?.context, { chars: 1234, memory: 600, digest: true }, "bot_turns.context 要能往返");
+  assert.equal(turn?.routineProposal?.name, "早报", "bot_turns.routine_proposal 要能往返");
+  assert.equal(turn?.handoff?.to, "b2", "bot_turns.handoff 要能往返");
+  const rev = (rt2.state.botRevisions || []).find((r) => r.id === "rev-rt");
+  assert.equal(rev?.data?.name, "旧名字", "bot_revisions 要能往返（人格历史）");
   assert.equal(th?.kind, "bot", "threads.kind 不能与 bot_id 写反");
   assert.equal(th?.botId, "bot-rt", "threads.bot_id 不能与 kind 写反");
+  assert.match(th?.digest || "", /更早的对话/, "threads.digest 要能往返（长对话靠它）");
   rt2.close();
   ok("bot_turns / threads 列序", "todo_id / proposal / cost / created_at / thread_id 与 kind / bot_id 往返一致");
 
