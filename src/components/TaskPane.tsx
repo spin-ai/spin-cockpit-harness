@@ -93,12 +93,16 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
 
   /** 项目右键菜单：对话入口只留一条 —— 把项目交给机器人 */
   /** 项目面板的视图设置：分组 / 排序 / 显示 / 筛选（照 ORCA 的侧栏设置浮层） */
-  type ProjectView = { group: "project" | "flat"; sort: "recent" | "name"; showTerminals: boolean; hideNoTask: boolean; hideNoTerminal: boolean };
+  type ProjectView = { group: "project" | "flat"; sort: "manual" | "recent" | "name"; showTerminals: boolean; hideNoTask: boolean; hideNoTerminal: boolean };
   const [projectView, setProjectView] = useState<ProjectView>(() => {
-    const base: ProjectView = { group: "project", sort: "recent", showTerminals: true, hideNoTask: false, hideNoTerminal: false };
-    try { return { ...base, ...(JSON.parse(localStorage.getItem("cmh.projects.view.v1") || "{}") as Partial<ProjectView>) }; } catch { return base; }
+    // v2：默认「固定顺序」；旧 v1 的 recent 不再沿用（点一下项目整列就重排，体验很糟）
+    const base: ProjectView = { group: "project", sort: "manual", showTerminals: true, hideNoTask: false, hideNoTerminal: false };
+    try {
+      const saved = JSON.parse(localStorage.getItem("cmh.projects.view.v2") || "{}") as Partial<ProjectView>;
+      return { ...base, ...saved };
+    } catch { return base; }
   });
-  useEffect(() => { try { localStorage.setItem("cmh.projects.view.v1", JSON.stringify(projectView)); } catch { /* ignore */ } }, [projectView]);
+  useEffect(() => { try { localStorage.setItem("cmh.projects.view.v2", JSON.stringify(projectView)); } catch { /* ignore */ } }, [projectView]);
   const [projectViewMenu, setProjectViewMenu] = useState<{ x: number; y: number } | null>(null);
   useEffect(() => {
     if (!projectViewMenu) return;
@@ -120,9 +124,11 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
     .filter((p) => !projectView.hideNoTask || (projectCounts[p.id] ?? 0) > 0)
     .filter((p) => !projectView.hideNoTerminal || sessionsOf(p.id).length > 0)
     .slice()
-    .sort((a, b) => (projectView.sort === "name"
-      ? a.name.localeCompare(b.name)
-      : (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0) || a.name.localeCompare(b.name)));
+    .sort((a, b) => {
+      if (projectView.sort === "name") return a.name.localeCompare(b.name);
+      if (projectView.sort === "recent") return (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0) || a.name.localeCompare(b.name);
+      return 0; // manual：沿用 state.projects 的顺序，点谁都不动
+    });
   const flatSessions = (state.terminals || [])
     .filter((t) => t.status === "running")
     .map((term) => ({ term, project: state.projects.find((p) => p.id === term.projectId) || null }))
@@ -692,7 +698,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
           {projectView.group === "flat" && flatSessions.length === 0 && <div className="inline-empty">没有运行中的终端</div>}
           {projectView.group === "project" && visibleProjects.map((p) => {
             const sessions = sessionsOf(p.id);
-            const expanded = expandedProjects[p.id] ?? p.id === state.activeProjectId;
+            const expanded = expandedProjects[p.id] === true;
             const isCurrent = p.id === state.activeProjectId;
             return (
               <div key={p.id} className="project-node">
@@ -809,6 +815,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
           <div className="pvp-section">
             <div className="pvp-label">排序方式</div>
             <div className="pvp-seg">
+              <button className={projectView.sort === "manual" ? "on" : ""} aria-pressed={projectView.sort === "manual"} onClick={() => setProjectView((v) => ({ ...v, sort: "manual" }))}>固定</button>
               <button className={projectView.sort === "recent" ? "on" : ""} aria-pressed={projectView.sort === "recent"} onClick={() => setProjectView((v) => ({ ...v, sort: "recent" }))}>最近活动</button>
               <button className={projectView.sort === "name" ? "on" : ""} aria-pressed={projectView.sort === "name"} onClick={() => setProjectView((v) => ({ ...v, sort: "name" }))}>名称</button>
             </div>

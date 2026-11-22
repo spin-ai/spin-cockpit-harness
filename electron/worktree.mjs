@@ -53,3 +53,53 @@ export function removeWorktree(dir) {
   const r = run("git", ["worktree", "remove", "--force", dir], repo);
   return r.ok;
 }
+
+export const WORKTREE_ROOT = ROOT;
+/** 历史上两套根并存（YieldMind 与 Cockpit Harness）；清理时要都认 */
+export const WORKTREE_ROOTS = [...new Set([ROOT, path.join(HOME, "Documents", "Cockpit Harness", "worktrees"), LEGACY_ROOT])];
+export const underWorktreeRoot = (dir) => WORKTREE_ROOTS.some((root) => path.resolve(dir).startsWith(path.resolve(root) + path.sep));
+
+/** 列出仓库下所有 worktree（含主工作区） */
+export function listWorktrees(repo) {
+  const r = run("git", ["worktree", "list", "--porcelain"], repo);
+  if (!r.ok) return [];
+  const out = [];
+  let cur = null;
+  for (const line of r.out.split("\n")) {
+    if (line.startsWith("worktree ")) { cur = { dir: line.slice(9) }; out.push(cur); }
+    else if (cur && line.startsWith("branch ")) cur.branch = line.slice(7).replace(/^refs\/heads\//, "");
+    else if (cur && line.startsWith("HEAD ")) cur.head = line.slice(5);
+    else if (cur && line === "detached") cur.detached = true;
+  }
+  return out.map((w) => {
+    const ageMs = (() => { try { return Date.now() - fs.statSync(w.dir).mtimeMs; } catch { return Infinity; } })();
+    return { ...w, isMain: path.resolve(w.dir) === path.resolve(repo), ageDays: Math.round(ageMs / 86400000) };
+  });
+}
+
+/**
+ * 清理 harness 自己建的 worktree：
+ * - 只动 ROOT 下的目录（不碰主工作区和用户自己的 worktree）
+ * - 分支默认保留（避免删掉未合并的提交）；mergedOnly=true 时只删已并入 base 的分支
+ */
+export function pruneWorktrees(repo, { keepDays = 0, mergedOnly = true, base = "HEAD", exclude = [] } = {}) {
+  const removed = [];
+  const kept = [];
+  const skip = new Set((exclude || []).map((d) => path.resolve(d)));
+  for (const w of listWorktrees(repo)) {
+    if (w.isMain) continue;
+    if (!underWorktreeRoot(w.dir)) continue;
+    if (skip.has(path.resolve(w.dir))) { kept.push({ ...w, reason: "正在运行" }); continue; }
+    if (Number.isFinite(w.ageDays) && w.ageDays < keepDays) { kept.push(w); continue; }
+    const rm = run("git", ["worktree", "remove", "--force", w.dir], repo);
+    if (!rm.ok) { kept.push({ ...w, error: rm.err || "remove failed" }); continue; }
+    let branchDeleted = false;
+    if (w.branch) {
+      const merged = run("git", ["branch", "--merged", base, "--format=%(refname:short)"], repo);
+      const isMerged = merged.ok && merged.out.split("\n").map((x) => x.trim()).includes(w.branch);
+      if (!mergedOnly || isMerged) branchDeleted = run("git", ["branch", "-D", w.branch], repo).ok;
+    }
+    removed.push({ dir: w.dir, branch: w.branch || "", branchDeleted });
+  }
+  return { removed, kept };
+}

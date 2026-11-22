@@ -155,6 +155,9 @@ export async function openDb(dir, { onTranscript } = {}) {
     "ALTER TABLE bots ADD COLUMN executor_agent_id TEXT",
     // bot 的角色：主管（拆解/分派）/ 员工（接任务）
     "ALTER TABLE bots ADD COLUMN role TEXT",
+    // 模型属于 bot（照 rakazo：composer 右下角选一次，写回档案）
+    "ALTER TABLE bots ADD COLUMN model TEXT",
+    "ALTER TABLE bots ADD COLUMN effort TEXT",
     // 派单链记住「谁派的」：bot 建的任务 / 它派下去的子任务（舞台用它把活挂回机器人）
     "ALTER TABLE todos ADD COLUMN bot_id TEXT",
     "ALTER TABLE delegations ADD COLUMN bot_id TEXT",
@@ -297,6 +300,7 @@ export async function openDb(dir, { onTranscript } = {}) {
     persona: J(r.persona, {}), capability: r.capability || "read",
     role: r.role === "supervisor" ? "supervisor" : "worker",
     executorAgentId: r.executor_agent_id || null,
+    model: r.model || "", effort: r.effort || "",
     channels: J(r.channels, ["local"]), policy: J(r.policy, {}), budget: J(r.budget, {}),
     status: r.status || "active", mutedUntil: r.muted_until || 0,
     createdAt: r.created_at || 0, updatedAt: r.updated_at || 0,
@@ -419,7 +423,11 @@ export async function openDb(dir, { onTranscript } = {}) {
     for (const l of state.todoLinks || []) run("INSERT INTO todo_links VALUES (?,?,?,?,?,?,?)", [l.id, l.todoId, l.pluginId, l.kind, l.ref, l.title || "", l.createdAt || Date.now()]);
     for (const sc of state.scenes || []) run("INSERT INTO scenes VALUES (?,?,?,?)", [sc.projectId, sc.text || "", JSON.stringify(sc.config || {}), sc.updatedAt || Date.now()]);
     for (const cs of state.coordinationScenes || []) run("INSERT INTO coordination_scenes VALUES (?,?,?,?,?,?,?)", [cs.id, cs.name || "场景", cs.projectId || null, cs.template || "office", JSON.stringify(cs.config || {}), cs.createdAt || Date.now(), cs.updatedAt || Date.now()]);
-    for (const b of state.bots || []) run("INSERT INTO bots VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [b.id, b.name, b.avatar || "", b.avatarClass || "a", JSON.stringify(b.persona || {}), b.capability || "read", JSON.stringify(b.channels || ["local"]), JSON.stringify(b.policy || {}), JSON.stringify(b.budget || {}), b.status || "active", b.mutedUntil || 0, b.createdAt || Date.now(), b.updatedAt || Date.now(), b.executorAgentId || null, b.role === "supervisor" ? "supervisor" : "worker"]);
+    // 显式列名：model / effort 是后加的列
+    for (const b of state.bots || []) run(
+      "INSERT INTO bots (id,name,avatar,avatar_class,persona,capability,channels,policy,budget,status,muted_until,created_at,updated_at,executor_agent_id,role,model,effort) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [b.id, b.name, b.avatar || "", b.avatarClass || "a", JSON.stringify(b.persona || {}), b.capability || "read", JSON.stringify(b.channels || ["local"]), JSON.stringify(b.policy || {}), JSON.stringify(b.budget || {}), b.status || "active", b.mutedUntil || 0, b.createdAt || Date.now(), b.updatedAt || Date.now(), b.executorAgentId || null, b.role === "supervisor" ? "supervisor" : "worker", b.model || "", b.effort || ""],
+    );
     for (const g of state.botGroups || []) run("INSERT INTO bot_groups VALUES (?,?,?,?,?)", [g.id, g.name || "群聊", JSON.stringify(g.replyMode || { kind: "mentions" }), g.createdAt || Date.now(), g.updatedAt || Date.now()]);
     for (const g of state.botGroups || []) for (const botId of g.memberIds || []) run("INSERT INTO bot_group_members VALUES (?,?)", [g.id, botId]);
     for (const m of state.botGroupMessages || []) run(

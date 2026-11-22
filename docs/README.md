@@ -86,6 +86,7 @@
 | [`product/COMPARE-user-stories.md`](product/COMPARE-user-stories.md) | 需求 | 记录 | 用户故事级竞品对照：vs Orca / Multica / ZCode 的真差异、缺口与不照抄项 |
 | [`product/COMPARE-knowledge-memory.md`](product/COMPARE-knowledge-memory.md) | 需求 | 记录 | 知识与记忆专项对照：vs WeKnora 与 Anthropic 记忆机制，附 ZCode 参照 |
 | [`product/COMPARE-rakazo.md`](product/COMPARE-rakazo.md) | 需求 | 记录 | vs Rakazo（自托管 AI 同事）**两层合并**对照：产品级 8 组用户故事 + bot 源码级实现（turn / 记忆 / 日程 / 求助 / 通知），含方向决定、12 条可抄、G1–G10 缺口 |
+| [`product/COMPARE-chat-window.md`](product/COMPARE-chat-window.md) | 需求 | 记录 | 聊天窗口逐部件对照：vs DeepSeek Harness / Orca 的 transcript / 流式 / 跟随 / composer / 长会话，含 P0–P2 缺口与不照抄项 |
 | [`arch/ARCH-key-tech.md`](arch/ARCH-key-tech.md) | 架构 | 部分落地 | **五件关键技术**：解析 / 编排 / 整理 / 记忆 / 画像的边界、现状、判据、风险与一句话应对 |
 | [`arch/ARCH-tech-landscape.md`](arch/ARCH-tech-landscape.md) | 架构 | 记录 | 五件关键技术的开源 / 闭源实现对照、可复用度、许可证红线 |
 | [`arch/ARCH-benchmark-landscape.md`](arch/ARCH-benchmark-landscape.md) | 架构 | 记录 | 五件关键技术的公开基准盘点：哪些真有数据集、哪些只有分类法、20–50 条本地闸门可抄什么 |

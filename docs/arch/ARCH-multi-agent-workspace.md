@@ -305,3 +305,19 @@ IDE 选中 → `POST /api/context` → 派活默认携带 → 产物出预览 �
 | M4 | 打包/签名/更新 + 首启 | 1 周 |
 
 **风险**：dsh 仍是 developer preview（锁版本 + 契约测试）；ACP 审批/steer 语义需实测；参考模块与 IPC 解耦工作量；worktree 边界（锁/清理/冲突）。
+
+
+## worktree 生命周期（2026-11-22）
+
+**为什么建**：每个 run 一个独立 worktree，避免并发 agent 互相覆盖工作区，也避免把主检出弄脏。目录在 `~/Documents/Cockpit Harness/worktrees/<repo>/<todo>-<run>-<rand>`（历史版本在 `~/Documents/YieldMind/worktrees`，两套都认）。
+
+**代价**：不清就堆——一次实测 13 个目录、853MB（含 agent 自己装的 node_modules），外加一堆 `harness/*` 分支。
+
+**现在的规则**：
+
+- `worktreeMode`：`auto`（默认，git 才建）/ `always` / `never`
+- `worktreeKeepDays`（默认 7）：应用启动时清掉超过 N 天的 harness worktree；**0 = 不清**
+- 清理只动两套 worktree 根下的目录，跳过正在跑的 run 的 cwd
+- 分支默认只删**已并入 HEAD** 的；未合并的保留（不会丢提交）
+- 设置 → 执行 → 「立即清理」可手动全清（keepDays=0）
+- 清理会扫**所有项目的仓库**，不只是当前活动项目

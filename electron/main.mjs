@@ -14,7 +14,7 @@ import { openDb, DEFAULT_SETTINGS } from "./db.mjs";
 import { safeStorage } from "electron";
 import { AcpClient, dshPathEnv } from "./acp.mjs";
 import { createKnowledge } from "./knowledge/index.mjs";
-import { chat as arkChat, chatStream as arkChatStream, resolveArkKey as resolveArkKeyFor } from "./knowledge/ark.mjs";
+import { CHAT_MODEL_CATALOG, chat as arkChat, chatStream as arkChatStream, resolveArkKey as resolveArkKeyFor } from "./knowledge/ark.mjs";
 import { createBots } from "./bot/index.mjs";
 import { notifyDecision } from "./bot/notify.mjs";
 import { createPairing } from "./im/pairing.mjs";
@@ -26,7 +26,7 @@ import { createMemory, parseDreamItems } from "./memory/index.mjs";
 import { createPersona } from "./persona/index.mjs";
 import { computeFeatures, computeMeasures, analyzePersonWithLLM, analysisCacheHash, evidenceMatches, looksLikeStat } from "./persona/model.mjs";
 import { createImGateway, formatImCard, formatApprovalCard } from "./im/gateway.mjs";
-import { prepareWorktree, removeWorktree, repoRoot } from "./worktree.mjs";
+import { prepareWorktree, removeWorktree, repoRoot, listWorktrees, pruneWorktrees, WORKTREE_ROOT, WORKTREE_ROOTS, underWorktreeRoot } from "./worktree.mjs";
 import { pickElement, cancelPick, detachPreview } from "./preview.mjs";
 import { openTunnel, closeTunnel, closeAllTunnels, toRemoteUrl, onTunnelClosed } from "./preview-tunnel.mjs";
 import { formatContext, detectDevUrl } from "./ui-context.mjs";
@@ -1756,6 +1756,8 @@ const SETTINGS_SPEC = {
   maxMissionChildren: { kind: "number", min: 1, max: 12, fallback: 4 },
   missionBudgetMinutes: { kind: "number", min: 5, max: 240, fallback: 30 },
   worktreeMode: { kind: "enum", values: ["auto", "always", "never"], fallback: "auto" },
+  // worktree 自动清理：应用启动时清掉超过 N 天的（0 = 不清）
+  worktreeKeepDays: { kind: "number", min: 0, max: 90, fallback: 7 },
 };
 
 /** 凭据只在本机加密存放：dshEnv 里通常有 API key */
@@ -3670,6 +3672,43 @@ const actions = {
   },
   knowledgeDocBlocks: async ({ id } = {}) => knowledge().blocks(String(id || "")),
   knowledgePageImage: async ({ id, page } = {}) => knowledge().pageImage(String(id || ""), Number(page) || 1),
+  /** worktree 现状：扫所有项目仓库（不只是当前活动的），只列 harness 自己建的 */
+  worktreesInfo: async () => {
+    const items = [];
+    const repos = new Set();
+    for (const p of store.state.projects || []) {
+      const repo = repoRoot(p.path);
+      if (!repo || repos.has(repo)) continue;
+      repos.add(repo);
+      for (const w of listWorktrees(repo)) {
+        if (w.isMain || !underWorktreeRoot(w.dir)) continue;
+        items.push({ dir: w.dir, branch: w.branch || "", ageDays: w.ageDays, repo, project: p.name });
+      }
+    }
+    return { ok: true, roots: WORKTREE_ROOTS, count: items.length, items };
+  },
+  /** 清理 worktree：扫所有项目仓库，跳过正在跑的 run 用的目录；keepDays=0 表示全清 */
+  worktreesPrune: async ({ keepDays } = {}) => {
+    const busy = new Set(
+      (store.state.runs || [])
+        .filter((r) => ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"].includes(r.status))
+        .map((r) => path.resolve(String(r.cwd || ""))),
+    );
+    const days = keepDays === undefined ? Number(store.state.settings?.worktreeKeepDays ?? 7) : Number(keepDays);
+    const removed = [];
+    const kept = [];
+    const repos = new Set();
+    for (const p of store.state.projects || []) {
+      const repo = repoRoot(p.path);
+      if (!repo || repos.has(repo)) continue;
+      repos.add(repo);
+      const res = pruneWorktrees(repo, { keepDays: days, mergedOnly: true, exclude: [...busy] });
+      removed.push(...res.removed.map((r) => ({ ...r, repo })));
+      kept.push(...res.kept.map((r) => ({ ...r, repo })));
+    }
+    store.persist();
+    return { ok: true, roots: WORKTREE_ROOTS, repos: repos.size, removed, kept, busy: busy.size, at: Date.now() };
+  },
   /** 扫码配置：起一次性配对页 + 返回二维码（dataURL）；成功由 pairing 回调写设置 */
   imPairStart: async () => {
     const p = await imPairing().start();
@@ -3878,6 +3917,8 @@ const actions = {
     return res;
   },
   botSave: async (patch = {}) => bots().save(patch || {}),
+  /** bot 对话可选模型（composer 右下角选择器） */
+  botModels: async () => CHAT_MODEL_CATALOG,
   botStatus: async ({ id, status, mutedUntil } = {}) => bots().setStatus(String(id || ""), { status, mutedUntil }),
   botRemove: async ({ id } = {}) => { bots().remove(String(id || "")); return { ok: true }; },
   botTick: async ({ botId, force } = {}) => bots().tick({ botId: String(botId || ""), force: Boolean(force) }),
@@ -7202,6 +7243,22 @@ app.whenReady().then(async () => {
   // 机器人现在是工作区左栏的一段（没有独立页面），启动时就要落种子，不能等打开 Bot 页才创建
   try { bots(); } catch (err) { console.warn(`[bot] seed failed: ${String(err?.message || err)}`); }
   try { startBotTick(); } catch (err) { console.warn(`[bot] tick start failed: ${String(err?.message || err)}`); }
+  // 启动后清一次旧 worktree（默认保留 7 天，0 = 不清），避免目录无限堆
+  setTimeout(() => {
+    try {
+      const days = Number(store.state.settings?.worktreeKeepDays ?? 7);
+      if (!days) return;
+      const repos = new Set();
+      let total = 0;
+      for (const p of store.state.projects || []) {
+        const repo = repoRoot(p.path);
+        if (!repo || repos.has(repo)) continue;
+        repos.add(repo);
+        total += pruneWorktrees(repo, { keepDays: days, mergedOnly: true }).removed.length;
+      }
+      if (total) console.log(`[worktree] pruned ${total} old worktree(s)`);
+    } catch (err) { console.warn(`[worktree] prune failed: ${String(err?.message || err)}`); }
+  }, 8000);
   // 空闲整理：没有 run 在跑、且人一段时间没操作时跑一轮 Dream（配置在记忆页，0 = 只手动）
   dreamIdleTimer = setInterval(() => { void dreamIdleTick(); }, DREAM_IDLE_TICK_MS);
   broadcast();

@@ -10,6 +10,12 @@
 
 export const ARK_BASE = "https://ark.cn-beijing.volces.com/api/plan/v3";
 
+/** bot 对话可选模型（composer 右下角那个列表的数据源）；只列能走 chat/completions 的 */
+export const CHAT_MODEL_CATALOG = [
+  { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", hint: "便宜、快，默认" },
+  { id: "doubao-seed-2.1-turbo", name: "Doubao Seed 2.1 Turbo", hint: "推理更强、贵一些" },
+];
+
 export const MODELS = {
   chat: "doubao-seed-2.1-turbo",   // 推理 / 多模态 / 图注 / VLM OCR
   fast: "deepseek-v4-flash",       // 问答 / 汇总，便宜

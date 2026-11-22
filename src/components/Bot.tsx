@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { EmptyState } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
 import { RowMenu } from "./RowMenu";
@@ -29,6 +30,8 @@ type Bot = {
   id: string; name: string; avatar?: string; avatarClass?: string;
   persona?: Persona; capability?: "read" | "dispatch" | "work"; role?: "supervisor" | "worker";
   executorAgentId?: string | null; channels?: string[];
+  /** 这个 bot 用哪个模型（空 = 跟随默认） */
+  model?: string; effort?: string;
   policy?: Policy; budget?: { tokensPerTurn?: number; tokensPerHour?: number };
   status?: "active" | "paused"; mutedUntil?: number;
 };
@@ -550,6 +553,11 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [memoryOverview, setMemoryOverview] = useState<{ byLayer?: Record<string, number>; notes?: number; injectable?: number } | null>(null);
   const [botId, setBotId] = useState("");
+  /** 机器人列表搜索：按名字 / 职责 / 能力档 / 执行体过滤（群聊按名字） */
+  const [botQuery, setBotQuery] = useState("");
+  /** 模型选择：照 rakazo，模型属于 bot，composer 右下角选一次就写回档案（群聊不需要） */
+  const [modelMenu, setModelMenu] = useState<{ x: number; y: number } | null>(null);
+  const [modelCatalog, setModelCatalog] = useState<{ id: string; name: string; hint?: string }[]>([]);
   const [tab, setTab] = useState<"persona" | "memory" | "tasks" | "routines" | "policy" | "needs" | "connectors">("persona");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -645,6 +653,18 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   }, []);
 
   const groups = state?.botGroups ?? [];
+  const botMatched = (() => {
+    const all = snapshot?.bots ?? [];
+    const q = botQuery.trim().toLowerCase();
+    if (!q) return { bots: all, groups, empty: false };
+    const bots = all.filter((b) => {
+      const hay = [b.name, b.persona?.mission, CAP_LABEL[b.capability || "read"], b.role === "supervisor" ? "主管" : "员工"]
+        .filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+    const gs = groups.filter((g) => g.name.toLowerCase().includes(q));
+    return { bots, groups: gs, empty: bots.length === 0 && gs.length === 0 };
+  })();
   const group = groups.find((g) => g.id === botId) ?? null;
   const isGroup = Boolean(group);
   // 主进程推的 delta 在 effect 里订阅（只订一次），所以当前群用 ref 带进去
@@ -920,6 +940,32 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   const saveDuty = (key: "goal" | "scope" | "deliverable" | "forbidden" | "report", value: string) =>
     savePatch({ persona: { ...(bot?.persona || {}), duty: { ...(bot?.persona?.duty || {}), [key]: value } } });
   const savePolicy = (patch: Record<string, unknown>) => savePatch({ policy: { ...(bot?.policy || {}), ...patch } });
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const list = await act("botModels") as { id: string; name: string; hint?: string }[] | null;
+      if (alive && Array.isArray(list)) setModelCatalog(list);
+    })();
+    return () => { alive = false; };
+  }, [act]);
+  useEffect(() => {
+    if (!modelMenu) return;
+    const close = () => setModelMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [modelMenu]);
+  const currentModelName = (() => {
+    const id = String(bot?.model || "").trim();
+    if (!id) return "默认模型";
+    return modelCatalog.find((m) => m.id === id)?.name || id;
+  })();
 
   /** 待处理：把「必须人点头」的东西收成一个队列（审批 / 建议 / 计划 / 提问 / 待验收）。
    *  必须在早期 return 之前算，否则 hook 数量会随渲染变化（React #310）。 */
@@ -1580,8 +1626,21 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
       <div className={`bot-grid${chatView === "trajectory" && !isGroup && openThreadId ? " trajectory-open" : ""}`}>
         <aside className="bot-side">
           <div className="bot-label">机器人</div>
+          <div className="bot-search">
+            <SearchIcon size={12} className="search-ico" />
+            <input
+              value={botQuery}
+              onChange={(e) => setBotQuery(e.target.value)}
+              placeholder="搜索机器人"
+              aria-label="搜索机器人"
+            />
+            {botQuery && (
+              <button className="icon-btn" title="清除" aria-label="清除搜索" onClick={() => setBotQuery("")}><XIcon size={11} /></button>
+            )}
+          </div>
           <div className="bot-list">
-            {groups.map((g) => (
+            {botMatched.empty && <div className="inline-empty">没有匹配的机器人</div>}
+            {botMatched.groups.map((g) => (
               <button key={g.id} className={`bot-item ${botId === g.id ? "on" : ""}`} onClick={() => setBotId(g.id)} title="群聊：一句话发给谁由回复模式决定">
                 <span className="bot-avatar group">群</span>
                 <span className="bot-item-main">
@@ -1590,13 +1649,13 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                 </span>
               </button>
             ))}
-            {!groups.length && (
+            {!groups.length && !botQuery.trim() && (
               <button className="bot-item" onClick={() => void createGroup()} title="把现在的机器人拉一个群">
                 <span className="bot-avatar group">群</span>
                 <span className="bot-item-main"><b>新建群聊</b><span>把 {members.length} 个机器人拉进来</span></span>
               </button>
             )}
-            {snapshot.bots.map((item) => {
+            {botMatched.bots.map((item) => {
               const on = item.id === bot?.id;
               const itemMuted = Boolean(item.mutedUntil && item.mutedUntil > Date.now());
               const dot = item.status !== "active" ? "paused" : itemMuted ? "quiet" : "";
@@ -2178,12 +2237,62 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                 <span className="ds-chip static">{isGroup ? "群聊" : bot?.role === "supervisor" ? "主管" : "员工"}</span>
               </div>
               <div className="ds-composer-trailing">
+                {!isGroup && (
+                  <button
+                    className="ds-model"
+                    title="这个机器人的模型"
+                    aria-label="选择模型"
+                    aria-haspopup="menu"
+                    aria-expanded={Boolean(modelMenu)}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      const r = e.currentTarget.getBoundingClientRect();
+                      setModelMenu((open) => (open ? null : { x: Math.max(8, r.right - 240), y: r.top - 10 }));
+                    }}
+                  >
+                    {currentModelName}
+                    <ChevronDownIcon size={11} />
+                  </button>
+                )}
                 {streaming || groupStream.length
                   ? <button className="ds-action-text" onClick={() => void cancel()}>停止</button>
                   : <button className="ds-send" disabled={!draft.trim() && !attachments.length} onClick={() => void send()} title="发送" aria-label="发送"><SendIcon size={16} /></button>}
               </div>
             </div>
           </div>
+
+          {modelMenu && createPortal(
+            <div
+              className="ds-model-pop"
+              style={{ left: modelMenu.x, top: modelMenu.y }}
+              role="menu"
+              aria-label="选择模型"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              {modelCatalog.length === 0 && <button className="ds-model-item" disabled>没有可用模型</button>}
+              {modelCatalog.map((m) => (
+                <button
+                  key={m.id}
+                  className={`ds-model-item ${String(bot?.model || "") === m.id ? "on" : ""}`}
+                  role="menuitemradio"
+                  aria-checked={String(bot?.model || "") === m.id}
+                  onClick={() => { setModelMenu(null); void savePatch({ model: m.id }); }}
+                >
+                  <b>{m.name}</b>
+                  {m.hint && <span>{m.hint}</span>}
+                </button>
+              ))}
+              <button
+                className={`ds-model-item ${!bot?.model ? "on" : ""}`}
+                role="menuitemradio"
+                aria-checked={!bot?.model}
+                onClick={() => { setModelMenu(null); void savePatch({ model: "" }); }}
+              >
+                <b>默认模型</b><span>跟随全局设置（当前 deepseek-v4-flash）</span>
+              </button>
+            </div>,
+            document.body,
+          )}
 
           <div className="bot-foot">
             <span>
@@ -2200,6 +2309,8 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
           </>
           )}
             </>
+          ) : chatView === "trajectory" ? (
+            <BotTrajectoryView turns={[]} state={state} onJump={() => {}} />
           ) : (
             <div className="bot-chat-choose"><span>从右侧选一条消息开始</span></div>
           )}

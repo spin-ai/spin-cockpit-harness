@@ -472,6 +472,9 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       capability: ["work", "dispatch", "read"].includes(patch.capability) ? patch.capability : (existing?.capability || "read"),
       role: patch.role === "supervisor" || patch.role === "worker" ? patch.role : (existing?.role || "worker"),
       executorAgentId: String(patch.executorAgentId ?? existing?.executorAgentId ?? "") || null,
+      // 模型 / 推理档：只在 bot 上存一份，chatStream 每次读它
+      model: String(patch.model ?? existing?.model ?? "").slice(0, 80),
+      effort: String(patch.effort ?? existing?.effort ?? "").slice(0, 40),
       channels: Array.isArray(patch.channels) ? patch.channels : (existing?.channels || ["local"]),
       policy: { ...DEFAULT_POLICY, ...(existing?.policy || {}), ...(patch.policy || {}) },
       budget: { ...DEFAULT_BUDGET, ...(existing?.budget || {}), ...(patch.budget || {}) },
@@ -807,6 +810,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
    */
   async function chatStreamWithTools(messages, bot, onDelta, signal, onTool) {
     const tools = bot.capability === "read" || !runTool ? [] : BOT_READ_TOOLS;
+    const model = String(bot.model || "").trim() || undefined;
     const trace = [];
     const events = [];
     let conversation = messages;
@@ -817,6 +821,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       try {
         res = await chatStream(conversation, {
           key: key(),
+          model,
           maxTokens: Number(bot.budget?.tokensPerTurn) || DEFAULT_BUDGET.tokensPerTurn,
           temperature: 0.7,
           onDelta,
@@ -827,7 +832,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
         // 部分网关不支持 function calling：第一轮就退回纯对话，不要让人看不到回复
         if (round === 0 && tools.length && /tools?|function|400/i.test(String(err?.message || ""))) {
           res = await chatStream(messages, {
-            key: key(), maxTokens: Number(bot.budget?.tokensPerTurn) || DEFAULT_BUDGET.tokensPerTurn,
+            key: key(), model, maxTokens: Number(bot.budget?.tokensPerTurn) || DEFAULT_BUDGET.tokensPerTurn,
             temperature: 0.7, onDelta, signal,
           });
           return { ...res, toolTrace: [] };
@@ -956,7 +961,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     }
     Object.assign(pending, {
       reply: answer.slice(0, 4000), decision: "replied",
-      cost: { tokens: res?.usage?.total_tokens ?? null, ms: now() - started },
+      cost: { tokens: res?.usage?.total_tokens ?? null, ms: now() - started, model: res?.model || "" },
     });
     // 新话题的第一句话就是标题：Chats 列表里不出现一排“新话题”
     if (thread.title === "新话题") {

@@ -138,6 +138,11 @@ for (const file of componentFiles) {
   if (/>\s*[＋−]\s*</.test(body)) glyphLeaks.push(file);
 }
 check(glyphLeaks.length === 0, `组件里不得用字符 ＋ / − 当图标（${glyphLeaks.join(", ") || "ok"}）`);
+// 列表稳定性（AGENTS.md 第 19 条）：项目列表默认固定排序，且展开态不跟随「当前项目」
+const taskPaneSrc = read("src/components/TaskPane.tsx");
+check(taskPaneSrc.includes('sort: "manual"'), "TaskPane · 项目列表默认固定排序（不得默认最近活动）");
+check(!/expandedProjects\[p\.id\] \?\? p\.id === state\.activeProjectId/.test(taskPaneSrc), "TaskPane · 展开态不得跟随当前项目");
+
 const actionGlyphLeaks = componentFiles.filter((file) => /EllipsisIcon size=\{14\}/.test(read(file)));
 check(actionGlyphLeaks.length === 0, `动作图标不得用 14px（${actionGlyphLeaks.join(", ") || "ok"}）`);
 

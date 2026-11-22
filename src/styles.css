@@ -331,7 +331,7 @@ button{cursor:pointer}
 .task-filter-chips{display:flex;align-items:center;gap:2px;min-width:0;overflow-x:auto;scrollbar-width:none}
 .task-filter-chips::-webkit-scrollbar{display:none}
 .task-view-toggle{display:flex;align-items:center;gap:2px;flex:none;margin-left:auto}
-.task-view-toggle button{width:24px;height:24px;display:grid;place-items:center;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--muted);padding:0}
+.task-view-toggle button{width:var(--icon-size);height:var(--icon-size);display:grid;place-items:center;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--muted);padding:0}
 .task-view-toggle button:hover{background:var(--surface-hover);color:var(--fg)}
 .task-view-toggle button.on{background:var(--surface);border-color:var(--border);color:var(--fg)}
 .task-filters button{border:1px solid transparent;background:transparent;color:var(--muted);font-size:11.5px;padding:2px 6px;border-radius:5px}
@@ -354,8 +354,8 @@ button{cursor:pointer}
 .term-strip{height:34px;flex:none;display:flex;align-items:stretch;background:#141416;border-bottom:1px solid #27272a;color:#d4d4d8}
 .term-strip .link{color:#a1a1aa;font-size:11.5px;white-space:nowrap;padding:0 2px}
 .term-strip .link:hover{color:#e4e4e7}
-.term-strip-actions{display:flex;align-items:center;gap:var(--icon-gap);padding:0 6px;flex:none}
-.term-strip-actions .term-tab.add{height:22px;align-items:center;padding:0 8px;border-right:0;border-radius:var(--radius-sm);font-size:13px;line-height:1}
+.term-strip-actions{display:flex;align-items:center;gap:var(--icon-gap);padding:0 8px;flex:none}
+.term-strip-actions .term-tab.add{width:var(--icon-size);height:var(--icon-size);justify-content:center;padding:0;border-right:0;border-radius:4px}
 .term-tabs{display:flex;align-items:stretch;gap:1px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none;scroll-behavior:smooth}
 .term-tabs::-webkit-scrollbar{display:none}
 .term-tab{display:flex;align-items:center;gap:6px;max-width:220px;min-width:0;border:0;border-right:1px solid #232326;background:transparent;color:#8b8b93;font-size:12.5px;padding:6px 9px;cursor:pointer;user-select:none;font-family:inherit}
@@ -564,7 +564,7 @@ button{cursor:pointer}
 
 /* project list under TODO LIST */
 .project-panel{flex:none;display:flex;flex-direction:column;min-height:80px;max-height:60%;border-top:1px solid var(--border);padding:6px 8px 8px;background:var(--surface)}
-.project-panel-head{flex-wrap:nowrap;white-space:nowrap;display:flex;justify-content:flex-start;align-items:center;gap:4px;font-size:11.5px;letter-spacing:.08em;font-weight:600;color:var(--muted);padding:2px 4px 6px}
+.project-panel-head{flex-wrap:nowrap;white-space:nowrap;display:flex;justify-content:flex-start;align-items:center;gap:4px;font-size:11.5px;letter-spacing:.08em;font-weight:600;color:var(--muted);padding:2px 8px 6px 4px}
 .project-panel-head .icon-btn{width:20px;height:20px}
 .project-panel-actions{display:flex;align-items:center;gap:var(--icon-gap);flex:none}
 .project-panel-head .spacer{flex:1 1 auto;min-width:4px}
@@ -651,7 +651,7 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 
 /* right panel: explorer + session history + preview */
 .right-panel{display:flex;flex-direction:column;min-height:0;background:var(--surface)}
-.right-tabs{display:flex;align-items:center;gap:2px;height:40px;flex:none;padding:0 6px;border-bottom:1px solid var(--border);background:var(--surface)}
+.right-tabs{display:flex;align-items:center;gap:2px;height:40px;flex:none;padding:0 8px;border-bottom:1px solid var(--border);background:var(--surface)}
 .right-tabs button{border:0;background:transparent;color:var(--muted);font-size:12.5px;padding:5px 7px;border-radius:5px;display:flex;align-items:center;gap:4px;white-space:nowrap}
 .right-tabs button:hover{background:var(--surface-hover);color:var(--fg-2)}
 .right-tabs button.on{background:var(--surface-selected);color:var(--fg);box-shadow:inset 0 -2px 0 var(--brand)}
@@ -667,6 +667,7 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .pane-collapse svg,.pane-add svg,
 .explorer-bar .icon-btn svg,.project-panel-head .icon-btn svg,.session-top .icon-btn svg,
 .right-tabs .icon-tab svg,
+.task-view-toggle svg,.project-panel-chev svg,
 .tree-row .tree-folder,.tree-row .file-ico,.tree-row .agent-ico,.tree-row > svg{width:15px;height:15px}
 .tree-chev svg{width:11px;height:11px}
 .icon-btn{width:var(--icon-size);height:var(--icon-size);border:0;background:transparent;color:var(--muted);border-radius:4px;display:grid;place-items:center;font-size:12.5px;line-height:1}
@@ -798,7 +799,7 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 
 /* icon-based right panel chrome (activity-bar style) */
 .right-tabs{padding:0 4px;gap:0}
-.right-tabs button.icon-tab{position:relative;width:36px;height:30px;margin:5px 1px;display:flex;align-items:center;justify-content:center;padding:0;border-radius:0;background:transparent;box-shadow:none;color:var(--muted)}
+.right-tabs button.icon-tab{position:relative;width:var(--icon-size);height:var(--icon-size);margin:auto 1px;display:flex;align-items:center;justify-content:center;padding:0;border-radius:0;background:transparent;box-shadow:none;color:var(--muted)}
 .right-tabs button.icon-tab:hover{background:var(--surface-hover);color:var(--fg-2)}
 /* 激活态用底色 + 圆角，不用下划线：38px 的窄标签里下划线会和图标对不齐 */
 .right-tabs button.icon-tab{border-radius:6px}
@@ -806,7 +807,7 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .right-tabs button.icon-tab.on::after{content:none}
 /* 标签不放计数：总数属于列表 / 概览，挂在图标后面只是噪音（见 DESIGN-SYSTEM §5「计数与徽标」） */
 .right-tabs .tab-trail .icon-tab svg{width:15px;height:15px}
-.right-tabs .tab-trail .icon-tab{width:28px}
+.right-tabs .tab-trail .icon-tab{width:var(--icon-size);margin:auto 1px}
 .right-tabs button.icon-tab svg{display:block}
 .right-tabs em{display:none}
 .explorer-title .root-ico{color:var(--amber);flex:none}
@@ -814,8 +815,10 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 /* 图标行：并排纯图标按钮之间只留 1–2px，靠 hover 底区分，不靠缝 */
 .explorer-actions,.project-panel-actions,.term-strip-actions,.bot-head-actions,.settings-head-actions,.pane-actions{display:flex;align-items:center;gap:var(--icon-gap);flex:none}
 /* ⋯ 跟同排图标一样大：不然 26px 带边框的按钮夹在 22px 无边框图标里很跳 */
-.explorer-actions .row-menu-trigger{width:22px;height:22px;border:0;background:transparent;color:var(--muted);padding:0;display:grid;place-items:center}
-.explorer-actions .row-menu-trigger:hover{background:var(--surface-hover);color:var(--fg)}
+.explorer-actions .btn.row-menu-trigger,
+.project-panel-actions .btn.row-menu-trigger{width:var(--icon-size);height:var(--icon-size);border:0;background:transparent;color:var(--muted);padding:0;display:grid;place-items:center}
+.explorer-actions .btn.row-menu-trigger:hover,
+.project-panel-actions .btn.row-menu-trigger:hover{background:var(--surface-hover);color:var(--fg)}
 .icon-btn svg{display:block}
 .explorer-search .search-ico{color:var(--faint);flex:none}
 .tree-chev{width:12px;height:12px;display:grid;place-items:center;color:var(--faint)}
@@ -1035,7 +1038,8 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .task-edit-input:focus{border-color:var(--brand)}
 
 /* TODO 新建任务：头部「＋」+ 列表顶部内联输入 */
-.pane-add{width:var(--icon-size);height:var(--icon-size);line-height:1;border-radius:5px;border:1px solid var(--border);background:var(--surface);color:var(--muted);font-size:12.5px;display:inline-flex;align-items:center;justify-content:center;padding:0}
+.pane-add{width:var(--icon-size);height:var(--icon-size);line-height:1;border-radius:4px;border:0;background:transparent;color:var(--muted);display:inline-flex;align-items:center;justify-content:center;padding:0}
+.pane-add:hover{background:var(--surface-hover);color:var(--fg)}
 .pane-add:hover{border-color:var(--brand-line);color:var(--brand)}
 .task-create{display:flex;flex-direction:column;gap:3px;padding:2px 2px 6px}
 .task-create input{height:28px;border:1px solid var(--brand-line,var(--brand-line));border-radius:6px;background:var(--surface);padding:0 8px;font-size:12.5px;color:var(--fg);outline:none}
@@ -3877,6 +3881,11 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
 .bot-settings .bot-tabs{position:sticky;top:44px;z-index:2;margin:0 -12px;padding:0 12px;background:var(--surface)}
 .bot-settings .bot-aside-body{padding-bottom:8px}
 .bot-label{font-size:11.5px;font-weight:600;letter-spacing:.04em;color:var(--faint)}
+.bot-search{display:flex;align-items:center;gap:6px;height:28px;margin:0 0 6px;padding:0 8px;border:1px solid var(--input);border-radius:var(--radius-sm);background:var(--surface)}
+.bot-search:focus-within{border-color:var(--border-strong)}
+.bot-search input{flex:1;min-width:0;border:0;background:transparent;outline:none;font-size:12px;color:var(--fg)}
+.bot-search input::placeholder{color:var(--faint)}
+.bot-search .search-ico{color:var(--faint);flex:none}
 .bot-list{display:flex;flex-direction:column;gap:2px}
 .bot-item{display:grid;grid-template-columns:26px minmax(0,1fr) auto;align-items:center;gap:8px;padding:7px 8px;border:0;border-radius:8px;background:transparent;text-align:left;color:var(--fg-2)}
 .bot-item:hover{background:var(--surface-hover)}
@@ -3989,8 +3998,10 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
 .bot-kv span{color:var(--muted)}
 .bot-kv b{font-weight:500;color:var(--fg-2);text-align:right;font-family:var(--mono);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bot-note{margin:0;font-size:11.5px;line-height:1.6;color:var(--muted)}
-.bot-mem-row{display:grid;grid-template-columns:30px minmax(0,1fr);gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:11.5px;color:var(--fg-2)}
-.bot-mem-row .mono{color:var(--faint)}
+/* 两列：左边标识（可长，最多 46%），右边说明。原来写死 30px，memory_search 这种直接压到右边文字上 */
+.bot-mem-row{display:flex;align-items:baseline;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);font-size:11.5px;color:var(--fg-2)}
+.bot-mem-row > .mono{color:var(--faint);flex:0 1 auto;max-width:46%;overflow-wrap:anywhere;word-break:break-word}
+.bot-mem-row > span:last-child{flex:1 1 auto;min-width:0}
 .bot-banner{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);padding:0 2px}
 .bot-banner i{width:6px;height:6px;border-radius:999px;background:var(--green)}
 .bot-banner.fail i{background:var(--red)}
@@ -4442,6 +4453,14 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
   padding:2px 10px 10px;min-width:0;flex-wrap:wrap;
 }
 .ds-composer-tools{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap;flex:1 1 auto}
+.ds-model{display:inline-flex;align-items:center;gap:4px;height:26px;margin-right:2px;padding:0 8px;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--muted);font-size:11.5px;white-space:nowrap}
+.ds-model:hover{color:var(--fg);border-color:var(--border-strong)}
+.ds-model-pop{position:fixed;z-index:70;width:240px;padding:4px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:0 16px 40px rgba(15,23,42,.18)}
+.ds-model-item{display:flex;flex-direction:column;gap:1px;width:100%;padding:6px 8px;border:0;border-radius:6px;background:transparent;text-align:left;color:var(--fg-2);font-size:12px}
+.ds-model-item:hover{background:var(--surface-hover);color:var(--fg)}
+.ds-model-item.on{background:var(--brand-soft);color:var(--fg)}
+.ds-model-item b{font-weight:600;font-size:12.5px}
+.ds-model-item span{font-size:10.5px;color:var(--faint)}
 .ds-composer-trailing{display:flex;align-items:center;gap:8px;flex:none;margin-left:auto}
 .ds-add{
   width:28px;height:28px;flex:none;display:grid;place-items:center;padding:0;

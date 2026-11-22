@@ -24,12 +24,14 @@ function Svg({ size = 16, className, style, children }: IconProps & { children: 
 
 export const GitIcon = (p: IconProps) => (
   <Svg {...p}>
-    <circle cx="6" cy="6" r="2.4" /><circle cx="6" cy="18" r="2.4" /><circle cx="18" cy="9" r="2.4" />
-    <path d="M6 8.4v7.2M8.3 6h4.3a3 3 0 0 1 3 3v.2" />
+    <g transform="translate(12 12) scale(.95) translate(-12 -12)">
+      <circle cx="6" cy="6" r="2.4" /><circle cx="6" cy="18" r="2.4" /><circle cx="18" cy="9" r="2.4" />
+      <path d="M6 8.4v7.2M8.3 6h4.3a3 3 0 0 1 3 3v.2" />
+    </g>
   </Svg>
 );
 export const FilesIcon = (p: IconProps) => (
-  <Svg {...p}><path d="M15.5 2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V6.5L15.5 2Z" /><path d="M15 2v5h5" /></Svg>
+  <Svg {...p}><g transform="translate(12 12) scale(.8) translate(-12 -12)"><path d="M15.5 2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V6.5L15.5 2Z" /><path d="M15 2v5h5" /></g></Svg>
 );
 
 export const HistoryIcon = (p: IconProps) => (
@@ -61,7 +63,7 @@ export const ChevronLeftIcon = (p: IconProps) => (
 );
 
 export const ChevronDownIcon = (p: IconProps) => (
-  <Svg {...p}><path d="m6 9 6 6 6-6" /></Svg>
+  <Svg {...p}><g transform="translate(12 12) scale(1.333) translate(-12 -12)"><path d="m6 9 6 6 6-6" /></g></Svg>
 );
 
 export const FolderIcon = (p: IconProps) => (
@@ -128,12 +130,12 @@ export const SearchIcon = (p: IconProps) => (
 
 /** 减号：缩小（不要再拿字符 − 当图标） */
 export const MinusIcon = (p: IconProps) => (
-  <Svg {...p}><path d="M5 12h14" /></Svg>
+  <Svg {...p}><path d="M4 12h16" /></Svg>
 );
 
 /** 加号：新建 / 添加（不要再拿字符 ＋ 当图标） */
 export const PlusIcon = (p: IconProps) => (
-  <Svg {...p}><path d="M12 5v14M5 12h14" /></Svg>
+  <Svg {...p}><path d="M12 4v16M4 12h16" /></Svg>
 );
 
 export const XIcon = (p: IconProps) => (
@@ -141,12 +143,12 @@ export const XIcon = (p: IconProps) => (
 );
 
 export const ListIcon = (p: IconProps) => (
-  <Svg {...p}><path d="M8 6h13M8 12h13M8 18h13" /><path d="M3 6h.01M3 12h.01M3 18h.01" /></Svg>
+  <Svg {...p}><g transform="translate(12 12) scale(.889) translate(-12 -12)"><path d="M8 6h13M8 12h13M8 18h13" /><path d="M3 6h.01M3 12h.01M3 18h.01" /></g></Svg>
 );
 
 /** 看板：三列 */
 export const BoardIcon = (p: IconProps) => (
-  <Svg {...p}><rect x="3" y="4" width="5" height="16" rx="1.4" /><rect x="9.5" y="4" width="5" height="11" rx="1.4" /><rect x="16" y="4" width="5" height="7" rx="1.4" /></Svg>
+  <Svg {...p}><g transform="translate(12 12) scale(.889) translate(-12 -12)"><rect x="3" y="4" width="5" height="16" rx="1.4" /><rect x="9.5" y="4" width="5" height="11" rx="1.4" /><rect x="16" y="4" width="5" height="7" rx="1.4" /></g></Svg>
 );
 
 export const ChatIcon = (p: IconProps) => (
@@ -158,15 +160,15 @@ export const TerminalIcon = (p: IconProps) => (
 );
 
 export const PanelCollapseIcon = (p: IconProps) => (
-  <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M14 4v16" /><path d="m10 10-2 2 2 2" /></Svg>
+  <Svg {...p}><g transform="translate(12 12) scale(.889) translate(-12 -12)"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M14 4v16" /><path d="m10 10-2 2 2 2" /></g></Svg>
 );
 
 export const PanelExpandIcon = (p: IconProps) => (
-  <Svg {...p}><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" /></Svg>
+  <Svg {...p}><g transform="translate(12 12) scale(.889) translate(-12 -12)"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" /></g></Svg>
 );
 
 export const PanelRestoreIcon = (p: IconProps) => (
-  <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 9h6v6H9z" /></Svg>
+  <Svg {...p}><g transform="translate(12 12) scale(.889) translate(-12 -12)"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 9h6v6H9z" /></g></Svg>
 );
 
 export const FilePlusIcon = (p: IconProps) => (
