@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT, path TEXT, 
 CREATE TABLE IF NOT EXISTS hosts (id TEXT PRIMARY KEY, name TEXT, kind TEXT, addr TEXT, status TEXT, heartbeat INTEGER, version TEXT, port INTEGER, user TEXT, caps TEXT, last_probe INTEGER, latency_ms INTEGER, max_concurrency INTEGER, default_cwd TEXT, probe_error TEXT);
 CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT, host_id TEXT, cli TEXT, cwd TEXT, max_concurrency INTEGER, approval TEXT, color TEXT, skills TEXT, alias TEXT, project_id TEXT, terminal_id TEXT, role TEXT DEFAULT 'worker', instructions TEXT DEFAULT '', max_children INTEGER DEFAULT 4);
 CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, key TEXT, title TEXT, desc TEXT, acceptance TEXT, status TEXT, agent_id TEXT, priority TEXT, due TEXT, parent_id TEXT, tags TEXT, subtasks TEXT, blocked_by TEXT, missing_writeback INTEGER, last_run_failed INTEGER, cwd TEXT, created_at INTEGER, updated_at INTEGER, confirmed INTEGER, project_id TEXT, kind TEXT DEFAULT 'task', mission_state TEXT, bot_id TEXT);
-CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, todo_id TEXT, agent_id TEXT, status TEXT, trigger TEXT, started_at INTEGER, ended_at INTEGER, cost REAL, tokens INTEGER, error TEXT, parent_run_id TEXT, cwd TEXT, branch TEXT, host_id TEXT, created_at INTEGER, tokens_in INTEGER, tokens_out INTEGER, usage_source TEXT, error_class TEXT, exit_code INTEGER, queue_wait_ms INTEGER, duration_ms INTEGER, queue_reason TEXT, kind TEXT DEFAULT 'worker', delegation_id TEXT, terminal_id TEXT, runtime TEXT, worktree_cleaned INTEGER, acp_session TEXT, result TEXT, result_source TEXT, result_truncated INTEGER, result_at INTEGER);
+CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, todo_id TEXT, thread_id TEXT, agent_id TEXT, status TEXT, trigger TEXT, started_at INTEGER, ended_at INTEGER, cost REAL, tokens INTEGER, error TEXT, parent_run_id TEXT, cwd TEXT, branch TEXT, host_id TEXT, created_at INTEGER, tokens_in INTEGER, tokens_out INTEGER, usage_source TEXT, error_class TEXT, exit_code INTEGER, queue_wait_ms INTEGER, duration_ms INTEGER, queue_reason TEXT, kind TEXT DEFAULT 'worker', delegation_id TEXT, terminal_id TEXT, runtime TEXT, worktree_cleaned INTEGER, acp_session TEXT, result TEXT, result_source TEXT, result_truncated INTEGER, result_at INTEGER);
 CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, todo_id TEXT, title TEXT, project_id TEXT, project TEXT, agent_id TEXT, created_at INTEGER, updated_at INTEGER, model TEXT, model_name TEXT, effort TEXT, kind TEXT DEFAULT 'chat', bot_id TEXT);
 CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, todo_id TEXT, run_id TEXT, role TEXT, kind TEXT, content TEXT, injected INTEGER, created_at INTEGER, thread_id TEXT, delivery TEXT, context TEXT, meta TEXT);
 CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, todo_id TEXT, run_id TEXT, kind TEXT, title TEXT, origin TEXT, ref TEXT, deep_link TEXT, created_at INTEGER);
@@ -124,6 +124,7 @@ export async function openDb(dir, { onTranscript } = {}) {
   const rows = (sql, params = []) => stmt(sql).all(...bind(params));
   for (const sql of [
     "ALTER TABLE runs ADD COLUMN cwd TEXT",
+    "ALTER TABLE runs ADD COLUMN thread_id TEXT",
     // run 的 ACP 会话 id：进程退出后可以 session/resume 续上（dsh 的 agentCapabilities.sessionCapabilities.resume）
     "ALTER TABLE runs ADD COLUMN acp_session TEXT",
     "ALTER TABLE runs ADD COLUMN branch TEXT",
@@ -264,7 +265,7 @@ export async function openDb(dir, { onTranscript } = {}) {
     kind: r.kind || "task", missionState: r.mission_state || null, botId: r.bot_id || null,
   }));
   state.runs = rows("SELECT * FROM runs").map((r) => ({
-    id: r.id, todoId: r.todo_id, agentId: r.agent_id, status: r.status, trigger: r.trigger,
+    id: r.id, todoId: r.todo_id, threadId: r.thread_id || null, agentId: r.agent_id, status: r.status, trigger: r.trigger,
     startedAt: r.started_at, endedAt: r.ended_at, cost: r.cost || 0, tokens: num(r.tokens),
     error: r.error || null, parentRunId: r.parent_run_id || null, cwd: r.cwd || "", branch: r.branch || null,
     hostId: r.host_id || null, createdAt: num(r.created_at) || r.started_at || null,
@@ -425,8 +426,8 @@ export async function openDb(dir, { onTranscript } = {}) {
     for (const a of state.agents) run("INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [a.id, a.name, a.hostId, a.cli, a.cwd, a.max, a.approval, a.color, JSON.stringify(a.skills || []), a.alias || "", a.projectId || "", a.terminalId || "", a.role || "worker", a.instructions || "", a.maxChildren ?? 4]);
     for (const t of state.todos) run("INSERT INTO todos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.key, t.title, t.desc || "", JSON.stringify(t.acceptance || []), t.status, t.agentId || null, t.priority, t.due || "", t.parentId || null, JSON.stringify(t.tags || []), JSON.stringify(t.subtasks || []), JSON.stringify(t.blockedBy || []), t.missingWriteback ? 1 : 0, t.lastRunFailed ? 1 : 0, t.cwd || "", t.createdAt || Date.now(), t.updatedAt || Date.now(), t.confirmed ? 1 : 0, t.projectId || null, t.kind || "task", t.missionState || null, t.botId || null]);
     for (const r of state.runs) run(
-      "INSERT INTO runs (id,todo_id,agent_id,status,trigger,started_at,ended_at,cost,tokens,error,parent_run_id,cwd,branch,host_id,created_at,tokens_in,tokens_out,usage_source,error_class,exit_code,queue_wait_ms,duration_ms,queue_reason,kind,delegation_id,terminal_id,runtime,worktree_cleaned,acp_session,result,result_source,result_truncated,result_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-      [r.id, r.todoId, r.agentId, r.status, r.trigger || "assign", r.startedAt || null, r.endedAt || null, r.cost || 0,
+      "INSERT INTO runs (id,todo_id,thread_id,agent_id,status,trigger,started_at,ended_at,cost,tokens,error,parent_run_id,cwd,branch,host_id,created_at,tokens_in,tokens_out,usage_source,error_class,exit_code,queue_wait_ms,duration_ms,queue_reason,kind,delegation_id,terminal_id,runtime,worktree_cleaned,acp_session,result,result_source,result_truncated,result_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [r.id, r.todoId, r.threadId || null, r.agentId, r.status, r.trigger || "assign", r.startedAt || null, r.endedAt || null, r.cost || 0,
         r.tokens ?? null, r.error || null, r.parentRunId || null, r.cwd || "", r.branch || null, r.hostId || null,
         r.createdAt || null, r.tokensIn ?? null, r.tokensOut ?? null, r.usageSource || "unknown", r.errorClass || null,
         r.exitCode ?? null, r.queueWaitMs ?? null, r.durationMs ?? null, r.queueReason || null,

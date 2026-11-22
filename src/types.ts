@@ -29,6 +29,8 @@ export interface Thread {
   /** bot = 人格 bot 的持续会话（todo_id 为空，但**不是**全局空会话） */
   kind?: "chat" | "mission" | "bot";
   botId?: string | null;
+  /** 纯聊天：无 Todo 的受管对话 Run 承载；可随时 promoteThreadToTodo 转为任务 */
+  chatOnly?: boolean;
   createdAt: number; updatedAt: number;
 }
 export interface Todo {
@@ -189,6 +191,8 @@ export interface RuntimeView {
 }
 export interface Run {
   id: string; todoId: string | null; agentId: string; status: string; trigger: string;
+  /** 消息宿主：纯聊天 / 探索 Run 没有 todoId 时用它挂到会话 */
+  threadId?: string | null;
   startedAt: number | null; endedAt: number | null; cost: number;
   /** null = 执行器未上报，界面显示「未上报」而不是 0（见 docs/arch/ARCH-hosts-stats.md） */
   tokens: number | null;

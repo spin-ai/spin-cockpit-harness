@@ -614,7 +614,7 @@ function openDelegations(missionId) {
   return missionDelegations(missionId).filter((d) => ["proposed", "queued", "running", "waiting_input", "rework"].includes(d.status));
 }
 
-// 纠偏投递：pending → injected / failed，失败不再伪装成“已注入”
+// 纠偏投递：pending → injected / failed，失败不再伪装成“已注入”（todo 可空：纯聊天 run 也能投）
 function deliverSteer({ thread, todo, run, messageId, text }) {
   // 终端 Agent：没有 ACP handle，直接把纠正写进同一个 pty。
   if (run.terminalId) {
@@ -629,11 +629,11 @@ function deliverSteer({ thread, todo, run, messageId, text }) {
       term.write(payload.endsWith("\r") ? payload : `${payload}\r`);
       const current = store.state.messages.find((m) => m.id === messageId);
       if (current && current.delivery === "pending") store.updateMessage(messageId, { delivery: "injected", injected: true });
-      store.addEvent("run.message", `run.message terminal ${todo.key}`);
+      store.addEvent("run.message", `run.message terminal ${todo?.key || run.id}`);
       return "injected";
     } catch (err) {
       store.updateMessage(messageId, { delivery: "failed" });
-      store.addEvent("run.steer_failed", `run.steer_failed terminal ${todo.key} ${String(err?.message || err).slice(0, 160)}`);
+      store.addEvent("run.steer_failed", `run.steer_failed terminal ${todo?.key || run.id} ${String(err?.message || err).slice(0, 160)}`);
       return "failed";
     }
   }
@@ -644,21 +644,21 @@ function deliverSteer({ thread, todo, run, messageId, text }) {
     return "failed";
   }
   store.updateMessage(messageId, { delivery: "pending" });
-  store.addEvent("run.message", `run.message pending ${todo.key}`);
+  store.addEvent("run.message", `run.message pending ${todo?.key || run.id}`);
   handle.client.prompt(text)
     .then(() => {
       // run 可能已结束/已停止（settlePendingSteers 先标 failed），只更新仍 pending 的消息
       const current = store.state.messages.find((m) => m.id === messageId);
       if (current && current.delivery === "pending") {
         store.updateMessage(messageId, { delivery: "injected", injected: true });
-        store.addEvent("run.message", `run.message injected ${todo.key}`);
+        store.addEvent("run.message", `run.message injected ${todo?.key || run.id}`);
       }
       broadcast();
     })
     .catch((err) => {
       const current = store.state.messages.find((m) => m.id === messageId);
       if (current && current.delivery === "pending") store.updateMessage(messageId, { delivery: "failed" });
-      store.addEvent("run.steer_failed", `run.steer_failed ${todo.key} ${String(err?.message || err).slice(0, 160)}`);
+      store.addEvent("run.steer_failed", `run.steer_failed ${todo?.key || run.id} ${String(err?.message || err).slice(0, 160)}`);
       broadcast();
     });
   return "pending";
@@ -905,52 +905,115 @@ function tick() {
   const activeWorkerStatuses = ["running", "waiting_input"];
   const workerRunning = () => state.runs.filter((r) => (r.kind || "worker") !== "supervisor" && activeWorkerStatuses.includes(r.status)).length;
   const supervisorRunning = () => state.runs.filter((r) => r.kind === "supervisor" && ["running", "waiting_input", "waiting_plan", "waiting_children"].includes(r.status)).length;
-  for (const run of state.runs.filter((r) => r.status === "queued")) {
-    const todo = state.todos.find((t) => t.id === run.todoId);
-    const agent = state.agents.find((a) => a.id === run.agentId);
-    if (!todo || !agent) continue;
-    const host = state.hosts.find((h) => h.id === agent.hostId);
-    if (!host || host.status !== "online") { run.queueReason = "主机离线"; continue; }
+  // 原因变了才广播 / 落盘：queueReason 只在内存里改是不行的，重启后界面上就只剩一个没有原因的「排队」
+  let reasonChanged = false;
+  const setReason = (run, reason) => {
+    const next = reason || null;
+    if ((run.queueReason || null) === next) return;
+    run.queueReason = next;
+    reasonChanged = true;
+  };
+  try {
+    for (const run of state.runs.filter((r) => r.status === "queued")) {
+      const todo = state.todos.find((t) => t.id === run.todoId);
+      const agent = state.agents.find((a) => a.id === run.agentId);
+      // 以前是静默 continue：任务 / Agent 被删掉的排队 run 会永远躺在队列里，且没有原因
+      if (!agent) { setReason(run, "找不到任务或 Agent，无法派活"); continue; }
+      // 无 Todo 的纯聊天 run：只要 Agent 并发允许就直接跑，不占用任务语义
+      if (!todo) {
+        if (!run.threadId) { setReason(run, "找不到任务或 Agent，无法派活"); continue; }
+        if (chatRuntimeOf(agent) !== "acp") { setReason(run, "纯聊天只支持 ACP Agent"); continue; }
+        if (workerCap > 0 && workerRunning() >= workerCap) { setReason(run, "等待全局并发"); continue; }
+        const chatBusy = state.runs.filter((r) => (r.kind || "worker") !== "supervisor" && r.agentId === agent.id && activeWorkerStatuses.includes(r.status)).length;
+        if (chatBusy >= (agent.max || 1)) { setReason(run, `等待同一个 Agent · ${agent.alias || agent.name}`); continue; }
+        setReason(run, null);
+        void startRun(run, null, agent).catch((err) => failQueuedRun(run, err));
+        continue;
+      }
+      const host = state.hosts.find((h) => h.id === agent.hostId);
+      if (!host || host.status !== "online") { setReason(run, "主机离线"); continue; }
 
-    if (run.kind === "supervisor" || todo.kind === "mission") {
-      if (!state.settings?.superAgentEnabled) { failMission(todo, "Super Agent 已关闭"); continue; }
-      if (host.kind === "ssh") { run.queueReason = "Mission 一期只支持本地 supervisor"; continue; }
-      if (supervisorRunning() >= supervisorCap) { run.queueReason = "等待 Supervisor 并发"; continue; }
-      run.queueReason = null;
-      void startSupervisorRun(run, todo, agent).catch((err) => failMission(todo, err));
-      continue;
-    }
+      if (run.kind === "supervisor" || todo.kind === "mission") {
+        if (!state.settings?.superAgentEnabled) { failMission(todo, "Super Agent 已关闭"); continue; }
+        if (host.kind === "ssh") { setReason(run, "Mission 一期只支持本地 supervisor"); continue; }
+        if (supervisorRunning() >= supervisorCap) { setReason(run, "等待 Supervisor 并发"); continue; }
+        setReason(run, null);
+        void startSupervisorRun(run, todo, agent).catch((err) => failMission(todo, err));
+        continue;
+      }
 
-    if (workerCap > 0 && workerRunning() >= workerCap) { run.queueReason = "等待全局并发"; continue; }
-    const hostCap = Number(host.maxConcurrency) || 0;
-    if (hostCap > 0) {
-      const hostBusy = state.runs.filter((r) => (r.kind || "worker") !== "supervisor" && r.hostId === host.id && activeWorkerStatuses.includes(r.status)).length;
-      if (hostBusy >= hostCap) { run.queueReason = `主机并发已满 · ${host.name}`; continue; }
+      if (workerCap > 0 && workerRunning() >= workerCap) { setReason(run, "等待全局并发"); continue; }
+      const hostCap = Number(host.maxConcurrency) || 0;
+      if (hostCap > 0) {
+        const hostBusy = state.runs.filter((r) => (r.kind || "worker") !== "supervisor" && r.hostId === host.id && activeWorkerStatuses.includes(r.status)).length;
+        if (hostBusy >= hostCap) { setReason(run, `主机并发已满 · ${host.name}`); continue; }
+      }
+      const busy = state.runs.filter((r) => (r.kind || "worker") !== "supervisor" && r.agentId === agent.id && activeWorkerStatuses.includes(r.status)).length;
+      // 这两条以前是静默 continue：界面上只显示「排队」，看不到为什么。原因必须写进 queueReason。
+      if (busy >= (agent.max || 1)) { setReason(run, `等待同一个 Agent · ${agent.alias || agent.name}`); continue; }
+      if (todo.blockedBy?.length) {
+        const pending = todo.blockedBy.filter((id) => {
+          const dep = state.todos.find((t) => t.id === id);
+          return !dep || !(dep.confirmed || ["done", "in_review"].includes(dep.status));
+        });
+        if (pending.length) { setReason(run, `等待依赖 · ${pending.length}`); continue; }
+      }
+      // Mission 子任务各有 worktree，可以并行；普通任务保持同 cwd 串行。
+      const sameCwdRun = run.trigger !== "broadcast" && !todo.parentId ? state.runs.find((r) => {
+        if ((r.kind || "worker") === "supervisor" || !activeWorkerStatuses.includes(r.status)) return false;
+        const t = state.todos.find((x) => x.id === r.todoId);
+        return t && (t.cwd || agent.cwd) === (todo.cwd || agent.cwd);
+      }) : null;
+      if (sameCwdRun) {
+        const blocker = state.todos.find((x) => x.id === sameCwdRun.todoId);
+        setReason(run, `同目录有任务在跑 · ${blocker?.key || sameCwdRun.id}`);
+        continue;
+      }
+      setReason(run, null);
+      // startRun 可能在 status="running" 之前就抛：不结算的话 run 会永远 queued，兜底 tick 每 5s 重试一次
+      void startRun(run, todo, agent).catch((err) => failQueuedRun(run, err));
     }
-    const busy = state.runs.filter((r) => (r.kind || "worker") !== "supervisor" && r.agentId === agent.id && activeWorkerStatuses.includes(r.status)).length;
-    // 这两条以前是静默 continue：界面上只显示「排队」，看不到为什么。原因必须写进 queueReason。
-    if (busy >= (agent.max || 1)) { run.queueReason = `等待同一个 Agent · ${agent.alias || agent.name}`; continue; }
-    if (todo.blockedBy?.length) {
-      const pending = todo.blockedBy.filter((id) => {
-        const dep = state.todos.find((t) => t.id === id);
-        return !dep || !(dep.confirmed || ["done", "in_review"].includes(dep.status));
-      });
-      if (pending.length) { run.queueReason = `等待依赖 · ${pending.length}`; continue; }
-    }
-    // Mission 子任务各有 worktree，可以并行；普通任务保持同 cwd 串行。
-    const sameCwdRun = run.trigger !== "broadcast" && !todo.parentId ? state.runs.find((r) => {
-      if ((r.kind || "worker") === "supervisor" || !activeWorkerStatuses.includes(r.status)) return false;
-      const t = state.todos.find((x) => x.id === r.todoId);
-      return t && (t.cwd || agent.cwd) === (todo.cwd || agent.cwd);
-    }) : null;
-    if (sameCwdRun) {
-      const blocker = state.todos.find((x) => x.id === sameCwdRun.todoId);
-      run.queueReason = `同目录有任务在跑 · ${blocker?.key || sameCwdRun.id}`;
-      continue;
-    }
-    run.queueReason = null;
-    void startRun(run, todo, agent);
+  } finally {
+    if (reasonChanged) broadcast();
   }
+}
+
+/**
+ * 队列兜底：tick() 只由动作触发（send / assign / retry / 设置变更 / run 结束），
+ * 应用退出后再启动，没有任何动作会把还在排队的 run 重新捡起来——它会一直「排队」且没有原因。
+ * 每 5s 扫一次，只在本进程确实有 queued run 时才跑，避免空转。
+ */
+const QUEUE_TICK_MS = 5 * 1000;
+let queueTimer = null;
+function startQueueTick() {
+  if (queueTimer) return;
+  queueTimer = setInterval(() => {
+    try {
+      if (store?.state?.runs?.some((r) => r.status === "queued")) tick();
+    } catch (err) { console.warn("[queue] tick failed:", String(err?.message || err)); }
+  }, QUEUE_TICK_MS);
+}
+
+/** 只有还没真正开跑的 run 才能直接被判失败；已经开始跑的走各自的结算路径，不在这重写 */
+function failQueuedRun(run, err) {
+  if (!run) return;
+  const message = `run 启动失败：${String(err?.message || err)}`;
+  if (run.status !== "queued") { console.warn(`[queue] ${run.id} ${message}`); return; }
+  run.status = "failed";
+  run.endedAt = run.endedAt || now();
+  run.error = run.error || message;
+  run.errorClass = run.errorClass || "other";
+  run.queueReason = null;
+  setRunResult(run, message, "error");
+  const todo = store.state.todos.find((t) => t.id === run.todoId);
+  if (todo) {
+    if (!todo.confirmed) todo.status = "todo";
+    todo.lastRunFailed = true;
+    todo.updatedAt = now();
+    store.addMessage(threadForTodo(todo).id, run.id, "system", "error", message);
+  }
+  store.addEvent("run.failed", `run.failed ${todo?.key || run.todoId} ${message}`);
+  broadcast();
 }
 
 async function startRun(run, todo, agent) {
@@ -986,7 +1049,15 @@ async function startRun(run, todo, agent) {
     cwd = run.cwd;
     branch = run.branch || null;
     store.addEvent("run.resume", `run.resume ${run.id} cwd=${cwd}`);
-  } else {
+  } else if (todo) {
+    // 上次进程死在 `git worktree add` 之后、写 startedAt 之前：run 还是 queued 且没有 cwd，
+    // 先清掉没人认领的目录，否则每次重启都会多留一个 worktree
+    if (!run.startedAt) {
+      try {
+        const stale = removeStaleWorktrees(baseCwd, todo?.key || "chat", run.id);
+        if (stale) store.addEvent("run.worktree", `run.worktree 清理上次残留 ${stale} 个 · ${run.id}`);
+      } catch (err) { console.warn("[worktree] stale cleanup failed:", String(err?.message || err)); }
+    }
     const worktree = prepareRunWorktree(todo, baseCwd, run.id);
     cwd = worktree.cwd;
     branch = worktree.branch;
@@ -1004,6 +1075,9 @@ async function startRun(run, todo, agent) {
     fs.mkdirSync(cwd, { recursive: true });
     if (worktree.created) store.addEvent("run.worktree", `run.worktree ${cwd} @ ${worktree.branch}`);
     else if (worktree.error) store.addEvent("run.worktree", `worktree skipped: ${worktree.error}`);
+  } else {
+    // 纯聊天（无 Todo）：直接在会话 cwd 跑，不建 worktree
+    run.cwd = baseCwd;
   }
   run.status = "running";
   run.startedAt = Date.now();
@@ -1011,11 +1085,10 @@ async function startRun(run, todo, agent) {
   run.hostId = host?.id || run.hostId || null;
   run.queueReason = null;
   run.queueWaitMs = run.createdAt ? Math.max(0, run.startedAt - run.createdAt) : null;
-  todo.status = "in_progress";
-  todo.lastRunFailed = false;
+  if (todo) { todo.status = "in_progress"; todo.lastRunFailed = false; }
   store.addMessage(thread.id, run.id, "system", "system", `run ${run.id} started · ${agent.name}`);
   store.addEvent("run.started", `run.started todo=${todo.key} agent=${agent.name} cwd=${cwd}`);
-  pluginHost?.emit("run.started", { runId: run.id, todoId: todo.id, title: todo.title, agentId: agent.id });
+  pluginHost?.emit("run.started", { runId: run.id, todoId: todo?.id ?? null, title: todo?.title || "", agentId: agent.id });
   broadcast();
 
   // 终端 Agent 走 pty（普通多 Agent / Mission child 都适用），并把标签推给渲染层
@@ -1247,21 +1320,22 @@ async function startRun(run, todo, agent) {
     applyRunUsage(run, res);
     setRunResult(run, lastAgentText(thread.id, run.id), "acp_text");
     const otherActive = store.state.runs.some((r) => r.id !== run.id && r.todoId === todo.id && ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"].includes(r.status));
-    todo.status = otherActive ? "in_progress" : "in_review";
-    void imNotifyRun(todo, run, handle).catch(() => {});
-    todo.updatedAt = now();
+    if (todo) todo.status = otherActive ? "in_progress" : "in_review";
+    if (todo) void imNotifyRun(todo, run, handle).catch(() => {});
+    if (todo) todo.updatedAt = now();
     store.addMessage(thread.id, run.id, "system", "system", `run 结束 · ${res?.stopReason || "end_turn"}`);
     // 注入归因：回答里用到了哪几条注入的记忆（口水话指标，但不落库就永远只能猜）
     if (injectLogId) {
       try { memory().markCited({ logId: injectLogId, text: runReplyText(run.id) }); } catch { /* 归因失败不影响 run */ }
     }
-    store.addEvent("run.finished", `run.finished todo=${todo.key}`);
+    store.addEvent("run.finished", `run.finished todo=${todo?.key || run.id}`);
     // bot 执行回流：这个任务如果是 bot 起的，就用它的口吻汇报一条
-    try {
+    if (todo) try {
       // 监视者：所有 watching 这个任务的 bot 都回报一条
       for (const w of (store.state.botTurns || []).filter((t) => t.todoId === todo.id && t.decision === "watching")) {
         try {
-          bots().report({ botId: w.botId, todoId: todo.id, runId: run.id, text: `${todo.key} 有结果了：${todo.title}` });
+          const turn = bots().report({ botId: w.botId, todoId: todo.id, runId: run.id, text: `${todo.key} 有结果了：${todo.title}` });
+          notifyBotTurn(turn, "reported");
         } catch { /* 单个失败不影响其它 */ }
       }
       const botTurn = (store.state.botTurns || []).find((t) => t.todoId === todo.id && t.botId);
@@ -1269,12 +1343,13 @@ async function startRun(run, todo, agent) {
       if (bot && bot.capability === "work") {
         const last = [...(store.state.messages || [])].reverse().find((m) => m.threadId === thread.id && m.role === "assistant");
         const summary = String(last?.content || "").replace(/\s+/g, " ").slice(0, 200);
-        bots().report({ botId: bot.id, todoId: todo.id, runId: run.id, text: `${todo.key} 完成：${todo.title}${summary ? `\n${summary}` : ""}` });
+        const turn = bots().report({ botId: bot.id, todoId: todo.id, runId: run.id, text: `${todo.key} 完成：${todo.title}${summary ? `\n${summary}` : ""}` });
+        notifyBotTurn(turn, "reported");
         broadcast();
       }
     } catch (err) { console.warn(`[bot] report failed: ${String(err?.message || err)}`); }
-    pluginHost?.emit("run.completed", { runId: run.id, todoId: todo.id, status: run.status, title: todo.title });
-    const delegation = delegationForChild(todo.id);
+    pluginHost?.emit("run.completed", { runId: run.id, todoId: todo?.id ?? null, status: run.status, title: todo?.title || "" });
+    const delegation = todo ? delegationForChild(todo.id) : null;
     if (delegation) {
       settleDelegation(todo, "completed", missionChildSummary(todo, run).summary, run);
     } else {
@@ -1292,13 +1367,25 @@ async function startRun(run, todo, agent) {
       run.errorMeta = missingKeyInfo(run.error);
       setRunResult(run, run.error, "error");
       run.exitCode = Number.isFinite(err?.exitCode) ? err.exitCode : null;
-      todo.status = "todo";
-      todo.lastRunFailed = true;
-      todo.updatedAt = now();
+      if (todo) { todo.status = "todo"; todo.lastRunFailed = true; todo.updatedAt = now(); }
       store.addMessage(thread.id, run.id, "system", "error", `run 失败：${run.error}`);
-      store.addEvent("run.failed", `run.failed todo=${todo.key} ${run.error}`);
-      pluginHost?.emit("run.failed", { runId: run.id, todoId: todo.id, status: run.status, error: run.error });
-      const delegation = delegationForChild(todo.id);
+      store.addEvent("run.failed", `run.failed todo=${todo?.key || run.id} ${run.error}`);
+      pluginHost?.emit("run.failed", { runId: run.id, todoId: todo?.id ?? null, status: run.status, error: run.error });
+      try {
+        // 起这个任务的 bot（或监视它的 bot）用失败口吻留一条，并按它自己的通知开关决定弹不弹
+        const botTurn = todo ? (store.state.botTurns || []).find((t) => t.todoId === todo.id && t.botId) : null;
+        const ownerBot = botTurn ? (store.state.bots || []).find((b) => b.id === botTurn.botId) : null;
+        if (ownerBot) {
+          const turn = bots().report({
+            botId: ownerBot.id, todoId: todo.id, runId: run.id,
+            text: `${todo.key} 失败：${String(run.error || "未知原因").slice(0, 120)}`,
+            kind: "run.failed",
+          });
+          notifyBotTurn(turn, "run.failed");
+          broadcast();
+        }
+      } catch { /* 汇报失败不影响 run 记账 */ }
+      const delegation = todo ? delegationForChild(todo.id) : null;
       if (delegation) {
         settleDelegation(todo, "failed", run.error, run);
       } else {
@@ -1371,7 +1458,7 @@ function applyPlan(todo, entries) {
 }
 
 function handleUpdate(run, todo, handle, u) {
-  const threadId = handle.threadId || threadForTodo(todo).id;
+  const threadId = handle.threadId || (todo ? threadForTodo(todo).id : run.threadId);
   handle.threadId = threadId;
   if (u.sessionUpdate === "agent_message_chunk") {
     const text = u.content?.text;
@@ -1418,7 +1505,7 @@ function handleUpdate(run, todo, handle, u) {
     store.addEvent("run.tool", `run.tool ${title} ${status}`);
     const raw = u.rawInput || {};
     const rawFile = raw.path || raw.file_path || raw.filePath;
-    if (rawFile) {
+    if (rawFile && todo) {
       const file = path.isAbsolute(String(rawFile)) ? String(rawFile) : path.join(run.cwd || todo.cwd || workspaceRoot, String(rawFile));
       if (!store.state.artifacts.some((a) => a.todoId === todo.id && a.ref === file)) {
         store.state.artifacts.push({
@@ -3462,7 +3549,38 @@ function startImGateway() {
           return res;
         }
       }
-      // 2) 普通消息：进入同一套会话。没有可用 Agent 时也落成「待执行」任务，不假装已经处理
+      // 2) 普通消息：只建任务，不自动开跑（IM 没有人的那次点击，授权闸与桌面一致）；
+      //    整句「开跑 / run」才指派执行体并排队。agentId 为空落「待指派」，桌面可见。
+      const saidRun = /^\s*(开跑|开始执行|开始干|run)\s*$/i.test(String(text || ""));
+      const lastTodo = imSessions[chatId] ? store.state.todos.find((t) => t.id === imSessions[chatId]) : null;
+      if (saidRun && lastTodo) {
+        const busy = store.state.runs.some((r) => r.todoId === lastTodo.id && ["queued", "running", "waiting_input"].includes(r.status));
+        if (busy || ["done"].includes(lastTodo.status)) {
+          await imGateway.send(`${lastTodo.key} ${busy ? "已经在跑" : "已完成"}，不用重复开跑。`, { to: chatId }).catch(() => {});
+          return { mode: "note", todoId: lastTodo.id };
+        }
+        try {
+          actions.run({ id: lastTodo.id });
+          await imGateway.send(`${lastTodo.key} 已开跑。`, { to: chatId }).catch(() => {});
+          return { mode: "run", todoId: lastTodo.id };
+        } catch (err) {
+          await imGateway.send(`开跑失败：${String(err?.message || err).slice(0, 160)}`, { to: chatId }).catch(() => {});
+          return { mode: "error", error: String(err?.message || err) };
+        }
+      }
+      if (!saidRun) {
+        const created = actions.createTodo({ title: String(text).slice(0, 120), desc: `来自 IM ${chatId}`, agentId: null });
+        const todoId = created?.id || null;
+        if (todoId) { imSessions[chatId] = todoId; saveImSessions(); }
+        try {
+          await imGateway.send(
+            todoId ? `收到，已建任务 ${created.key}（未指派）。回复「开跑」开始执行，或到桌面点「派活」。` : "收到，但没有可执行的 Agent，已记录在待处理里等你派活。",
+            { to: chatId },
+          );
+        } catch { /* 没有出站通道不算失败 */ }
+        return { mode: "queued", todoId, threadId: created ? threadForTodo(created).id : null };
+      }
+      // 兼容：没有可开跑的会话时，「开跑」落到旧链路（创建任务并派活）
       let res = null;
       try { res = await actions.send({ text, projectId: null }); } catch (err) { res = { mode: "error", error: String(err?.message || err) }; }
       let todoId = res?.todoId || null;
@@ -5911,6 +6029,7 @@ const actions = {
       thread.agentId = agent.id;
       thread.projectId = project?.id || null;
       thread.project = cwd;
+      thread.chatOnly = false;
       thread.updatedAt = now();
       const run = queueRun(mission, agent, "mission", null, "supervisor");
       store.updateMessage(userMsg.id, { runId: run.id });
@@ -5962,6 +6081,7 @@ const actions = {
       thread.agentId = mentionAgent.id;
       thread.projectId = project?.id || null;
       thread.project = cwd;
+      thread.chatOnly = false;
       thread.updatedAt = now();
       store.addEvent("todo.created", `todo.created ${todo.key} ${mention ? `via @${mention}` : "via element"}`);
       // 终端 Agent：Chat 只负责派活，真正的工作发生在 pty 里；renderer 拿到参数后创建终端标签。
@@ -6042,7 +6162,7 @@ const actions = {
     tick();
     return { mode: "run", threadId: thread.id, todoId: boundTodo.id, runId: run.id };
   },
-  /** 纯聊天：不显示在 TODO 的隐藏任务承载 ACP 会话；随时可转为正式任务。 */
+  /** 纯聊天：无 Todo 的受管对话 Run（消息挂 thread，run.threadId 关联）；可随时 promoteThreadToTodo 转为任务。 */
   chat: async ({ threadId, text, agentId, projectId }) => {
     const value = String(text || "").trim();
     if (!value) throw new Error("内容不能为空");
@@ -6053,26 +6173,31 @@ const actions = {
     if (chatRuntimeOf(agent) === "terminal") throw new Error("纯聊天目前只支持 ACP Agent；终端 Agent 请直接用 Chat 派活");
     const err = chatAgentError(agent);
     if (err) throw new Error(err);
+    thread.chatOnly = true;
+    // 已有活跃的纯聊天 run：这句话作为纠偏投给同一个 run，不并行再开一个
+    const activeChatRun = [...store.state.runs].reverse().find((r) => r.threadId === thread.id && !r.todoId && ["running", "waiting_input"].includes(r.status));
+    const userMsg = store.addMessage(thread.id, activeChatRun?.id || null, "user", "text", value);
+    if (activeChatRun) {
+      const delivery = deliverSteer({ thread, todo: null, run: activeChatRun, messageId: userMsg.id, text: value });
+      broadcast();
+      return { mode: "chat-steer", threadId: thread.id, runId: activeChatRun.id, delivery };
+    }
     const project = store.state.projects.find((p) => p.id === (projectId || thread.projectId)) || activeProject();
-    const userMsg = store.addMessage(thread.id, null, "user", "text", value);
-    const todo = {
-      id: store.nextId("t"), key: `#${store.state.seq}`, title: value.slice(0, 80), desc: "", acceptance: [], status: "in_progress",
-      agentId: agent.id, priority: "P2", due: "", parentId: null, tags: ["chat-only", "chat"], subtasks: [], blockedBy: [],
-      missingWriteback: false, lastRunFailed: false, confirmed: false, projectId: project?.id || null,
-      cwd: project?.path || thread.project || workspaceRoot, kind: "chat", createdAt: now(), updatedAt: now(),
+    const run = {
+      id: store.nextId("r"), todoId: null, threadId: thread.id, agentId: agent.id, status: "queued",
+      trigger: "chat", kind: "worker", delegationId: null,
+      startedAt: null, endedAt: null, cost: 0, tokens: null, error: null, parentRunId: null,
+      cwd: project?.path || thread.project || workspaceRoot, branch: null, hostId: agent.hostId || null, createdAt: now(),
+      tokensIn: null, tokensOut: null, usageSource: "unknown", errorClass: null, exitCode: null,
+      queueWaitMs: null, durationMs: null, queueReason: null, terminalId: null, runtime: null,
     };
-    store.state.todos.unshift(todo);
-    thread.todoId = todo.id;
-    thread.kind = "chat";
+    store.state.runs.push(run);
     thread.agentId = agent.id;
-    thread.projectId = project?.id || null;
-    thread.project = todo.cwd;
     thread.updatedAt = now();
-    const run = queueRun(todo, agent, "chat");
     store.updateMessage(userMsg.id, { runId: run.id });
-    store.addEvent("chat.started", `chat.started ${todo.key} agent=${agent.name}`);
+    store.addEvent("chat.started", `chat.started run=${run.id} agent=${agent.name}`);
     tick();
-    return { mode: "chat-run", threadId: thread.id, todoId: todo.id, runId: run.id };
+    return { mode: "chat-run", threadId: thread.id, runId: run.id };
   },
   promoteChat: ({ id } = {}) => {
     const todo = store.state.todos.find((t) => t.id === id && t.kind === "chat");
@@ -6082,6 +6207,36 @@ const actions = {
     todo.tags = (todo.tags || []).filter((tag) => tag !== "chat-only");
     todo.updatedAt = now();
     store.addEvent("chat.promoted", `chat.promoted ${todo.key}`);
+    broadcast();
+    return todo;
+  },
+  /** 纯聊天 → 任务：建真实 Todo，把这个 thread 里的全部无主 run 原样挂上去（不重跑、不改 runId）。 */
+  promoteThreadToTodo: ({ threadId } = {}) => {
+    const thread = store.state.threads.find((t) => t.id === threadId);
+    if (!thread) throw new Error("会话不存在");
+    if (thread.todoId) return store.state.todos.find((t) => t.id === thread.todoId);
+    const runs = store.state.runs.filter((r) => r.threadId === thread.id && !r.todoId);
+    const activeRun = runs.find((r) => ["queued", "running", "waiting_input"].includes(r.status));
+    const agent = store.state.agents.find((a) => a.id === thread.agentId) || null;
+    const project = store.state.projects.find((p) => p.id === thread.projectId) || activeProject();
+    const title = String(thread.title || "对话任务").slice(0, 120) || "对话任务";
+    const todo = {
+      id: store.nextId("t"), key: `#${store.state.seq}`, title, desc: "", acceptance: [],
+      status: activeRun ? "in_progress" : runs.some((r) => r.status === "failed") ? "todo" : runs.length ? "in_review" : "todo",
+      agentId: agent?.id || null, priority: "P2", due: "今天", parentId: null, tags: ["chat"],
+      subtasks: [], blockedBy: [], missingWriteback: false,
+      lastRunFailed: runs.some((r) => r.status === "failed"), confirmed: false,
+      projectId: project?.id || null,
+      cwd: runs.find((r) => r.cwd)?.cwd || thread.project || project?.path || workspaceRoot,
+      createdAt: now(), updatedAt: now(), kind: "task",
+    };
+    store.state.todos.unshift(todo);
+    for (const r of runs) r.todoId = todo.id;
+    thread.todoId = todo.id;
+    thread.chatOnly = false;
+    thread.updatedAt = now();
+    store.addMessage(thread.id, null, "system", "system", `已转为任务 · ${todo.key}`);
+    store.addEvent("chat.promoted", `chat.promoted ${todo.key} runs=${runs.length}`);
     broadcast();
     return todo;
   },
@@ -6164,7 +6319,15 @@ const actions = {
     const thread = store.state.threads.find((t) => t.id === threadId);
     if (!thread) throw new Error("会话不存在");
     const todo = thread.todoId ? store.state.todos.find((t) => t.id === thread.todoId) : null;
-    if (!todo) throw new Error("还没有可重新生成的回答");
+    // 纯聊天（无 Todo）：重跑最后一轮提问，仍走无 Todo 的对话 Run
+    if (!todo) {
+      if (!thread.chatOnly) throw new Error("还没有可重新生成的回答");
+      const busy = store.state.runs.find((r) => r.threadId === thread.id && ["queued", "running", "waiting_input"].includes(r.status));
+      if (busy) throw new Error("当前还在运行，等结束后再重新生成");
+      const lastUser = [...store.state.messages].reverse().find((m) => m.threadId === thread.id && m.role === "user");
+      if (!lastUser) throw new Error("没有找到上一轮提问");
+      return actions.chat({ threadId: thread.id, text: lastUser.content });
+    }
     if (activeRunOf(todo.id)) throw new Error("当前还在运行，等结束后再重新生成");
     if (todo.confirmed) throw new Error("任务已确认，不能再重新生成");
     const lastUser = [...store.state.messages].reverse().find((m) => m.threadId === thread.id && m.role === "user");
@@ -6190,7 +6353,18 @@ const actions = {
     if (!next) throw new Error("内容不能为空");
     const thread = store.state.threads.find((t) => t.id === msg.threadId);
     const todo = thread?.todoId ? store.state.todos.find((t) => t.id === thread.todoId) : null;
-    if (!thread || !todo) throw new Error("这条消息还没有关联任务，不能重发");
+    if (!thread) throw new Error("这条消息不存在");
+    // 纯聊天：正在跑的对话 run 直接投纠偏；没在跑则提示不能重发（重新生成可用）
+    if (!todo) {
+      const activeChat = store.state.runs.find((r) => r.threadId === thread.id && !r.todoId && ["running", "waiting_input"].includes(r.status));
+      if (thread.chatOnly && activeChat) {
+        store.updateMessage(msg.id, { content: next });
+        const delivery = deliverSteer({ thread, todo: null, run: activeChat, messageId: msg.id, text: next });
+        broadcast();
+        return { mode: "steer", delivery };
+      }
+      throw new Error("纯聊天消息不能重发；等本轮结束后可「重新生成」");
+    }
     if (next === String(msg.content || "").trim()) return { mode: "noop" };
     store.updateMessage(msg.id, { content: next });
     store.addEvent("message.edit", `message.edit ${todo.key}`);

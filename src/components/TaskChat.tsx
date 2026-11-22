@@ -460,7 +460,9 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
       return;
     }
     setSending(true);
-    const res = chatOnly && !todo
+    // 纯聊天 / 只聊：走无 Todo 的对话 Run；发送仍然是一次明确动作
+    const useChat = !todo && (chatOnly || pureChat);
+    const res = useChat
       ? await act("chat", { threadId: thread.id, text: value, agentId, projectId: scopeProjectId || undefined })
       : await act("send", {
         threadId: thread.id, text: value, agentId, projectId: scopeProjectId || undefined,
@@ -551,6 +553,11 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   const queuedRun = todo ? state.runs.some((r) => r.todoId === todo.id && r.status === "queued") : false;
   const willRun = todo ? (!todo.confirmed && !active && !queuedRun) : true;
   const blocked = willRun && !isRunnable(dispatchAgent);
+  /** 纯聊天：无 Todo 的受管对话 Run（thread.chatOnly）；可随时「转为任务」 */
+  const pureChat = !todo && Boolean(thread?.chatOnly);
+  const activeChatRun = pureChat
+    ? (globalState ?? state).runs.find((r) => r.threadId === thread?.id && !r.todoId && ["queued", "running", "waiting_input"].includes(r.status))
+    : null;
   const baseMode: "dispatch" | "steer" | "queue" | "run" | "note" =
     !todo
       ? "dispatch"
@@ -562,7 +569,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
             ? "queue"
             : "run";
   const terminalDispatch = !todo && dispatchAgent?.chatRuntime === "terminal";
-  const sendLabel = botThread ? "发送" : blocked ? "发送" : baseMode === "dispatch" ? (chatOnly ? "只聊" : previewAllocation ? "预览分配" : terminalDispatch ? "终端派活" : "派活") : baseMode === "steer" ? "纠偏" : baseMode === "run" ? "发送并运行" : "发送";
+  const sendLabel = botThread ? "发送" : blocked ? "发送" : pureChat ? (activeChatRun ? "纠偏" : "发送") : baseMode === "dispatch" ? (chatOnly ? "只聊" : previewAllocation ? "预览分配" : terminalDispatch ? "终端派活" : "派活") : baseMode === "steer" ? "纠偏" : baseMode === "run" ? "发送并运行" : "发送";
   const blockedReason = blocked
     ? (dispatchAgent ? (dispatchAgent.chatRuntime === "terminal" ? `未检测到 ${dispatchAgent.cli}` : `「${dispatchAgent.cli}」仅终端可用`) : "没有可用的 Agent")
     : undefined;
@@ -572,7 +579,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     : context
     ? "描述改动…"
     : !todo
-      ? "描述要完成的事，发送后创建任务并派活…"
+      ? (pureChat ? "输入消息…" : "描述要完成的事，发送后创建任务并派活…")
       : todo.confirmed
         ? "仅记录…"
         : active
@@ -610,9 +617,14 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     requestTerminalAdopt({ terminalId: t.terminalId, cwd: t.cwd, title: t.title, taskId: t.taskId || undefined });
   };
   const promoteChat = async () => {
-    if (!todo) return;
-    const res = await act("promoteChat", { id: todo.id });
-    if (res) onSelect(todo.id);
+    if (todo) {
+      const res = await act("promoteChat", { id: todo.id });
+      if (res) onSelect(todo.id);
+      return;
+    }
+    // 纯聊天（无 Todo）：建真实任务，历史 run 原样挂上去
+    const res = await act("promoteThreadToTodo", { threadId: thread!.id });
+    if (res?.id) onSelect(res.id);
   };
 
   // 把连续的 tool / thought 收成一组，避免一屏都是工具气泡
@@ -822,8 +834,8 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
               {mission && (
                 <button className="link tiny" onClick={() => void openCarrier()} title="在航母舞台上看这个 Mission 的弹射起飞">看弹射</button>
               )}
-              {todo?.kind === "chat" && (
-                <button className="link tiny" onClick={() => void promoteChat()} title="把这段聊天变成 TODO 任务">转为任务</button>
+              {(todo?.kind === "chat" || (!thread.todoId && thread.chatOnly)) && (
+                <button className="link tiny" onClick={() => void promoteChat()} title="把这段聊天变成 TODO 任务（历史运行原样挂上去）">转为任务</button>
               )}
               {activeRuns.length > 1 ? (
                 <>
@@ -1192,7 +1204,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                     </select>
                   </>
                 )}
-                {!todo && !botThread && (
+                {!todo && !botThread && !pureChat && (
                   <button className={`chat-toggle ${chatOnly ? "on" : ""}`} title="不创建可见任务，只和 Agent 对话；可随时转为任务" onClick={() => { setChatOnly((v) => !v); setProposal(null); }}>只聊</button>
                 )}
                 {!botThread && (
@@ -1200,6 +1212,9 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                     {!todo && <button onClick={() => setPreviewAllocation((v) => !v)}>{previewAllocation ? "取消预览分派" : "发送前预览分派"}</button>}
                     <button onClick={() => setShowTool((v) => !v)}>{showTool ? "隐藏工具与思考" : "显示工具与思考"}</button>
                   </RowMenu>
+                )}
+                {!botThread && (
+                  <span className="tiny muted" aria-hidden>{sendLabel}</span>
                 )}
                 <button
                   className={`ds-send mode-${baseMode}`}

@@ -4,7 +4,7 @@
 
 > 起因：Chat 在两个状态间切换（未选任务 = 分派表单，选中任务 = 会话），但这不是产品设计，而是数据模型的副作用——消息只能挂在 `todo_id` 上，没有任务就没有地方放消息。
 > 本文记录改造后的模型、`send` 状态机、迁移方式与遗留边界。差距基线见 [`GAP-chat.md`](../product/GAP-chat.md)。
-> 纯聊天与探索执行的目标模型见 [`ARCH-workbench-execution.md`](ARCH-workbench-execution.md)（部分落地）：允许无 Todo 的探索 / 对话 Run；关视图不再取消运行。纯聊天隐藏 Todo 仍在（待 M3）。
+> 纯聊天与探索执行见 [`ARCH-workbench-execution.md`](ARCH-workbench-execution.md)（部分落地）：纯聊天已不再创建隐藏 `kind=chat` Todo，改用无 Todo 的对话 Run（`thread.chatOnly`，可转任务）；关视图不再取消运行。
 
 ---
 
