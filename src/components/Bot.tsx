@@ -644,6 +644,46 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   /** delta 先按帧攒着，一帧最多一次 setState */
   const deltaBufRef = useRef(new Map<string, { groupId?: string; name?: string; text: string }>());
   const deltaRafRef = useRef(0);
+  /**
+   * 网关常在 40ms 内把整段推完（实测 Ark 6 个 delta / 39ms），直接 setState 看起来
+   * 还是「整段出现」。这里做一层很短的打字机：只影响观感，不改落库内容。
+   */
+  const revealRef = useRef<{ one: { target: string; shown: number }; group: Map<string, { target: string; shown: number }> }>({ one: { target: "", shown: 0 }, group: new Map() });
+  const revealRafRef = useRef(0);
+  const revealLastRef = useRef(0);
+  const startReveal = () => {
+    if (revealRafRef.current) return;
+    revealLastRef.current = performance.now();
+    const step = (now: number) => {
+      revealRafRef.current = 0;
+      const dt = Math.max(8, Math.min(64, now - revealLastRef.current));
+      revealLastRef.current = now;
+      const st = revealRef.current;
+      const budget = Math.max(1, Math.round(dt * 0.15)); // ~150 字/秒
+      let more = false;
+      if (st.one.shown < st.one.target.length) {
+        const left = st.one.target.length - st.one.shown;
+        const take = left > 500 ? left : Math.max(budget, Math.ceil(left / 18));
+        st.one.shown = Math.min(st.one.target.length, st.one.shown + take);
+        setStreaming((prev) => (prev ? { ...prev, text: st.one.target.slice(0, st.one.shown), phase: "streaming" } : prev));
+        more = st.one.shown < st.one.target.length;
+      }
+      if (st.group.size) {
+        const texts = new Map<string, string>();
+        for (const [botId, item] of st.group) {
+          if (item.shown >= item.target.length) continue;
+          const left = item.target.length - item.shown;
+          const take = left > 500 ? left : Math.max(budget, Math.ceil(left / 18));
+          item.shown = Math.min(item.target.length, item.shown + take);
+          texts.set(botId, item.target.slice(0, item.shown));
+          if (item.shown < item.target.length) more = true;
+        }
+        if (texts.size) setGroupStream((prev) => prev.map((s) => (texts.has(s.botId) ? { ...s, text: texts.get(s.botId)! } : s)));
+      }
+      if (more) revealRafRef.current = requestAnimationFrame(step);
+    };
+    revealRafRef.current = requestAnimationFrame(step);
+  };
   /** 回合流自己滚：贴底时跟着新内容走，用户主动往上翻就不抢 */
   const streamRef = useRef<HTMLDivElement | null>(null);
   const stickRef = useRef(true);
@@ -696,23 +736,27 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
       if (!entries.length) return;
       const groupEntries = entries.filter(([, v]) => v.groupId);
       if (groupEntries.length) {
+        for (const [botId, v] of groupEntries) {
+          if (v.groupId !== groupIdRef.current) continue;
+          const item = revealRef.current.group.get(botId) || { target: "", shown: 0 };
+          item.target += v.text;
+          revealRef.current.group.set(botId, item);
+        }
         setGroupStream((prev) => {
           const next = prev.map((s) => ({ ...s }));
           for (const [botId, v] of groupEntries) {
             if (v.groupId !== groupIdRef.current) continue;
-            const idx = next.findIndex((s) => s.botId === botId);
-            if (idx < 0) next.push({ botId, name: v.name || "", text: v.text });
-            else next[idx] = { ...next[idx], text: next[idx].text + v.text };
+            if (!next.some((s) => s.botId === botId)) next.push({ botId, name: v.name || "", text: "" });
           }
           return next;
         });
+        startReveal();
       }
       const single = entries.find(([, v]) => !v.groupId);
       if (single) {
-        const [botId, v] = single;
-        setStreaming((prev) => (prev && prev.botId === botId
-          ? { ...prev, text: prev.text + v.text, phase: "streaming" }
-          : { botId, text: v.text, phase: "streaming" }));
+        const [, v] = single;
+        revealRef.current.one.target += v.text;
+        startReveal();
       }
     };
     const off = window.harness.onBotDelta((payload) => {
@@ -961,6 +1005,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
       setPendingOwner(text);
       setGroupStream([]);
       setGroupPhases({});
+      revealRef.current.group.clear();
       stickRef.current = true;
       setBusy("group");
       try {
@@ -975,6 +1020,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
         setPendingOwner(null);
         setGroupStream([]);
         setGroupPhases({});
+        revealRef.current.group.clear();
       }
       return;
     }
@@ -989,6 +1035,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     setError("");
     // 自己的话立刻上屏；bot 回合结束、落库后由 awaitingUserEcho 自动让位
     setPendingUser(text);
+    revealRef.current.one = { target: "", shown: 0 };
     setStreaming({ botId: sendTo, text: "", phase: "thinking" });
     stickRef.current = true;
     try {
@@ -1004,6 +1051,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     } finally {
       setStreaming(null);
       setPendingUser(null);
+      revealRef.current.one = { target: "", shown: 0 };
     }
   };
 
