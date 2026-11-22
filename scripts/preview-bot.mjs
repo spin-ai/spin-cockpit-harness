@@ -92,7 +92,8 @@ const MOCK = String.raw`
     missionPlans: [], delegations: [], plugins: [{ id: "notes", version: "1.0.0", path: "/x", enabled: true, builtin: true, manifest: { name: "笔记" }, permissions: [], installedAt: now, lastError: null, lastRunAt: null }],
     pluginCommands: [], todoLinks: [],
     bots: [bot, bot2], botTurns: turns, routines: [{ id: "rt1", botId: "b1", name: "早报", kind: "daily", atHour: 9 }],
-    botGroups: [], botGroupMessages: [],
+    botGroups: [{ id: "g1", name: "项目群", memberIds: ["b1", "b2"], replyMode: { kind: "mentions" }, createdAt: now - 6e5 }],
+    botGroupMessages: [],
     context: { selection: null, elements: [], notes: [] },
     summary: { activeRuns: 0, cost: 0, tokens: 0, failures: 0 },
     workspacePath: "/tmp/ws", projectPath: "/tmp/ws", projectId: "p", activeProjectId: "p",
@@ -125,13 +126,28 @@ const MOCK = String.raw`
       else if (type === "botChatNew") result = { id: "th-bot-b1-3", title: "新话题" };
       else if (type === "botChatFork") result = { thread: { id: "th-bot-b1-fork" }, copied: 2 };
       else if (type === "botChat") result = { ok: true, result: turns[0] };
+      else if (type === "botGroupSend") {
+        // 模拟群聊：先落自己的话，再逐个成员流式回（和主进程 botGroupSend 一样）
+        const say = (botId, delta) => window.__delta?.({ botId, groupId: payload.id, name: botId === "b1" ? "PM · 项目经理" : "DE-A · 前端", delta });
+        const owner = { id: "gm-owner", groupId: payload.id, seq: 0, author: "owner", botId: null, botName: "", text: payload.text, decision: "answered", createdAt: Date.now(), meta: null };
+        // 每次广播都换一个新对象（和主进程 IPC 一样），否则 React 按引用比较不会重渲染
+        const put = (msg) => { state.botGroupMessages = [...state.botGroupMessages, msg]; emit({ ...state }); };
+        // 回声故意晚 80ms：模拟 IPC 往返，好在同一个用例里看到「乐观气泡 → 真消息」两态
+        setTimeout(() => put(owner), 80);
+        await new Promise((r) => setTimeout(r, 220));
+        say("b1", "先说一半");
+        await new Promise((r) => setTimeout(r, 400));
+        say("b1", "，说完了。");
+        put({ id: "gm-b1", groupId: payload.id, seq: 1, author: "bot", botId: "b1", botName: "PM · 项目经理", text: "先说一半，说完了。", decision: "replied", createdAt: Date.now(), meta: null });
+        result = { messages: [] };
+      }
       return { ok: true, result };
     },
     docsPick: async () => [{ path: "/tmp/ws/README.md", name: "README.md", text: "# 标题\n正文", size: 20 }],
     docsRead: async () => [{ path: "/tmp/ws/README.md", name: "README.md", text: "# 标题\n正文" }],
     clipboardRead: async () => "",
     clipboardWrite: async () => {},
-    onBotDelta: () => () => {}, onBotTool: () => () => {}, onBotMessage: () => () => {},
+    onBotDelta: (cb) => { window.__delta = cb; return () => {}; }, onBotTool: () => () => {}, onBotMessage: () => () => {},
     onState: (cb) => { emit = cb; setTimeout(() => cb(state), 0); return () => {}; },
     onPluginChatDraft: () => () => {}, onPluginNotify: () => () => {}, onPluginOpenView: () => () => {},
     onTerminalAdopt: () => () => {}, onQuickCapture: () => () => {},
@@ -430,10 +446,41 @@ await run(`
   await new Promise((r) => setTimeout(r, 250));
   return true;`);
 check("出场规则：谁能找它（只有我 / 群里 @ 它 / 群里任何人）", (await all(".bot-seg button")).join("/").includes("只有我") && (await all(".bot-seg button")).join("/").includes("群里任何人"));
+
+// 群聊：发出去立刻能看到「自己那句 + 谁在回、回到哪了」，不等整段跑完
+await run(`
+  const item = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("项目群"));
+  if (!item) throw new Error("没有群聊入口");
+  item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 250));
+  return true;`);
+check("群聊：进去了（群聊 chip）", (await text(".ds-composer")).includes("群聊"));
+await run(`
+  const box = document.querySelector(".ds-composer textarea");
+  if (!box) throw new Error("没有输入框");
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+  setter.call(box, "群里问一句");
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 80));
+  const send = document.querySelector(".ds-send");
+  if (!send) throw new Error("没有发送按钮");
+  send.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  return true;`);
+await sleep(40);
+check("群聊：自己的话立刻出现（不等后端）", (await text(".ds-pending")).includes("群里问一句"));
+check("群聊：没人开口时有一行「等成员回…」", (await text(".ds-typing")).includes("等成员回"), JSON.stringify((await text(".bot-stream")).slice(-160)));
+await sleep(250);
+check("群聊：后端回声到了就不再画乐观气泡（不重复）", await ev(`!document.querySelector(".ds-pending")`));
+check("群聊：逐字流式可见（不等整段）", (await text(".ds-streaming")).includes("先说一半"));
+check("群聊：流式块上能「停止」", await ev(`!!document.querySelector(".ds-streaming .ds-action-text")`));
+await shot(path.join(OUT, "bot-group-stream.png"));
+await sleep(700);
+check("群聊：跑完后落库、临时态收干净", (await text(".bot-stream")).includes("先说一半，说完了。") && await ev(`!document.querySelector(".ds-pending") && !document.querySelector(".ds-streaming")`), JSON.stringify((await text(".bot-stream")).slice(-160)));
+
 check("没有控制台报错", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 
 
-console.log(`\n${fails ? `✗ ${fails} 项失败` : "全部通过"} · 截图：${OUT}/bot-chats.png、bot-chat.png、bot-chat-peek.png、bot-chat-dark.png`);
+console.log(`\n${fails ? `✗ ${fails} 项失败` : "全部通过"} · 截图：${OUT}/bot-chats.png、bot-chat.png、bot-chat-peek.png、bot-chat-dark.png、bot-group-stream.png`);
 ws.close();
 cleanup();
 process.exit(fails ? 1 : 0);

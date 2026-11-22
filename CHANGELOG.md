@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Fixed（群聊：发出去看不到实时响应）
+- **`botGroupSend` 补流式**：之前调 `bots().reply(bot, value, {})`，既没 `onDelta` 也没 `signal` —— UI 要等全部成员都跑完才 `load()`，所以群里发一句后界面一片空白。现在每个成员都带 `onDelta` / `onTool`（payload 加 `groupId` + `name`），并按 botId 分块推到前端
+- **自己的话立刻出现**：owner 那句先 `persist + broadcast`；前端再用乐观气泡（`ds-pending`）兑，回声到了就收，不会重复
+- **逐字流式 + 可停止**：每个成员一个 `AbortController`，`停止` 只掉正在说的那一个；被停的那条落成 `interrupted`（「已停止这次回复」），不再报成「没回」
+- **没有任何成员开口前**显示一行「等成员回…」；群聊空态从「跑一次决策」改成「@名字 / @everyone / 谁回」的真实提示（之前群聊会错用 1:1 的空态）
+- `scripts/preview-bot.mjs` 新增 7 项群聊断言（mock 的 `botGroupSend` 会模拟延迟回声 + 两段 delta），截图 `.preview/bot-group-stream.png`
+
 ### Changed（回合导航：细线代替序号）
 - **右侧回合轨不再写 `1 / 2 / 3…`**：改成 2px 短细线（12px 常态 / 20px 悬停与当前轮），当前轮更深（`--fg`）、其余 `--border-strong`；点仍可跳回合，序号只留在 `title` / `aria-label`
 - 新增滚动同步：正文滚动时用 `data-turn-id` 反推「现在读到第几轮」，切 bot / 换会话 / 新增回合都会重算

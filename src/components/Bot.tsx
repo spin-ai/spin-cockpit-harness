@@ -584,12 +584,19 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     kind: "daily" | "every" | "watch"; name: string; atHour: number; minutes: number; path: string;
   } | null>(null);
   const [streaming, setStreaming] = useState<{ botId: string; text: string } | null>(null);
+  /** 群聊：每个成员一条流式块（主进程逐个回，不能只存一条） */
+  const [groupStream, setGroupStream] = useState<{ botId: string; name: string; text: string }[]>([]);
+  /** 群聊：自己刚发出去的那句先就地显示，不等后端返回 */
+  const [pendingOwner, setPendingOwner] = useState<string | null>(null);
+  const groupIdRef = useRef("");
   /** 回合流自己滚：贴底时跟着新内容走，用户主动往上翻就不抢 */
   const streamRef = useRef<HTMLDivElement | null>(null);
   const stickRef = useRef(true);
 
   const turnCount = snapshot?.turns?.length ?? 0;
   const streamText = streaming?.text?.length ?? 0;
+  /** 群聊的流式长度：自己那句 + 每个成员的增量，用来触发贴底滚动 */
+  const groupStreamText = groupStream.reduce((n, s) => n + s.text.length, 0) + (pendingOwner?.length ?? 0);
   // 换 bot = 换一条时间线：重新贴底
   /** 「交给机器人」从别的页面指过来：跟着 initialBotId 切人，而不是只在首次挂载时生效 */
   useEffect(() => {
@@ -601,7 +608,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     const el = streamRef.current;
     if (!el || !stickRef.current) return;
     el.scrollTop = el.scrollHeight;
-  }, [turnCount, streamText, botId, openThreadId]);
+  }, [turnCount, streamText, groupStreamText, botId, openThreadId]);
 
   const load = useCallback(async () => {
     try {
@@ -619,10 +626,22 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
 
   useEffect(() => { void load(); }, [load]);
 
-  // 流式增量：主进程推 delta，这里只做追加；结束时用 botChat 的返回值落库并刷新
+  // 流式增量：主进程推 delta，这里只做追加；结束时用 botChat / botGroupSend 的返回值落库并刷新
   useEffect(() => {
     const off = window.harness.onBotDelta((payload) => {
       if (!payload?.delta) return;
+      if (payload.groupId) {
+        // 群聊：按 botId 分块追加，正在说话的人和已说过的人各占一块
+        if (payload.groupId !== groupIdRef.current) return;
+        setGroupStream((prev) => {
+          const idx = prev.findIndex((s) => s.botId === payload.botId);
+          if (idx < 0) return [...prev, { botId: payload.botId, name: payload.name || "", text: payload.delta }];
+          const next = [...prev];
+          next[idx] = { ...next[idx], text: next[idx].text + payload.delta };
+          return next;
+        });
+        return;
+      }
       setStreaming((prev) => (prev && prev.botId === payload.botId
         ? { botId: payload.botId, text: prev.text + payload.delta }
         : { botId: payload.botId, text: payload.delta }));
@@ -633,10 +652,14 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   const groups = state?.botGroups ?? [];
   const group = groups.find((g) => g.id === botId) ?? null;
   const isGroup = Boolean(group);
+  // 主进程推的 delta 在 effect 里订阅（只订一次），所以当前群用 ref 带进去
+  useEffect(() => { groupIdRef.current = group?.id || ""; }, [group?.id]);
   const groupMessages = useMemo(
     () => (state?.botGroupMessages ?? []).filter((m) => m.groupId === group?.id).sort((a, b) => a.seq - b.seq),
     [state?.botGroupMessages, group?.id],
   );
+  /** 自己那句：后端回声一到就用真的那条，别和乐观气泡同时出现 */
+  const awaitingOwnerEcho = Boolean(pendingOwner) && !groupMessages.some((m) => m.author === "owner" && m.text === pendingOwner);
   const bot = useMemo(() => (isGroup ? null : snapshot?.bots.find((b) => b.id === botId) ?? snapshot?.bots[0] ?? null), [snapshot, botId, isGroup]);
   const members = snapshot?.bots ?? [];
   const botOf = useCallback((id?: string) => members.find((b) => b.id === id) ?? null, [members]);
@@ -756,6 +779,10 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     if (isGroup && group) {
       setDraft("");
       setError("");
+      // 自己的话和「正在回」的占位立刻出来：群里每个成员都要想一会儿，不能整段空白
+      setPendingOwner(text);
+      setGroupStream([]);
+      stickRef.current = true;
       setBusy("group");
       try {
         const res = await act("botGroupSend", { id: group.id, text }) as { messages?: unknown[] } | null;
@@ -766,6 +793,8 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
         setDraft(text);
       } finally {
         setBusy("");
+        setPendingOwner(null);
+        setGroupStream([]);
       }
       return;
     }
@@ -1025,7 +1054,15 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   };
 
   const cancel = async () => {
-    try { await act("botCancel", { botId: bot?.id }); notify("已取消这次回复"); }
+    try {
+      if (isGroup && groupStream.length) {
+        await Promise.all(groupStream.map((s) => act("botCancel", { botId: s.botId })));
+        notify("已取消这次回复");
+        return;
+      }
+      await act("botCancel", { botId: bot?.id });
+      notify("已取消这次回复");
+    }
     catch (err) { notify(String((err as Error)?.message || err)); }
   };
 
@@ -1796,7 +1833,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
               syncActiveTurn();
             }}
           >
-            {!turns.length && (
+            {!isGroup && !turns.length && (
               <div className="bot-empty">
                 <EmptyState
                   compact
@@ -1805,6 +1842,16 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                   desc={openThreadId && openThreadId !== defaultThreadId
                     ? "在下面说一句：它只把这段对话记在这个话题里，默认会话仍然干净。"
                     : "点右上「跑一次决策」：有值得说的事件才会开口，没有就记一条沉默。"}
+                />
+              </div>
+            )}
+            {isGroup && !groupMessages.length && !pendingOwner && (
+              <div className="bot-empty">
+                <EmptyState
+                  compact
+                  mark="◇"
+                  title="群里还没人说话"
+                  desc="说一句试试：@名字 只叫那个人，@everyone 让全体回；不 @ 就按「谁回」的设定投递。"
                 />
               </div>
             )}
@@ -1833,6 +1880,29 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                 </div>
               );
             })}
+            {/* 群聊：自己刚发的那句 + 每个正在回的成员一块（逐字长出来） */}
+            {isGroup && awaitingOwnerEcho && (
+              <div className="ds-user ds-pending">
+                <div className="ds-bubble">{pendingOwner}</div>
+                <div className="ds-actions ds-actions-user"><span className="ds-time">发送中…</span></div>
+              </div>
+            )}
+            {isGroup && groupStream.map((s) => (
+              <div className="ds-assistant ds-streaming" key={`gs-${s.botId}`} aria-live="polite">
+                <div className="ds-bot-attr">
+                  <b>{s.name || botOf(s.botId)?.name || "机器人"}</b>
+                  <span className="ds-tag">回你</span>
+                  <button className="ds-action-text" onClick={() => void cancel()}>停止</button>
+                </div>
+                <div className="ds-assistant-body">{s.text || "\u00a0"}<span className="ds-caret" /></div>
+              </div>
+            ))}
+            {isGroup && awaitingOwnerEcho && !groupStream.length && (
+              <div className="ds-typing" aria-live="polite">
+                <span className="ds-caret" />
+                <span>等成员回…</span>
+              </div>
+            )}
             {!isGroup && rows.map((row) => {
               if (row.kind === "day") {
                 return (
@@ -2107,7 +2177,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                 <span className="ds-chip static">{isGroup ? "群聊" : bot?.role === "supervisor" ? "主管" : "员工"}</span>
               </div>
               <div className="ds-composer-trailing">
-                {streaming
+                {streaming || groupStream.length
                   ? <button className="ds-action-text" onClick={() => void cancel()}>停止</button>
                   : <button className="ds-send" disabled={!draft.trim() && !attachments.length} onClick={() => void send()} title="发送" aria-label="发送"><SendIcon size={16} /></button>}
               </div>

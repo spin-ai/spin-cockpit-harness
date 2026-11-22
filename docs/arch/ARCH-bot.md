@@ -68,6 +68,7 @@
 | **自动化面板**：一行一条（名称 / 下次·上次 / 启用 / 到点就跑·等这一轮 / 删除），新建仍是每天 / 每隔 / 变化才跑 | `Bot.tsx` §routines |
 | **工具与通道面板**：只读工具（4 个）、通道（local / group / feishu 未接入 / mobile 不适用）、已装插件 —— 只陈述「它能碰到什么」，写操作仍走审批 | `Bot.tsx` §connectors |
 | **出场规则 · 谁能找它**：`policy.whoCanAsk = owner / group / anyone`；`owner` 的 bot 不进群聊（`botGroupSend` 过滤），只在 1:1 回应 | `DEFAULT_POLICY` / `botGroupSend` |
+| **群聊实时感**：`botGroupSend` 先落并广播 owner 那句，再逐个成员 `reply`，每个成员都带 `onDelta` / `onTool`（payload 带 `groupId` + `name`）并按 botId 分块流式渲染；成员之间各自一个 `AbortController`，`停止` 只掉正在说的那个；回声到达后乐观气泡让位给真消息 | `botGroupSend` / `sendDelta` / `groupStream` |
 | **头像**：人格卡里选 emoji（不存图片），带底色档位 | `Bot.tsx` §persona |
 | **会话正文**：agent 回复走 `RichText`（与 Chat 窗口同一套 Markdown / 代码卡 / 列表），用户消息保留纯文本气泡；视觉规范见 `ARCH-chat-ui` | `RichText` / `src/components/TaskChat.tsx` |
 | **回合可恢复（bot 侧）**：被动回复先落一条 `decision: "streaming"`，增量每 800ms 节流刷新；成功后同一条改成 `replied`，取消 / 报错则删掉；**应用被杀**留下的 `streaming` 在下次 `ensureSeed()` 收成 `interrupted` 并保留半截正文 | `reply()` / `ensureSeed()` / Bot 页「被打断」行 |

@@ -4513,6 +4513,10 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
 .bot-main .bot-ask{margin:0 auto;max-width:var(--ds-max);width:100%;border:1px solid var(--border);border-radius:14px;padding:8px 10px;background:var(--page-canvas)}
 .bot-main .bot-streaming .ds-assistant-body{color:var(--fg-2)}
 .ds-caret{display:inline-block;width:2px;height:16px;margin-left:2px;vertical-align:-2px;background:var(--muted);animation:ds-caret 1s steps(2,end) infinite}
+/* 群聊：还没人开口时的一行等待，和自己的「发送中…」气泡 */
+.ds-typing{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--faint);padding:2px 2px 0}
+.ds-typing .ds-caret{height:12px;margin:0}
+.ds-pending .ds-bubble{opacity:.72}
 @keyframes ds-caret{50%{opacity:0}}
 .bot-main .bot-main{}
 

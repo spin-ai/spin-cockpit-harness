@@ -2901,6 +2901,14 @@ function botWatchProbe(watch) {
 let botStore = null;
 let botTimer = null;
 const botAborts = new Map();
+/** 流式增量 / 工具事件：group 里带 groupId + name，前端才知道是哪条群消息在长 */
+const sendDelta = (base, delta) => {
+  if (!delta) return;
+  if (win && !win.isDestroyed()) win.webContents.send("harness:bot-delta", { ...base, delta });
+};
+const sendTool = (base, tool) => {
+  if (win && !win.isDestroyed()) win.webContents.send("harness:bot-tool", { ...base, ...tool });
+};
 
 /**
  * 机器人会话的只读工具执行器。
@@ -3934,16 +3942,29 @@ const actions = {
       return msg;
     };
     push("owner", null, value);
+    // 先把「你说的这句」落盘 + 广播：群里多个 bot 可能各想十几秒，不能等全跑完才出现
+    store.persist(); broadcast();
     const out = [];
     for (const bot of targets) {
+      // 每个成员各自一个 abort：客户端「停止」能掐正在说话的那一个
+      const controller = new AbortController();
+      botAborts.set(bot.id, controller);
       try {
-        const turn = await bots().reply(bot, value, {});
+        const turn = await bots().reply(bot, value, {
+          signal: controller.signal,
+          onDelta: (delta) => sendDelta({ botId: bot.id, groupId: gid, name: bot.name }, delta),
+          onTool: (tool) => sendTool({ botId: bot.id, groupId: gid, name: bot.name }, tool),
+        });
         out.push(push("bot", bot, turn?.reply || "", turn?.decision || "answered", {
           turnId: turn?.id || null, runId: turn?.runId || null, cost: turn?.cost || null,
         }));
       } catch (err) {
-        out.push(push("bot", bot, `（没回：${String(err?.message || err)}）`, "blocked"));
+        if (controller.signal.aborted) out.push(push("bot", bot, "已停止这次回复", "interrupted"));
+        else out.push(push("bot", bot, `（没回：${String(err?.message || err)}）`, "blocked"));
+      } finally {
+        botAborts.delete(bot.id);
       }
+      store.persist(); broadcast();
     }
     store.persist(); broadcast();
     return { messages: out };
@@ -3957,8 +3978,8 @@ const actions = {
       return await bots().reply(bot, text, {
         threadId: String(threadId || ""),
         signal: controller.signal,
-        onDelta: (delta) => { if (win && !win.isDestroyed()) win.webContents.send("harness:bot-delta", { botId: bot.id, delta }); },
-        onTool: (tool) => { if (win && !win.isDestroyed()) win.webContents.send("harness:bot-tool", { botId: bot.id, ...tool }); },
+        onDelta: (delta) => sendDelta({ botId: bot.id }, delta),
+        onTool: (tool) => sendTool({ botId: bot.id }, tool),
       });
     } finally {
       botAborts.delete(bot.id);
