@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { confirmDialog } from "./ConfirmHost";
 import type { Project, ProjectStatus, State } from "../types";
 import { ERROR_CLASS, fmtMs, missingKeyInfo, p50, pct, timeAgo, tokens } from "../ui";
 import { PageHeader } from "./PageHeader";
@@ -71,7 +72,7 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask }
     notify("项目已重命名");
   };
   const remove = async (p: Project) => {
-    if (!window.confirm(`移除项目“${p.name}”？不会删除磁盘上的文件。`)) return;
+    if (!(await confirmDialog(`移除项目“${p.name}”？不会删除磁盘上的文件。`))) return;
     const res = await act("removeProject", { id: p.id });
     if (res) notify("项目已移除");
   };
@@ -79,13 +80,13 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask }
   const actionsFor = (p: Project, isActive: boolean) => (
     editing === p.id ? (
       <>
-        <button className="btn tiny-btn primary" onClick={() => void saveRename(p.id)}>保存</button>
-        <button className="btn tiny-btn" onClick={() => setEditing(null)}>取消</button>
+        <button className="btn tiny primary" onClick={() => void saveRename(p.id)}>保存</button>
+        <button className="btn tiny" onClick={() => setEditing(null)}>取消</button>
       </>
     ) : (
       <>
-        <button className="btn tiny-btn primary" disabled={isActive} onClick={() => onSwitch(p.id)}>{isActive ? "使用中" : "打开"}</button>
-        <button className="btn tiny-btn" onClick={() => onNewTask(p.id)} title="在当前项目中新建任务">＋ 任务</button>
+        <button className="btn tiny primary" disabled={isActive} onClick={() => onSwitch(p.id)}>{isActive ? "使用中" : "打开"}</button>
+        <button className="btn tiny" onClick={() => onNewTask(p.id)} title="在当前项目中新建任务">＋ 任务</button>
         <RowMenu title="更多项目操作">
           <button onClick={() => act("revealProject", { id: p.id })}>在 Finder 中显示</button>
           <button onClick={() => setSceneProject(p)}>执行配置</button>
@@ -113,8 +114,8 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask }
             value={layout}
             onChange={(id) => setLayout(id as "cards" | "list")}
             items={[
-              { id: "cards", label: (<><TableIcon size={12} /> {t("action.cards")}</>), title: "卡片视图" },
-              { id: "list", label: (<><ListIcon size={12} /> {t("action.list")}</>), title: "列表视图" },
+              { id: "cards", label: (<><TableIcon size={14} /> {t("action.cards")}</>), title: "卡片视图" },
+              { id: "list", label: (<><ListIcon size={14} /> {t("action.list")}</>), title: "列表视图" },
             ]}
           />
           <button className="btn primary" onClick={onAdd}>＋ {t("action.addProject")}</button>
@@ -329,16 +330,16 @@ export function Hosts({ state, act, notify, now, embedded = false }: { state: St
     notify(res?.ok ? "已添加" : `已添加，探测失败：${res?.error || "未知原因"}`);
   };
   const remove = async (id: string, name: string) => {
-    if (!window.confirm(`移除主机「${name}」？已绑定的 Agent 需要先移回本机。`)) return;
+    if (!(await confirmDialog(`移除主机「${name}」？已绑定的 Agent 需要先移回本机。`))) return;
     const ok = await act("removeHost", { id });
     if (ok) notify("主机已移除");
   };
 
   const actionsFor = (h: State["hosts"][number], isProbing: boolean) => (
     <>
-      <button className="btn tiny-btn" disabled={isProbing} onClick={() => void probe(h.id)}>{isProbing ? "探测中…" : "重新探测"}</button>
-      {h.kind !== "local" && <button className="btn tiny-btn" onClick={() => openEdit(h)}>编辑</button>}
-      {h.kind !== "local" && <button className="btn tiny-btn danger" onClick={() => void remove(h.id, h.name)}>移除</button>}
+      <button className="btn tiny" disabled={isProbing} onClick={() => void probe(h.id)}>{isProbing ? "探测中…" : "重新探测"}</button>
+      {h.kind !== "local" && <button className="btn tiny" onClick={() => openEdit(h)}>编辑</button>}
+      {h.kind !== "local" && <button className="btn tiny danger" onClick={() => void remove(h.id, h.name)}>移除</button>}
       <RowMenu title="更多主机操作">
         <label className="row-menu-label">交给机器人
           <select
@@ -370,8 +371,8 @@ export function Hosts({ state, act, notify, now, embedded = false }: { state: St
         value={layout}
         onChange={(id) => setLayout(id as "cards" | "list")}
         items={[
-          { id: "cards", label: (<><TableIcon size={12} /> {t("action.cards")}</>), title: "卡片视图" },
-          { id: "list", label: (<><ListIcon size={12} /> {t("action.list")}</>), title: "列表视图" },
+          { id: "cards", label: (<><TableIcon size={14} /> {t("action.cards")}</>), title: "卡片视图" },
+          { id: "list", label: (<><ListIcon size={14} /> {t("action.list")}</>), title: "列表视图" },
         ]}
       />
       <button className="btn" disabled={probingAll} onClick={() => void probeAll()}>{probingAll ? "探测中…" : t("action.probeAll")}</button>
@@ -494,10 +495,10 @@ export function Hosts({ state, act, notify, now, embedded = false }: { state: St
                         className="project-status-select"
                         value={a.hostId}
                         title="切换 Agent 运行主机（下一次运行生效）"
-                        onChange={(e) => {
+                        onChange={async (e) => {
                           const hostId = e.target.value;
                           const targetName = state.hosts.find((x) => x.id === hostId)?.name || hostId;
-                          if (hostId !== a.hostId && !window.confirm(`把「${a.name}」移到 ${targetName}？下一次运行生效。`)) {
+                          if (hostId !== a.hostId && !(await confirmDialog(`把「${a.name}」移到 ${targetName}？下一次运行生效。`))) {
                             e.currentTarget.value = a.hostId;
                             return;
                           }
@@ -726,7 +727,7 @@ export function Stats({ state, onOpen, embedded = false }: { state: State; onOpe
           <button key={r.id} className={`seg-btn ${range === r.id ? "on" : ""}`} onClick={() => setRange(r.id)}>{r.label}</button>
         ))}
       </div>
-      <button className="btn tiny-btn" onClick={exportCsv}>{t("action.exportCsv")}</button>
+      <button className="btn tiny" onClick={exportCsv}>{t("action.exportCsv")}</button>
     </div>
   );
 
@@ -830,7 +831,7 @@ export function Stats({ state, onOpen, embedded = false }: { state: State; onOpe
               );
             })}
           </div>
-          {errFilter && <button className="btn tiny-btn error-clear" onClick={() => setErrFilter(null)}>清除筛选</button>}
+          {errFilter && <button className="btn tiny error-clear" onClick={() => setErrFilter(null)}>清除筛选</button>}
           {failed === 0 && <div className="tiny muted stats-error-empty">没有失败记录</div>}
         </section>
       </div>

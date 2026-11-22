@@ -12,7 +12,7 @@ import { redactSecrets } from "../redact.mjs";
 import { suppressionReason } from "./guard.mjs";
 import { notifyDecision } from "./notify.mjs";
 import { WAIT_LIMIT_MS, describeRoutine, nextRunAt, normalizeRoutine, routineDue } from "./routine.mjs";
-import { BOT_TOOL_META, botToolsFor, parseToolArgs, toolNamesFor } from "./tools.mjs";
+import { BOT_TOOL_CATALOG, BOT_TOOL_META, botToolsFor, parseToolArgs, toolNamesFor } from "./tools.mjs";
 import { skillsFor } from "./skills.mjs";
 import { isFreshEvent } from "./github.mjs";
 import { normalizeToolStatus, toolFamily } from "../tool-format.mjs";
@@ -66,30 +66,87 @@ const clip = (s, n) => {
 };
 
 /**
- * 首次启动时的内置机器人（可改名/删除，和 Notes 一样是 first-party 默认值）：
- * 主管小Z + 员工小A/小B/小C。员工先不绑执行体，绑上 Agent 之后才能起 run。
+ * 内置演示机器人已下线（2026-11-22）：新装不再预置任何 bot，机器人页从空态开始。
+ * 老库里残留的 4 个种子 bot 在 `ensureSeed()` 里一次性清掉（连同回合 / 日程 / 改动历史 / 会话 / 群成员），
+ * 只认这四个固定 id，人自己建的 bot 一律不动。
  */
-export function seedBots() {
-  const now = Date.now();
-  const base = (over) => ({
-    id: over.id, name: over.name, avatar: over.avatar, avatarClass: over.avatarClass,
-    role: over.role, capability: over.capability,
-    persona: { ...DEFAULT_PERSONA, ...(over.persona || {}) },
-    channels: ["local"], intro: Boolean(over.intro),
-    policy: { ...DEFAULT_POLICY, notify: { ...DEFAULT_POLICY.notify }, standing: { ...DEFAULT_POLICY.standing } },
-    budget: { ...DEFAULT_BUDGET },
-    status: "active", mutedUntil: 0, executorAgentId: null, skills: [], projectId: null, hostId: null, team: "", plan: null, createdAt: now, updatedAt: now,
-  });
-  return [
-    base({ id: "bot-xiaoz", name: "小Z", avatar: "Z", avatarClass: "d", role: "supervisor", capability: "dispatch", intro: true,
-      persona: { mission: "拆解目标、分派任务、汇总结果", tone: "先给结论，再给依据" } }),
-    base({ id: "bot-xiaoa", name: "小A", avatar: "A", avatarClass: "a", role: "worker", capability: "read",
-      persona: { mission: "负责具体执行；被分派到哪条任务就汇报哪条", tone: "简短" } }),
-    base({ id: "bot-xiaob", name: "小B", avatar: "B", avatarClass: "b", role: "worker", capability: "read",
-      persona: { mission: "负责具体执行；被分派到哪条任务就汇报哪条", tone: "简短" } }),
-    base({ id: "bot-xiaoc", name: "小C", avatar: "C", avatarClass: "c", role: "worker", capability: "read",
-      persona: { mission: "负责具体执行；被分派到哪条任务就汇报哪条", tone: "简短" } }),
-  ];
+export const LEGACY_SEED_BOT_IDS = ["bot-xiaoz", "bot-xiaoa", "bot-xiaob", "bot-xiaoc"];
+
+/** 草稿 / 阅读位置的键：`<botId>:<threadId>`、`group:<groupId>`、或老数据里直接是 botId */
+function uiKeyBelongs(key, { botIds = new Set(), threadIds = new Set(), groupIds = new Set() } = {}) {
+  const k = String(key || "");
+  if (k.startsWith("group:") && groupIds.has(k.slice("group:".length))) return true;
+  for (const id of botIds) if (k === id || k.startsWith(`${id}:`) || k.includes(`:${id}:`)) return true;
+  for (const t of threadIds) if (k === t || k.endsWith(`:${t}`)) return true;
+  return false;
+}
+
+/**
+ * 一个（或多个）bot 的全部附属数据：删除 / 撤销删除 / 清种子共用这一份口径。
+ * 群聊只在「删完这个成员就没别人了」时一起收；否则只摘成员，群本身留着。
+ */
+export function collectBotData(state, ids) {
+  const threadIds = new Set((state.threads || []).filter((t) => t.kind === "bot" && ids.has(t.botId)).map((t) => t.id));
+  const groups = [];
+  const emptiedGroups = [];
+  for (const g of state.botGroups || []) {
+    const mine = (g.memberIds || []).filter((id) => ids.has(id));
+    if (!mine.length) continue;
+    groups.push({ id: g.id, memberIds: mine });
+    const left = (g.memberIds || []).filter((id) => !ids.has(id));
+    if (!left.length) {
+      emptiedGroups.push({
+        group: { ...g, memberIds: (g.memberIds || []).slice() },
+        messages: (state.botGroupMessages || []).filter((m) => m.groupId === g.id),
+      });
+    }
+  }
+  const groupIds = new Set(emptiedGroups.map((x) => x.group.id));
+  const keys = { botIds: ids, threadIds, groupIds };
+  return {
+    bots: (state.bots || []).filter((b) => ids.has(b.id)),
+    turns: (state.botTurns || []).filter((t) => ids.has(t.botId)),
+    routines: (state.routines || []).filter((r) => ids.has(r.botId)),
+    revisions: (state.botRevisions || []).filter((r) => ids.has(r.botId)),
+    events: (state.botEvents || []).filter((e) => ids.has(e.botId)),
+    threads: (state.threads || []).filter((t) => threadIds.has(t.id)),
+    messages: (state.messages || []).filter((m) => threadIds.has(m.threadId)),
+    groups,
+    emptiedGroups,
+    groupMessages: (state.botGroupMessages || []).filter((m) => ids.has(m.botId) || groupIds.has(m.groupId)),
+    ui: Object.fromEntries(Object.entries(state.botUi || {}).filter(([k]) => uiKeyBelongs(k, keys))),
+  };
+}
+
+/** 把 collectBotData() 收上来的东西从 state 里摘掉（不改 data，方便撤销） */
+export function dropBotData(state, ids, data = collectBotData(state, ids)) {
+  state.bots = (state.bots || []).filter((b) => !ids.has(b.id));
+  state.botTurns = (state.botTurns || []).filter((t) => !ids.has(t.botId));
+  state.routines = (state.routines || []).filter((r) => !ids.has(r.botId));
+  state.botRevisions = (state.botRevisions || []).filter((r) => !ids.has(r.botId));
+  state.botEvents = (state.botEvents || []).filter((e) => !ids.has(e.botId));
+  const threadIds = new Set(data.threads.map((t) => t.id));
+  state.threads = (state.threads || []).filter((t) => !threadIds.has(t.id));
+  state.messages = (state.messages || []).filter((m) => !threadIds.has(m.threadId));
+  const deadGroups = new Set(data.emptiedGroups.map((x) => x.group.id));
+  for (const g of state.botGroups || []) {
+    if (Array.isArray(g.memberIds)) g.memberIds = g.memberIds.filter((id) => !ids.has(id));
+  }
+  state.botGroups = (state.botGroups || []).filter((g) => !deadGroups.has(g.id));
+  state.botGroupMessages = (state.botGroupMessages || []).filter((m) => !ids.has(m.botId) && !deadGroups.has(m.groupId));
+  if (state.botUi) {
+    const keys = { botIds: ids, threadIds, groupIds: deadGroups };
+    for (const k of Object.keys(state.botUi)) if (uiKeyBelongs(k, keys)) delete state.botUi[k];
+  }
+  return data;
+}
+
+/** 清掉老库里的种子 bot；返回清了几条（0 = 本来就没有） */
+export function purgeLegacySeedBots(state) {
+  const ids = new Set((state.bots || []).filter((b) => LEGACY_SEED_BOT_IDS.includes(b.id)).map((b) => b.id));
+  if (!ids.size) return 0;
+  dropBotData(state, ids);
+  return ids.size;
 }
 
 /* ------------------------------------------------------------------ 纯函数 */
@@ -289,8 +346,8 @@ function personaLines(bot, { proactive, recentProactive, inGroup = false }) {
     recent.length ? `你最近主动说过（别自相矛盾、也别重复）：\n${recent.map((t) => `- ${clip(t, 120)}`).join("\n")}` : "",
     `能力档位：${bot.capability === "dispatch" ? "可以起 Agent 任务（先建 todo），但必须先问人、由人确认起 run" : bot.capability === "work" ? "可以建任务、并跟踪执行体" : "只读：能读记忆、资料、工作区和运行状态，不能建任务"}`,
     proactive ? "" : (canCreate
-      ? `可直接调的工具：${toolNames.join(" / ")}。workspace_* / git_* / run_log 只读；memory_write / memory_forget 只写你自己的记忆；task_create 会真的建一条 todo 并指派给 worker，默认只建任务、不起 run，只有用户明确说「开跑 / 开始 / 直接干」时才可传 start=true。${bot.policy?.standing?.enabled ? "无人值守已开：对已建好、属于你绑定项目的任务，可以 run_start 直接起 run（每小时有上限）。" : "无人值守没开：不能自己起 run。"} 不能改文件、不能跑任意命令。`
-      : `可直接调的工具：${toolNames.join(" / ")}。全部只读（workspace_* / git_* / run_log / memory_search / knowledge_search / todo_list / run_status）+ 只写你自己的记忆（memory_write / memory_forget）。不能建任务、不能改文件、不能跑命令。`),
+      ? `可直接调的工具：${toolNames.join(" / ")}。workspace_* / git_* / run_log / todo_get / bot_list 只读；memory_write / memory_forget 只写你自己的记忆；task_create 会真的建一条 todo 并指派给 worker，传 bot 就派给另一个机器人（用它绑定的执行体，任务归它）；todo_update 能改已有任务的状态 / 负责人 / 验收 / 备注，但完成与取消只能人来做；默认只建任务、不起 run，只有用户明确说「开跑 / 开始 / 直接干」时才可传 start=true。${bot.policy?.standing?.enabled ? "无人值守已开：对已建好、属于你绑定项目的任务，可以 run_start 直接起 run（每小时有上限）。" : "无人值守没开：不能自己起 run。"} 不能改文件、不能跑任意命令。`
+      : `可直接调的工具：${toolNames.join(" / ")}。全部只读（workspace_* / git_* / run_log / memory_search / knowledge_search / todo_list / todo_get / bot_list / run_status）+ 只写你自己的记忆（memory_write / memory_forget）。不能建任务、不能改已建任务、不能改文件、不能跑命令。`),
     proactive
       ? "现在没有人在跟你对话：你只负责判断这一刻值不值得说一句，不调用工具。"
       : "看工作区：先用 workspace_list 或 workspace_grep 确认路径，再 workspace_read；引用事实时给 path:line。git_status / git_log / git_diff / run_log 都是只读，路径越界会被拒绝。",
@@ -405,10 +462,12 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       healed = true;
     }
     if (healed) store.persist();
-    if (stateOf().bots.length) return false;
-    stateOf().bots.push(...seedBots());
-    store.persist();
-    return true;
+    // 内置演示 bot 下线：老库里残留的一次性清掉（新装本来就是空的，直接进空态）
+    if (purgeLegacySeedBots(stateOf())) {
+      store.persist();
+      return true;
+    }
+    return false;
   }
 
   const nextTurnId = () => `bt${now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -754,6 +813,8 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       plan: existing?.plan || null,
       status: patch.status === "paused" ? "paused" : (patch.status || existing?.status || "active"),
       mutedUntil: Number(patch.mutedUntil ?? existing?.mutedUntil ?? 0),
+      // 新建的空白 bot（没写职责）第一轮先问用途；从模板建的已经有 mission，不再问一遍
+      intro: existing ? Boolean(existing.intro) : !patch.persona?.mission,
       createdAt: existing?.createdAt || now(),
       updatedAt: now(),
     };
@@ -818,19 +879,81 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     return bot;
   }
 
+  /** 上一次删除的快照：会话内可撤销（不落库，重启即失效） */
+  let lastRemoval = null;
+
   function remove(id) {
-    stateOf().bots = bots().filter((b) => b.id !== String(id));
-    stateOf().botTurns = turnsOf().filter((t) => t.botId !== String(id));
-    stateOf().routines = routinesOf().filter((r) => r.botId !== String(id));
-    stateOf().botRevisions = revisionsOf().filter((r) => r.botId !== String(id));
+    const ids = new Set([String(id || "")]);
+    if (!ids.size || !bots().some((b) => ids.has(b.id))) return { ok: false, error: "机器人不存在" };
+    const data = collectBotData(stateOf(), ids);
+    dropBotData(stateOf(), ids, data);
+    lastRemoval = { ids, data };
     store.persist();
     onChange();
+    return { ok: true, name: data.bots[0]?.name || "", canUndo: true };
+  }
+
+  /** 撤销上一次删除：把 bot 连同回合 / 会话 / 日程 / 群成员一起放回去（id 已被占用就跳过那一条） */
+  function undoRemove() {
+    if (!lastRemoval) return { ok: false, error: "没有可撤销的删除" };
+    const { data } = lastRemoval;
+    const pushNew = (list, rows) => {
+      const have = new Set((list || []).map((r) => r.id));
+      for (const row of rows || []) if (!have.has(row.id)) list.push(row);
+    };
+    stateOf().bots = stateOf().bots || [];
+    pushNew(stateOf().bots, data.bots);
+    stateOf().botTurns = stateOf().botTurns || [];
+    pushNew(stateOf().botTurns, data.turns);
+    stateOf().routines = stateOf().routines || [];
+    pushNew(stateOf().routines, data.routines);
+    stateOf().botRevisions = stateOf().botRevisions || [];
+    pushNew(stateOf().botRevisions, data.revisions);
+    stateOf().botEvents = stateOf().botEvents || [];
+    pushNew(stateOf().botEvents, data.events);
+    stateOf().threads = stateOf().threads || [];
+    pushNew(stateOf().threads, data.threads);
+    stateOf().messages = stateOf().messages || [];
+    pushNew(stateOf().messages, data.messages);
+    stateOf().botGroupMessages = stateOf().botGroupMessages || [];
+    pushNew(stateOf().botGroupMessages, data.groupMessages);
+    stateOf().botGroups = stateOf().botGroups || [];
+    for (const { group, messages } of data.emptiedGroups) {
+      if (!stateOf().botGroups.some((g) => g.id === group.id)) stateOf().botGroups.push(group);
+      pushNew(stateOf().botGroupMessages, messages);
+    }
+    for (const { id, memberIds } of data.groups) {
+      const group = stateOf().botGroups.find((g) => g.id === id);
+      if (!group) continue;
+      group.memberIds = [...new Set([...(group.memberIds || []), ...memberIds])];
+    }
+    stateOf().botUi = { ...data.ui, ...(stateOf().botUi || {}) };
+    lastRemoval = null;
+    store.persist();
+    onChange();
+    return { ok: true, name: data.bots[0]?.name || "" };
+  }
+
+  /** 清空一条 bot 会话的消息（默认会话也允许；回合记录一起清） */
+  function clearChat({ threadId } = {}) {
+    const id = String(threadId || "");
+    const thread = threadsOf().find((t) => t.id === id && t.kind === "bot");
+    if (!thread) throw new Error("会话不存在");
+    const before = (stateOf().messages || []).length;
+    stateOf().messages = (stateOf().messages || []).filter((m) => m.threadId !== id);
+    stateOf().botTurns = turnsOf().filter((t) => t.threadId !== id);
+    thread.digest = "";
+    thread.updatedAt = now();
+    store.persist();
+    onChange();
+    return { ok: true, removed: before - (stateOf().messages || []).length };
   }
 
   function snapshot(limit = 80) {
     const turns = turnsOf();
     return {
       bots: bots(),
+      toolCatalog: BOT_TOOL_CATALOG,
       agents: (stateOf().agents || []).map((a) => ({ id: a.id, name: a.name, alias: a.alias || "", cli: a.cli, role: a.role || "worker", hostId: a.hostId || null })),
       turns: turns.slice(-limit),
       routines: listRoutines(),
@@ -1444,7 +1567,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
   }
 
   return {
-    ensureSeed, list: bots, snapshot, turns: turnsOf, save, setStatus, remove, tick, reply,
+    ensureSeed, list: bots, snapshot, turns: turnsOf, save, setStatus, remove, undoRemove, tick, reply,
     report, watch, unwatch,
     listRoutines, saveRoutine, removeRoutine, routineStatus,
     revisions, restore, revisionDiff,
@@ -1452,7 +1575,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     settleAsks,
     threadOf: (botId) => threadOf(String(botId || "")),
     chats: (botId) => chatsOf(String(botId || "")),
-    newChat, renameChat, removeChat, searchChats, forkChat,
+    newChat, renameChat, removeChat, clearChat, searchChats, forkChat,
     ensureBotThread, migrateThreads,
   };
 }

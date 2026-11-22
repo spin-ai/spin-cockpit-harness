@@ -39,6 +39,17 @@ export const bot = (patch = {}) => ({
   ...patch,
 });
 
+/**
+ * 用例用的真 bot（进 state）：内置种子 bot 已下线，要 bot 就自己建一个。
+ * `intro` 默认关——否则第一轮会先问用途，用例等不到预期的开口。
+ */
+export const makeBot = (bots, patch = {}) => {
+  const { intro = false, ...rest } = patch;
+  const saved = bots.save({ name: "用例 bot", capability: "read", ...rest });
+  saved.intro = intro;
+  return saved;
+};
+
 /** 收尾：打印总数，给 npm script 一个非 0 退出码 */
 export const report = (label = "Bot") => {
   console.log(`\n${label}: ${passed} 项 · ${failed ? `failed（${failed}）` : "passed"}`);

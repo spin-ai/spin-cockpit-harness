@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { confirmDialog } from "./ConfirmHost";
 import type { ElementContext } from "../types";
 import { CameraIcon, ChevronRightIcon, CodeIcon, CopyIcon, DevtoolsIcon, ExternalIcon, ListIcon, MinusIcon, PlusIcon, RecordIcon, RefreshIcon, RevealIcon, SearchIcon, XIcon } from "./Icons";
 import { FileVisual, extOf, IMAGE_EXT, VIDEO_EXT, AUDIO_EXT, DOC_EXT } from "./FileVisual";
@@ -626,8 +627,8 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   };
 
   /** 离开可视化：有未保存修改先确认，然后回到渲染并刷新 */
-  const leaveVisualTo = (next: "render" | "source") => {
-    if (visualDirty && !window.confirm("可视化编辑有未保存修改，切走会丢弃。继续？")) return;
+  const leaveVisualTo = async (next: "render" | "source") => {
+    if (visualDirty && !(await confirmDialog("可视化编辑有未保存修改，切走会丢弃。继续？"))) return;
     setVisualDirty(false);
     setFileMode(next);
     if (isHtml) refresh();
@@ -746,17 +747,17 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
           {!isFile && (
             <>
               <button className="preview-icon" title="后退" disabled={!canBack} onClick={() => go("goBack")}>
-                <ChevronRightIcon size={13} className="rot-180" />
+                <ChevronRightIcon size={14} className="rot-180" />
               </button>
               <button className="preview-icon" title="前进" disabled={!canForward} onClick={() => go("goForward")}>
-                <ChevronRightIcon size={13} />
+                <ChevronRightIcon size={14} />
               </button>
               <button
                 className="preview-icon"
                 title={loading ? "停止加载" : "刷新（按住 Shift 硬刷新）"}
                 onClick={(e) => (loading ? stop() : reload(e.shiftKey))}
               >
-                {loading ? <XIcon size={13} /> : <RefreshIcon size={13} />}
+                {loading ? <XIcon size={14} /> : <RefreshIcon size={14} />}
               </button>
             </>
           )}
@@ -771,7 +772,7 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
             onKeyDown={(e) => { if (!isFile && e.key === "Enter") { e.preventDefault(); open(); } }}
             placeholder="http://localhost:5173"
           />
-          {!isFile && <button className="btn tiny-btn" onClick={open}>打开</button>}
+          {!isFile && <button className="btn tiny" onClick={open}>打开</button>}
           {remoteMode && tunnel && (
             <span className="preview-tunnel" title={`经 SSH 隧道到 ${remoteHost?.name}（只绑本机 127.0.0.1）· ${tunnel.remoteUrl}`}>
               隧道 · {remoteHost?.name}
@@ -779,7 +780,7 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
           )}
           {isFile && onOpenUrl && (
             <button
-              className="btn tiny-btn"
+              className="btn tiny"
               title="在同一个预览标签里改用地址（dev server / 远程页面）"
               onClick={() => onOpenUrl(defaultUrl)}
             >URL</button>
@@ -802,25 +803,25 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
               aria-label="目录"
               aria-pressed={tocOpen}
               onClick={() => setTocOpen((v) => !v)}
-            ><ListIcon size={13} /></button>
+            ><ListIcon size={14} /></button>
           )}
           {fileMode === "visual" && (
-            <button className="btn tiny-btn primary" disabled={saving} title="保存（⌘S）" onClick={() => void saveVisual()}>
+            <button className="btn tiny primary" disabled={saving} title="保存（⌘S）" onClick={() => void saveVisual()}>
               {saving ? "保存中…" : "保存修改"}
             </button>
           )}
           {isMarkdown && fileMode === "render" && richDirty && (
-            <button className="btn tiny-btn primary" disabled={saving} title="保存（⌘S）" onClick={() => void editorRef.current?.save()}>{saving ? "保存中…" : "保存"}</button>
+            <button className="btn tiny primary" disabled={saving} title="保存（⌘S）" onClick={() => void editorRef.current?.save()}>{saving ? "保存中…" : "保存"}</button>
           )}
           {dirty && (
-            <button className="btn tiny-btn primary" disabled={saving} title="保存（⌘S）" onClick={() => void save()}>
+            <button className="btn tiny primary" disabled={saving} title="保存（⌘S）" onClick={() => void save()}>
               {saving ? "保存中…" : "保存"}
             </button>
           )}
           {!dirty && savedAt && <span className="preview-saved">已保存</span>}
           {canPick && (picking
-            ? <button className="btn tiny-btn danger" onClick={() => void cancelPick()}>取消拾取</button>
-            : <button className="btn tiny-btn primary" disabled={!ready} title="在页面里点选元素，注入 Chat" onClick={() => void pickElement()}>拾取元素</button>
+            ? <button className="btn tiny danger" onClick={() => void cancelPick()}>取消拾取</button>
+            : <button className="btn tiny primary" disabled={!ready} title="在页面里点选元素，注入 Chat" onClick={() => void pickElement()}>拾取元素</button>
           )}
           {!isFile && (
             <>
@@ -843,6 +844,7 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
                   onBlur={() => commitSize("w")}
                   onKeyDown={(e) => { if (e.key === "Enter") { commitSize("w"); (e.target as HTMLInputElement).blur(); } }}
                 />
+                {/* 尺寸分隔符「宽 × 高」是排版符号，不是图标 */}
                 <span className="preview-size-x">×</span>
                 <input
                   value={sizeDraft.h}
@@ -855,19 +857,19 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
                 />
               </span>
               {(viewport.w != null || viewport.h != null) && (
-                <button className="btn tiny-btn" title="适应窗口（清除宽高）" onClick={() => setViewport({ w: null, h: null })}>适应</button>
+                <button className="btn tiny" title="适应窗口（清除宽高）" onClick={() => setViewport({ w: null, h: null })}>适应</button>
               )}
               <div className="preview-zoom">
-                <button title="缩小" aria-label="缩小" onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 10) / 10))}><MinusIcon size={13} /></button>
+                <button title="缩小" aria-label="缩小" onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 10) / 10))}><MinusIcon size={14} /></button>
                 <button className="preview-zoom-value" title="重置缩放" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
-                <button title="放大" aria-label="放大" onClick={() => setZoom((z) => Math.min(2, Math.round((z + 0.1) * 10) / 10))}><PlusIcon size={13} /></button>
+                <button title="放大" aria-label="放大" onClick={() => setZoom((z) => Math.min(2, Math.round((z + 0.1) * 10) / 10))}><PlusIcon size={14} /></button>
               </div>
-              <button className={`icon-btn ${findOpen ? "on" : ""}`} title="页内查找" disabled={!ready} onClick={() => setFindOpen((v) => !v)}><SearchIcon size={13} /></button>
+              <button className={`icon-btn ${findOpen ? "on" : ""}`} title="页内查找" disabled={!ready} onClick={() => setFindOpen((v) => !v)}><SearchIcon size={14} /></button>
               <button className={`icon-btn ${consoleOpen ? "on" : ""}`} title="控制台（页面日志）" onClick={() => setConsoleOpen((v) => !v)}>
-                <CodeIcon size={13} />
+                <CodeIcon size={14} />
                 {logErrors > 0 && <span className="preview-badge">{logErrors > 99 ? "99" : logErrors}</span>}
               </button>
-              <button className="icon-btn" title="截图（复制到剪贴板）" disabled={!ready} onClick={() => void capture(false)}><CameraIcon size={13} /></button>
+              <button className="icon-btn" title="截图（复制到剪贴板）" disabled={!ready} onClick={() => void capture(false)}><CameraIcon size={14} /></button>
               <button
                 className={`icon-btn ${rec ? "on" : ""}`}
                 title={rec ? "停止录制" : "录制预览（约 4fps · 最长 60s · 无音频）"}
@@ -879,23 +881,23 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
                   <RecordIcon size={8} /> {String(Math.floor((recNow - rec.startedAt) / 60000)).padStart(2, "0")}:{String(Math.floor(((recNow - rec.startedAt) % 60000) / 1000)).padStart(2, "0")}
                 </span>
               )}
-              <button className="icon-btn" title="开发者工具" disabled={!ready} onClick={toggleDevtools}><DevtoolsIcon size={13} /></button>
-              <button className="icon-btn" title="在系统浏览器打开" onClick={openExternal}><ExternalIcon size={13} /></button>
+              <button className="icon-btn" title="开发者工具" disabled={!ready} onClick={toggleDevtools}><DevtoolsIcon size={14} /></button>
+              <button className="icon-btn" title="在系统浏览器打开" onClick={openExternal}><ExternalIcon size={14} /></button>
             </>
           )}
-          {isFile && <button className="icon-btn" title="刷新" aria-label="刷新" onClick={refresh}><RefreshIcon size={13} /></button>}
+          {isFile && <button className="icon-btn" title="刷新" aria-label="刷新" onClick={refresh}><RefreshIcon size={14} /></button>}
           {isFile && (
             <>
-              <button className="icon-btn" title="在 Finder 中显示" aria-label="在 Finder 中显示" onClick={() => void reveal()}><RevealIcon size={13} /></button>
-              <button className="icon-btn" title="复制相对路径" aria-label="复制相对路径" onClick={() => void copyPath()}><CopyIcon size={13} /></button>
+              <button className="icon-btn" title="在 Finder 中显示" aria-label="在 Finder 中显示" onClick={() => void reveal()}><RevealIcon size={14} /></button>
+              <button className="icon-btn" title="复制相对路径" aria-label="复制相对路径" onClick={() => void copyPath()}><CopyIcon size={14} /></button>
             </>
           )}
-          {onClose && <button className="icon-btn" title="关闭预览" aria-label="关闭预览" onClick={onClose}><XIcon size={13} /></button>}
+          {onClose && <button className="icon-btn" title="关闭预览" aria-label="关闭预览" onClick={onClose}><XIcon size={14} /></button>}
         </div>
       </div>
       {findOpen && (
         <div className="preview-find">
-          <SearchIcon size={12} />
+          <SearchIcon size={14} />
           <input
             ref={findInputRef}
             value={findText}
@@ -910,7 +912,7 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
           <span className="preview-find-count">{findResult ? `${findResult.active}/${findResult.total}` : "0/0"}</span>
           <button className="preview-icon" title="上一个（Shift+Enter）" onClick={() => find(false)}>↑</button>
           <button className="preview-icon" title="下一个（Enter）" onClick={() => find(true)}>↓</button>
-          <button className="preview-icon" title="关闭" onClick={closeFind}><XIcon size={12} /></button>
+          <button className="preview-icon" title="关闭" onClick={closeFind}><XIcon size={14} /></button>
         </div>
       )}
       {fileMode === "visual" && (
@@ -936,11 +938,11 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
             页面请求「{permHint.label}」 · <span className="mono">{permHint.origin}</span>
           </span>
           {permHint.grantable ? (
-            <button className="btn tiny-btn" onClick={() => void allowPermission()}>允许并刷新</button>
+            <button className="btn tiny" onClick={() => void allowPermission()}>允许并刷新</button>
           ) : (
             <span className="faint">这类权限需要在系统浏览器里完成</span>
           )}
-          <button className="icon-btn" title="忽略" aria-label="忽略" onClick={() => setPermHint(null)}><XIcon size={12} /></button>
+          <button className="icon-btn" title="忽略" aria-label="忽略" onClick={() => setPermHint(null)}><XIcon size={14} /></button>
         </div>
       )}
       {isFile && data?.encoding && !data.binary && (
@@ -957,8 +959,8 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
             <b>控制台</b>
             <span className="faint">{logs.length} 条{logErrors ? ` · ${logErrors} error` : ""}</span>
             <span style={{ flex: 1 }} />
-            <button className="btn tiny-btn" onClick={() => setLogs([])}>清空</button>
-            <button className="icon-btn" title="关闭" aria-label="关闭控制台" onClick={() => setConsoleOpen(false)}><XIcon size={12} /></button>
+            <button className="btn tiny" onClick={() => setLogs([])}>清空</button>
+            <button className="icon-btn" title="关闭" aria-label="关闭控制台" onClick={() => setConsoleOpen(false)}><XIcon size={14} /></button>
           </div>
           <div className="preview-console-list">
             {logs.length === 0

@@ -262,7 +262,8 @@ const bots = createBots({
   log: { warn() {}, info() {} },
 });
 bots.ensureSeed();
-const bot = bots.list()[0];
+// 内置种子 bot 已下线：探针自己建一个（固定 id，重复跑不会堆一串）
+const bot = bots.save({ id: "bot-probe", name: "验收 bot" });
 bot.intro = false;
 bot.model = model;
 bot.capability = "read";

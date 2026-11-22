@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { HOUR, MIN, NOON, at, bot, test } from "./_harness.mjs";
+import { HOUR, MIN, NOON, at, bot, makeBot, test } from "./_harness.mjs";
 import { buildSystemPrompt, collectCandidates, createBots, gatesFor, quietActive, scoreCandidate, DEFAULT_POLICY } from "../../electron/bot/index.mjs";
 import { parseSseDelta } from "../../electron/knowledge/ark.mjs";
 import { createMemory } from "../../electron/memory/index.mjs";
@@ -25,10 +25,8 @@ const dispatchBots = createBots({
   chat: async () => ({ text: "我理解的是补完两个核对项，要现在开吗？", usage: { totalTokens: 88 } }),
   key: () => "k",
 });
-dispatchBots.ensureSeed();
-
-const seededDispatch = dispatchBots.list()[0];
-seededDispatch.intro = false; // 测试里跳过「先问用途」那一轮（真实流程见文末 intro 用例）
+// 测试里跳过「先问用途」那一轮（真实流程见文末 intro 用例）
+const seededDispatch = makeBot(dispatchBots, { name: "测试主管" });
 
 await test("dispatch 档位：主动开口时产出 proposal，但不动 todos", async () => {
   dispatchBots.save({ id: seededDispatch.id, capability: "dispatch" });
@@ -46,7 +44,7 @@ await test("read 档位：同样的开口不带 proposal", async () => {
   const readStore = { state: { bots: readBotsState, botTurns: [], todos: dispatchStore.state.todos.slice() }, persist() {} };
   const readBots = createBots({ store: readStore, now: () => NOON, memory: () => ({ inject: () => ({ items: [] }) }), chat: async () => ({ text: "这件事还等你确认。", usage: {} }), key: () => "k" });
   readBots.ensureSeed();
-  readBots.list()[0].intro = false;
-  const turns = await readBots.tick({ botId: readBots.list()[0].id });
+  const readBot = makeBot(readBots);
+  const turns = await readBots.tick({ botId: readBot.id });
   assert.equal(turns.at(-1).proposal, null);
 });

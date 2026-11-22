@@ -266,7 +266,7 @@
 
 | 能力 | Rakazo 的实现 | 我们 |
 |---|---|---|
-| **创建时就问用途** | 新 bot 第一轮是 hidden intro run：禁止先客套，**先 `ask_user`** 问"你想让我干什么"，一次给的 2–4 个选项必须贴合它的名字/描述/已知信息，**不许用通用清单**；拿到答案后再 `update_bot` 写 description / instructions，说不清的留空后补（`apps/api/src/bots/hidden-turns.prompt.ts:4-30`） | ✗ `seedBots()` 直接塞一个「戈洛」+ 默认人格卡，不问 |
+| **创建时就问用途** | 新 bot 第一轮是 hidden intro run：禁止先客套，**先 `ask_user`** 问"你想让我干什么"，一次给的 2–4 个选项必须贴合它的名字/描述/已知信息，**不许用通用清单**；拿到答案后再 `update_bot` 写 description / instructions，说不清的留空后补（`apps/api/src/bots/hidden-turns.prompt.ts:4-30`） | ◐ 空白 bot（没写职责）第一轮先问，答案落成 `persona.mission`；但选项还是模型现编，不是贴合已知信息的 2–4 个 |
 | 指令版本化 | `instructions` 有版本与 diff：Myers 最短编辑，超 500 行改为整段替换；**含脱敏标记的行永不算"未变"**，防止把真密钥当成文字改动（`packages/core/src/bots/instruction-diff.ts:1-25`） | ✗ 人格卡 5 个字段直接覆盖写 |
 | 模型归属 | 模型与 thinking 档**属于 bot**，`model-pins.ts` 管 pin/回退；改模型是可审计的变更 | ◐ 全局 `ARK_API_KEY` + 单一模型，无 per-bot |
 | 模板 / 导入 | bot 模板（`bot-templates.ts` 244 行）+ 从 Grok Bot / Hermes / OpenClaw 导入（`agent-import.ts` 945 行，含指令清洗与工具重映射） | ✗ |
@@ -424,7 +424,7 @@
 | 5 | ✅ 已落（事件级） | **loop guard（G4）** | 纯函数、零依赖、立刻止血；错误文案照抄它的人话写法 | `electron/bot/` 新 `guard(history)`；selftest 加 3 条 |
 | 6 | ✅ 已落 | **ask_user 卡片（G7）** | 主动开口时最需要的出口；我们已有回合流 UI，加一种 turn 类型即可 | `bot_turns.decision = "asked"` + Bot 页输入即回答 |
 | 7 | ✅ 已落 | **通知节流（G10）** | 主动 bot 的生死线；数据都在 `bot_turns` 与 `snapshot.recent` 里 | `startBotTick()` 发送前判定（180 字 / 未读抑制 / snooze） |
-| 8 | ✅ 已落 | **创建时问用途（G8）** | 解决"塞一个默认 bot"的尴尬；它的 intro prompt 结构可直接借（先问、再 `update_bot`、说不清就留空） | `seedBots()` 改为「创建即一轮 intro」 |
+| 8 | ✅ 已落 | **创建时问用途（G8）** | 解决"塞一个默认 bot"的尴尬；它的 intro prompt 结构可直接借（先问、再 `update_bot`、说不清就留空） | 内置小Z/小A/小B/小C 已下线；空白 bot 建出来就带 `intro`，第一轮先问 |
 | 9 | ✅ 已落 | **记忆纪律三件（US-D02 + §12.4）** | 4 KB 硬上限 + 「已用 N / 上限」外显 + 修订与 `expectedRevision`；我们已有 `note_revisions` 与被裁理由，缺的是保存侧上限与条目修订 | `ARCH-memory` 注入预算再加一条上限，selftest 断言 |
 | 10 | ✅ 已落（沉默/被拦不进会话；routine 有落点） | **非对话触发器 / background run 两分法**（§12.2） | 日程落地时直接决定"这次结果进不进聊天" | 与顺位 1、3 一起设计 |
 | 11 | ✅ 落库脱敏已落（流式 / vault 未做） | **脱敏三处（G5 + US-B06）** | 流式脱敏（跨 chunk）+ 落库前脱敏 + vault 只回元数据；已有 key 形态概念，移到运行时 | `ark.chatStream` 的 delta 出口 + `bot_turns.input` 落库前 |

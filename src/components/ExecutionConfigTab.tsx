@@ -70,8 +70,8 @@ export function ExecutionConfigTab({ state, act, notify, onOpenScene }: {
         <div className="off-prof-foot">
           <span>{draft.trim() ? `${draft.length} 字符 · 下一次派活生效` : "未配置"}</span>
           <div className="row gap6">
-            <button className="btn tiny-btn" onClick={() => void suggest()} disabled={Boolean(busy)}>{busy === "suggest" ? "生成中…" : "AI 建议"}</button>
-            <button className="btn tiny-btn primary" onClick={() => void save()} disabled={Boolean(busy)}>{busy === "save" ? "保存中…" : "保存"}</button>
+            <button className="btn tiny" onClick={() => void suggest()} disabled={Boolean(busy)}>{busy === "suggest" ? "生成中…" : "AI 建议"}</button>
+            <button className="btn tiny primary" onClick={() => void save()} disabled={Boolean(busy)}>{busy === "save" ? "保存中…" : "保存"}</button>
           </div>
         </div>
       </section>

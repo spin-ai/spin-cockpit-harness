@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeftIcon } from "./Icons";
 
 /** 时间戳 → hh:mm（轨迹账本与聊天时间同源格式） */
 const hm = (ts: number) => {
@@ -21,8 +22,10 @@ export interface TrajectoryRecord {
   usage?: string;
 }
 
-export function TrajectoryView({ records, onJump, focusTurnId, unit = "轮" }: {
+export function TrajectoryView({ records, onJump, focusTurnId, unit = "轮", onBack }: {
   records: TrajectoryRecord[]; onJump: (turnId: string) => void; focusTurnId?: string | null; unit?: string;
+  /** 任务会话里没有页签：返回对话由轨迹自己的工具栏承担 */
+  onBack?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // 从某一轮动作点进来：滚到那一轮并让它的那条记录展开
@@ -57,6 +60,11 @@ export function TrajectoryView({ records, onJump, focusTurnId, unit = "轮" }: {
   return (
     <div className="ds-trajectory" ref={scrollRef}>
       <div className="ds-tr-toolbar">
+        {onBack && (
+          <button className="ds-tr-back" onClick={onBack} title="回到对话" aria-label="回到对话">
+            <ChevronLeftIcon size={14} /> 对话
+          </button>
+        )}
         <button className={foldDuration ? "on" : ""} onClick={() => setFoldDuration((v) => !v)} aria-pressed={foldDuration}>时长</button>
         <button className={foldTurns ? "on" : ""} onClick={() => setFoldTurns((v) => !v)} aria-pressed={foldTurns}>轮次</button>
         <button className={foldCalls ? "on" : ""} onClick={() => setFoldCalls((v) => !v)} aria-pressed={foldCalls}>调用</button>

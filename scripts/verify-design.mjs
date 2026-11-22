@@ -62,6 +62,7 @@ check(glyphPages.length === 0, `控件不得用字符代替图标${glyphPages.le
 
 // 页面主面不再新增 12px 圆角（统计 tile 已统一 10）
 const stylesCss = read("src/styles.css") + "\n" + read("src/office/office.css");
+const allCss = ["src/styles.css", "src/design-system.css", "src/wiki.css"].map(read).join("\n");
 const deprecatedClasses = /\.(?:view-switch|kv-tabs|off-tabs|off-tab|git-view-tabs|zh-tabs|pane-empty|notes-meta-empty|project-overview|project-list-[a-z]+|notes-page|notes-layout|notes-sidebar|notes-meta|notes-main|notes-stats)(?![\w-])/;
 check(!deprecatedClasses.test(stylesCss), "styles.css · 旧外壳 / 旧 tab / 旧空态类已下线");
 check(!/border-radius:[^;}]*\b(?:7|9|11|12|13)px\b/.test(stylesCss), "styles.css · 圆角只用 token（6 / 10 / 14）");
@@ -151,6 +152,96 @@ const gapRules = stylesCss.split("\n").filter((line) => line.includes("gap:var(-
 for (const group of iconGroups) {
   check(gapRules.some((line) => line.includes(`.${group}`)), `styles.css · .${group} 图标间距用 --icon-gap`);
 }
+
+/**
+ * 视觉收敛的硬指标（docs/DESIGN-SYSTEM.md §3）：字号 / 间距 / 圆角 / 裸色值都要在栅格上。
+ * 加这些检查是为了防止"再加一个 12.5px / 9px padding / 5px 圆角"把层次重新搅乱。
+ */
+const cssText = read("src/styles.css");
+const fontSizes = new Set([...cssText.matchAll(/font-size:([0-9.]+)px/g)].map((m) => m[1]));
+const allowedFont = new Set(["22", "18", "15", "13", "12", "11", "10.5"]);
+check(fontSizes.size <= 7 && [...fontSizes].every((v) => allowedFont.has(v)),
+  `styles.css · 字号只用 7 档（${[...fontSizes].sort().join(" / ")}）`);
+const spaceValues = new Set([...cssText.matchAll(/(?:padding|margin|gap|row-gap|column-gap):([^;}]+)/g)]
+  .flatMap((m) => [...m[1].matchAll(/([0-9]+)px/g)].map((x) => x[1])));
+const allowedSpace = new Set(["0", "2", "4", "6", "8", "12", "16", "24", "32"]);
+check([...spaceValues].every((v) => allowedSpace.has(v)),
+  `styles.css · 间距只用 2/4/6/8/12/16/24/32（越界：${[...spaceValues].filter((v) => !allowedSpace.has(v)).join(",") || "无"}）`);
+const radii = new Set([...cssText.matchAll(/border-radius:([^;}]+)/g)].map((m) => m[1].trim()));
+const badRadius = [...radii].filter((v) => !/^(0|50%|999px|var\(--radius[\w-]*\)|calc\(var\(--radius\) \+ \d+px\)|var\(--radius-sm\) [\d ]+px [\d ]+px|0 0 var\(--radius\) var\(--radius\))$/.test(v) && /[0-9]+px/.test(v) && !/(var\(--radius)/.test(v));
+check(badRadius.length === 0, `styles.css · 圆角只用 6/10/14/999（越界：${badRadius.slice(0, 4).join(" | ") || "无"}）`);
+// token 定义里的 hex 是调色板本身；这里只数「属性值里直接写颜色」的情况
+const declHex = new Set();
+for (const m of cssText.matchAll(/([a-zA-Z-]+)\s*:\s*([^;{}]+)/g)) {
+  if (m[1].startsWith("--")) continue;
+  for (const h of m[2].matchAll(/#[0-9a-fA-F]{3,8}/g)) declHex.add(h[0].toLowerCase());
+}
+check(declHex.size <= 60, `styles.css · 属性值里的裸色值 ≤60（现在 ${declHex.size}：${[...declHex].slice(0, 5).join(",")}）`);
+const bodyFont = cssText.includes("font-size:13px");
+check(bodyFont, "styles.css · 正文字号 13px 存在（11–12.5 不再承担正文）");
+
+// 本轮收敛的硬约束（防止回退）
+check(!/\.btn\.tiny-btn/.test(cssText), "styles.css · 旧别名 .btn.tiny-btn 已下线");
+check(!/--radius-(card|control|float)\b/.test(cssText), "styles.css · 圆角只留 sm / radius / lg（chat 两例外）");
+check(!/z-index:\s*\d/.test(cssText), "styles.css · z-index 只走 --z-* 层级表");
+check(!/letter-spacing:\s*\.0[48]/.test(cssText) && !/letter-spacing:\s*\.12/.test(cssText), "styles.css · letter-spacing 只留 0 / .02 / .06 / -.02");
+const pageHeads = walkTsx("src/components").filter((f) => f !== "src/components/PageHeader.tsx" && /<h[12][ >]/.test(fs.readFileSync(path.join(root, f), "utf8")));
+check(pageHeads.length === 0, `组件里不得自己写 h1/h2（${pageHeads.slice(0, 3).join("、") || "ok"}）`);
+let borderShadow = 0;
+for (const m of cssText.matchAll(/([^{}@]+)\{([^{}]*)\}/g)) {
+  const sel = m[1].trim(); const body = m[2];
+  if (/float|modal|menu|pop|toast|tooltip|dialog|drawer|peek|banner/i.test(sel)) continue;
+  if (/border(?:-top|-right|-bottom|-left)?\s*:\s*[0-9.]+px solid/.test(body) && /box-shadow:\s*(?!none)/.test(body)) borderShadow += 1;
+}
+check(borderShadow === 0, `styles.css · 带描边的块不再叠阴影（剩余 ${borderShadow}）`);
+check((cssText.match(/>×</g) || []).length === 0, "styles.css · 不用字符 × 当图标");
+
+// ── 三个样式文件统一口径（styles / design-system / wiki）──────────────────
+const allFonts = new Set([...allCss.matchAll(/font-size:([0-9.]+)px/g)].map((m) => m[1]));
+const uiFonts = new Set(["22", "18", "15", "13", "12", "11", "10.5"]);
+const wikiFonts = new Set(["26", "20", "16", "14", "13", "12", "11", "10.5"]);
+const wikiOnly = new Set([...read("src/wiki.css").matchAll(/font-size:([0-9.]+)px/g)].map((m) => m[1]));
+const uiOnly = new Set([...read("src/styles.css").matchAll(/font-size:([0-9.]+)px/g)].map((m) => m[1]));
+const dsOnly = new Set([...read("src/design-system.css").matchAll(/font-size:([0-9.]+)px/g)].map((m) => m[1]));
+check([...uiOnly, ...dsOnly].every((v) => uiFonts.has(v)), `styles+design-system · 字号只用 UI 七档（越界：${[...uiOnly, ...dsOnly].filter((v) => !uiFonts.has(v)).join(",") || "无"}）`);
+check([...wikiOnly].every((v) => wikiFonts.has(v)), `wiki.css · 阅读页字号只用八档（越界：${[...wikiOnly].filter((v) => !wikiFonts.has(v)).join(",") || "无"}）`);
+
+const allHexDecl = new Set();
+for (const m of allCss.matchAll(/([a-zA-Z-]+)\s*:\s*([^;{}]+)/g)) {
+  if (m[1].startsWith("--")) continue;
+  for (const h of m[2].matchAll(/#[0-9a-fA-F]{3,8}/g)) allHexDecl.add(h[0].toLowerCase());
+}
+check(allHexDecl.size <= 60, `三个 css · 属性值裸色值 ≤60（现在 ${allHexDecl.size}）`);
+check(!/box-shadow:inset [0-9]+px 0 0 var\(--/.test(allCss), "三个 css · 选中态不再画白条/色条（用底色）");
+check(!/z-index:\s*\d/.test(allCss), "三个 css · z-index 只走 --z-* 层级表");
+check(!/letter-spacing:\s*\.0[48]|letter-spacing:\s*\.1[26]/.test(allCss), "三个 css · letter-spacing 只留 0 / .02 / .06 / -.02");
+const spaceAll = new Set([...allCss.matchAll(/(?:padding|margin|gap|row-gap|column-gap):([^;}]+)/g)]
+  .flatMap((m) => [...m[1].matchAll(/([0-9]+)px/g)].map((x) => x[1])));
+const allowedSpaceAll = new Set(["0", "1", "2", "3", "4", "6", "8", "12", "16", "24", "32", "48", "64"]);
+check([...spaceAll].every((v) => allowedSpaceAll.has(v)), `三个 css · 间距在栅格上（越界：${[...spaceAll].filter((v) => !allowedSpaceAll.has(v)).join(",") || "无"}）`);
+
+/**
+ * 数字不挂在 chrome 上（DESIGN-SYSTEM §5「计数与徽标」）。
+ * 只认「容器类名带 bar/head/tabs/rail/toolbar/pane-actions」且子节点里出现 `{n} 条/页/个/项` 的写法。
+ * 列表行尾、概览、菜单、进度里的数字不算 —— 这些类名在 allow 里。
+ */
+const CHROME_SEL = /className="[^"]*(?:bar\b|head\b|tabs?\b|rail\b|title-row|toolbar|pane-actions)[^"]*"/;
+const COUNT_ALLOW = /list-head|menu|overview|stat|progress|peek|hint|note|empty/i;
+const COUNT_RE = /\}[^<>{}]{0,8}(条|页|个|项)\s*</;
+const chromeCountHits = [];
+for (const file of walkTsx("src")) {
+  const lines = fs.readFileSync(path.join(root, file), "utf8").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (!CHROME_SEL.test(lines[i]) || COUNT_ALLOW.test(lines[i])) continue;
+    for (let j = i; j < Math.min(i + 8, lines.length); j++) {
+      if (COUNT_RE.test(lines[j]) && !COUNT_ALLOW.test(lines[j])) {
+        chromeCountHits.push(`${file}:${j + 1}`);
+        break;
+      }
+    }
+  }
+}
+check(chromeCountHits.length === 0, `数字不得挂在 bar/head/tabs/rail 上（${chromeCountHits.slice(0, 3).join("、") || "ok"}）`);
 
 for (const item of checks) console.log(`${item.ok ? "✓" : "✗"} ${item.label}`);
 console.log(`\nDesign verification: ${process.exitCode ? "failed" : "passed"}`);

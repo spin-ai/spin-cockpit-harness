@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { confirmDialog } from "./ConfirmHost";
 import type { State } from "../types";
 import { STATUS_LABEL, statusTone } from "../ui";
 import { GitWiki } from "./GitWiki";
@@ -103,8 +104,8 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
 
   const stage = (paths: string[]) => run("暂存", () => window.harness.gitStage(root, paths));
   const unstage = (paths: string[]) => run("取消暂存", () => window.harness.gitUnstage(root, paths));
-  const discard = (paths: string[]) => {
-    if (!window.confirm(`丢弃 ${paths.length} 个文件的改动？不可恢复。`)) return;
+  const discard = async (paths: string[]) => {
+    if (!(await confirmDialog(`丢弃 ${paths.length} 个文件的改动？不可恢复。`))) return;
     void run("丢弃", () => window.harness.gitDiscard(root, paths));
   };
   const commit = () => {
@@ -123,9 +124,9 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
     return res;
   });
   const pull = () => run("拉取", () => window.harness.gitPull(root));
-  const checkout = (branch: string) => {
+  const checkout = async (branch: string) => {
     if (!branch || branch === status?.branch) return;
-    if ((status?.files?.length ?? 0) > 0 && !window.confirm("工作区有改动，切换分支可能失败或带过去。继续？")) return;
+    if ((status?.files?.length ?? 0) > 0 && !(await confirmDialog("工作区有改动，切换分支可能失败或带过去。继续？"))) return;
     void run("切换分支", () => window.harness.gitCheckout(root, branch));
   };
   /**
@@ -227,7 +228,7 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
             {!branches.includes(status.branch || "") && <option value={status.branch || ""}>{status.branch || "(detached)"}</option>}
             {branches.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>
-          <button className="btn tiny-btn" disabled={Boolean(busy)} onClick={refresh}>{loading ? "…" : t("action.refresh")}</button>
+          <button className="btn tiny" disabled={Boolean(busy)} onClick={refresh}>{loading ? "…" : t("action.refresh")}</button>
           <RowMenu title="更多 Git 操作">
             {branchDraft === null
               ? <button onClick={() => setBranchDraft("")}>新建分支</button>
@@ -249,7 +250,7 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
               )}
             <button disabled={Boolean(busy)} onClick={() => void pull()}>拉取{status.behind ? ` ↓${status.behind}` : ""}</button>
           </RowMenu>
-          <button className="btn tiny-btn primary" disabled={Boolean(busy)} onClick={() => void push()} title={status.wadeGate ? "WADE worktree：推送要走 wade implementation-session done" : undefined}>推送{status.ahead ? ` ↑${status.ahead}` : ""}</button>
+          <button className="btn tiny primary" disabled={Boolean(busy)} onClick={() => void push()} title={status.wadeGate ? "WADE worktree：推送要走 wade implementation-session done" : undefined}>推送{status.ahead ? ` ↑${status.ahead}` : ""}</button>
         </div>}
       />
 
@@ -292,11 +293,11 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
               onChange={(e) => setMessage(e.target.value)}
             />
             <div className="row gap6" style={{ justifyContent: "flex-end", marginTop: 6 }}>
-              <button className="btn tiny-btn" disabled={!staged.length || Boolean(busy)} onClick={() => {
-                if (!window.confirm("用 --amend 改写上一条提交？")) return;
+              <button className="btn tiny" disabled={!staged.length || Boolean(busy)} onClick={async () => {
+                if (!(await confirmDialog("用 --amend 改写上一条提交？"))) return;
                 void run("Amend", () => window.harness.gitCommit(root, message || "amend", true));
               }}>Amend</button>
-              <button className="btn tiny-btn primary" disabled={!staged.length || Boolean(busy)} onClick={commit}>
+              <button className="btn tiny primary" disabled={!staged.length || Boolean(busy)} onClick={commit}>
                 {busy === "提交" ? "提交中…" : `提交 ${staged.length} 个文件`}
               </button>
             </div>

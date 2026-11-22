@@ -89,7 +89,7 @@ export function TaskDetail({ state, todo, act, onOpenThread, onOpenRun }: {
             <span>{project?.name || "未归属项目"}</span>
             {agent && <><span className="td-kicker-sep">/</span><span>{agent.name}</span></>}
           </div>
-          <h2 className="td-h2">{todo.title}</h2>
+          <div className="td-title">{todo.title}</div>
           <div className="td-badges">
             <span className={`pill status ${STATUS[todo.status]?.cls || "todo"}`}>{STATUS[todo.status]?.label || todo.status}</span>
             {todo.priority && <span className={`prio ${todo.priority}`}>{todo.priority}</span>}
@@ -101,11 +101,11 @@ export function TaskDetail({ state, todo, act, onOpenThread, onOpenRun }: {
           {active && (
             <>
               <span className="td-live"><span className="dot green" />{RUN_STATUS[active.status] || active.status}</span>
-              <button className="btn tiny-btn" onClick={() => void act("stop", { runId: active.id })}>停止</button>
+              <button className="btn tiny" onClick={() => void act("stop", { runId: active.id })}>停止</button>
             </>
           )}
-          {thread && <button className="btn tiny-btn" onClick={() => onOpenThread(thread.id)}>打开会话</button>}
-          <button className="btn tiny-btn" onClick={() => void copyMarkdown()} title="复制成 Markdown，可直接贴进 Chat 或 issue">复制详情</button>
+          {thread && <button className="btn tiny" onClick={() => onOpenThread(thread.id)}>打开会话</button>}
+          <button className="btn tiny" onClick={() => void copyMarkdown()} title="复制成 Markdown，可直接贴进 Chat 或 issue">复制详情</button>
         </div>
       </header>
 
@@ -184,6 +184,11 @@ export function TaskDetail({ state, todo, act, onOpenThread, onOpenRun }: {
               <dt>目录</dt><dd className="mono ellipsis" title={cwd}>{cwd || "—"}</dd>
               <dt>分支</dt><dd className="mono ellipsis">{branch || "—"}</dd>
               <dt>Agent</dt><dd className="ellipsis">{agent ? `${agent.name} · ${agent.cli}` : "未指派"}</dd>
+              {(() => {
+                const owner = todo.botId ? (state.bots || []).find((b) => b.id === todo.botId) : null;
+                if (!owner) return null;
+                return (<><dt>机器人</dt><dd className="ellipsis">{owner.name}</dd></>);
+              })()}
               <dt>终端</dt><dd>{terminals.length ? `${terminals.filter((t) => t.status === "running").length} 运行中 / ${terminals.length}` : "—"}</dd>
               <dt>截止</dt><dd>{todo.due || "—"}</dd>
               <dt>创建</dt><dd>{relTime(todo.createdAt)}</dd>

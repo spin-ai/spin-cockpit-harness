@@ -90,7 +90,7 @@ export function WikiFlowDemo({ eyebrow, title, steps }: {
       </div>
 
       <div className="wiki-demo-foot">
-        <button type="button" disabled={index === 0} onClick={() => go(index - 1)}><ChevronLeftIcon size={12} /> 上一步</button>
+        <button type="button" disabled={index === 0} onClick={() => go(index - 1)}><ChevronLeftIcon size={14} /> 上一步</button>
         <span>{index + 1} / {steps.length}</span>
         <button type="button" disabled={index === steps.length - 1} onClick={() => go(index + 1)}>下一步 →</button>
         <button type="button" className="wiki-demo-replay" onClick={replay}>重播</button>

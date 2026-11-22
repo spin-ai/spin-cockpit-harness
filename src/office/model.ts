@@ -291,9 +291,10 @@ export function buildOfficeModel(state: State, opts: { projectId?: string | null
     // 阵容非空：只呈现阵容里的机器人（没绑执行体的也上台，显示「待绑定」而不是消失）
     for (const entry of cast) {
       const bot = resolveCastBot(entry, bots);
+      // 机器人不属于某个项目：它借的身体在哪个项目都得能上这台舞台
       const agent = bot
-        ? projectAgents.find((a) => a.id === bot.executorAgentId) ?? null
-        : projectAgents.find((a) => a.id === entry.agentId) ?? null;
+        ? state.agents.find((a) => a.id === bot.executorAgentId) ?? null
+        : state.agents.find((a) => a.id === entry.agentId) ?? null;
       if (!bot && !agent) continue;
       seats.push({ bot, agent, spec: entry });
     }

@@ -91,7 +91,7 @@ export function OfficeInspector({ actor, model, act, notify, onOpenTask, onOpenT
             {actor.agent ? ` · ${actor.hostName}` : ""}
           </span>
         </div>
-        <button type="button" className="icon-btn" title="取消选中（Esc）" onClick={onClose} aria-label="取消选中（Esc）"><XIcon size={13} /></button>
+        <button type="button" className="icon-btn" title="取消选中（Esc）" onClick={onClose} aria-label="取消选中（Esc）"><XIcon size={14} /></button>
       </div>
 
       <div className="insp-status">

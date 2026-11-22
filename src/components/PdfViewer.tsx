@@ -77,7 +77,7 @@ export function PdfViewer({ rel, root, name, onError }: {
     <div className="pdf-viewer">
       <div className="pdf-bar">
         <button className="preview-icon" title="上一页（←）" aria-label="上一页" disabled={page <= 1} onClick={() => go(-1)}>
-          <ChevronLeftIcon size={13} />
+          <ChevronLeftIcon size={14} />
         </button>
         <span className="pdf-page">
           <input
@@ -92,15 +92,15 @@ export function PdfViewer({ rel, root, name, onError }: {
           <em>/ {pages || "…"}</em>
         </span>
         <button className="preview-icon" title="下一页（→）" aria-label="下一页" disabled={!!pages && page >= pages} onClick={() => go(1)}>
-          <ChevronRightIcon size={13} />
+          <ChevronRightIcon size={14} />
         </button>
         <span className="pdf-sep" />
-        <button className="preview-icon" title="缩小" aria-label="缩小" disabled={scaleIdx === 0} onClick={() => setScaleIdx((i) => Math.max(0, i - 1))}><MinusIcon size={13} /></button>
+        <button className="preview-icon" title="缩小" aria-label="缩小" disabled={scaleIdx === 0} onClick={() => setScaleIdx((i) => Math.max(0, i - 1))}><MinusIcon size={14} /></button>
         <button className="pdf-zoom" title="重置为适合宽度" onClick={() => setScaleIdx(2)}>{Math.round(scale * 100)}%</button>
-        <button className="preview-icon" title="放大" aria-label="放大" disabled={scaleIdx === SCALES.length - 1} onClick={() => setScaleIdx((i) => Math.min(SCALES.length - 1, i + 1))}><PlusIcon size={13} /></button>
+        <button className="preview-icon" title="放大" aria-label="放大" disabled={scaleIdx === SCALES.length - 1} onClick={() => setScaleIdx((i) => Math.min(SCALES.length - 1, i + 1))}><PlusIcon size={14} /></button>
         <span className="pdf-name ellipsis" title={name}>{name}</span>
         <button className="preview-icon" title="重新渲染这一页" aria-label="重新渲染" onClick={() => setNonce((n) => n + 1)}>
-          <RefreshIcon size={12} />
+          <RefreshIcon size={14} />
         </button>
         {busy && <span className="pdf-busy">渲染中…</span>}
       </div>

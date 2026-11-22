@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { confirmDialog } from "./ConfirmHost";
 import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
 import { RowMenu } from "./RowMenu";
@@ -205,7 +206,7 @@ export function Memory({ act }: { act: Act }) {
     const ids = [...picked];
     if (!ids.length) return;
     const label = action === "archive" ? "标为过期" : action === "restore" ? "恢复" : "降级";
-    if (action === "archive" && !window.confirm(`把所选 ${ids.length} 条${label}？（可恢复）`)) return;
+    if (action === "archive" && !(await confirmDialog(`把所选 ${ids.length} 条${label}？（可恢复）`))) return;
     try {
       const res = await act("memoryEntryBulk", { ids, action });
       setNotice(`已${label} ${res?.count || 0} 条`);
@@ -270,13 +271,13 @@ export function Memory({ act }: { act: Act }) {
         actions={<>
           <button className="btn primary" onClick={() => { setTab("notes"); document.querySelector(".pr-side")?.scrollIntoView({ block: "nearest" }); }}>{t("action.review")}</button>
           <button className="btn" onClick={() => void dream()} disabled={busy}>{t("action.runDream")}</button>
-          <button className="icon-btn" onClick={() => void load()} title="刷新" aria-label="刷新"><RefreshIcon size={13} /></button>
+          <button className="icon-btn" onClick={() => void load()} title="刷新" aria-label="刷新"><RefreshIcon size={14} /></button>
         </>}
       />
       {(error || notice) && (
         <div className={`notes-banner ${error ? "error" : ""}`}>
           <span className="ellipsis">{error || notice}</span>
-          <button className="notes-banner-x" title="关闭提示" aria-label="关闭提示" onClick={() => { setError(""); setNotice(""); }}><XIcon size={12} /></button>
+          <button className="notes-banner-x" title="关闭提示" aria-label="关闭提示" onClick={() => { setError(""); setNotice(""); }}><XIcon size={14} /></button>
         </div>
       )}
 
@@ -299,11 +300,11 @@ export function Memory({ act }: { act: Act }) {
           <button className="link tiny" onClick={() => setPicked(new Set(shownEntries.map((e) => e.id)))}>全选本层</button>
           <button className="link tiny" onClick={() => setPicked(new Set())} disabled={!picked.size}>清空</button>
           <span style={{ flex: 1 }} />
-          <button className="btn tiny-btn" onClick={() => void bulkAction("demote")} disabled={!picked.size}>降级</button>
+          <button className="btn tiny" onClick={() => void bulkAction("demote")} disabled={!picked.size}>降级</button>
           {showArchived
-            ? <button className="btn tiny-btn" onClick={() => void bulkAction("restore")} disabled={!picked.size}>恢复</button>
-            : <button className="btn tiny-btn" onClick={() => void bulkAction("archive")} disabled={!picked.size}>标为过期</button>}
-          <button className="icon-btn" title="退出多选" aria-label="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}><XIcon size={13} /></button>
+            ? <button className="btn tiny" onClick={() => void bulkAction("restore")} disabled={!picked.size}>恢复</button>
+            : <button className="btn tiny" onClick={() => void bulkAction("archive")} disabled={!picked.size}>标为过期</button>}
+          <button className="icon-btn" title="退出多选" aria-label="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}><XIcon size={14} /></button>
         </div>
       )}
 
@@ -353,7 +354,7 @@ export function Memory({ act }: { act: Act }) {
         <section className="pr-main">
           <div className="pr-layer-head">
             <div>
-              <h2>{layerMeta.name}<span className="kv-type">{layer === "L4" ? "注入优先" : layer === "L1" ? "仅回查" : "按预算注入"}</span></h2>
+              <div className="section-title">{layerMeta.name}<span className="kv-type">{layer === "L4" ? "注入优先" : layer === "L1" ? "仅回查" : "按预算注入"}</span></div>
               <p>{layerMeta.desc}。{layer === "L4" ? "写进这里的条目每次 run 都会注入，所以宁少不多。" : ""}</p>
             </div>
             <span className="row gap6">
@@ -364,7 +365,7 @@ export function Memory({ act }: { act: Act }) {
                 <option value="title">按标题</option>
                 <option value="length">按篇幅</option>
               </select>
-              <button className="btn tiny-btn" onClick={() => { setDraft(""); document.querySelector<HTMLTextAreaElement>(".pr-new-entry")?.focus(); }}>＋ 新条目</button>
+              <button className="btn tiny" onClick={() => { setDraft(""); document.querySelector<HTMLTextAreaElement>(".pr-new-entry")?.focus(); }}>＋ 新条目</button>
             </span>
           </div>
 
@@ -378,7 +379,7 @@ export function Memory({ act }: { act: Act }) {
             />
             <div className="pr-ask-row">
               <span className="tiny faint">写入「{layerMeta.name}」· 建议一条只说一件事</span>
-              <button className="btn tiny-btn primary" disabled={busy || !draft.trim()} onClick={() => void addEntry()}>写入</button>
+              <button className="btn tiny primary" disabled={busy || !draft.trim()} onClick={() => void addEntry()}>写入</button>
             </div>
           </div>
 
@@ -414,7 +415,7 @@ export function Memory({ act }: { act: Act }) {
                 mark="◍"
                 title={`「${layerMeta.name}」还是空的`}
                 desc={layer === "L4" ? "接受 Dream 的「晋升」建议会写到这里，也可以手动添加。" : "条目只由 Dream 建议或人工写入。"}
-                action={<button className="btn tiny-btn primary" onClick={() => document.querySelector<HTMLTextAreaElement>(".pr-new-entry")?.focus()}>写一条</button>}
+                action={<button className="btn tiny primary" onClick={() => document.querySelector<HTMLTextAreaElement>(".pr-new-entry")?.focus()}>写一条</button>}
               />
             )}
             {showArchived && (
@@ -425,7 +426,7 @@ export function Memory({ act }: { act: Act }) {
                   <div key={e.id} className="pr-entry">
                     <div className="pr-entry-head">
                       <h3>{e.title}</h3>
-                      <button className="btn tiny-btn" onClick={() => void restore(e)}>恢复</button>
+                      <button className="btn tiny" onClick={() => void restore(e)}>恢复</button>
                     </div>
                     <div className="pr-entry-meta">
                       <span className="kv-type">{e.layer}</span>
@@ -491,8 +492,8 @@ export function Memory({ act }: { act: Act }) {
                     <input className="kv-input" value={editing.title} onChange={(ev) => setEditing({ ...editing, title: ev.target.value })} />
                     <textarea className="kv-ask" rows={3} value={editing.body} onChange={(ev) => setEditing({ ...editing, body: ev.target.value })} />
                     <div className="row gap6" style={{ justifyContent: "flex-end" }}>
-                      <button className="btn tiny-btn" onClick={() => setEditing(null)}>取消</button>
-                      <button className="btn tiny-btn primary" onClick={() => void saveEdit()} disabled={busy}>保存</button>
+                      <button className="btn tiny" onClick={() => setEditing(null)}>取消</button>
+                      <button className="btn tiny primary" onClick={() => void saveEdit()} disabled={busy}>保存</button>
                     </div>
                   </div>
                 ) : (
@@ -588,9 +589,9 @@ export function Memory({ act }: { act: Act }) {
                     <div className="pr-qf">
                       <span className="src" title={ttlFull(n)}>{n.sourceRef || "无来源"} · {relTime(n.createdAt)}{ttlLabel(n)}</span>
                       <span className="row gap6">
-                        <button className="btn tiny-btn" onClick={() => void resolveNote(n.id, "stale")}>拒绝</button>
-                        <button className="btn tiny-btn" onClick={() => void promoteNote(n.id)} title="晋升为结论条目">晋升</button>
-                        <button className="btn tiny-btn ok" onClick={() => void resolveNote(n.id, "verified")}>验证</button>
+                        <button className="btn tiny" onClick={() => void resolveNote(n.id, "stale")}>拒绝</button>
+                        <button className="btn tiny" onClick={() => void promoteNote(n.id)} title="晋升为结论条目">晋升</button>
+                        <button className="btn tiny ok" onClick={() => void resolveNote(n.id, "verified")}>验证</button>
                       </span>
                     </div>
                   </div>
@@ -633,8 +634,8 @@ export function Memory({ act }: { act: Act }) {
                         {sg.baseRev ? `${relTime(sg.baseRev)}前的版本` : "只产建议"}
                       </span>
                       <span className="row gap6">
-                        <button className="btn tiny-btn" onClick={() => void resolveSug(sg.id, false)} disabled={busy}>拒绝</button>
-                        <button className="btn tiny-btn ok" onClick={() => void resolveSug(sg.id, true)} disabled={busy}>接受</button>
+                        <button className="btn tiny" onClick={() => void resolveSug(sg.id, false)} disabled={busy}>拒绝</button>
+                        <button className="btn tiny ok" onClick={() => void resolveSug(sg.id, true)} disabled={busy}>接受</button>
                       </span>
                     </div>
                   </div>

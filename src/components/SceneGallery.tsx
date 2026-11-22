@@ -153,7 +153,6 @@ export function SceneGallery({ state, model, scenes, activeSceneId, onSelectScen
   onExportScene: (id: string) => void;
 }) {
   const stats = model.stats;
-  const project = state.projects.find((p) => p.id === state.activeProjectId);
   const [query, setQuery] = useState("");
   const [templateFilter, setTemplateFilter] = useState<CoordinationTemplate | "all">("all");
   const [sort, setSort] = useState<SortKey>("updated");
@@ -224,7 +223,7 @@ export function SceneGallery({ state, model, scenes, activeSceneId, onSelectScen
             aria-label="搜索场景"
             spellCheck={false}
           />
-          {query ? <button className="off-icon-btn" onClick={() => setQuery("")} aria-label="清除搜索" title="清除搜索"><XIcon size={13} /></button> : null}
+          {query ? <button className="off-icon-btn" onClick={() => setQuery("")} aria-label="清除搜索" title="清除搜索"><XIcon size={14} /></button> : null}
         </div>
         <div className="off-gal-filters" role="group" aria-label="按舞台模板筛选">
           <button className={`off-gal-chip ${templateFilter === "all" ? "on" : ""}`} onClick={() => setTemplateFilter("all")}>
@@ -247,7 +246,7 @@ export function SceneGallery({ state, model, scenes, activeSceneId, onSelectScen
       {scenes.length > 0 && visible.length === 0 ? (
         <div className="off-gal-empty">
           <span>没有匹配的场景</span>
-          <button className="btn tiny-btn" onClick={() => { setQuery(""); setTemplateFilter("all"); }}>清除筛选</button>
+          <button className="btn tiny" onClick={() => { setQuery(""); setTemplateFilter("all"); }}>清除筛选</button>
         </div>
       ) : null}
 
@@ -260,7 +259,6 @@ export function SceneGallery({ state, model, scenes, activeSceneId, onSelectScen
           const desc = templateDesc(scene.template);
           const active = scene.id === activeSceneId;
           const flags = sceneFlags(scene);
-          const onlyScene = scenes.length <= 1;
           return (
             <article
               className={`off-scene-card ${active ? "active" : ""}`}
@@ -304,7 +302,7 @@ export function SceneGallery({ state, model, scenes, activeSceneId, onSelectScen
                   {active ? <span className="tag live">当前</span> : null}
                   <span className="tag">{label}</span>
                 </div>
-                <p className="off-scene-desc">{project ? `${project.name} · ${project.alias}` : "全局"} · {desc}</p>
+                <p className="off-scene-desc">{(() => { const sp = scene.projectId ? state.projects.find((p) => p.id === scene.projectId) : null; return sp ? `${sp.name} · ${sp.alias}` : "全局"; })()} · {desc}</p>
                 <div className="off-gal-cast">
                   <div className="off-avatars">
                     {cast.slice(0, 5).map((a) => <span key={a.id} className={`off-avatar-mini accent-${a.accent}`} title={a.name}>{(a.name || "·").slice(0, 1)}</span>)}
@@ -322,8 +320,8 @@ export function SceneGallery({ state, model, scenes, activeSceneId, onSelectScen
                   <>
                     <span className="off-scene-confirm">删除「{scene.name}」？</span>
                     <div className="row gap6">
-                      <button className="btn tiny-btn" onClick={(e) => { e.stopPropagation(); setConfirming(null); }}>取消</button>
-                      <button className="btn tiny-btn danger" onClick={(e) => { e.stopPropagation(); setConfirming(null); onDeleteScene(scene.id); }}>删除</button>
+                      <button className="btn tiny" onClick={(e) => { e.stopPropagation(); setConfirming(null); }}>取消</button>
+                      <button className="btn tiny danger" onClick={(e) => { e.stopPropagation(); setConfirming(null); onDeleteScene(scene.id); }}>删除</button>
                     </div>
                   </>
                 ) : (
@@ -336,9 +334,8 @@ export function SceneGallery({ state, model, scenes, activeSceneId, onSelectScen
                       <button
                         role="menuitem"
                         className="danger"
-                        disabled={onlyScene}
-                        title={onlyScene ? "至少保留一个场景；想换模板可直接修改这个场景" : "删除场景"}
-                        onClick={() => { if (!onlyScene) setConfirming(scene.id); }}
+                        title="删除场景"
+                        onClick={() => setConfirming(scene.id)}
                       >删除</button>
                     </RowMenu>
                   </>

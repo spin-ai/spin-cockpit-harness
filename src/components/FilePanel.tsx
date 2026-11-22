@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { confirmDialog } from "./ConfirmHost";
 import type { Agent, Message, Run, State, Thread, Todo } from "../types";
 import { agentOf, timeAgo } from "../ui";
 import {
@@ -289,7 +290,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
 
   const trashEntry = async (entry: Entry) => {
     if (entry.path === "") return;
-    if (!window.confirm(`删除「${entry.name}」？会移到废纸篓。`)) return;
+    if (!(await confirmDialog(`删除「${entry.name}」？会移到废纸篓。`))) return;
     try {
       await window.harness.filesTrash(entry.path, base);
       if (baseRef.current !== base) return;
@@ -590,7 +591,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
           aria-label="资源管理器"
           onClick={() => setTab("explorer")}
         >
-          <FilesIcon size={15} />
+          <FilesIcon size={14} />
         </button>
         <button
           className={`icon-tab ${tab === "git" ? "on" : ""}`}
@@ -598,7 +599,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
           aria-label="Git"
           onClick={() => setTab("git")}
         >
-          <GitIcon size={15} />
+          <GitIcon size={14} />
         </button>
         <button
           className={`icon-tab ${tab === "sessions" ? "on" : ""}`}
@@ -606,7 +607,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
           aria-label="会话历史"
           onClick={() => setTab("sessions")}
         >
-          <HistoryIcon size={15} />
+          <HistoryIcon size={14} />
         </button>
         <div className="tab-trail">
           {onToggleMaximize && (
@@ -616,7 +617,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
               aria-label={maximized ? "还原资源管理器" : "最大化资源管理器"}
               onClick={onToggleMaximize}
             >
-              {maximized ? <PanelRestoreIcon size={15} /> : <PanelExpandIcon size={13} />}
+              {maximized ? <PanelRestoreIcon size={14} /> : <PanelExpandIcon size={14} />}
             </button>
           )}
           {onCollapse && (
@@ -626,7 +627,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
               aria-label="收起右侧栏"
               onClick={onCollapse}
             >
-              <PanelCollapseIcon size={13} />
+              <PanelCollapseIcon size={14} />
             </button>
           )}
         </div>
@@ -637,16 +638,16 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
           <>
             <div className="explorer-bar">
               <div className="explorer-title" title={base}>
-                <FolderOpenIcon size={13} className="root-ico" />
+                <FolderOpenIcon size={14} className="root-ico" />
                 <span className="ellipsis">{rootName}</span>
                 {base !== state.projectPath && <span className="worktree-tag">worktree</span>}
               </div>
               <div className="explorer-actions">
                 <button className="icon-btn" title={`新建文件${activeDir ? `到 ${activeDir}` : "到项目根目录"}`} aria-label="新建文件" onClick={() => startCreate(activeDir, "file")}>
-                  <FilePlusIcon size={13} />
+                  <FilePlusIcon size={14} />
                 </button>
                 <button className="icon-btn" title={`新建文件夹${activeDir ? `到 ${activeDir}` : "到项目根目录"}`} aria-label="新建文件夹" onClick={() => startCreate(activeDir, "folder")}>
-                  <FolderPlusIcon size={13} />
+                  <FolderPlusIcon size={14} />
                 </button>
                 <RowMenu title="文件操作">
                   <button onClick={() => setShowHidden((v) => !v)}>{showHidden ? "隐藏点文件" : "显示点文件"}</button>
@@ -657,7 +658,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
             </div>
             <div className="explorer-search">
               <div className="explorer-search-field">
-                <SearchIcon size={12} className="search-ico" />
+                <SearchIcon size={14} className="search-ico" />
                 <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="筛选文件…" />
                 {query && <button className="icon-btn" title="清除" aria-label="清除" onClick={() => setQuery("")}><XIcon size={11} /></button>}
               </div>
@@ -682,13 +683,13 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
           <>
             <div className="explorer-bar">
               <div className="explorer-title">
-                <BotIcon size={13} className="root-ico" />
+                <BotIcon size={14} className="root-ico" />
                 <span>智能体会话</span>
               </div>
             </div>
             <div className="explorer-search">
               <div className="explorer-search-field">
-                <SearchIcon size={12} className="search-ico" />
+                <SearchIcon size={14} className="search-ico" />
                 <input value={sessionQuery} onChange={(e) => setSessionQuery(e.target.value)} placeholder="搜索…" />
                 {sessionQuery && <button className="icon-btn" title="清除" aria-label="清除" onClick={() => setSessionQuery("")}><XIcon size={11} /></button>}
               </div>
@@ -723,7 +724,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
                             aria-expanded={open}
                             onClick={(e) => { e.stopPropagation(); toggleSession(s.thread.id); }}
                           >
-                            <ChevronDownIcon size={12} className={open ? "rot-180" : ""} />
+                            <ChevronDownIcon size={14} className={open ? "rot-180" : ""} />
                           </button>
                         </div>
                         <div className="session-meta">

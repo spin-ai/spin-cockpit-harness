@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { HOUR, MIN, NOON, at, bot, test } from "./_harness.mjs";
+import { HOUR, MIN, NOON, at, bot, makeBot, test } from "./_harness.mjs";
 import { buildSystemPrompt, collectCandidates, createBots, gatesFor, quietActive, scoreCandidate, DEFAULT_POLICY } from "../../electron/bot/index.mjs";
 import { parseSseDelta } from "../../electron/knowledge/ark.mjs";
 import { createMemory } from "../../electron/memory/index.mjs";
@@ -23,7 +23,7 @@ await test("创建后先问用途；用户第一句话成为职责", async () =>
     key: () => "k",
   });
   introBots.ensureSeed();
-  const b = introBots.list()[0];
+  const b = makeBot(introBots, { intro: true });
   const first = (await introBots.tick({ botId: b.id })).at(-1);
   assert.equal(first.decision, "asked");
   assert.match(first.reply, /你想让我干什么/);
@@ -45,8 +45,7 @@ function askBots(chatReply) {
     key: () => "k",
   });
   b.ensureSeed();
-  const bot = b.list()[0];
-  bot.intro = false;
+  const bot = makeBot(b);
   st.state.todos.push({ id: "t1", title: "待输入任务", status: "waiting_input", confirmed: true });
   return { st, b, bot };
 }
@@ -85,8 +84,7 @@ await test("先不管：划掉卡片但不影响聊天", async () => {
 await test("卡片 7 天后自动过期（懒标记），不会再挂在界面上", () => {
   const st = { state: { bots: [], botTurns: [], routines: [], todos: [] }, persist() {} };
   const b = createBots({ store: st, now: () => NOON, memory: () => ({ inject: () => ({ items: [], markdown: "" }) }), key: () => "" });
-  b.ensureSeed();
-  const bot = b.list()[0];
+  const bot = makeBot(b);
   st.state.botTurns.push({
     id: "ask-old", botId: bot.id, decision: "asked", reply: "旧的提问",
     ask: { text: "旧的提问", status: "open", options: [], createdAt: NOON - 8 * 24 * 3600_000 },
@@ -100,7 +98,7 @@ await test("创建时的提问也是一张卡片（同一套状态机）", async
   const st = { state: { bots: [], botTurns: [], routines: [], todos: [] }, persist() {} };
   const b = createBots({ store: st, now: () => NOON, memory: () => ({ inject: () => ({ items: [], markdown: "" }) }), chatStream: async () => ({ text: "好" }), key: () => "k" });
   b.ensureSeed();
-  const bot = b.list()[0];
+  const bot = makeBot(b, { intro: true });
   const first = (await b.tick({ botId: bot.id })).at(-1);
   assert.equal(first.decision, "asked");
   assert.equal(first.ask.status, "open");

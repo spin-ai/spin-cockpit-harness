@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { HOUR, MIN, NOON, at, bot, test } from "./_harness.mjs";
+import { HOUR, MIN, NOON, at, bot, makeBot, test } from "./_harness.mjs";
 import { buildSystemPrompt, collectCandidates, createBots, gatesFor, quietActive, scoreCandidate, DEFAULT_POLICY } from "../../electron/bot/index.mjs";
 import { parseSseDelta } from "../../electron/knowledge/ark.mjs";
 import { createMemory } from "../../electron/memory/index.mjs";
@@ -29,9 +29,7 @@ await test("流式增量会节流落盘（被打断时有半截可看）", async
     },
     key: () => "k",
   });
-  b.ensureSeed();
-  const bot = b.list()[0];
-  bot.intro = false;
+  const bot = makeBot(b);
   const turn = await b.reply(bot, "在吗", { onDelta: () => {} });
   assert.equal(seen.decision, "streaming", "生成中就应该有一条 streaming 回合");
   assert.equal(seen.reply, "你好", "半截内容要已经落盘");

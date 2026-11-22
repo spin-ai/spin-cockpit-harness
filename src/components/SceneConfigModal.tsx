@@ -60,11 +60,11 @@ export function SceneConfigModal({ project, text, act, notify, onClose }: {
           placeholder={"worktree: auto\nruntime: auto\nagent: <别名>\nconcurrency: 1\nacceptance: ...\nnotes: ..."}
         />
         <div className="scene-modal-foot">
-          <button className="btn tiny-btn" onClick={() => void suggest()} disabled={Boolean(busy)}>{busy === "suggest" ? "生成中…" : "AI 建议"}</button>
+          <button className="btn tiny" onClick={() => void suggest()} disabled={Boolean(busy)}>{busy === "suggest" ? "生成中…" : "AI 建议"}</button>
           <span className="tiny faint">{draft.trim() ? `${draft.length} 字符` : "未配置"}</span>
           <div className="row gap6">
-            <button className="btn tiny-btn" onClick={onClose} disabled={Boolean(busy)}>取消</button>
-            <button className="btn tiny-btn primary" onClick={() => void save()} disabled={Boolean(busy)}>{busy === "save" ? "保存中…" : "保存"}</button>
+            <button className="btn tiny" onClick={onClose} disabled={Boolean(busy)}>取消</button>
+            <button className="btn tiny primary" onClick={() => void save()} disabled={Boolean(busy)}>{busy === "save" ? "保存中…" : "保存"}</button>
           </div>
         </div>
       </div>

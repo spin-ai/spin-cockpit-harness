@@ -110,7 +110,7 @@ export function SceneConfigPanel({ state, model, cast, onCast, prefs, onPrefs, o
       <div className="off-insp-head">
         <div className="off-insp-title"><b>场景配置</b><span>{prefs.name} · {templateLabel(prefs.template)}</span></div>
         <span className="off-cfg-count">{rows.length} 人</span>
-        <button type="button" className="off-icon-btn" title="关闭配置" onClick={onClose} aria-label="关闭配置"><XIcon size={13} /></button>
+        <button type="button" className="off-icon-btn" title="关闭配置" onClick={onClose} aria-label="关闭配置"><XIcon size={14} /></button>
       </div>
       <div className="off-insp-body">
         <section className="off-insp-block">
@@ -187,7 +187,7 @@ export function SceneConfigPanel({ state, model, cast, onCast, prefs, onPrefs, o
 
         <div className="off-cfg-note"><b>边界：</b>场景只提供默认值与呈现；执行仍走 Mission / Delegation。</div>
       </div>
-      <div className="off-insp-foot"><button className="off-icon-btn" title="关闭配置" aria-label="关闭配置" onClick={onClose}><XIcon size={13} /></button><span className="off-spacer" /><button className="btn primary off-insp-btn" onClick={() => notify("场景配置已保存（本地）")}>保存配置</button></div>
+      <div className="off-insp-foot"><button className="off-icon-btn" title="关闭配置" aria-label="关闭配置" onClick={onClose}><XIcon size={14} /></button><span className="off-spacer" /><button className="btn primary off-insp-btn" onClick={() => notify("场景配置已保存（本地）")}>保存配置</button></div>
     </aside>
   );
 }

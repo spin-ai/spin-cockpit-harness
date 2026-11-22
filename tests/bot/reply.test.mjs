@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { HOUR, MIN, NOON, at, bot, test } from "./_harness.mjs";
+import { HOUR, MIN, NOON, at, bot, makeBot, test } from "./_harness.mjs";
 import { buildSystemPrompt, collectCandidates, createBots, gatesFor, quietActive, scoreCandidate, DEFAULT_POLICY } from "../../electron/bot/index.mjs";
 import { parseSseDelta } from "../../electron/knowledge/ark.mjs";
 import { createMemory } from "../../electron/memory/index.mjs";
@@ -38,7 +38,7 @@ const bots = createBots({
 });
 bots.ensureSeed();
 
-const seeded = bots.list()[0];
+const seeded = makeBot(bots, { name: "小A" });
 
 await test("被动回复：流式增量按顺序到，落库 decision=replied 且有注入记忆", async () => {
   deltas.length = 0;
@@ -61,7 +61,7 @@ await test("被动回复：首字延迟落进 cost.ttftMs", async () => {
     key: () => "k",
   });
   fast.ensureSeed();
-  const turn = await fast.reply(fast.list()[0], "在吗");
+  const turn = await fast.reply(makeBot(fast), "在吗");
   assert.equal(turn.cost.ttftMs, 120);
   assert.equal(turn.cost.tokens, 3);
 });
@@ -88,7 +88,7 @@ await test("取消：signal abort 时回合留成 interrupted，半截回复不�
   });
   aborting.ensureSeed();
   const controller = new AbortController();
-  const p = aborting.reply(aborting.list()[0], "在吗", { signal: controller.signal, onDelta: () => {} });
+  const p = aborting.reply(makeBot(aborting), "在吗", { signal: controller.signal, onDelta: () => {} });
   setTimeout(() => controller.abort(), 20);
   await assert.rejects(() => p, /abort/i);
   assert.equal(abortStore.state.botTurns.length, 1);
@@ -108,6 +108,6 @@ await test("报错（非取消）：回合不留在账上", async () => {
     key: () => "k",
   });
   failing.ensureSeed();
-  await assert.rejects(() => failing.reply(failing.list()[0], "在吗"), /上游 500/);
+  await assert.rejects(() => failing.reply(makeBot(failing), "在吗"), /上游 500/);
   assert.equal(errStore.state.botTurns.length, 0);
 });

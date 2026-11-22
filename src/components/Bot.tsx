@@ -1,12 +1,14 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { confirmDialog } from "./ConfirmHost";
 import { createPortal } from "react-dom";
 import { EmptyState } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
 import { RowMenu } from "./RowMenu";
-import { CopyIcon, FileTextIcon, GitIcon, LinkIcon, ListIcon, PencilIcon, PlusIcon, QuoteIcon, RefreshIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, XIcon } from "./Icons";
+import { CheckSquareIcon, CopyIcon, FileTextIcon, GitIcon, LinkIcon, ListIcon, PencilIcon, PlusIcon, QuoteIcon, RefreshIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, XIcon } from "./Icons";
 import { FAMILY_UNIT, FAMILY_VERB, STATUS_LABEL, familyOf, formatDuration, humanArgs, isFileLike, objectOf, runsOfFamily, statusOf, summarizeFamilies, turnStatusOf, type ToolFamily, type ToolStatus } from "../tool-family";
 import { requestFilePreview } from "../terminal-events";
 import { ToolFamilyIcon } from "./ToolFamilyIcon";
+import { UndoBar, type UndoAction } from "./UndoBar";
 import { TrajectoryView, type TrajectoryRecord } from "./TrajectoryView";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "./Icons";
 import { useT } from "../i18n";
@@ -118,11 +120,12 @@ type TraceStep = {
 type RailTab = "messages" | "schedule" | "settings";
 
 function BotRailTabs({ tab, onTab }: { tab: RailTab; onTab: (t: RailTab) => void }) {
+  const t = useT();
   return (
     <div className="bot-rail-tabs">
-      <button className={tab === "messages" ? "on" : ""} onClick={() => onTab("messages")}>消息</button>
-      <button className={tab === "schedule" ? "on" : ""} onClick={() => onTab("schedule")}>调度</button>
-      <button className={tab === "settings" ? "on" : ""} onClick={() => onTab("settings")}>设置</button>
+      <button className={tab === "messages" ? "on" : ""} onClick={() => onTab("messages")}>{t("bot.messages", "消息")}</button>
+      <button className={tab === "schedule" ? "on" : ""} onClick={() => onTab("schedule")}>{t("bot.schedule", "调度")}</button>
+      <button className={tab === "settings" ? "on" : ""} onClick={() => onTab("settings")}>{t("bot.settings", "设置")}</button>
     </div>
   );
 }
@@ -330,12 +333,9 @@ function ToolCard({ step, child = false }: { step: TraceStep; child?: boolean })
 
   const depthClass = child ? "ds-tool-card child" : "ds-tool-card";
   const object = objectOf(null, family, step.summary || "");
-  // bot 自带工具（查记忆 / 查任务）说的是「做什么」，不是参数；参数只在没有语义名时露出来
-  const known = TOOL_LABEL[step.title];
-  const query = /(?:^|· )query=([^·]+)/.exec(humanArgs(step.summary || ""))?.[1]?.trim();
-  // 语义名优先（查记忆 / 看目录），没有就用家族动词（已执行 / 已读取）
-  const label = known || FAMILY_VERB[family];
-  const human = known ? (query || "") : humanArgs(step.summary || "");
+  // 不用语义名时用家族动词（已执行 / 已读取）；工具名本身在卡片标题里
+  const label = FAMILY_VERB[family];
+  const human = humanArgs(step.summary || "");
   const fileLike = (family === "read" || family === "edit") && isFileLike(object);
   if (family === "run") {
     return (
@@ -411,7 +411,7 @@ function FileChip({ path }: { path: string }) {
   const short = name.length > 28 ? `${name.slice(0, 26)}…` : name;
   return (
     <span className="ds-file-chip" title={path}>
-      <FileTextIcon size={12} />
+      <FileTextIcon size={14} />
       <button className="ds-file-chip-name" onClick={(e) => { e.stopPropagation(); requestFilePreview({ rel: path, name }); }}>{short}</button>
     </span>
   );
@@ -508,7 +508,7 @@ function TraceDetails({ runId, botName, state }: { runId?: string | null; botNam
   return (
     <details className="im-trace">
       <summary>
-        轨迹 <em>{trace.length}</em>
+        轨迹
         {run && <span className={`tag ${run.status === "failed" ? "fail" : run.status === "done" ? "ok" : ""}`}>{run.status}</span>}
         {run?.terminalId && (
           <button
@@ -545,22 +545,17 @@ type Snapshot = {
   agents?: { id: string; name: string; alias: string; cli: string; role: string; hostId?: string | null }[];
   tasks?: { id: string; key: string; title: string; status: string; missionState: string | null; agentId: string | null }[];
   recentTodos?: { id: string; key: string; title: string; status: string; missionState: string | null }[];
+  /** 工具目录（主进程下发，渲染层不再手写工具清单） */
+  toolCatalog?: { name: string; label: string; risk: string; requiresCapability: string[] | null }[];
   /** 聊天面的小状态：草稿与阅读位置（key = botId:threadId / group:groupId） */
   botUi?: Record<string, { draft?: string; scroll?: { turnId?: string; offset?: number } | null; updatedAt?: number }>;
 };
 
 const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "汇报", watching: "监视中", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工" };
-/** 只读工具 → 人话；流式期间显示「正在查任务」比空窗好 */
-const TOOL_LABEL: Record<string, string> = {
-  memory_search: "查记忆", knowledge_search: "查资料", todo_list: "查任务", run_status: "查运行",
-  workspace_list: "看目录", workspace_read: "读文件", workspace_grep: "搜代码",
-  git_status: "看 git 状态", git_log: "看提交", git_diff: "看改动", run_log: "读运行结果",
-  memory_write: "记一条", memory_forget: "忘一条", task_create: "建任务",
-};
-/** 工具名 → 「正在查 / 正在读 / 正在改」；家族由主进程/正则兜底给出，群聊里每个成员各一行 */
-const toolLabel = (tool?: string) => {
+/** 工具名 → 「正在查 / 正在改」；标签来自主进程下发的工具目录，找不到再按家族兜底 */
+const toolLabel = (tool?: string, meta?: { label?: string; risk?: string }) => {
   const name = tool || "";
-  if (TOOL_LABEL[name]) return `正在查 · ${TOOL_LABEL[name]}`;
+  if (meta?.label) return `正在${meta.risk === "read" ? "查" : meta.risk === "write" ? "改" : "用"} · ${meta.label}`;
   const family = familyOf(null, { title: name });
   const verb = family === "read" ? "读" : family === "edit" ? "改" : family === "run" ? "跑" : family === "net" ? "看网页" : family === "search" ? "查" : "用工具";
   return `正在${verb}${name ? ` · ${name}` : ""}`;
@@ -684,6 +679,13 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   /** 转录窗口：一次只画最近 N 个块（200 轮也不会堆出几千个节点） */
   const [renderBlocks, setRenderBlocks] = useState(40);
   const [renamingChat, setRenamingChat] = useState<{ id: string; title: string } | null>(null);
+  /** 删除机器人后的撤销条 */
+  const [undo, setUndo] = useState<UndoAction | null>(null);
+  /** 监视任务：搜索而不是从 30 条里翻 */
+  const [watchQuery, setWatchQuery] = useState("");
+  /** 新建群聊：名字 + 勾成员（不再写死「项目群」+ 全员） */
+  const [groupDraft, setGroupDraft] = useState<{ name: string; ids: string[] } | null>(null);
+  const [groupNameDraft, setGroupNameDraft] = useState("");
   /** 会话行展开：这条会话起过的执行（ORCA 的 worker 树） */
   const [expandedChat, setExpandedChat] = useState<string | null>(null);
   /** 附件：随这句话一起带进上下文（文本，读自 docsPick） */
@@ -918,6 +920,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   })();
   const group = groups.find((g) => g.id === botId) ?? null;
   const isGroup = Boolean(group);
+  useEffect(() => { setGroupNameDraft(group?.name || ""); }, [group?.id, group?.name]);
   // 主进程推的 delta 在 effect 里订阅（只订一次），所以当前群用 ref 带进去
   useEffect(() => { groupIdRef.current = group?.id || ""; }, [group?.id]);
   const groupMessages = useMemo(() => {
@@ -970,6 +973,11 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   }, [tab, refreshTidy, snapshot?.turns]);
   const members = snapshot?.bots ?? [];
   const botOf = useCallback((id?: string) => members.find((b) => b.id === id) ?? null, [members]);
+  /** 工具标签也走主进程下发的目录（流式提示「正在查 · 看目录」） */
+  const toolMeta = useMemo(
+    () => Object.fromEntries((snapshot?.toolCatalog || []).map((t) => [t.name, t])) as Record<string, { label?: string; risk?: string }>,
+    [snapshot?.toolCatalog],
+  );
   /** 默认会话 = 老回合与主动开口的落点；新开的会话只装自己的回合 */
   const defaultThreadId = (bot?.id ? snapshot?.botThreads?.[bot.id] : null) || null;
   const turns = useMemo(() => {
@@ -1087,9 +1095,36 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     if (!group) return;
     void act("botGroupSave", { id: group.id, replyMode: mode.kind === "bot" ? { kind: "bot", botId: mode.botId || groupMembers[0]?.id || "" } : { kind: mode.kind } });
   };
-  const createGroup = async () => {
-    const res = (await act("botGroupSave", { name: "项目群", memberIds: members.map((m) => m.id), replyMode: { kind: "mentions" } })) as { id?: string } | null;
+  /** 建群：名字自取、成员自选（不再写死「项目群 + 全员」） */
+  const createGroupWith = async () => {
+    if (!groupDraft) return;
+    const name = groupDraft.name.trim() || "群聊";
+    if (!groupDraft.ids.length) { notify("至少选一个成员"); return; }
+    const res = (await act("botGroupSave", { name, memberIds: groupDraft.ids, replyMode: { kind: "mentions" } })) as { id?: string } | null;
+    setGroupDraft(null);
     if (res?.id) setBotId(res.id);
+  };
+
+  const renameGroup = async () => {
+    if (!group) return;
+    const name = groupNameDraft.trim();
+    if (!name || name === group.name) { setGroupNameDraft(group.name); return; }
+    await act("botGroupSave", { id: group.id, name });
+  };
+
+  const toggleGroupMember = async (memberId: string) => {
+    if (!group) return;
+    const on = group.memberIds.includes(memberId);
+    const ids = on ? group.memberIds.filter((id) => id !== memberId) : [...group.memberIds, memberId];
+    if (!ids.length) { notify("群里至少留一个人；要解散请用「删除群聊」"); return; }
+    await act("botGroupSave", { id: group.id, memberIds: ids });
+  };
+
+  const deleteGroup = async () => {
+    if (!group) return;
+    if (!(await confirmDialog({ danger: true, title: `删除群聊「${group.name}」？`, desc: "群里的消息会一起删除；机器人本身不受影响。" }))) return;
+    await act("botGroupRemove", { id: group.id });
+    setBotId("");
   };
 
   /** 草稿键：1:1 按 bot + 会话，群聊按群；切走再回来草稿还在 */
@@ -1140,6 +1175,14 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   const send = async () => {
     const text = draft.trim();
     if (!text) return;
+    if (isGroup && group && /@everyone\b/iu.test(text)) {
+      const ok = await confirmDialog({
+        title: "同时叫醒全体成员？",
+        desc: `@everyone 会让 ${groupMembers.length} 个成员各回一条，按各自配额扣 token。`,
+        ok: "叫醒",
+      });
+      if (!ok) return;
+    }
     if (isGroup && group) {
       setDraft("");
       setError("");
@@ -1288,11 +1331,20 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     void run("chat", () => act("botChatRename", { threadId: id, title }));
   };
 
-  const removeChat = (chat: Chat) => {
-    if (!window.confirm(`删除会话「${chat.title}」？里面的消息会一起删掉。`)) return;
+  const removeChat = async (chat: Chat) => {
+    if (!(await confirmDialog({ danger: true, title: `删除会话「${chat.title}」？`, desc: "里面的消息会一起删掉。默认会话不能删，可以清空。" }))) return;
     void run("chat", async () => {
       await act("botChatRemove", { threadId: chat.id });
       if (openThreadId === chat.id) setOpenThreadId(null);
+    });
+  };
+
+  /** 清空一条会话：消息与回合一起清，会话本身留着（默认会话也能清） */
+  const clearChat = async (chat: Chat) => {
+    if (!(await confirmDialog({ danger: true, title: `清空会话「${chat.title}」？`, desc: "里面的消息会一起删掉；会话本身留着。" }))) return;
+    void run("chat", async () => {
+      await act("botChatClear", { threadId: chat.id });
+      notify("会话已清空");
     });
   };
 
@@ -1436,7 +1488,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   const migrateThreads = () => void run("migrate", async () => {
     const dry = (await act("botThreadMigrate", { dryRun: true })) as { turns?: number; messages?: number } | null;
     if (!dry?.turns) { notify("没有需要迁移的历史回合"); return; }
-    if (!window.confirm(`将把 ${dry.turns} 条回合补成 ${dry.messages} 条会话消息，继续？`)) return;
+    if (!(await confirmDialog(`将把 ${dry.turns} 条回合补成 ${dry.messages} 条会话消息，继续？`))) return;
     const done = (await act("botThreadMigrate", {})) as { messages?: number } | null;
     notify(`已迁移 ${done?.messages ?? 0} 条消息`);
     await load();
@@ -1450,7 +1502,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   };
 
   const removeRoutine = async (routine: Routine) => {
-    if (!window.confirm(`删除日程「${routine.name || routine.when}」？`)) return;
+    if (!(await confirmDialog(`删除日程「${routine.name || routine.when}」？`))) return;
     void run("routine", async () => {
       await act("botRoutineRemove", { id: routine.id });
       notify("已删除");
@@ -1567,16 +1619,21 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
       }
     });
   };
-  const remove = () => {
+  const remove = async () => {
     if (!bot) return;
-    if (!window.confirm(`删除 bot「${bot.name}」？它的回合记录会一起删掉。`)) return;
-    void run("remove", async () => { await act("botRemove", { id: bot.id }); setBotId(""); });
+    const ok = await confirmDialog({ danger: true, title: `删除 bot「${bot.name}」？`, desc: "回合、会话、日程与群成员会一起删除。删除后 6 秒内可以撤销。" });
+    if (!ok) return;
+    void run("remove", async () => {
+      await act("botRemove", { id: bot.id });
+      setBotId("");
+      setUndo({ label: `已删除「${bot.name}」`, run: () => act("botUndoRemove") });
+    });
   };
 
   if (!snapshot) {
     return (
       <div className="page bot-page">
-        <PageHeader title={t("page.bots")} actions={onBackToBots ? <button className="btn ghost" onClick={onBackToBots} title="回到机器人配置页" aria-label="回到机器人配置页"><ChevronLeftIcon size={13} /></button> : undefined} />
+        <PageHeader title={t("page.bots")} actions={onBackToBots ? <button className="btn ghost" onClick={onBackToBots} title="回到机器人配置页" aria-label="回到机器人配置页"><ChevronLeftIcon size={14} /></button> : undefined} />
         <div className="bot-loading"><EmptyState compact title="正在读取机器人…" desc={error || "稍等一下"} /></div>
       </div>
     );
@@ -1585,7 +1642,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   if (!snapshot.bots.length) {
     return (
       <div className="page bot-page">
-        <PageHeader title={t("page.bots")} actions={onBackToBots ? <button className="btn ghost" onClick={onBackToBots} title="回到机器人配置页" aria-label="回到机器人配置页"><ChevronLeftIcon size={13} /></button> : undefined} />
+        <PageHeader title={t("page.bots")} actions={onBackToBots ? <button className="btn ghost" onClick={onBackToBots} title="回到机器人配置页" aria-label="回到机器人配置页"><ChevronLeftIcon size={14} /></button> : undefined} />
         <EmptyState mark="◇" title="还没有机器人" desc="建一个机器人需要人格卡、出场策略和配额；先给个名字，其余用默认值。" action={<button className="btn primary" onClick={create}>新建机器人</button>} />
       </div>
     );
@@ -1910,6 +1967,26 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                     ? `能执行：执行体是 ${(snapshot.agents || []).find((a) => a.id === bot?.executorAgentId)?.name || "未绑定的 Agent"}（CLI Agent）；点「开跑」会起它能跑的 run，跑完回流一条汇报。`
                     : "可起任务 ≠ 自己动手：bot 只能提议建 todo，起 run 仍要你在桌面确认。"}
                 </p>
+                {(() => {
+                  const execAgent = (state?.agents || []).find((a) => a.id === bot?.executorAgentId);
+                  if (!execAgent) return null;
+                  const botProject = (state?.projects || []).find((p) => p.id === bot?.projectId);
+                  const execProject = (state?.projects || []).find((p) => p.id === execAgent.projectId);
+                  const projectMismatch = botProject && execProject && botProject.id !== execProject.id;
+                  const hostMismatch = Boolean(bot?.hostId && execAgent.hostId && bot.hostId !== execAgent.hostId);
+                  if (!projectMismatch && !hostMismatch) return null;
+                  return (
+                    <div className="bot-banner fail" role="alert">
+                      <i />
+                      <span>
+                        执行体和这个 bot 的绑定对不上：
+                        {projectMismatch ? ` 执行体属于「${execProject.name}」，bot 绑的是「${botProject.name}」。` : ""}
+                        {hostMismatch ? " 执行体不在 bot 绑定的主机上。" : ""}
+                        工作区工具会用 bot 绑的项目根，起 run 用任务自己的 cwd。
+                      </span>
+                    </div>
+                  );
+                })()}
                 <label className="bot-num" style={{ marginTop: 6 }}>
                   <span>模型</span>
                   <select className="project-filter" value={bot?.model || ""} onChange={(e) => void savePatch({ model: e.target.value })}>
@@ -1933,19 +2010,22 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                     ))}
                   </div>
                 </div>
-                <p className="bot-note">思考档只改「最多查几轮 / 工具轮温度」，不改单轮 token 上限。</p>                <div className="bot-label">只读工具（{bot?.capability === "read" ? "只读档可用" : "已连接"}）</div>
-                {([["workspace_list", "看目录"], ["workspace_read", "读文件"], ["workspace_grep", "搜代码"], ["git_status", "git 状态"], ["git_log", "提交历史"], ["git_diff", "未提交改动"], ["run_log", "运行结果"], ["memory_search", "记忆"], ["knowledge_search", "资料库"], ["todo_list", "任务"], ["run_status", "运行"]] as const).map(([id, label]) => (
-                  <div className="bot-mem-row" key={id}>
-                    <span className="mono">{id}</span>
-                    <span>
-                      {label}
-                      <em className="faint"> · 只读</em>
-                    </span>
-                  </div>
-                ))}
-                <div className="bot-mem-row"><span className="mono">memory_write</span><span>记自己的记忆<em className="faint"> · 只写本 bot 的 owner</em></span></div>
-                <div className="bot-mem-row"><span className="mono">memory_forget</span><span>删自己的记忆<em className="faint"> · 只能删自己的</em></span></div>
-                <div className="bot-mem-row"><span className="mono">task_create</span><span>建任务<em className="faint"> · {bot?.capability === "read" ? "只读档不可用" : "起 run 仍需你确认"}</em></span></div>
+                <p className="bot-note">思考档只改「最多查几轮 / 工具轮温度」，不改单轮 token 上限。</p>
+                {/* 工具清单由主进程下发（BOT_TOOL_META），这里不再手写；档位不够的工具标出来 */}
+                <div className="bot-label">工具（{bot?.capability === "read" ? "只读档" : bot?.capability === "dispatch" ? "可起任务" : "能执行"}）</div>
+                {(snapshot.toolCatalog || []).map((tool) => {
+                  const allowed = !tool.requiresCapability || tool.requiresCapability.includes(bot?.capability || "read");
+                  const risk = tool.risk === "read" ? "只读" : tool.risk === "self" ? "只写自己的" : "写任务";
+                  return (
+                    <div className="bot-mem-row" key={tool.name}>
+                      <span className="mono">{tool.name}</span>
+                      <span>
+                        {tool.label}
+                        <em className="faint"> · {allowed ? risk : `${risk} · 当前档位不可用`}</em>
+                      </span>
+                    </div>
+                  );
+                })}
                 <div className="bot-label" style={{ marginTop: 12 }}>通道</div>
                 <div className="bot-mem-row"><span className="mono">local</span><span>桌面 Chat / Bot 页<em className="faint"> · 已连接</em></span></div>
                 <div className="bot-mem-row"><span className="mono">group</span><span>群聊<em className="faint"> · {groups.length} 个群</em></span></div>
@@ -2116,6 +2196,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
 
   return (
     <div className="page bot-page">
+      <UndoBar action={undo} onDone={() => setUndo(null)} />
 
       {error && <div className="bot-banner fail"><i /><span>{error}</span></div>}
 
@@ -2123,7 +2204,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
         <aside className="bot-side">
           <div className="bot-label">机器人</div>
           <div className="bot-search">
-            <SearchIcon size={12} className="search-ico" />
+            <SearchIcon size={14} className="search-ico" />
             <input
               value={botQuery}
               onChange={(e) => setBotQuery(e.target.value)}
@@ -2145,12 +2226,6 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 </span>
               </button>
             ))}
-            {!groups.length && !botQuery.trim() && (
-              <button className="bot-item" onClick={() => void createGroup()} title="把现在的机器人拉一个群">
-                <span className="bot-avatar group">群</span>
-                <span className="bot-item-main"><b>新建群聊</b><span>把 {members.length} 个机器人拉进来</span></span>
-              </button>
-            )}
             {botMatched.bots.map((item) => {
               const on = item.id === bot?.id;
               const itemMuted = Boolean(item.mutedUntil && item.mutedUntil > Date.now());
@@ -2169,7 +2244,23 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
               );
             })}
           </div>
-          <button className="bot-new" onClick={create}>＋ 新建机器人</button>
+          <RowMenu
+            title="新建：机器人或群聊"
+            className="bot-new-menu"
+            triggerClassName="bot-new"
+            trigger={<><PlusIcon size={13} /> 新建</>}
+            align="left"
+            openOnHover
+          >
+            <button onClick={create}>
+              <span className="row-menu-title">新建机器人</span>
+              <span className="row-menu-hint">人格卡 · 出场策略</span>
+            </button>
+            <button onClick={() => setGroupDraft({ name: `群聊 ${groups.length + 1}`, ids: members.map((b) => b.id) })}>
+              <span className="row-menu-title">新建群聊</span>
+              <span className="row-menu-hint">起名字、选成员</span>
+            </button>
+          </RowMenu>
         </aside>
 
         {!isGroup && chatView === "chat" && railTab === "messages" && (
@@ -2190,9 +2281,9 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 <span className="spacer" />
                 <RowMenu title="机器人操作">
                   <button onClick={() => setRailTab("settings")}>机器人设置</button>
-                  {!isGroup && <button disabled={Boolean(busy)} onClick={togglePause}>{bot?.status === "active" ? "暂停" : "恢复"}</button>}
-                  {!isGroup && <button disabled={Boolean(busy)} onClick={() => void (muted ? unmute() : mute())}>{muted ? "取消静音" : "静音 1h"}</button>}
-                  {!isGroup && <button disabled={Boolean(busy)} onClick={() => void tick()}>跑一次决策</button>}
+                  {!isGroup && <button disabled={Boolean(busy)} onClick={togglePause}>{bot?.status === "active" ? t("bot.pause", "暂停") : t("bot.resume", "恢复")}</button>}
+                  {!isGroup && <button disabled={Boolean(busy)} onClick={() => void (muted ? unmute() : mute())}>{muted ? t("bot.unmute", "取消静音") : t("bot.mute1h", "静音 1h")}</button>}
+                  {!isGroup && <button disabled={Boolean(busy)} onClick={() => void tick()}>{t("bot.tick", "跑一次决策")}</button>}
                   <button onClick={() => void run("thread", async () => {
                     const res = (await act("botThread", { botId: bot?.id })) as { threadId?: string } | null;
                     if (res?.threadId) onOpenThread(res.threadId);
@@ -2202,7 +2293,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                   <button onClick={() => { setTab("persona"); setRenameFocus((n) => n + 1); }}>重命名</button>
                   <button onClick={migrateThreads}>迁移历史到会话</button>
                   <button onClick={() => void clearTurns("silent")}>清空沉默 / 被拦记录</button>
-                  <button className="danger" onClick={() => { if (window.confirm("清空这个机器人的全部回合记录？")) void clearTurns("all"); }}>清空全部回合</button>
+                  <button className="danger" onClick={async () => { if (await confirmDialog("清空这个机器人的全部回合记录？")) void clearTurns("all"); }}>清空全部回合</button>
                   <button className="danger" onClick={remove}>删除当前机器人</button>
                   {onBackToBots && <button onClick={onBackToBots}>回到机器人配置</button>}
                 </RowMenu>
@@ -2216,7 +2307,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                   onChange={(event) => setChatQuery(event.target.value)}
                   aria-label="搜索会话"
                 />
-                <button className="btn tiny primary" onClick={newChat} disabled={Boolean(busy)}>＋ 新会话</button>
+                <button className="btn tiny primary" onClick={newChat} disabled={Boolean(busy)}>＋ {t("bot.newChat", "新会话")}</button>
               </div>
               {!chats.length && (
                 <div className="bot-empty">
@@ -2229,7 +2320,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 </div>
               )}
               <div className="bot-upnext">
-                  <div className="bot-label">工作 <em>{needs.length + myRoutines.filter((r) => r.due).length + assigned.rows.length}</em></div>
+                  <div className="bot-label">工作</div>
                   {needs.length === 0 && !myRoutines.some((r) => r.due) && assigned.rows.length === 0 && (
                     <p className="bot-note">没有需要你处理的。任务在任务面板，日程在「自动化」。</p>
                   )}
@@ -2279,17 +2370,33 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
               ) : null}
               <div className="bot-upnext">
                 <div className="bot-label">监视任务</div>
-                <select
+                <input
                   className="bot-exec"
-                  value=""
-                  aria-label="选择任务交给它监视"
-                  onChange={(event) => { if (event.target.value) void run("watch", () => act("botWatchTask", { todoId: event.target.value, botId: bot?.id })); }}
-                >
-                  <option value="">选择一个任务交给它监视…</option>
-                  {(snapshot.recentTodos || []).map((t) => (
-                    <option key={t.id} value={t.id}>{t.key} · {t.title.slice(0, 24)} · {t.missionState || t.status}</option>
-                  ))}
-                </select>
+                  value={watchQuery}
+                  placeholder="搜任务编号 / 标题，选中就监视"
+                  aria-label="搜索任务交给它监视"
+                  onChange={(event) => setWatchQuery(event.target.value)}
+                />
+                {watchQuery.trim() && (() => {
+                  const q = watchQuery.trim().toLowerCase();
+                  const hits = (snapshot.recentTodos || [])
+                    .filter((t) => `${t.key} ${t.title}`.toLowerCase().includes(q))
+                    .slice(0, 6);
+                  if (!hits.length) return <p className="bot-note">没有匹配的任务</p>;
+                  return (
+                    <div className="row gap6 wrap" style={{ margin: "6px 0" }}>
+                      {hits.map((t) => (
+                        <button
+                          key={t.id}
+                          className="btn tiny"
+                          onClick={() => { void run("watch", () => act("botWatchTask", { todoId: t.id, botId: bot?.id })); setWatchQuery(""); }}
+                        >
+                          {t.key} · {t.title.slice(0, 24)}
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
                 {(snapshot.turns || []).filter((t) => t.botId === bot?.id && t.decision === "watching").map((t) => {
                   const todo = (snapshot.recentTodos || []).find((x) => x.id === t.todoId);
                   return (
@@ -2332,7 +2439,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                             aria-expanded={expandedChat === chat.id}
                             onClick={() => setExpandedChat((prev) => (prev === chat.id ? null : chat.id))}
                           >
-                            <ChevronRightIcon size={12} className={expandedChat === chat.id ? "rot-90" : ""} />
+                            <ChevronRightIcon size={14} className={expandedChat === chat.id ? "rot-90" : ""} />
                           </button>
                         ) : <span className="bot-twist" />}
                         <button className="bot-chat-row-main" onClick={() => openChat(chat.id)} title={chat.title}>
@@ -2344,6 +2451,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                         <RowMenu title="会话操作">
                           <button onClick={() => setRenamingChat({ id: chat.id, title: chat.title })}>重命名</button>
                           <button onClick={() => forkChat(chat.id)}>从这里分支</button>
+                          <button onClick={() => void clearChat(chat)}>清空消息</button>
                           <button className="danger" onClick={() => removeChat(chat)}>删除会话</button>
                         </RowMenu>
                       </div>
@@ -2401,8 +2509,8 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
           })()}
           {!isGroup && !openThreadId && (
             <div className="bot-chat-tabs">
-              <button className={chatView === "chat" ? "on" : ""} onClick={() => setChatView("chat")}>对话</button>
-              <button className={chatView === "trajectory" ? "on" : ""} onClick={() => setChatView("trajectory")}>轨迹</button>
+              <button className={chatView === "chat" ? "on" : ""} onClick={() => setChatView("chat")}>{t("bot.chat", "对话")}</button>
+              <button className={chatView === "trajectory" ? "on" : ""} onClick={() => setChatView("trajectory")}>{t("bot.trajectory", "轨迹")}</button>
             </div>
           )}
           {(isGroup || openThreadId) ? (
@@ -2417,22 +2525,22 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
           {!isGroup && openThreadId && (
             <div className="bot-chat-bar">
               <button className="btn tiny" onClick={() => setOpenThreadId(null)} title="返回会话列表" aria-label="返回会话列表">
-                <ChevronLeftIcon size={13} />
+                <ChevronLeftIcon size={14} />
               </button>
               <b className="ellipsis">{chats.find((c) => c.id === openThreadId)?.title || "会话"}</b>
-              <span className="tiny faint">{turns.filter((t) => ["answered", "replied", "reported", "asked"].includes(t.decision || "answered")).length} 条</span>
               <span className="spacer" />
-              <button className="btn tiny" onClick={newChat} disabled={Boolean(busy)}>＋ 新会话</button>
+              <button className="btn tiny" onClick={newChat} disabled={Boolean(busy)}>＋ {t("bot.newChat", "新会话")}</button>
               <RowMenu title="会话操作">
                 <button onClick={() => { const c = chats.find((x) => x.id === openThreadId); setRenamingChat({ id: openThreadId, title: c?.title || "会话" }); setOpenThreadId(null); }}>重命名</button>
                 <button onClick={() => forkChat(openThreadId)}>从这里分支</button>
+                <button onClick={() => { const c = chats.find((x) => x.id === openThreadId); if (c) void clearChat(c); }}>清空消息</button>
                 <button className="danger" onClick={() => { const c = chats.find((x) => x.id === openThreadId); if (c) removeChat(c); }}>删除会话</button>
               </RowMenu>
             </div>
           )}
           <div className="bot-chat-tabs">
-            <button className={chatView === "chat" ? "on" : ""} onClick={() => setChatView("chat")}>对话</button>
-            <button className={chatView === "trajectory" ? "on" : ""} onClick={() => setChatView("trajectory")}>轨迹</button>
+            <button className={chatView === "chat" ? "on" : ""} onClick={() => setChatView("chat")}>{t("bot.chat", "对话")}</button>
+            <button className={chatView === "trajectory" ? "on" : ""} onClick={() => setChatView("trajectory")}>{t("bot.trajectory", "轨迹")}</button>
           </div>
           {chatView === "trajectory" ? (
             <TrajectoryView records={trajectoryRecords(turns, state)} focusTurnId={trajectoryTurn} onJump={(id) => { setChatView("chat"); setTimeout(() => jumpToTurn(id), 30); }} />
@@ -2525,7 +2633,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
               .map(([botId, p]) => (
                 <div className="ds-typing" key={`gp-${botId}`} aria-live="polite">
                   <span className="ds-caret" />
-                  <span>{p.name || botOf(botId)?.name || "成员"} · {p.phase === "tool" ? toolLabel(p.tool) : "正在想…"}</span>
+                  <span>{p.name || botOf(botId)?.name || "成员"} · {p.phase === "tool" ? toolLabel(p.tool, toolMeta[p.tool || ""]) : "正在想…"}</span>
                 </div>
               ))}
             {isGroup && busy === "group" && !groupStream.length && !groupPhaseCount && (
@@ -2647,16 +2755,16 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                     </div>
                   )}
                   <div className="ds-actions">
-                    <button className="ds-action" title="复制这条回复" aria-label="复制这条回复" onClick={() => void window.harness.clipboardWrite(turn.reply || "")}><CopyIcon size={15} /></button>
+                    <button className="ds-action" title="复制这条回复" aria-label="复制这条回复" onClick={() => void window.harness.clipboardWrite(turn.reply || "")}><CopyIcon size={14} /></button>
                     {/* 轨迹入口放在这一轮的动作里：不是只能从页签进，且进来就定位到这一轮 */}
                     <button className="ds-action" title="看这一轮的轨迹" aria-label="看这一轮的轨迹" onClick={() => { setTrajectoryTurn(turn.id); setChatView("trajectory"); }}>
-                      <ListIcon size={15} />
+                      <ListIcon size={14} />
                     </button>
                     {turn.input && (
-                      <button className="ds-action" title="重试这一轮（复用原话）" aria-label="重试这一轮" disabled={Boolean(busy)} onClick={() => void retryTurn(turn.id)}><RefreshIcon size={15} /></button>
+                      <button className="ds-action" title="重试这一轮（复用原话）" aria-label="重试这一轮" disabled={Boolean(busy)} onClick={() => void retryTurn(turn.id)}><RefreshIcon size={14} /></button>
                     )}
-                    <button className="ds-action" title="引用这条继续问" aria-label="引用这条继续问" onClick={() => quote(turn.reply || "")}><QuoteIcon size={15} /></button>
-                    {openThreadId && <button className="ds-action" title="复制到新会话，换个说法重开" aria-label="分支到新会话" onClick={() => forkChat(openThreadId)}><GitIcon size={15} /></button>}
+                    <button className="ds-action" title="引用这条继续问" aria-label="引用这条继续问" onClick={() => quote(turn.reply || "")}><QuoteIcon size={14} /></button>
+                    {openThreadId && <button className="ds-action" title="复制到新会话，换个说法重开" aria-label="分支到新会话" onClick={() => forkChat(openThreadId)}><GitIcon size={14} /></button>}
                     <span className="ds-time">{hm(turn.createdAt)}</span>
                     {typeof turn.cost?.tokens === "number" && turn.cost.tokens > 0 && (
                       <span className="ds-usage">
@@ -2701,7 +2809,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                       <div className="ds-bubble">{turn.input}</div>
                       <div className="ds-actions ds-actions-user">
                         <span className="ds-time">{hm(turn.createdAt)}</span>
-                        <button className="ds-action" title="复制这条消息" aria-label="复制这条消息" onClick={() => void window.harness.clipboardWrite(turn.input || "")}><CopyIcon size={15} /></button>
+                        <button className="ds-action" title="复制这条消息" aria-label="复制这条消息" onClick={() => void window.harness.clipboardWrite(turn.input || "")}><CopyIcon size={14} /></button>
                       </div>
                     </div>
                     <div className="ds-assistant">
@@ -2733,7 +2841,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 <div className="ds-assistant-body">
                   {streaming.text
                     ? <>{streaming.text}<span className="ds-caret" /></>
-                    : <span className="ds-thinking">{streaming.phase === "tool" ? toolLabel(streaming.tool) : "正在想…"}</span>}
+                    : <span className="ds-thinking">{streaming.phase === "tool" ? toolLabel(streaming.tool, toolMeta[streaming.tool || ""]) : "正在想…"}</span>}
                 </div>
               </div>
             )}
@@ -2775,10 +2883,13 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
             return (
               <div className="im-mentions">
                 {hits.map((m) => (
-                  <button key={m.id} className="im-mention" onClick={() => insert(m.name)}>
+                  <button key={m.id} className="im-mention" onClick={() => insert(m.name)} title={`${m.name}${m.persona?.mission ? ` · ${m.persona.mission}` : ""}`}>
                     <span className={`bot-avatar ${m.avatarClass || "a"}`}>{m.avatar || m.name.slice(0, 1)}</span>
                     <b>{String(m.name).split("·")[0].trim()}</b>
-                    <span className="tiny faint ellipsis">{m.name}</span>
+                    <span className="tiny faint ellipsis">
+                      {m.persona?.mission || "还没写职责"}
+                      {m.status !== "active" ? " · 已暂停" : m.mutedUntil && m.mutedUntil > Date.now() ? " · 静音中" : ""}
+                    </span>
                   </button>
                 ))}
                 <button className="im-mention" onClick={() => { const head = draft.slice(0, mentionAt.at); const tail = draft.slice(mentionAt.at + 1 + mentionAt.query.length); setDraft(`${head}@everyone ${tail}`); setMentionAt(null); }}>
@@ -2860,7 +2971,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
             />
             <div className="ds-composer-bar">
               <div className="ds-composer-tools">
-                <button className="ds-add" onClick={() => void pickAttachments()} disabled={attachments.length >= 3} title="把文本文件带进上下文" aria-label="附件"><PlusIcon size={13} /></button>
+                <button className="ds-add" onClick={() => void pickAttachments()} disabled={attachments.length >= 3} title="把文本文件带进上下文" aria-label="附件"><PlusIcon size={14} /></button>
                 {isGroup && <span className="ds-chip static" title="输入 @名字 指定谁回">@ 谁回</span>}
                 <span className="ds-chip static">{isGroup ? "群聊" : bot?.role === "supervisor" ? "主管" : "员工"}</span>
               </div>
@@ -2932,24 +3043,47 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
           )}
         </main>
 
-        {isGroup && (
+        {isGroup && group && (
         <aside className="bot-aside">
-          {isGroup ? (
-            <div className="bot-aside-body">
-              <div className="bot-label">群成员 <em>{members.length}</em></div>
-              {members.map((m) => (
-                <div className="bot-group-member" key={m.id}>
-                  <span className={`bot-avatar ${m.avatarClass || "a"}`}>{m.avatar || m.name.slice(0, 1)}</span>
-                  <span className="bot-item-main">
-                    <b>{m.name}</b>
-                    <span>{m.team ? `${m.team} · ` : ""}{m.role === "supervisor" ? "主管" : "员工"} · {CAP_LABEL[m.capability || "read"]}</span>
-                  </span>
+          <div className="bot-aside-body">
+            <div className="bot-label">{t("bot.groupName", "群名")}</div>
+            <input
+              className="bot-exec"
+              value={groupNameDraft}
+              aria-label="群名"
+              onChange={(e) => setGroupNameDraft(e.target.value)}
+              onBlur={() => void renameGroup()}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void renameGroup(); } }}
+            />
+            <div className="bot-label" style={{ marginTop: 10 }}>{t("bot.groupMembers", "群成员")} <em>{groupMembers.length}</em></div>
+            {groupMembers.map((m) => (
+              <div className="bot-group-member" key={m.id}>
+                <span className={`bot-avatar ${m.avatarClass || "a"}`}>{m.avatar || m.name.slice(0, 1)}</span>
+                <span className="bot-item-main">
+                  <b>{m.name}</b>
+                  <span>{m.persona?.mission || "还没写职责"}</span>
+                </span>
+                <span className="row gap4">
                   <button className="link tiny" onClick={() => setReplyMode({ kind: "bot", botId: m.id })}>只它回</button>
-                </div>
-              ))}
-              <p className="bot-note">群聊里能看到本轮其他人已经说的；会话与记忆仍各自独立。要谁回应就「发给」谁。</p>
-            </div>
-          ) : asideContent}
+                  <button className="link tiny" disabled={groupMembers.length <= 1} onClick={() => void toggleGroupMember(m.id)}>移出</button>
+                </span>
+              </div>
+            ))}
+            {members.some((m) => !group.memberIds.includes(m.id)) && (
+              <>
+                <div className="bot-label" style={{ marginTop: 10 }}>{t("bot.groupAdd", "加成员")}</div>
+                {members.filter((m) => !group.memberIds.includes(m.id)).map((m) => (
+                  <div className="bot-group-member" key={m.id}>
+                    <span className={`bot-avatar ${m.avatarClass || "a"}`}>{m.avatar || m.name.slice(0, 1)}</span>
+                    <span className="bot-item-main"><b>{m.name}</b><span>{m.persona?.mission || "还没写职责"}</span></span>
+                    <button className="link tiny" onClick={() => void toggleGroupMember(m.id)}>加入</button>
+                  </div>
+                ))}
+              </>
+            )}
+            <p className="bot-note">群聊里能看到本轮其他人已经说的；会话与记忆仍各自独立。要谁回应就「发给」谁。</p>
+            <button className="btn tiny danger" style={{ marginTop: 8 }} onClick={() => void deleteGroup()}>{t("bot.groupDelete", "删除群聊")}</button>
+          </div>
         </aside>
         )}
         {!isGroup && chatView === "chat" && railTab === "schedule" && (
@@ -2965,6 +3099,54 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
           </aside>
         )}
       </div>
+
+      {groupDraft && (
+        <div className="modal-mask" onMouseDown={(e) => { if (e.target === e.currentTarget) setGroupDraft(null); }}>
+          <div className="modal" role="dialog" aria-modal="true" aria-label="新建群聊">
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ margin: 0 }}>新建群聊</h3>
+              <button className="icon-btn" title="关闭" aria-label="关闭新建群聊" onClick={() => setGroupDraft(null)}><XIcon size={14} /></button>
+            </div>
+            <label>
+              群名
+              <input
+                value={groupDraft.name}
+                autoFocus
+                aria-label="群名"
+                placeholder="群名"
+                onChange={(e) => setGroupDraft({ ...groupDraft, name: e.target.value })}
+                onKeyDown={(e) => { if (e.key === "Enter") void createGroupWith(); if (e.key === "Escape") setGroupDraft(null); }}
+              />
+            </label>
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <span className="tiny faint">成员 · 已选 {groupDraft.ids.length}/{members.length}</span>
+              <div className="row gap6">
+                <button className="btn tiny" disabled={groupDraft.ids.length === members.length}
+                  onClick={() => setGroupDraft({ ...groupDraft, ids: members.map((b) => b.id) })}>全选</button>
+                <button className="btn tiny" disabled={!groupDraft.ids.length}
+                  onClick={() => setGroupDraft({ ...groupDraft, ids: [] })}>清空</button>
+              </div>
+            </div>
+            <div className="bot-list bot-group-members">
+              {members.map((m) => {
+                const on = groupDraft.ids.includes(m.id);
+                return (
+                  <button key={m.id} className={`bot-item ${on ? "on" : ""}`} aria-pressed={on} title={on ? "移出群聊" : "加入群聊"}
+                    onClick={() => setGroupDraft({ ...groupDraft, ids: on ? groupDraft.ids.filter((x) => x !== m.id) : [...groupDraft.ids, m.id] })}>
+                    <span className={`bot-avatar ${m.avatarClass || "a"}`}>{m.avatar || m.name.slice(0, 1)}</span>
+                    <span className="bot-item-main"><b>{m.name}</b><span>{CAP_LABEL[m.capability || "read"]}</span></span>
+                    {on ? <CheckSquareIcon size={14} /> : null}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="row gap6" style={{ justifyContent: "flex-end" }}>
+              <button className="btn tiny" onClick={() => setGroupDraft(null)}>取消</button>
+              <button className="btn tiny primary" disabled={!groupDraft.ids.length} onClick={() => void createGroupWith()}>建群</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

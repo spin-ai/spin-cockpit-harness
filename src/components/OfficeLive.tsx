@@ -7,6 +7,7 @@ import { OfficeStage, STAGE_SIZE } from "../office/OfficeStage";
 import { OfficeInspector } from "../office/OfficeInspector";
 import { RobotArt } from "../office/RobotArt";
 import { XIcon } from "./Icons";
+import { RowMenu } from "./RowMenu";
 import { EyeIcon, EyeOffIcon, WrenchIcon } from "./Icons";
 import { SceneConfigPanel, DEFAULT_MOTION, motionOf, STAGE_VIEW_LABEL, CARRIER_VIEWS, WARROOM_VIEWS, type ScenePrefs, type SceneMotion } from "../office/SceneConfigPanel";
 import { a11yChecks, ZONE_LABEL, triggerOf } from "../office/motion";
@@ -84,7 +85,7 @@ function LightCard({ page, model, now, onPick }: {
   );
 }
 
-export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPrefs, onOpenTask, onOpenThread, onOpenTerminal, onOpenProjects, initialSelectedId = null, initialDetailOpen = false, initialMode = "live", lightsOnly = false, onPickLight, replaySignal = 0 }: {
+export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPrefs, onOpenTask, onOpenThread, onOpenTerminal, onOpenProjects, projectId = null, initialSelectedId = null, initialDetailOpen = false, initialMode = "live", lightsOnly = false, onPickLight, replaySignal = 0 }: {
   state: State;
   now: number;
   act: Act;
@@ -97,6 +98,8 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
   onOpenThread: (threadId: string) => void;
   onOpenTerminal: (cwd: string, terminalId?: string) => void;
   onOpenProjects: () => void;
+  /** 舞台上按哪个项目取运行态：场景的建议项目；没标注就跟随当前项目 */
+  projectId?: string | null;
   initialSelectedId?: string | null;
   initialDetailOpen?: boolean;
   initialMode?: "live" | "config";
@@ -160,11 +163,11 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
   }, []);
 
   const model = useMemo(() => buildOfficeModel(state, {
-    projectId: state.activeProjectId,
+    projectId: projectId ?? state.activeProjectId,
     now,
     wide,
     cast,
-  }), [state, now, wide, cast]);
+  }), [state, now, wide, cast, projectId]);
 
   /* ── 状态变化的只读记录：只记真实 zone / tone / pose 变化，不编造事件 ── */
   useEffect(() => {
@@ -427,9 +430,8 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
         {!lightsOnly ? (
           <>
             <div className="stage-head">
-              <h2>{templateName} · 实况</h2>
-              <span className="sub">{prefs.name} · {templateName} · @{displayModel.projectAlias}</span>
-              <span className="sub" title="动效档位与走位时长">动效 {motion.tier === "calm" ? "克制" : motion.tier === "full" ? "完整" : "关闭"} · 走位 {(motion.walk / 1000).toFixed(1)}s</span>
+              <div className="section-title">{templateName} · 实况</div>
+              <span className="sub">{prefs.name} · @{displayModel.projectAlias}</span>
               <div className="scene-stats">
                 <span title={`${stats.agents} 个执行体 · ${stats.bots} 个机器人`}><b>{stats.bots || stats.agents}</b>人</span>
                 <span className="run"><b>{stats.running}</b>运行</span>
@@ -450,20 +452,20 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
                     <option value="dusk">光照 · 黄昏</option>
                     <option value="night">光照 · 夜晚</option>
                   </select>
-                ) : null}
-                <span className="hint">{isCarrier ? "点舰载机 → 状态与动效" : isWarRoom ? "点席位 → 状态与动效" : "点角色 → 状态与动效"}</span>
-                {!is3D ? <button className={`btn tiny ghost ${showPaths ? "on" : ""}`} aria-pressed={showPaths} onClick={() => setShowPaths((v) => !v)} title="画出各角色到目标区域的走位路径">走位路径</button> : null}
-                {isCarrier ? <button className="btn tiny ghost" onClick={() => setLaunchSignal((v) => v + 1)} title="演一遍电磁弹射">演一遍弹射</button> : null}
-                {isWarRoom ? <button className="btn tiny ghost" onClick={() => setLaunchSignal((v) => v + 1)} title="演一遍点火发射">演一遍发射</button> : null}
-                {isCarrier ? <button className="btn tiny ghost" onClick={() => setLandSignal((v) => v + 1)} title="演一遍着舰">演一遍着舰</button> : null}
-                {isCarrier || isWarRoom ? (
+                ) : (
                   <select className="mini-select" value={stageView} onChange={(e) => onPrefs({ view: e.target.value as CoordinationStageView })} title="舞台机位：快捷切换（也可在场景配置里改，会存进这个场景）" aria-label="舞台机位（快捷切换）">
                     {(isCarrier ? CARRIER_VIEWS : WARROOM_VIEWS).map((v) => <option key={v} value={v}>视角 · {STAGE_VIEW_LABEL[v]}</option>)}
                   </select>
-                ) : null}
-                <button className={`btn tiny ghost ${reduced ? "on" : ""}`} aria-pressed={reduced} onClick={() => setReduced((v) => !v)} title="模拟系统 reduced-motion / 动效关闭">模拟 reduced-motion</button>
-                <button className={`btn tiny ghost ${configOpen ? "on" : ""}`} aria-pressed={configOpen} title="场景配置" aria-label="场景配置" onClick={() => { setConfigOpen((v) => !v); setSelectedId(null); setDetailOpen(false); }}><WrenchIcon size={13} /></button>
-                <button className={`btn tiny ${detailOpen ? "on" : ""}`} aria-pressed={detailOpen} title={detailOpen ? "收起详情" : "详情"} aria-label={detailOpen ? "收起详情" : "详情"} onClick={() => setDetailOpen((v) => !v)}>{detailOpen ? <EyeOffIcon size={13} /> : <EyeIcon size={13} />}</button>
+                )}
+                <RowMenu title="舞台工具" align="right">
+                  {isCarrier ? <button onClick={() => setLaunchSignal((v) => v + 1)}>演一遍弹射</button> : null}
+                  {isWarRoom ? <button onClick={() => setLaunchSignal((v) => v + 1)}>演一遍发射</button> : null}
+                  {isCarrier ? <button onClick={() => setLandSignal((v) => v + 1)}>演一遍着舰</button> : null}
+                  {!is3D ? <button className={showPaths ? "on" : ""} aria-pressed={showPaths} onClick={() => setShowPaths((v) => !v)}><span className="row-menu-title">走位路径</span><span className="row-menu-hint">{showPaths ? "开" : "关"}</span></button> : null}
+                  <button className={reduced ? "on" : ""} aria-pressed={reduced} onClick={() => setReduced((v) => !v)}><span className="row-menu-title">模拟 reduced-motion</span><span className="row-menu-hint">{reduced ? "开" : "关"}</span></button>
+                </RowMenu>
+                <button className={`btn tiny ghost ${configOpen ? "on" : ""}`} aria-pressed={configOpen} title="场景配置" aria-label="场景配置" onClick={() => { setConfigOpen((v) => !v); setSelectedId(null); setDetailOpen(false); }}><WrenchIcon size={14} /></button>
+                <button className={`btn tiny ${detailOpen ? "on" : ""}`} aria-pressed={detailOpen} title={detailOpen ? "收起详情" : "详情"} aria-label={detailOpen ? "收起详情" : "详情"} onClick={() => setDetailOpen((v) => !v)}>{detailOpen ? <EyeOffIcon size={14} /> : <EyeIcon size={14} />}</button>
               </div>
             </div>
 
@@ -548,7 +550,7 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
                   <div className="insp-head">
                     <div className="insp-avatar" style={{ "--accent": "var(--slate)" } as CSSProperties}><RobotArt tone="neutral" /></div>
                     <div className="insp-title"><b>没有选中角色</b><span>舞台上的位置和动作只读真实状态</span></div>
-                    <button type="button" className="icon-btn" title="收起详情" onClick={() => setDetailOpen(false)} aria-label="收起详情"><XIcon size={13} /></button>
+                    <button type="button" className="icon-btn" title="收起详情" onClick={() => setDetailOpen(false)} aria-label="收起详情"><XIcon size={14} /></button>
                   </div>
                   <div className="insp-status">
                     <span className="pill idle">{hhmmss(cursorAt)}</span>
@@ -590,29 +592,31 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
                   <span><i className="dot wait" />待确认</span>
                   <span><i className="dot review" />待验收</span>
                   <span><i className="dot fail" />失败</span>
-                  <span className="note">{isCarrier ? "弹射位 = 并发 worker · 着舰道 = 串行 review / approval · 中止 = 复飞" : "大屏 = 发射流程 · 推进位 = 并发 worker · 发射许可 = approval · 复盘墙 = review"}</span>
                 </>
               ) : (
                 <>
                   <span><i className="line walk" />走位只发生在真的换区域时</span>
                   <span><i className="line stay" />失败 / 重试 / 计划批注停在原地</span>
-                  <span className="note">位置来自 run / todo 的真实 zone · 舞台不做演示动画</span>
                 </>
               )}
             </div>
 
-            <div className="timeline" aria-label="状态变化时间轴">
+            <div className={`timeline ${timelineChanges.length ? "" : "empty"}`} aria-label="状态变化时间轴">
               <div className="tl-head">
                 <div className="tl-title">
                   <b>时间轴</b>
                   <span>{replayEnd === null ? "最近 15 分钟" : `回放 ${hhmmss(cursorAt)}`} · {timelineChanges.length} 次状态变化 · {walkCount} 次走位</span>
                 </div>
-                <div className="tl-actions">
-                  <button className="btn tiny" aria-pressed={playing} onClick={() => (playing ? stopPlay() : startPlay())}>{playing ? "⏸ 暂停" : "▶ 回放"}</button>
-                  <button className="btn tiny ghost" onClick={jumpNow}>回到现在</button>
-                  <label className="chk"><input type="checkbox" checked={walkOnly} onChange={(e) => setWalkOnly(e.target.checked)} /> 只看走位</label>
-                </div>
+                {timelineChanges.length ? (
+                  <div className="tl-actions">
+                    <button className="btn tiny" aria-pressed={playing} onClick={() => (playing ? stopPlay() : startPlay())}>{playing ? "⏸ 暂停" : "▶ 回放"}</button>
+                    <button className="btn tiny ghost" onClick={jumpNow}>回到现在</button>
+                    <label className="chk"><input type="checkbox" checked={walkOnly} onChange={(e) => setWalkOnly(e.target.checked)} /> 只看走位</label>
+                  </div>
+                ) : null}
               </div>
+              {timelineChanges.length ? (
+              <>
               <div className="tl-track">
                 <div className="tl-lane l0" />
                 <div className="tl-lane l1" />
@@ -666,9 +670,11 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
                     <span className={`tag ${detailEvent.walked ? "walk" : "stay"}`}>{detailEvent.walked ? `走位 ${(motion.walk / 1000).toFixed(1)}s` : "原地 · 不走位"}</span>
                   </>
                 ) : (
-                  <span className="r">{timelineChanges.length ? "把时间轴拖回变化发生的那一刻，或点上面的记录。" : "页面打开后发生的真实状态变化会记录在这里；拖动时间轴或点记录可以回到那一刻。"}</span>
+                  <span className="r">把时间轴拖回变化发生的那一刻，或点上面的记录。</span>
                 )}
               </div>
+              </>
+              ) : null}
             </div>
           </>
         ) : prefs.template !== "office" ? (

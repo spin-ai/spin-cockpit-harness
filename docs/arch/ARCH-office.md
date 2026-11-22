@@ -98,16 +98,19 @@ src/office/
 
 ## 5. 场景 / 配置的当前边界
 
-- 场景名、阵容、座位、呈现开关落 `coordination_scenes` 表（`electron/db.mjs` + `coordinationSceneSave` / `coordinationSceneRemove`）；一个项目可以有多个场景。
-- 场景库卡片就地管理：双击标题或 `⋯ → 重命名`（Enter 提交 / Esc 取消）、`复制一份`（同模板同阵容的新场景）、`复制为 JSON`（剪贴板导出）、`删除`（先在本卡底部二次确认）；每个项目至少保留一个场景。全部复用 `coordinationSceneSave` / `coordinationSceneRemove`，不新增 IPC。
+- 场景名、阵容、座位、呈现开关落 `coordination_scenes` 表（`electron/db.mjs` + `coordinationSceneSave` / `coordinationSceneRemove`）。**场景是全局列表**：它描述「多个机器人怎么协作」，不属于某个项目，不按当前项目过滤；`project_id` 只作「建议项目」标注（卡片上的来源）。
+- **阵容按机器人存**：渲染层写 `botId`，老数据只有执行体 `agentId`（读时用 `bots.executor_agent_id` 反查）。`normalizeCoordinationCast` 必须两种都认——只认 `agentId` 会把 UI 保存的阵容整份丢掉（2026-11-22 已修）。
+- 场景库卡片就地管理：双击标题或 `⋯ → 重命名`（Enter 提交 / Esc 取消）、`复制一份`（同模板同阵容的新场景）、`复制为 JSON`（剪贴板导出）、`删除`（先在本卡底部二次确认）；场景可以删到零，删除最后一台后回到空态。全部复用 `coordinationSceneSave` / `coordinationSceneRemove`，不新增 IPC。
 - 卡片上方可搜索（场景名 / 舞台模板 / 阵容成员）、按模板筛选、按最近更新 / 最近创建 / 名称排序；卡片只显示自己的「更新于」和非默认配置标记，全局运行统计留在页头摘要里，避免每张卡重复同一组数字。
 - 配置里的评审门 / 失败升级 / 角色提示注入目前是「默认值」，不改变现有调度；接入 Mission 派活时再消费。
 - 舞台模板：办公室（2.5D）、作战室（three.js 3D）、航母（three.js 3D）均可用。流水线（factory）已下线，旧值按 carrier 呈现并写回。
 
 ## 6. 边界 / 后续
 
-- 新项目首次进入场景页会自动创建一个办公室场景；之后可在场景库新建多个。
-- 场景名、阵容、座位、呈现开关存 `coordination_scenes`（按项目过滤；一项目多场景）；迁移参考 `docs/migrations/002-coordination-scenes.sql`。
+- 空项目进入场景页显示空态（不再自动创建办公室场景），由用户从模板新建。
+- 场景名、阵容、座位、呈现开关存 `coordination_scenes`（全局；`project_id` 仅作建议项目）；迁移参考 `docs/migrations/002-coordination-scenes.sql`。
+- 阵容里的执行体按机器人全局解析：机器人只借「身体」，当前在哪个项目不影响上台；未绑执行体的座位显示「待绑定」。
+- 舞台取运行态的项目 = 场景的「建议项目」；老场景没标注时跟随当前项目。所以在任何项目下打开同一台场景，看到的是同一批运行态。
 - 会议角在 Mission `plan_review` 时由主控走过去；成员座位仍来自 Mission 子任务的真实 Owner。
 - 作战室 3D 来自 `docs/prototype/warroom-3d.html`，航母 3D 来自 `docs/prototype/carrier-3d.js`，分别在 `src/office/warroom-scene.ts` / `carrier-scene.ts` 里接上真实 OfficeModel。
 - 不复制 marvis-office 的美术资产；只沿用「空间化状态 + 角色动作」的表达方式。

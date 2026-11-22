@@ -10,6 +10,8 @@
 import { report } from "./_harness.mjs";
 
 const suites = [
+  "./seed.test.mjs",      // 不预置演示 bot / 老库清理 / 新建带 intro
+  "./lifecycle.test.mjs", // 删机器人（清干净 + 撤销）/ 清空会话
   "./gates.test.mjs",     // 静音 / 间隔 / 条数 / token / 打分 / 候选
   "./prompt.test.mjs",    // 人格卡 + 记忆正文 + 主动说过的话
   "./reply.test.mjs",     // 被动回复：流式、取消、SSE

@@ -10,22 +10,22 @@
  */
 
 import assert from "node:assert/strict";
-import { NOON, test } from "./_harness.mjs";
+import { NOON, makeBot, test } from "./_harness.mjs";
 import { buildSystemPrompt, createBots, MAX_TOOL_ROUNDS } from "../../electron/bot/index.mjs";
 import {
   BOT_READ_TOOL_NAMES, BOT_SELF_TOOL_NAMES, BOT_TOOL_META, BOT_WRITE_TOOL_NAMES,
-  botToolsFor, parseToolArgs,
+  botToolsFor, matchBotRef, parseToolArgs,
 } from "../../electron/bot/tools.mjs";
 
 const EXPECTED_READ = [
-  "git_diff", "git_log", "git_status", "knowledge_search", "memory_search",
-  "run_log", "run_status", "todo_list", "workspace_grep", "workspace_list", "workspace_read",
+  "bot_list", "git_diff", "git_log", "git_status", "knowledge_search", "memory_search",
+  "run_log", "run_status", "todo_get", "todo_list", "workspace_grep", "workspace_list", "workspace_read",
 ];
 
 await test("工具表：只读含工作区；写世界的一个都没有", () => {
   assert.deepEqual([...BOT_READ_TOOL_NAMES].sort(), EXPECTED_READ);
   assert.deepEqual([...BOT_SELF_TOOL_NAMES].sort(), ["handoff_to_bot", "memory_forget", "memory_write", "plan_set", "plan_update", "routine_propose"]);
-  assert.deepEqual([...BOT_WRITE_TOOL_NAMES].sort(), ["run_start", "task_create"]);
+  assert.deepEqual([...BOT_WRITE_TOOL_NAMES].sort(), ["run_start", "task_create", "todo_update"]);
   for (const t of botToolsFor("work")) {
     assert.equal(t.type, "function");
     assert.ok(t.function?.description, `${t.function?.name} 缺描述`);
@@ -54,6 +54,32 @@ await test("工具参数：坏 JSON / 空值都退回空对象，不抛", () => 
   assert.deepEqual(parseToolArgs(""), {});
   assert.deepEqual(parseToolArgs('{"query":"STDF"}'), { query: "STDF" });
   assert.deepEqual(parseToolArgs({ query: "对象直传" }), { query: "对象直传" });
+});
+
+await test("机器人引用：id / 全名 / 名字里的 handle 都能认，未知返回 null", () => {
+  const peers = [
+    { id: "b1", name: "PM · 项目经理" },
+    { id: "b2", name: "DE-A · 开发" },
+  ];
+  assert.equal(matchBotRef(peers, "b2")?.id, "b2");
+  assert.equal(matchBotRef(peers, "pm · 项目经理")?.id, "b1");
+  assert.equal(matchBotRef(peers, "de-a")?.id, "b2");
+  assert.equal(matchBotRef(peers, "@DE-A")?.id, "b2");
+  assert.equal(matchBotRef(peers, "没这个人"), null);
+  assert.equal(matchBotRef(peers, ""), null);
+  assert.equal(matchBotRef(null, "b1"), null);
+});
+
+await test("派活与改任务分档：read 不能 task_create / todo_update，work 两样都有", () => {
+  const read = botToolsFor("read").map((t) => t.function.name);
+  assert.equal(read.includes("todo_update"), false);
+  assert.ok(read.includes("todo_get"), "只读档也要能看任务详情");
+  assert.ok(read.includes("bot_list"), "只读档也要能看到同事");
+  const work = botToolsFor("work").map((t) => t.function.name);
+  assert.ok(work.includes("todo_update"));
+  const taskCreate = botToolsFor("work").find((t) => t.function.name === "task_create");
+  assert.deepEqual(taskCreate.function.parameters.required, ["title"], "agent 与 bot 二选一，不能都强制");
+  assert.ok(taskCreate.function.parameters.properties.bot, "task_create 要能派给机器人");
 });
 
 await test("职责卡进 prompt：角色 / 目标 / 范围 / 交付物 / 不做 / 汇报口径都在", () => {
@@ -224,8 +250,7 @@ await test("日程建议：工具只出草稿，回合上挂 proposal，确认�
 await test("人格历史：改一次存一版，恢复生成新版本（旧记录不删）", async () => {
   const st = { state: { bots: [], botTurns: [] }, persist() {} };
   const b = createBots({ store: st, now: () => NOON, memory: () => ({ inject: () => ({ items: [] }) }), key: () => "k" });
-  b.ensureSeed();
-  const target = b.list()[0];
+  const target = makeBot(b);
   const before = target.name;
   b.save({ id: target.id, name: "新名字" });
   const revs = b.revisions(target.id);
@@ -271,8 +296,7 @@ await test("群聊 handoff：回合上挂交接对象，prompt 带群聊交接�
 await test("通知开关：局部更新不清掉其它开关（嵌套合并）", () => {
   const st = { state: { bots: [], botTurns: [] }, persist() {} };
   const b = createBots({ store: st, now: () => NOON, memory: () => ({ inject: () => ({ items: [] }) }), key: () => "k" });
-  b.ensureSeed();
-  const target = b.list()[0];
+  const target = makeBot(b);
   assert.equal(target.policy.notify.taskDone, true);
   b.save({ id: target.id, policy: { ...(target.policy || {}), notify: { proactive: false } } });
   const next = b.list().find((x) => x.id === target.id);
@@ -285,8 +309,7 @@ await test("人格历史：旧页保存会冲突；diff 只列改动字段", () 
   let clock = NOON;
   const st = { state: { bots: [], botTurns: [] }, persist() {} };
   const b = createBots({ store: st, now: () => clock, memory: () => ({ inject: () => ({ items: [] }) }), key: () => "k" });
-  b.ensureSeed();
-  const target = b.list()[0];
+  const target = makeBot(b);
   const seen = target.updatedAt;
   clock += 1000;
   b.save({ id: target.id, name: "新名字", expectedUpdatedAt: seen });

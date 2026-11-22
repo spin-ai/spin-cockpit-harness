@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { HOUR, MIN, NOON, at, bot, test } from "./_harness.mjs";
+import { HOUR, MIN, NOON, at, bot, makeBot, test } from "./_harness.mjs";
 import { buildSystemPrompt, collectCandidates, createBots, gatesFor, quietActive, scoreCandidate, DEFAULT_POLICY } from "../../electron/bot/index.mjs";
 import { parseSseDelta } from "../../electron/knowledge/ark.mjs";
 import { createMemory } from "../../electron/memory/index.mjs";
@@ -36,6 +36,16 @@ await test("日程：每天到点 / 未到点 / 今天已跑；间隔；变化�
   assert.ok(nextRunAt({ ...daily, atHour: 20 }, noon) > noon);
 });
 
+await test("建日程时今天的点已经过了：不补跑，从明天开始", () => {
+  const evening = at(22).getTime();
+  const created = normalizeRoutine({ kind: "daily", atHour: 9, name: "早报", createdAt: evening });
+  const verdict = routineDue(created, { now: evening + 60_000 });
+  assert.equal(verdict.due, false, "22:00 建的 9:00 日程不能当场补跑");
+  assert.match(verdict.reason, /从明天开始|建日程/);
+  assert.equal(routineDue(created, { now: at(9, 1).getTime() + 24 * 3600_000 }).due, true, "第二天 9:01 要跑");
+  assert.equal(nextRunAt(created, evening + 60_000), todayAt(9, evening) + 24 * 3600_000, "UI 上的「下次」要说明天 9 点");
+});
+
 await test("日程真的会替 bot 开口，并记账 lastFiredAt", async () => {
   const rtStore = { state: { bots: [], botTurns: [], routines: [], todos: [] }, persist() {} };
   const rtBots = createBots({
@@ -46,10 +56,8 @@ await test("日程真的会替 bot 开口，并记账 lastFiredAt", async () => 
     probeWatch: () => ({ hash: "h1" }),
     key: () => "k",
   });
-  rtBots.ensureSeed();
-  const b = rtBots.list()[0];
-  b.intro = false;
-  rtBots.saveRoutine({ botId: b.id, kind: "daily", atHour: 9, name: "早报" });
+  const b = makeBot(rtBots);
+  rtBots.saveRoutine({ botId: b.id, kind: "daily", atHour: 9, name: "早报", createdAt: at(8).getTime() });
   const turns = await rtBots.tick({ botId: b.id });
   const turn = turns.at(-1);
   assert.equal(turn.trigger.kind, "routine");
@@ -80,10 +88,8 @@ await test("日程到点把 prompt 交给模型，而不是只念名字", async 
     chat: async (messages) => { seen = messages.at(-1).content; return { text: "早报：两项待确认。" }; },
     key: () => "k",
   });
-  b.ensureSeed();
-  const bot = b.list()[0];
-  bot.intro = false;
-  b.saveRoutine({ botId: bot.id, kind: "daily", atHour: 9, name: "早报", prompt: "汇总今天的待确认任务" });
+  const bot = makeBot(b);
+  b.saveRoutine({ botId: bot.id, kind: "daily", atHour: 9, name: "早报", prompt: "汇总今天的待确认任务", createdAt: at(8).getTime() });
   await b.tick({ botId: bot.id });
   assert.match(seen, /这次要做的：汇总今天的待确认任务/);
 });
@@ -98,9 +104,7 @@ function routineBots(extra = {}) {
     chatStream: async () => ({ text: "嗯", usage: {} }),
     key: () => "k",
   });
-  b.ensureSeed();
-  const bot = b.list()[0];
-  bot.intro = false;
+  const bot = makeBot(b);
   return { st, b, bot };
 }
 
@@ -108,7 +112,7 @@ await test("alongside：到点就跑，不等上一轮", async () => {
   const { st, b, bot } = routineBots();
   // 刚说过话（10 秒前）
   st.state.botTurns.push({ id: "x", botId: bot.id, decision: "answered", reply: "刚说完", trigger: {}, createdAt: at(12).getTime() - 10_000 });
-  b.saveRoutine({ botId: bot.id, kind: "daily", atHour: 9, name: "早报", mode: "alongside" });
+  b.saveRoutine({ botId: bot.id, kind: "daily", atHour: 9, name: "早报", mode: "alongside", createdAt: at(8).getTime() });
   const turns = await b.tick({ botId: bot.id });
   assert.equal(turns.at(-1).trigger.kind, "routine", "alongside 不该等");
 });
@@ -116,7 +120,7 @@ await test("alongside：到点就跑，不等上一轮", async () => {
 await test("in-chat：忙的时候先等，等满 5 分钟就并进去", async () => {
   const { st, b, bot } = routineBots();
   st.state.botTurns.push({ id: "x", botId: bot.id, decision: "answered", reply: "刚说完", trigger: {}, createdAt: at(12).getTime() - 10_000 });
-  const rt = b.saveRoutine({ botId: bot.id, kind: "daily", atHour: 9, name: "跟进", mode: "in-chat" });
+  const rt = b.saveRoutine({ botId: bot.id, kind: "daily", atHour: 9, name: "跟进", mode: "in-chat", createdAt: at(8).getTime() });
   const first = await b.tick({ botId: bot.id });
   assert.equal(first.length, 0, "忙的时候这一轮不该开口");
   assert.ok(st.state.routines.find((r) => r.id === rt.id).waitingSince > 0, "要记下开始等的时间");
@@ -129,7 +133,7 @@ await test("in-chat：忙的时候先等，等满 5 分钟就并进去", async (
 
 await test("in-chat：空着就立刻跑，不用等", async () => {
   const { b, bot } = routineBots();
-  b.saveRoutine({ botId: bot.id, kind: "daily", atHour: 9, name: "跟进", mode: "in-chat" });
+  b.saveRoutine({ botId: bot.id, kind: "daily", atHour: 9, name: "跟进", mode: "in-chat", createdAt: at(8).getTime() });
   const turns = await b.tick({ botId: bot.id });
   assert.equal(turns.at(-1).trigger.kind, "routine");
 });

@@ -94,8 +94,7 @@ export function Carrier3D({ model, now, selectedId, onSelect, motion, reduced, l
   return (
     <div className="carrier3d-frame">
       <div className="carrier3d" ref={hostRef} />
-      <span className="carrier3d-badge">CARRIER · THREE.JS</span>
-      <span className="carrier3d-hint">弹射位 = 并发 run · 着舰道 = review / approval 串行 · 拖动环绕 · 双击回总览</span>
+      <span className="carrier3d-hint">弹射位 = 并发 run · 着舰道 = review / approval 串行 · 中止 = 复飞 · 拖动环绕 · 双击回总览</span>
     </div>
   );
 }

@@ -9,7 +9,7 @@ export function RobotArt({ tone, className = "" }: { tone: OfficeTone; className
   const eye = tone === "wait"
     ? <text className="r-char" x="26" y="36" textAnchor="middle">?</text>
     : tone === "fail"
-      ? <text className="r-char" x="26" y="36" textAnchor="middle">×</text>
+      ? <g stroke="var(--red)" strokeWidth="1.8" strokeLinecap="round"><path d="M23 33l6 6M29 33l-6 6" /></g>
       : tone === "run" || tone === "lead"
         ? <path className="r-happy" d="M21.4 32.2c1.4-2.1 2.9-2.1 4.3 0M29.1 32.2c1.4-2.1 2.9-2.1 4.3 0" />
         : <circle className="r-eye" cx="26" cy="32" r="2.8" />;

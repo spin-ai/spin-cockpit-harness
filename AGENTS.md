@@ -87,6 +87,7 @@ npm run typecheck
 npm run build
 npm run verify:design     # 设计规范：token、PageHeader、标题单语、字符图标、开合控件、旧类下线
 npm run verify:docs       # 状态头 / 索引 / 内链
+npm run i18n:report       # 翻译进度表（只报告每个组件还剩多少硬编码中文）
 npm run verify:privacy    # 真实账号 / 手机号 / 邮箱 / 本机路径 / 密钥；不进 CI 日志
 
 # 主进程 / 插件 / 终端

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { HOUR, MIN, NOON, at, bot, test } from "./_harness.mjs";
+import { HOUR, MIN, NOON, at, bot, makeBot, test } from "./_harness.mjs";
 import { buildSystemPrompt, collectCandidates, createBots, gatesFor, quietActive, scoreCandidate, DEFAULT_POLICY } from "../../electron/bot/index.mjs";
 import { parseSseDelta } from "../../electron/knowledge/ark.mjs";
 import { createMemory } from "../../electron/memory/index.mjs";
@@ -37,9 +37,7 @@ await test("说话的部分进 thread，沉默/被拦只留审计", async () => 
     chatStream: async () => ({ text: "好的", usage: {} }),
     key: () => "k",
   });
-  b.ensureSeed();
-  const bot = b.list()[0];
-  bot.intro = false;
+  const bot = makeBot(b);
   await b.reply(bot, "在吗", { onDelta: () => {} });
   const thread = st.state.threads.find((t) => t.kind === "bot" && t.botId === bot.id);
   assert.ok(thread, "应该有一条 bot thread");
@@ -52,8 +50,7 @@ await test("说话的部分进 thread，沉默/被拦只留审计", async () => 
 await test("迁移幂等：dryRun 只数数，真跑一次就够，再跑是 0", () => {
   const st = chatStore();
   const b = createBots({ store: st, now: () => NOON, memory: () => ({ inject: () => ({ items: [], markdown: "" }) }), key: () => "" });
-  b.ensureSeed();
-  const bot = b.list()[0];
+  const bot = makeBot(b);
   // 造三条老回合：两条该迁，一条沉默不该迁
   st.state.botTurns.push(
     { id: "t1", botId: bot.id, decision: "replied", input: "旧问题", reply: "旧回答", trigger: {}, createdAt: NOON - 3000 },
@@ -86,9 +83,7 @@ await test("续聊时历史来自 thread：迁移过的旧对话会被带上", a
     chatStream: async (messages) => { captured.push(messages); return { text: "接着说", usage: {} }; },
     key: () => "k",
   });
-  b.ensureSeed();
-  const bot = b.list()[0];
-  bot.intro = false;
+  const bot = makeBot(b);
   st.state.botTurns.push({ id: "old", botId: bot.id, decision: "replied", input: "上次的问题", reply: "上次的回答", trigger: {}, createdAt: NOON - 5000 });
   b.migrateThreads({});
   await b.reply(bot, "然后呢", { onDelta: () => {} });
@@ -108,9 +103,7 @@ await test("新会话和默认会话分开：回复落在指定的那条 thread 
     chatStream: async () => ({ text: "收到", usage: {} }),
     key: () => "k",
   });
-  b.ensureSeed();
-  const bot = b.list()[0];
-  bot.intro = false;
+  const bot = makeBot(b);
   const def = b.threadOf(bot.id) || b.ensureBotThread(bot);
   const chat = b.newChat({ botId: bot.id });
   assert.notEqual(chat.id, def.id);
@@ -132,9 +125,7 @@ await test("新话题的第一句话成为标题（Chats 列表不出现一排�
     chatStream: async () => ({ text: "好", usage: {} }),
     key: () => "k",
   });
-  b.ensureSeed();
-  const bot = b.list()[0];
-  bot.intro = false;
+  const bot = makeBot(b);
   const chat = b.newChat({ botId: bot.id });
   await b.reply(bot, "把登录页的文案改短一点", { threadId: chat.id, onDelta: () => {} });
   assert.match(st.state.threads.find((t) => t.id === chat.id).title, /登录页/);
@@ -143,8 +134,7 @@ await test("新话题的第一句话成为标题（Chats 列表不出现一排�
 await test("会话搜索：标题和消息正文都能命中", () => {
   const st = chatStore();
   const b = createBots({ store: st, now: () => NOON, memory: () => ({ inject: () => ({ items: [], markdown: "" }) }), key: () => "" });
-  b.ensureSeed();
-  const bot = b.list()[0];
+  const bot = makeBot(b);
   const def = b.ensureBotThread(bot, { title: "默认会话" });
   st.addMessage(def.id, null, "agent", "text", "部署脚本在 scripts/install-renderer.mjs");
   const hit = b.searchChats({ botId: bot.id, query: "install-renderer" });
@@ -158,8 +148,7 @@ await test("会话搜索：标题和消息正文都能命中", () => {
 await test("删会话：默认会话不能删，其余连消息一起删", () => {
   const st = chatStore();
   const b = createBots({ store: st, now: () => NOON, memory: () => ({ inject: () => ({ items: [], markdown: "" }) }), key: () => "" });
-  b.ensureSeed();
-  const bot = b.list()[0];
+  const bot = makeBot(b);
   const def = b.ensureBotThread(bot);
   const chat = b.newChat({ botId: bot.id });
   st.addMessage(chat.id, null, "user", "text", "临时话题");
@@ -174,8 +163,7 @@ await test("删会话：默认会话不能删，其余连消息一起删", () =>
 await test("分支：新会话拿到复制出来的消息，源会话一条不少", () => {
   const st = chatStore();
   const b = createBots({ store: st, now: () => NOON, memory: () => ({ inject: () => ({ items: [], markdown: "" }) }), key: () => "" });
-  b.ensureSeed();
-  const bot = b.list()[0];
+  const bot = makeBot(b);
   const src = b.ensureBotThread(bot, { title: "原话题" });
   st.addMessage(src.id, null, "user", "text", "第一句");
   st.addMessage(src.id, null, "agent", "text", "回第一句");
@@ -193,8 +181,7 @@ await test("分支：新会话拿到复制出来的消息，源会话一条不�
 await test("空会话不能分支；谁能找它默认是 group", () => {
   const st = chatStore();
   const b = createBots({ store: st, now: () => NOON, memory: () => ({ inject: () => ({ items: [], markdown: "" }) }), key: () => "" });
-  b.ensureSeed();
-  const bot = b.list()[0];
+  const bot = makeBot(b);
   const empty = b.ensureBotThread(bot);
   assert.throws(() => b.forkChat({ threadId: empty.id }), /还没有消息/);
   assert.equal(DEFAULT_POLICY.whoCanAsk, "group");

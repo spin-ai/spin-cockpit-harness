@@ -1068,9 +1068,9 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
             onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); close(t.id); } }}
           >
             {t.kind === "task"
-              ? (todo?.key ? <span className="term-tab-icon">{todo.key}</span> : <EyeIcon size={12} className="term-tab-icon" />)
+              ? (todo?.key ? <span className="term-tab-icon">{todo.key}</span> : <EyeIcon size={14} className="term-tab-icon" />)
               : t.kind === "preview"
-              ? (t.rel ? <FileVisual name={t.title} size={12} /> : <EyeIcon size={12} className="term-tab-icon" />)
+              ? (t.rel ? <FileVisual name={t.title} size={12} /> : <EyeIcon size={14} className="term-tab-icon" />)
               : <span className={`dot ${t.attention ? "amber" : t.taskId ? "green" : "slate"}`} />}
             {(state.terminals || []).some((rec) => rec.stalled && rec.status === "running"
               && t.kind !== "task"
@@ -1116,7 +1116,7 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
             aria-haspopup="menu"
             aria-expanded={Boolean(bgMenu)}
             onClick={(e) => openBgMenu(e.currentTarget)}
-          ><ChevronDownIcon size={13} /></button>
+          ><ChevronDownIcon size={14} /></button>
         )}
         <button
           className="term-tab add"
@@ -1125,15 +1125,15 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
           aria-haspopup="menu"
           aria-expanded={Boolean(newMenu)}
           onClick={(e) => openNewMenu(e.currentTarget)}
-        ><PlusIcon size={13} /></button>
+        ><PlusIcon size={14} /></button>
         {onToggleMaximize && (
           <button className="pane-collapse dark" title={maximized ? "还原（Esc）" : "最大化"} aria-label={maximized ? "还原终端" : "最大化终端"} onClick={onToggleMaximize}>
-            {maximized ? <PanelRestoreIcon size={13} /> : <PanelExpandIcon size={13} />}
+            {maximized ? <PanelRestoreIcon size={14} /> : <PanelExpandIcon size={14} />}
           </button>
         )}
         {onCollapse && (
           <button className="pane-collapse dark" title="收起终端" aria-label="收起终端" onClick={onCollapse}>
-            <PanelCollapseIcon size={13} />
+            <PanelCollapseIcon size={14} />
           </button>
         )}
       </div>
@@ -1938,8 +1938,8 @@ function TermTab({ projectId, pane, multi, visible, focused, focusToken, searchO
       {searchOpen && searchAddon && <TermSearch addon={searchAddon} onClose={onCloseSearch} />}
       {!searchOpen && (
         <div className={`term-pane-actions ${multi ? "" : "single"}`}>
-          <button title="向右拆分（⌘D）" aria-label="向右拆分" onClick={() => onSplit("row")}><SplitRightIcon size={12} /></button>
-          <button title="向下拆分（⇧⌘D）" aria-label="向下拆分" onClick={() => onSplit("col")}><SplitDownIcon size={12} /></button>
+          <button title="向右拆分（⌘D）" aria-label="向右拆分" onClick={() => onSplit("row")}><SplitRightIcon size={14} /></button>
+          <button title="向下拆分（⇧⌘D）" aria-label="向下拆分" onClick={() => onSplit("col")}><SplitDownIcon size={14} /></button>
         </div>
       )}
       {scrolledUp && !exited && (
@@ -1951,7 +1951,7 @@ function TermTab({ projectId, pane, multi, visible, focused, focusToken, searchO
         <div className="term-exited">
           <span>进程已退出{exitCode !== null && exitCode !== 0 ? ` · code ${exitCode}` : ""}</span>
           <div className="row gap8">
-            <button className="btn tiny-btn" onClick={restart}>重新启动</button>
+            <button className="btn tiny" onClick={restart}>重新启动</button>
             <button className="link" onClick={onClosePane}>关闭窗格</button>
           </div>
         </div>
@@ -2075,9 +2075,9 @@ function TermSearch({ addon, onClose }: { addon: SearchAddon; onClose: () => voi
       <button className={caseSensitive ? "on" : ""} title="区分大小写" onClick={() => setCaseSensitive((v) => !v)}>Aa</button>
       <button className={regex ? "on" : ""} title="正则表达式" onClick={() => setRegex((v) => !v)}>.*</button>
       <span className="term-search-count">{status}</span>
-      <button title="上一个（⇧Enter）" onClick={() => find(true)}><ChevronUpIcon size={13} /></button>
-      <button title="下一个（Enter）" onClick={() => find(false)}><ChevronDownIcon size={13} /></button>
-      <button title="关闭（Esc）" onClick={() => onClose()}><XIcon size={13} /></button>
+      <button title="上一个（⇧Enter）" onClick={() => find(true)}><ChevronUpIcon size={14} /></button>
+      <button title="下一个（Enter）" onClick={() => find(false)}><ChevronDownIcon size={14} /></button>
+      <button title="关闭（Esc）" onClick={() => onClose()}><XIcon size={14} /></button>
     </div>
   );
 }

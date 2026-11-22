@@ -57,7 +57,7 @@ export function GitPanel({ state, notify }: { state: State; notify: (m: string) 
     return (
       <div className="git-mini-empty">
         <div>当前项目不是 Git 仓库</div>
-        <button className="btn tiny-btn" onClick={() => void run("初始化", () => window.harness.gitInit(root))}>初始化仓库</button>
+        <button className="btn tiny" onClick={() => void run("初始化", () => window.harness.gitInit(root))}>初始化仓库</button>
       </div>
     );
   }
@@ -93,13 +93,13 @@ export function GitPanel({ state, notify }: { state: State; notify: (m: string) 
 
       <div className="git-mini-scroll">
         <button className="git-mini-group" onClick={() => setOpen((o) => ({ ...o, staged: !o.staged }))}>
-          暂存的改动 <em>{staged.length}</em>
+          暂存的改动
         </button>
         {open.staged && staged.map((f) => <Row key={`s-${f.path}`} file={f} />)}
         {open.staged && staged.length === 0 && <div className="git-mini-none">暂无</div>}
 
         <button className="git-mini-group" onClick={() => setOpen((o) => ({ ...o, changes: !o.changes }))}>
-          变更 <em>{changed.length}</em>
+          变更
           {changed.length > 0 && (
             <span className="link tiny" style={{ marginLeft: "auto" }} onClick={(e) => { e.stopPropagation(); void run("暂存全部", () => window.harness.gitStage(root, changed.map((f) => f.path))); }}>全部暂存</span>
           )}
@@ -131,7 +131,7 @@ export function GitPanel({ state, notify }: { state: State; notify: (m: string) 
         <button className="link tiny" disabled={Boolean(busy)} onClick={() => void run("拉取", () => window.harness.gitPull(root))}>拉取</button>
         <button className="link tiny" disabled={Boolean(busy)} onClick={() => void run("推送", () => window.harness.gitPush(root))}>推送</button>
         <button
-          className="btn tiny-btn primary"
+          className="btn tiny primary"
           disabled={!staged.length || Boolean(busy)}
           onClick={() => {
             if (!message.trim()) { notify("写个提交信息"); return; }

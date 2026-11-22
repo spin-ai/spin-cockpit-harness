@@ -3,7 +3,7 @@ import type { OfficeActor as OfficeActorModel, OfficeTone } from "./model";
 
 function eyeFor(tone: OfficeTone) {
   if (tone === "wait") return <text className="off-r-char" x="26" y="36" textAnchor="middle" style={{ fill: "var(--amber)" }}>?</text>;
-  if (tone === "fail") return <text className="off-r-char" x="26" y="36" textAnchor="middle" style={{ fill: "var(--red)" }}>×</text>;
+  if (tone === "fail") return <g stroke="var(--red)" strokeWidth="1.8" strokeLinecap="round"><path d="M23 33l6 6M29 33l-6 6" /></g>;
   if (tone === "run" || tone === "lead") return <path className="off-r-happy" d="M21.4 32.2c1.4-2.1 2.9-2.1 4.3 0M29.1 32.2c1.4-2.1 2.9-2.1 4.3 0" />;
   return <circle className="off-r-eye" cx="26" cy="32" r="2.8" />;
 }
@@ -43,7 +43,7 @@ export function OfficeAvatarIso({ tone, accent = "slate" }: { tone: OfficeTone; 
       <circle cx="20" cy="15.5" r="8.6" fill="none" stroke={ring} strokeWidth="1.3" />
       <ellipse cx="17" cy="11.6" rx="3.1" ry="1.9" fill="rgba(255,255,255,.38)" />
       {tone === "wait" ? <text x="20" y="20" textAnchor="middle" fontSize="10.5" fontWeight="700" fill="var(--amber)">?</text> : null}
-      {tone === "fail" ? <text x="20" y="20" textAnchor="middle" fontSize="11.5" fontWeight="700" fill="var(--red)">×</text> : null}
+      {tone === "fail" ? <g stroke="var(--red)" strokeWidth="1.6" strokeLinecap="round"><path d="M17 17l6 6M23 17l-6 6" /></g> : null}
     </svg>
   );
 }

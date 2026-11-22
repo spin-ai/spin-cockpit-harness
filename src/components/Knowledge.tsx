@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { confirmDialog } from "./ConfirmHost";
 import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
 import { RowMenu } from "./RowMenu";
@@ -285,7 +286,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
   };
 
   const remove = async (doc: Doc) => {
-    if (!window.confirm(`删除资料「${doc.title}」？引用它的页面会被标为过期。`)) return;
+    if (!(await confirmDialog(`删除资料「${doc.title}」？引用它的页面会被标为过期。`))) return;
     setBusy(true);
     try {
       const res = await act("knowledgeRemove", { id: doc.id });
@@ -345,7 +346,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
 
   const removeEngine = async () => {
     if (!selected) return;
-    if (!window.confirm(`移除自研引擎「${selected.label}」？已导入的资料不受影响。`)) return;
+    if (!(await confirmDialog(`移除自研引擎「${selected.label}」？已导入的资料不受影响。`))) return;
     setEngineBusy("remove");
     try {
       const res = await act("knowledgeEngineRemove", { name: selected.name });
@@ -406,8 +407,8 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
             {counts.attention > 0 && <span className="warn"><b>{counts.attention}</b> 需处理</span>}
           </div>
           <span className="spacer" />
-          <button className="btn tiny-btn primary" onClick={() => void ingest()} disabled={busy}>＋ {t("action.importMaterials")}</button>
-          <button className="btn tiny-btn" onClick={() => setPasting(true)} disabled={busy}>{t("action.pasteText")}</button>
+          <button className="btn tiny primary" onClick={() => void ingest()} disabled={busy}>＋ {t("action.importMaterials")}</button>
+          <button className="btn tiny" onClick={() => setPasting(true)} disabled={busy}>{t("action.pasteText")}</button>
           {moreMenu}
         </div>
       ) : (
@@ -428,7 +429,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
       {(error || notice) && (
         <div className={`notes-banner ${error ? "error" : ""}`}>
           <span className="ellipsis">{error || notice}</span>
-          <button className="notes-banner-x" title="关闭提示" aria-label="关闭提示" onClick={() => { setError(""); setNotice(""); }}><XIcon size={12} /></button>
+          <button className="notes-banner-x" title="关闭提示" aria-label="关闭提示" onClick={() => { setError(""); setNotice(""); }}><XIcon size={14} /></button>
         </div>
       )}
       {pasting && (
@@ -437,8 +438,8 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
           <input className="kv-input" value={pasteTitle} placeholder="标题（可选）" onChange={(e) => setPasteTitle(e.target.value)} />
           <textarea className="kv-ask" rows={5} value={pasteText} placeholder="粘贴网页正文 / Markdown / 报告，索引后可被检索与引用" onChange={(e) => setPasteText(e.target.value)} />
           <div className="row gap6">
-            <button className="btn tiny-btn" onClick={() => { setPasting(false); setPasteText(""); }}>取消</button>
-            <button className="btn tiny-btn primary" disabled={busy || !pasteText.trim()} onClick={() => void ingestText()}>存入资料库</button>
+            <button className="btn tiny" onClick={() => { setPasting(false); setPasteText(""); }}>取消</button>
+            <button className="btn tiny primary" disabled={busy || !pasteText.trim()} onClick={() => void ingestText()}>存入资料库</button>
           </div>
         </div>
       )}
@@ -503,7 +504,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
             <div className="pr-docview">
               <div className="pr-docview-head">
                 <div>
-                  <h2>{preview.doc.title}</h2>
+                  <div className="section-title">{preview.doc.title}</div>
                   <span className="tiny faint">
                     {engines.find((e) => e.name === (preview.doc.engine || preview.doc.parser))?.label || preview.doc.engine || preview.doc.parser} · {preview.doc.pages_total || preview.pages.length} 页 · {statusOf(preview.doc.status)} · {preview.chunks} 个片段
                   </span>
@@ -542,7 +543,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
                 <div className="pr-ask-row">
                   <span className="tiny faint">只基于勾选的 {checked.size || docs.length} 份资料回答 · ⌘Enter 提问</span>
                   <button className="link tiny" onClick={() => { setAskQ(""); setAsk(null); setHits([]); setPages([]); }}>清空</button>
-                  <button className="btn tiny-btn primary" onClick={() => void runAsk()} disabled={busy || !askQ.trim()}>{busy ? "检索中…" : "提问 ⌘Enter"}</button>
+                  <button className="btn tiny primary" onClick={() => void runAsk()} disabled={busy || !askQ.trim()}>{busy ? "检索中…" : "提问 ⌘Enter"}</button>
                 </div>
               </div>
 
@@ -662,7 +663,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
           <figure className="kv-shot">
             <figcaption>
               <span className="ellipsis">{shot.title} · p{shot.page}</span>
-              <button className="icon-btn" title="关闭" aria-label="关闭截图" onClick={() => setShot(null)}><XIcon size={13} /></button>
+              <button className="icon-btn" title="关闭" aria-label="关闭截图" onClick={() => setShot(null)}><XIcon size={14} /></button>
             </figcaption>
             <img src={shot.dataUrl} alt={`${shot.title} 第 ${shot.page} 页`} />
           </figure>
@@ -674,7 +675,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
           <div className="modal kv-config-modal" role="dialog" aria-modal="true" aria-label="解析与索引">
             <div className="pr-block-head">
               解析与索引
-              <button className="icon-btn" title="关闭" aria-label="关闭解析与索引" onClick={() => setConfigOpen(false)}><XIcon size={13} /></button>
+              <button className="icon-btn" title="关闭" aria-label="关闭解析与索引" onClick={() => setConfigOpen(false)}><XIcon size={14} /></button>
             </div>
             <div className="kv-config-body">
               <p className="inline-empty">解析引擎决定文字与页码的抽取质量；索引模式决定正文是否出网。</p>
@@ -705,7 +706,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
                         </button>
                         {!engine.local && (
                           <button
-                            className="btn tiny-btn"
+                            className="btn tiny"
                             disabled={engineBusy === `probe:${engine.name}`}
                             onClick={() => void probe(engine.name)}
                           >{engineBusy === `probe:${engine.name}` ? "…" : "探测"}</button>
@@ -714,7 +715,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
                     );
                   })}
                 </div>
-                <button className="btn tiny-btn" onClick={() => setAdding((value) => !value)}>＋ 自研引擎</button>
+                <button className="btn tiny" onClick={() => setAdding((value) => !value)}>＋ 自研引擎</button>
                 {adding && (
                   <div className="kv-extra-form">
                     <input className="kv-input" placeholder="引擎名，如 my-parser" value={newEngine.name} onChange={(e) => setNewEngine({ ...newEngine, name: e.target.value })} />
@@ -722,7 +723,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
                     <input className="kv-input" placeholder="支持格式，如 pdf,docx" value={newEngine.fileTypes} onChange={(e) => setNewEngine({ ...newEngine, fileTypes: e.target.value })} />
                     <div className="kv-engine-foot">
                       <span className="tiny faint">响应可为 markdown 或 JSON；JSON 默认取 markdown 字段</span>
-                      <button className="btn tiny-btn" onClick={() => void addEngine()} disabled={engineBusy === "add" || !newEngine.name.trim() || !newEngine.endpoint.trim()}>注册</button>
+                      <button className="btn tiny" onClick={() => void addEngine()} disabled={engineBusy === "add" || !newEngine.name.trim() || !newEngine.endpoint.trim()}>注册</button>
                     </div>
                   </div>
                 )}
@@ -796,8 +797,8 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
                   <div className="kv-engine-foot">
                     <span className="tiny faint">{selected.fileTypes.slice(0, 8).join(" / ")}{selected.fileTypes.length > 8 ? " …" : ""}</span>
                     <span className="row gap6">
-                      {isExtra && <button className="btn tiny-btn" onClick={() => void removeEngine()} disabled={engineBusy === "remove"}>移除</button>}
-                      <button className="btn tiny-btn" onClick={() => void saveEngine()} disabled={engineBusy === "save"}>
+                      {isExtra && <button className="btn tiny" onClick={() => void removeEngine()} disabled={engineBusy === "remove"}>移除</button>}
+                      <button className="btn tiny" onClick={() => void saveEngine()} disabled={engineBusy === "save"}>
                         {engineBusy === "save" ? "保存中…" : "保存"}
                       </button>
                     </span>

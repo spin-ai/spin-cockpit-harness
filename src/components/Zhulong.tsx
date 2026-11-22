@@ -412,7 +412,7 @@ export function Zhulong({ state, act, notify, onOpenSettings, onBack }: {
         <PageHeader
           title={t("page.visual")}
           subtitle="把手绘架构图 / 界面截图 / PDF 页面解析成区块与关系"
-          actions={onBack ? <button className="btn ghost" onClick={onBack} title="回到插件市场" aria-label="回到插件市场"><ChevronLeftIcon size={13} /></button> : undefined}
+          actions={onBack ? <button className="btn ghost" onClick={onBack} title="回到插件市场" aria-label="回到插件市场"><ChevronLeftIcon size={14} /></button> : undefined}
         />
         <EmptyState
           mark="◇"
@@ -439,7 +439,7 @@ export function Zhulong({ state, act, notify, onOpenSettings, onBack }: {
         )}
         actions={(
           <>
-            {onBack && <button className="btn ghost" onClick={onBack} title="回到插件市场" aria-label="回到插件市场"><ChevronLeftIcon size={13} /></button>}
+            {onBack && <button className="btn ghost" onClick={onBack} title="回到插件市场" aria-label="回到插件市场"><ChevronLeftIcon size={14} /></button>}
             <button className="btn" onClick={() => void runProbe()}>{t("action.probeBackend")}</button>
             <button className="btn" disabled={!result || busy} onClick={() => void handoff()} title="把结构化摘要写进 Chat 草稿，人确认后再发">{t("action.handToAgent")}</button>
             {busy ? (
@@ -458,7 +458,7 @@ export function Zhulong({ state, act, notify, onOpenSettings, onBack }: {
           <i />
           <span>还没有配置解析后端</span>
           <span className="zh-banner-detail">外部 API（OpenAI 兼容 / 火山 Ark）或自部署 zhulong-vl 二选一；填完回来 ⌘V 粘贴截图即可</span>
-          <button className="btn tiny-btn" onClick={onOpenSettings}>去设置 → 插件</button>
+          <button className="btn tiny" onClick={onOpenSettings}>去设置 → 插件</button>
         </div>
       )}
       {banner && !unconfigured && (

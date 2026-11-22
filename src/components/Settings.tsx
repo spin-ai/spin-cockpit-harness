@@ -1,4 +1,5 @@
 import { Fragment, createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { confirmDialog } from "./ConfirmHost";
 import type { PluginRecord, Settings as SettingsModel, State } from "../types";
 import { THEMES } from "../themes";
 import { PageHeader } from "./PageHeader";
@@ -310,7 +311,7 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
             {savedAt != null && <span className="settings-saved">{t("settings.saved")}</span>}
             {SECTION_KEYS[section] && (
               <button
-                className="btn tiny-btn"
+                className="btn tiny"
                 title="把本页所有项恢复为默认值"
                 onClick={() => {
                   const keys = SECTION_KEYS[section] || [];
@@ -357,7 +358,7 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
 
             <Card title="布局">
               <Row title="重置面板尺寸" hint="任务 / 会话 / 终端 / 文件的列宽恢复默认">
-                <button className="btn tiny-btn" onClick={() => { window.dispatchEvent(new Event("harness:reset-layout")); notify("已重置"); }}>{t("action.reset")}</button>
+                <button className="btn tiny" onClick={() => { window.dispatchEvent(new Event("harness:reset-layout")); notify("已重置"); }}>{t("action.reset")}</button>
               </Row>
             </Card>
           </>
@@ -552,8 +553,8 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
 
             <Card title="桌面操作（agent-desktop）">
               <Row k="agentDesktopEnabled" title="桌面应用操作" hint="挂载 agent-desktop 的 MCP，可读可访问性树并点按控件；开启后 Agent 能读到当前窗口里的文字">
-                <Toggle value={Boolean(settings.agentDesktopEnabled)} onChange={(v) => {
-                  if (v && !window.confirm("开启后，Agent 可以读取你桌面上任意窗口的可访问性内容，并点击/输入。只在受控环境下开启。确认开启？")) return;
+                <Toggle value={Boolean(settings.agentDesktopEnabled)} onChange={async (v) => {
+                  if (v && !(await confirmDialog("开启后，Agent 可以读取你桌面上任意窗口的可访问性内容，并点击/输入。只在受控环境下开启。确认开启？"))) return;
                   void set({ agentDesktopEnabled: v });
                 }} />
               </Row>
@@ -668,9 +669,9 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
                   onChange={(event) => setSetupText(event.target.value)}
                 />
                 <div className="im-quick-actions">
-                  <button className="btn tiny-btn primary" disabled={setupBusy || !setupText.trim()} onClick={() => void runSetup()}>{setupBusy ? "…" : t("action.saveAndTest")}</button>
-                  {(pair ? <button className="btn tiny-btn" title="关闭二维码" aria-label="关闭二维码" onClick={() => void stopPair()}><XIcon size={12} /></button> : <button className="btn tiny-btn" onClick={() => void startPair()}>用手机扫码</button>)}
-                  <button className="btn tiny-btn" onClick={async () => {
+                  <button className="btn tiny primary" disabled={setupBusy || !setupText.trim()} onClick={() => void runSetup()}>{setupBusy ? "…" : t("action.saveAndTest")}</button>
+                  {(pair ? <button className="btn tiny" title="关闭二维码" aria-label="关闭二维码" onClick={() => void stopPair()}><XIcon size={14} /></button> : <button className="btn tiny" onClick={() => void startPair()}>用手机扫码</button>)}
+                  <button className="btn tiny" onClick={async () => {
                     setSetupBusy(true);
                     setSetupStatus(null);
                     try {
@@ -679,15 +680,15 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
                       if (res?.ok) notify("已从剪贴板写入飞书配置");
                     } finally { setSetupBusy(false); }
                   }}>从剪贴板读入</button>
-                  <button className="btn tiny-btn" onClick={async () => {
+                  <button className="btn tiny" onClick={async () => {
                     const res = (await act("imFeishuTest", {})) as { ok?: boolean; error?: string; chat?: string } | null;
                     notify(res?.ok ? `已发到 ${res.chat}（看飞书里有没有收到）` : `发送失败：${res?.error || "未知错误"}`);
                   }}>发送测试消息</button>
-                  <button className="btn tiny-btn" onClick={async () => {
+                  <button className="btn tiny" onClick={async () => {
                     const res = (await act("imStatus", {})) as { result?: { ws?: boolean; wsReady?: boolean; wsError?: string; feishu?: boolean; inbound?: number; recent?: { at: number; line: string }[] } } | null;
                     setImInfo(res?.result || null);
                   }}>检查连接</button>
-                  <button className="btn tiny-btn ghost" aria-expanded={advanced} title={advanced ? "收起高级" : "高级"} onClick={() => setAdvanced((v) => !v)}><ChevronDownIcon size={12} className={advanced ? "rot-180" : ""} />高级</button>
+                  <button className="btn tiny ghost" aria-expanded={advanced} title={advanced ? "收起高级" : "高级"} onClick={() => setAdvanced((v) => !v)}><ChevronDownIcon size={14} className={advanced ? "rot-180" : ""} />高级</button>
                   <span className="tiny muted">{String(settings.imFeishuAppId || "") ? `已配置 ${String(settings.imFeishuAppId).slice(0, 12)}…` : settings.imWebhookUrl ? "已配置 webhook" : "未配置"}</span>
                 </div>
                 {setupStatus && <div className={`im-quick-status ${setupStatus.ok ? "ok" : "fail"}`}>{setupStatus.text}</div>}
@@ -779,14 +780,14 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
             <Card title="本地数据">
               <Row title="数据库" hint="harness.db 的完整路径">
                 <span className="mono tiny ellipsis set-row-value" title={state.dbPath}>{state.dbPath ?? "—"}</span>
-                <button className="btn tiny-btn" onClick={() => { void navigator.clipboard?.writeText(state.dbPath ?? ""); notify("已复制"); }}>复制</button>
+                <button className="btn tiny" onClick={() => { void navigator.clipboard?.writeText(state.dbPath ?? ""); notify("已复制"); }}>复制</button>
               </Row>
               <Row title="数据目录" hint="导出、备份和语料都放在这里">
                 <span className="mono tiny ellipsis set-row-value" title={state.userDataPath}>{state.userDataPath ?? "—"}</span>
-                <button className="btn tiny-btn" onClick={() => void act("openDataDir")}>打开</button>
+                <button className="btn tiny" onClick={() => void act("openDataDir")}>打开</button>
               </Row>
               <Row title="导出备份">
-                <button className="btn tiny-btn" onClick={async () => { const p = await act("exportData"); if (p) notify(`已导出：${p}`); }}>导出 .db</button>
+                <button className="btn tiny" onClick={async () => { const p = await act("exportData"); if (p) notify(`已导出：${p}`); }}>导出 .db</button>
               </Row>
             </Card>
             <Card title="人物语料">
@@ -795,7 +796,7 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
               </Row>
               <Row title="复制到应用目录" hint="把仓库里的 datasets/wechat 复制进应用数据目录（约 250MB），之后无需再指定路径">
                 <button
-                  className="btn tiny-btn"
+                  className="btn tiny"
                   onClick={async () => {
                     try {
                       const res = await act("personaDatasetCopy");
@@ -814,8 +815,8 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
               >
                 <Toggle
                   value={Boolean(settings.knowledgeCloudIndex)}
-                  onChange={(v) => {
-                    if (v && !window.confirm("开启后，资料正文分块与检索查询串会发送到火山方舟 embedding 接口。确认开启？")) return;
+                  onChange={async (v) => {
+                    if (v && !(await confirmDialog("开启后，资料正文分块与检索查询串会发送到火山方舟 embedding 接口。确认开启？"))) return;
                     void set({ knowledgeCloudIndex: v });
                   }}
                 />
@@ -828,7 +829,7 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
             <Card title="清理">
               <Row title="清空任务" hint="删除全部 Task / Mission，以及它们的会话、消息、运行记录、Delegation、计划、产物与终端绑定；项目 / Agent / 机器人 / 设置 / 记忆 / 知识库不动。删前自动备份数据库，备份文件名里带时间戳">
                 <button
-                  className="btn tiny-btn danger"
+                  className="btn tiny danger"
                   onClick={async () => {
                     const preview = await act("taskClearPreview");
                     const n = preview?.counts;
@@ -840,15 +841,15 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
                       `计划 ${n.plans} 份、Delegation ${n.delegations} 条、产物 ${n.artifacts} 个`,
                     ];
                     if (n.running) lines.push(`其中 ${n.running} 条运行还在进行，会先被停止`);
-                    if (!window.confirm(`${lines.join("\n")}\n\n确定清空？`)) return;
-                    if (!window.confirm("最后确认：任务、会话与运行记录都会消失（删前会自动备份数据库，可手动回滚）。继续？")) return;
+                    if (!(await confirmDialog(`${lines.join("\n")}\n\n确定清空？`))) return;
+                    if (!(await confirmDialog("最后确认：任务、会话与运行记录都会消失（删前会自动备份数据库，可手动回滚）。继续？"))) return;
                     const res = await act("clearTasks", { confirm: "CLEAR" });
                     if (res?.ok) notify(res.backup ? `已清空任务 · 备份 ${String(res.backup).split("/").pop()}` : "没有任务可清空");
                   }}
                 >清空任务…</button>
               </Row>
               <Row title="重置设置" hint="恢复全部默认值，不影响数据">
-                <button className="btn tiny-btn danger" onClick={() => { if (window.confirm("恢复默认设置？")) void act("resetSettings"); }}>{t("action.reset")}</button>
+                <button className="btn tiny danger" onClick={async () => { if (await confirmDialog("恢复默认设置？")) void act("resetSettings"); }}>{t("action.reset")}</button>
               </Row>
             </Card>
           </>
@@ -872,15 +873,15 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
                     <PluginSettings act={act} plugin={plugin} />
                   </div>
                   <div className="settings-plugin-actions">
-                    <button className="btn tiny-btn" onClick={() => void act(plugin.enabled ? "pluginDisable" : "pluginEnable", { id: plugin.id })}>{plugin.enabled ? "禁用" : "启用"}</button>
-                    {!plugin.builtin && <button className="btn tiny-btn danger" onClick={() => { if (window.confirm(`卸载插件「${plugin.manifest?.name || plugin.id}」？`)) void act("pluginRemove", { id: plugin.id }); }}>卸载</button>}
+                    <button className="btn tiny" onClick={() => void act(plugin.enabled ? "pluginDisable" : "pluginEnable", { id: plugin.id })}>{plugin.enabled ? "禁用" : "启用"}</button>
+                    {!plugin.builtin && <button className="btn tiny danger" onClick={async () => { if (await confirmDialog(`卸载插件「${plugin.manifest?.name || plugin.id}」？`)) void act("pluginRemove", { id: plugin.id }); }}>卸载</button>}
                   </div>
                 </div>
               ))}
             </Card>
             <Card title="安装">
               <Row title="本地插件" hint="选择一个包含 plugin.json 的目录；安装后默认禁用，确认权限后手动启用">
-                <button className="btn tiny-btn" onClick={() => void act("pluginInstall")}>安装插件文件 / 目录…</button>
+                <button className="btn tiny" onClick={() => void act("pluginInstall")}>安装插件文件 / 目录…</button>
               </Row>
               <Row title="Notes 插件" hint="内置 Obsidian 风格插件；启用后在左侧「知识库」里选择 vault">
                 <span className="muted small set-row-value">first-party · fs:vault · tasks:write</span>
@@ -1082,8 +1083,8 @@ function PluginSettings({ act, plugin }: { act: Act; plugin: PluginRecord }) {
   return (
     <div className="settings-plugin-settings">
       <div className="row" style={{ gap: 8 }}>
-        <button className="btn tiny-btn" aria-expanded={open} title={open ? "收起配置" : "配置"} onClick={() => setOpen((v) => !v)}><ChevronDownIcon size={12} className={open ? "rot-180" : ""} />配置</button>
-        {probeCommand && <button className="btn tiny-btn" disabled={!plugin.enabled || busy} onClick={() => void probe()}>{busy ? "探测中…" : "探测后端"}</button>}
+        <button className="btn tiny" aria-expanded={open} title={open ? "收起配置" : "配置"} onClick={() => setOpen((v) => !v)}><ChevronDownIcon size={14} className={open ? "rot-180" : ""} />配置</button>
+        {probeCommand && <button className="btn tiny" disabled={!plugin.enabled || busy} onClick={() => void probe()}>{busy ? "探测中…" : "探测后端"}</button>}
         {!plugin.enabled && <span className="muted small">启用后可配置</span>}
       </div>
       {open && plugin.enabled && (
@@ -1181,7 +1182,7 @@ function PreviewPermissions() {
           {site.permissions.map((p) => (
             <button
               key={p.key}
-              className="btn tiny-btn"
+              className="btn tiny"
               disabled={busy === `${site.origin}|${p.key}`}
               title={`撤销「${p.label}」授权`}
               onClick={() => void revoke(site.origin, p.key)}

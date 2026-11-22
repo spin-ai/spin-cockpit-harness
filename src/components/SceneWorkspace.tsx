@@ -71,10 +71,10 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
   const [localCast, setLocalCast] = useState<OfficeCastMember[] | null>(null);
   const [localPrefs, setLocalPrefs] = useState<ScenePrefs | null>(null);
   const [replaySignal, setReplaySignal] = useState(0);
-  const ensuring = useRef<string | null>(null);
   const saveTimer = useRef<number | null>(null);
 
-  const scenes = useMemo(() => (state.coordinationScenes ?? []).filter((s) => (s.projectId || null) === (state.activeProjectId || null)), [state.coordinationScenes, state.activeProjectId]);
+  /* 场景是全局列表：它描述「多个机器人怎么协作」，不属于某个项目；projectId 只是建议项目。 */
+  const scenes = useMemo(() => state.coordinationScenes ?? [], [state.coordinationScenes]);
   const scene = scenes.find((s) => s.id === sceneId) ?? scenes[0] ?? null;
 
   useEffect(() => {
@@ -92,20 +92,6 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
     try { localStorage.setItem(sceneStoreKey, sceneId); } catch { /* 忽略 */ }
   }, [sceneId, sceneStoreKey]);
 
-  useEffect(() => {
-    if (!state.activeProjectId || scenes.length) return;
-    if (ensuring.current === projectKey) return;
-    ensuring.current = projectKey;
-    void act("coordinationSceneSave", {
-      projectId: state.activeProjectId,
-      name: `${project?.name || "研发"} 小队`,
-      template: "office",
-      config: { cast: [], prefs: {} },
-    }).then((created) => {
-      if (created?.id) setSceneId(created.id);
-    }).catch(() => { ensuring.current = null; });
-  }, [act, project?.name, projectKey, scenes.length, state.activeProjectId]);
-
   const scenePrefs = scene ? prefsOf(scene as any, project?.name || "研发") : defaultPrefs(project?.name || "研发");
   const prefs = localPrefs ?? scenePrefs;
   const cast = localCast ?? ((scene?.config.cast ?? []) as OfficeCastMember[]);
@@ -120,6 +106,12 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
   useEffect(() => {
     if (prefs.template !== "office" && tab === "lights") setTab("live");
   }, [prefs.template, tab]);
+
+  /* 空项目：没有场景可看实况，直接落在场景库的空态（新建入口在那儿） */
+  useEffect(() => {
+    if (scenes.length) return;
+    if (tab === "live" || tab === "lights") setTab("gallery");
+  }, [scenes.length, tab]);
 
   useEffect(() => () => {
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
@@ -199,7 +191,7 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
 
   const deleteScene = (id: string) => {
     const source = scenes.find((s) => s.id === id);
-    if (!source || scenes.length <= 1) return;
+    if (!source) return;
     void act("coordinationSceneRemove", { id }).then((done) => {
       if (!done) return;
       setSceneId((prev) => (prev === id ? null : prev));
@@ -224,12 +216,15 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
       .catch(() => notify("复制失败：剪贴板不可用"));
   };
 
+  /* 舞台取运行态的项目：场景标注的建议项目（老场景没标注就跟随当前项目） */
+  const stageProjectId = scene?.projectId ?? state.activeProjectId ?? null;
+
   const galleryModel = useMemo(() => buildOfficeModel(state, {
-    projectId: state.activeProjectId,
+    projectId: stageProjectId,
     now,
     wide: window.innerWidth >= 1440,
     cast,
-  }), [state, now, cast]);
+  }), [state, now, cast, stageProjectId]);
 
   const subtitle = tab === "gallery"
     ? "多个机器人协作的拟人化配置。办公室只是其中一种舞台。"
@@ -243,6 +238,16 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
   const clock = new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const t = useT();
   const motion = motionOf(prefs);
+
+  /* 没有场景时的唯一空态：场景库与实况共用同一份文案与入口 */
+  const emptyScenes = (
+    <EmptyState
+      mark="⌂"
+      title="还没有协作场景"
+      desc="场景决定多个机器人怎么协作与呈现；先建一台，之后可在办公室 / 作战室 / 航母之间切换。"
+      action={<button className="btn primary" onClick={() => openNewScene("office")}>新建协作场景</button>}
+    />
+  );
 
   return (
     <div className={`page off-page ${staged ? "off-page-staged" : ""}`}>
@@ -282,19 +287,23 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
       />
 
       {tab === "gallery" ? (
-        <SceneGallery
-          state={state}
-          model={galleryModel}
-          scenes={scenes}
-          activeSceneId={scene?.id ?? null}
-          onSelectScene={setSceneId}
-          onEnter={() => setTab("live")}
-          onNewScene={openNewScene}
-          onRenameScene={renameScene}
-          onDuplicateScene={duplicateScene}
-          onDeleteScene={deleteScene}
-          onExportScene={exportScene}
-        />
+        scenes.length ? (
+          <SceneGallery
+            state={state}
+            model={galleryModel}
+            scenes={scenes}
+            activeSceneId={scene?.id ?? null}
+            onSelectScene={setSceneId}
+            onEnter={() => setTab("live")}
+            onNewScene={openNewScene}
+            onRenameScene={renameScene}
+            onDuplicateScene={duplicateScene}
+            onDeleteScene={deleteScene}
+            onExportScene={exportScene}
+          />
+        ) : (
+          emptyScenes
+        )
       ) : staged && scene ? (
         <OfficeLive
           state={state}
@@ -309,6 +318,7 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
           onOpenThread={onOpenThread}
           onOpenTerminal={onOpenTerminal}
           onOpenProjects={onOpenProjects}
+          projectId={stageProjectId}
           initialSelectedId={initialSelectedId}
           initialDetailOpen={initialDetailOpen}
           initialMode={initialMode}
@@ -317,12 +327,7 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
           replaySignal={replaySignal}
         />
       ) : staged ? (
-        <EmptyState
-          mark="⌂"
-          title="还没有协作场景"
-          desc="新建一个办公室场景，或先从场景库选择模板。"
-          action={<button className="btn primary" onClick={() => openNewScene("office")}>新建办公室场景</button>}
-        />
+        emptyScenes
       ) : (
         <ExecutionConfigTab
           state={state}
@@ -335,7 +340,7 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
       {newScene ? (
         <div className="modal-mask" onMouseDown={(e) => { if (e.target === e.currentTarget) setNewScene(null); }}>
           <div className="modal off-scene-modal" role="dialog" aria-modal="true" aria-label="新建协作场景">
-            <div className="modal-head"><div><h3>新建协作场景</h3><p>先选舞台模板，再配阵容与编排。创建后先进入实况。</p></div><button className="off-icon-btn" title="关闭" onClick={() => setNewScene(null)} aria-label="关闭新建场景"><XIcon size={13} /></button></div>
+            <div className="modal-head"><div><h3>新建协作场景</h3><p>先选舞台模板，再配阵容与编排。创建后先进入实况。</p></div><button className="off-icon-btn" title="关闭" onClick={() => setNewScene(null)} aria-label="关闭新建场景"><XIcon size={14} /></button></div>
             <div className="off-modal-field"><span>场景名称</span><input value={newScene.name} onChange={(e) => setNewScene((s) => s ? { ...s, name: e.target.value } : s)} autoFocus /></div>
             <div className="off-modal-field"><span>舞台模板</span>
               <div className="off-modal-templates">

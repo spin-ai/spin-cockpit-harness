@@ -193,7 +193,6 @@ export function GitWiki({ branch, head, pageId, onNavigate, sourceLabel }: {
       <aside className="git-wiki-side">
         <div className="git-wiki-side-head">
           <span className="mono tiny faint">PROJECT WIKI</span>
-          <span className="tiny muted">{WIKI_PAGES.length} 页</span>
         </div>
         <input
           ref={searchRef}
@@ -236,7 +235,7 @@ export function GitWiki({ branch, head, pageId, onNavigate, sourceLabel }: {
         <div className="git-wiki-content" ref={contentRef} onClick={onClick}>
           <header className="git-wiki-page-head">
             <div className="git-wiki-kicker">{page.group} · {branch ? "GIT WIKI" : "PROJECT WIKI"}</div>
-            <h1>{page.title}</h1>
+            <div className="wiki-title">{page.title}</div>
             <p>{page.summary}</p>
             <div className="git-wiki-meta">
               <span className="mono">{page.id}.md</span>
@@ -248,8 +247,8 @@ export function GitWiki({ branch, head, pageId, onNavigate, sourceLabel }: {
           {WIKI_DEMOS[page.id] && <WikiFlowDemo {...WIKI_DEMOS[page.id]} />}
           <article className="md-render git-wiki-markdown" dangerouslySetInnerHTML={{ __html: html }} />
           <footer className="git-wiki-pager">
-            {prev ? <button className="git-wiki-pager-btn" onClick={() => open(prev.id)}><span><ChevronLeftIcon size={12} /> 上一篇</span><b>{prev.title}</b></button> : <span />}
-            {next ? <button className="git-wiki-pager-btn next" onClick={() => open(next.id)}><span>下一篇 <ChevronRightIcon size={12} /></span><b>{next.title}</b></button> : <span />}
+            {prev ? <button className="git-wiki-pager-btn" onClick={() => open(prev.id)}><span><ChevronLeftIcon size={14} /> 上一篇</span><b>{prev.title}</b></button> : <span />}
+            {next ? <button className="git-wiki-pager-btn next" onClick={() => open(next.id)}><span>下一篇 <ChevronRightIcon size={14} /></span><b>{next.title}</b></button> : <span />}
           </footer>
         </div>
       </main>

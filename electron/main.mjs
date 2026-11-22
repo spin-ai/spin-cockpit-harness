@@ -23,7 +23,7 @@ import { eventRowsFromGh, parseGhJson } from "./bot/github.mjs";
 import { newWebhookToken, webhookEvent } from "./bot/webhook.mjs";
 import { skillSummaries } from "./bot/skills.mjs";
 import { describeRoutine, nextRunAt, normalizeRoutine } from "./bot/routine.mjs";
-import { BOT_TOOL_META } from "./bot/tools.mjs";
+import { BOT_TOOL_META, matchBotRef } from "./bot/tools.mjs";
 import { clipChars, grepWorkspace, listWorkspace, readWorkspaceFile } from "./bot/workspace.mjs";
 import { redactSecrets } from "./redact.mjs";
 import { createPairing } from "./im/pairing.mjs";
@@ -345,15 +345,34 @@ function normalizeCoordinationPrefs(raw = {}) {
 
 function normalizeCoordinationCast(raw) {
   if (!Array.isArray(raw)) return [];
+  const bots = store.state.bots || [];
+  const agents = store.state.agents || [];
   const seen = new Set();
   const out = [];
   for (const item of raw.slice(0, 50)) {
+    // 座位上坐的是机器人（botId）；老数据只有执行体（agentId），读的时候再反查成机器人。
+    // 渲染层只写 botId，这里若只认 agentId 会把整份阵容丢掉（阵容存不下来）。
+    const botId = String(item?.botId || "").trim();
     const agentId = String(item?.agentId || "").trim();
-    if (!agentId || seen.has(agentId)) continue;
-    seen.add(agentId);
+    if (!botId && !agentId) continue;
+    const bot = botId
+      ? bots.find((b) => b.id === botId)
+      : bots.find((b) => b.executorAgentId === agentId) || null;
+    // 同一台机器人可能同时被 botId 和它的执行体写进来，按机器人去重（没有机器人时退回执行体）。
+    const key = bot?.id || botId || agentId;
+    if (seen.has(key)) continue;
+    // 已知名单非空时挡掉脏数据；名单为空（迁移中）就放行，别把场景清空。
+    if (botId && bots.length && !bot) continue;
+    if (!botId && !bot && agents.length && !agents.some((a) => a.id === agentId)) continue;
+    seen.add(key);
     const role = ["lead", "worker", "reviewer"].includes(item?.role) ? item.role : "worker";
     const seat = item?.seat == null ? null : Math.max(0, Math.min(5, Math.round(Number(item.seat))));
-    out.push({ agentId, role, seat: Number.isFinite(seat) ? seat : null, displayName: String(item?.displayName || "").slice(0, 40) });
+    out.push({
+      ...(botId ? { botId } : { agentId }),
+      role,
+      seat: Number.isFinite(seat) ? seat : null,
+      displayName: String(item?.displayName || "").slice(0, 40),
+    });
   }
   return out;
 }
@@ -3156,6 +3175,19 @@ async function botReadTool(name, args = {}, ctx = {}) {
   }
 }
 
+/**
+ * 派给机器人的任务：目标 bot 与派活人都挂上监视（`watch` 幂等），跑完各自回报一条。
+ * 只给「派给机器人」用；派给执行体的任务保持原来的行为。
+ */
+function watchDelegation(todo, targetBot, ownerBot) {
+  if (!todo || !targetBot) return;
+  const title = `${todo.key} ${todo.title}`;
+  try { bots().watch({ botId: targetBot.id, todoId: todo.id, title }); } catch { /* 监视失败不挡派活 */ }
+  if (ownerBot && ownerBot.id !== targetBot.id) {
+    try { bots().watch({ botId: ownerBot.id, todoId: todo.id, title }); } catch { /* 同上 */ }
+  }
+}
+
 async function botReadToolNow(name, args = {}, ctx = {}) {
   const st = store.state;
   // bot 绑了默认项目就用它；没绑才回退当前项目。workspace_* / git_* 的根都按这个走。
@@ -3190,8 +3222,10 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
     case "todo_list": {
       const want = String(args.status || "all");
       const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 50);
+      // 自己名下的任务跨项目也要看得到：绑了项目只限工作区工具，不遮住自己的待办
+      const mine = (t) => Boolean(ctx?.bot?.id) && t.botId === ctx.bot.id;
       const rows = st.todos
-        .filter((t) => (!projectId || !t.projectId || t.projectId === projectId))
+        .filter((t) => mine(t) || !projectId || !t.projectId || t.projectId === projectId)
         .filter((t) => want === "all" || t.status === want)
         .slice(0, limit)
         .map((t) => ({
@@ -3231,6 +3265,86 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
       broadcast();
       return { ok: true, runId, todoId: todo.id, key: todo.key };
     }
+    case "todo_update": {
+      const bot = ctx?.bot;
+      if (!bot || !["work", "dispatch"].includes(bot.capability || "")) {
+        return { error: "当前能力档不能改任务（只读档只能查）" };
+      }
+      const ref = String(args.todo || "").trim();
+      const todo = st.todos.find((t) => t.id === ref || t.key === ref || t.key === ref.replace(/^#/, "") || t.key.replace(/^#/, "") === ref);
+      if (!todo) return { error: `找不到任务 ${ref || "（空）"}` };
+      if (todo.kind === "mission") return { error: "Mission 的计划与子任务不在这个工具里改" };
+      const ownTask = Boolean(bot?.id) && todo.botId === bot.id;
+      if (!ownTask && projectId && todo.projectId && todo.projectId !== projectId) return { error: "这条任务不在你绑定的项目里" };
+      if (todo.confirmed) return { error: "这条任务已经被人确认完成；要改先请人撤销确认" };
+      if (args.bot && args.agent) return { error: "bot 与 agent 只能给一个：派给机器人就用 bot" };
+      const changed = [];
+      const status = String(args.status || "").trim();
+      if (status) {
+        // done / cancelled 是人的决定：工具里不给，避免 bot 自己把活“结掉”
+        if (!["todo", "in_progress", "waiting_input", "in_review"].includes(status)) {
+          return { error: "status 只能是 todo / in_progress / waiting_input / in_review；完成与取消要人来点" };
+        }
+        if (todo.status !== status) { todo.status = status; changed.push("status"); }
+      }
+      if (typeof args.priority === "string" && ["P0", "P1", "P2", "P3"].includes(args.priority)) {
+        if (todo.priority !== args.priority) { todo.priority = args.priority; changed.push("priority"); }
+      }
+      if (Array.isArray(args.acceptance)) {
+        const next = args.acceptance.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 5);
+        if (!next.length) return { error: "acceptance 不能为空数组" };
+        if (JSON.stringify(next) !== JSON.stringify(todo.acceptance || [])) { todo.acceptance = next; changed.push("acceptance"); }
+      }
+      if (args.bot) {
+        const target = matchBotRef(st.bots, args.bot);
+        if (!target) {
+          return { error: `找不到机器人 ${args.bot}；可用：${(st.bots || []).map((b) => b.name).join(" / ")}` };
+        }
+        if ((target.capability || "read") === "read") return { error: `${target.name} 只有只读档，接不了任务` };
+        const executor = st.agents.find((a) => a.id === target.executorAgentId);
+        if (!executor) return { error: `${target.name} 还没绑定执行体（设置 → 能力）` };
+        if ((executor.role || "worker") === "supervisor") return { error: `${target.name} 的执行体是主管，不能接子任务` };
+        if (bot.hostId && executor.hostId && executor.hostId !== bot.hostId) {
+          return { error: `${target.name} 的执行体在另一台主机上` };
+        }
+        if (todo.botId !== target.id || todo.agentId !== executor.id) {
+          todo.botId = target.id;
+          todo.agentId = executor.id;
+          changed.push("assignee");
+        }
+        if (changed.includes("assignee")) {
+          try { bots().watch({ botId: target.id, todoId: todo.id, title: `${todo.key} ${todo.title}` }); } catch { /* 监视失败不挡派活 */ }
+        }
+      } else if (args.agent) {
+        const raw = String(args.agent || "").trim().replace(/^@/, "").toLowerCase();
+        const handleOf = (a) => String(a.name || "").split("·")[0].trim().toLowerCase();
+        const agent = st.agents.find((a) => a.id === String(args.agent || "")
+          || String(a.alias || "").toLowerCase() === raw
+          || String(a.name || "").toLowerCase() === raw
+          || handleOf(a) === raw);
+        if (!agent) return { error: `找不到执行体 ${args.agent}；可用：${st.agents.filter((a) => (a.role || "worker") !== "supervisor").map((a) => a.alias || a.name).join(" / ")}` };
+        if ((agent.role || "worker") === "supervisor") return { error: `${agent.name} 是主管，不能接子任务` };
+        if (bot.hostId && agent.hostId && agent.hostId !== bot.hostId) return { error: `${agent.name} 在另一台主机上` };
+        if (todo.agentId !== agent.id) { todo.agentId = agent.id; changed.push("assignee"); }
+      }
+      const comment = String(args.comment || "").trim().slice(0, 500);
+      if (comment) {
+        const thread = threadForTodo(todo);
+        store.addMessage(thread.id, null, "system", "system", `${bot.name}：${comment}`);
+        changed.push("comment");
+      }
+      if (!changed.length) return { ok: true, key: todo.key, todoId: todo.id, changed, note: "没有变化" };
+      todo.updatedAt = now();
+      store.addEvent("todo.updated", `todo.updated ${todo.key} ${changed.join(",")} by bot`);
+      store.persist();
+      broadcast();
+      const agentNow = st.agents.find((a) => a.id === todo.agentId);
+      const botNow = (st.bots || []).find((b) => b.id === todo.botId);
+      return {
+        ok: true, key: todo.key, todoId: todo.id, status: todo.status,
+        agent: agentNow ? (agentNow.alias || agentNow.name) : null, bot: botNow?.name || null, changed,
+      };
+    }
     case "task_create": {
       const bot = ctx?.bot;
       if (!bot || !["work", "dispatch"].includes(bot.capability || "")) {
@@ -3239,20 +3353,36 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
       const title = String(args.title || "").trim().replace(/\s+/g, " ").slice(0, 200);
       if (!title) return { error: "title 不能为空" };
       const brief = String(args.brief || "").trim().slice(0, 2000);
-      const ref = String(args.agent || "").trim().replace(/^@/, "").toLowerCase();
-      const handleOf = (a) => String(a.name || "").split("·")[0].trim().toLowerCase();
-      const agent = st.agents.find((a) => a.id === String(args.agent || "")
-        || String(a.alias || "").toLowerCase() === ref
-        || String(a.name || "").toLowerCase() === ref
-        || handleOf(a) === ref);
-      if (!agent) return { error: `找不到 worker：${args.agent || "（空）"}；可用：${st.agents.filter((a) => (a.role || "worker") !== "supervisor").map((a) => a.alias || a.name).join(" / ")}` };
-      if ((agent.role || "worker") === "supervisor") return { error: `${agent.name} 是主管，不能接子任务` };
+      if (args.bot && args.agent) return { error: "bot 与 agent 只能给一个：派给机器人就用 bot" };
+      // 派给机器人：用它的执行体，任务归它（memory owner / 回报 / 任务页签都跟着它）
+      const targetBot = args.bot ? matchBotRef(st.bots, args.bot) : null;
+      if (args.bot && !targetBot) {
+        return { error: `找不到机器人 ${args.bot}；可用：${(st.bots || []).map((b) => b.name).join(" / ")}` };
+      }
+      let agent = null;
+      if (targetBot) {
+        if ((targetBot.capability || "read") === "read") return { error: `${targetBot.name} 只有只读档，接不了任务` };
+        agent = st.agents.find((a) => a.id === targetBot.executorAgentId) || null;
+        if (!agent) return { error: `${targetBot.name} 还没绑定执行体（设置 → 能力）` };
+        if ((agent.role || "worker") === "supervisor") return { error: `${targetBot.name} 的执行体是主管，不能接子任务` };
+      } else {
+        const ref = String(args.agent || "").trim().replace(/^@/, "").toLowerCase();
+        const handleOf = (a) => String(a.name || "").split("·")[0].trim().toLowerCase();
+        agent = st.agents.find((a) => a.id === String(args.agent || "")
+          || String(a.alias || "").toLowerCase() === ref
+          || String(a.name || "").toLowerCase() === ref
+          || handleOf(a) === ref) || null;
+        if (!agent) return { error: `找不到 worker：${args.agent || "（空）"}；可用：${st.agents.filter((a) => (a.role || "worker") !== "supervisor").map((a) => a.alias || a.name).join(" / ")}` };
+        if ((agent.role || "worker") === "supervisor") return { error: `${agent.name} 是主管，不能接子任务` };
+      }
       if (bot.hostId && agent.hostId && agent.hostId !== bot.hostId) {
         return { error: `这个 bot 绑定在主机 ${st.hosts.find((h) => h.id === bot.hostId)?.name || bot.hostId}，${agent.name} 在另一台主机上` };
       }
+      const ownerId = targetBot ? targetBot.id : bot.id;
       const cwd = project?.path || agent.cwd || workspaceRoot;
-      const existed = st.todos.find((t) => t.status === "todo" && t.title === title && t.agentId === agent.id && t.botId === bot.id);
+      const existed = st.todos.find((t) => t.status === "todo" && t.title === title && t.agentId === agent.id && t.botId === ownerId);
       if (existed) {
+        watchDelegation(existed, targetBot, bot);
         // 同一轮重复建 / 用户改口说「开跑」：任务已存在时，start=true 就把这次当成启动
         let runId = null;
         if (args.start === true) {
@@ -3268,12 +3398,13 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
           }
         }
         store.persist(); broadcast();
-        return { ok: true, existed: true, key: existed.key, todoId: existed.id, agent: agent.alias || agent.name, started: Boolean(runId), runId };
+        return { ok: true, existed: true, key: existed.key, todoId: existed.id, agent: agent.alias || agent.name, bot: targetBot?.name || null, started: Boolean(runId), runId };
       }
-      const todo = actions.createTodo({ title, desc: brief, agentId: agent.id, cwd, priority: "P1", botId: bot.id, projectId: project?.id || null });
+      const todo = actions.createTodo({ title, desc: brief, agentId: agent.id, cwd, priority: "P1", botId: ownerId, projectId: project?.id || null });
       if (Array.isArray(args.acceptance) && args.acceptance.length) {
         todo.acceptance = args.acceptance.map((x) => String(x).trim()).filter(Boolean).slice(0, 5);
       }
+      watchDelegation(todo, targetBot, bot);
       // 只有用户明确说「开跑 / 开始 / 直接干」时模型才会传 start=true；默认只建 todo。
       let runId = null;
       if (args.start === true) {
@@ -3287,7 +3418,50 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
         }
       }
       store.persist(); broadcast();
-      return { ok: true, key: todo.key, todoId: todo.id, agent: agent.alias || agent.name, started: Boolean(runId), runId };
+      return { ok: true, key: todo.key, todoId: todo.id, agent: agent.alias || agent.name, bot: targetBot?.name || null, started: Boolean(runId), runId };
+    }
+    case "todo_get": {
+      const ref = String(args.todo || "").trim();
+      const todo = st.todos.find((t) => t.id === ref || t.key === ref || t.key === ref.replace(/^#/, "") || t.key.replace(/^#/, "") === ref);
+      if (!todo) return { error: `找不到任务 ${ref || "（空）"}` };
+      const ownTask = Boolean(ctx?.bot?.id) && todo.botId === ctx.bot.id;
+      if (!ownTask && projectId && todo.projectId && todo.projectId !== projectId) return { error: "这条任务不在你绑定的项目里" };
+      const agent = st.agents.find((a) => a.id === todo.agentId);
+      const owner = (st.bots || []).find((b) => b.id === todo.botId);
+      const runs = (st.runs || []).filter((r) => r.todoId === todo.id).slice(-3).map((r) => ({
+        runId: r.id, status: r.status, startedAt: r.startedAt || r.createdAt || null, endedAt: r.endedAt || null,
+        error: r.error ? String(r.error).slice(0, 200) : null,
+      }));
+      return {
+        key: todo.key, title: todo.title, brief: String(todo.desc || "").slice(0, 1200),
+        acceptance: todo.acceptance || [], status: todo.status, confirmed: Boolean(todo.confirmed),
+        priority: todo.priority || null, due: todo.due || null, kind: todo.kind || "task",
+        agent: agent ? (agent.alias || agent.name) : null, bot: owner?.name || null,
+        project: st.projects.find((p) => p.id === todo.projectId)?.name || null,
+        lastRunFailed: Boolean(todo.lastRunFailed), updatedAt: todo.updatedAt || null, runs,
+      };
+    }
+    case "bot_list": {
+      const wantBusy = args.busy_only === true || args.busyOnly === true;
+      const activeRun = ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"];
+      const openStatus = ["todo", "queued", "in_progress", "waiting_input", "in_review"];
+      const rows = (st.bots || []).map((b) => {
+        const mine = st.todos.filter((t) => t.botId === b.id && !t.confirmed && openStatus.includes(t.status));
+        const myTodoIds = new Set(st.todos.filter((t) => t.botId === b.id).map((t) => t.id));
+        const running = st.runs.filter((r) => activeRun.includes(r.status) && myTodoIds.has(r.todoId)).length;
+        const executor = st.agents.find((a) => a.id === b.executorAgentId);
+        return {
+          id: b.id, name: b.name, role: b.role || "worker", capability: b.capability || "read",
+          team: b.team || "", duty: b.persona?.mission || "",
+          executor: executor ? (executor.alias || executor.name) : null,
+          project: st.projects.find((p) => p.id === b.projectId)?.name || null,
+          status: b.status === "paused" ? "paused" : (b.mutedUntil && b.mutedUntil > Date.now() ? "muted" : "active"),
+          open: mine.length, running,
+          doing: mine.slice(0, 3).map((t) => `${t.key} ${t.title}`),
+          self: b.id === ctx?.bot?.id,
+        };
+      }).filter((r) => !wantBusy || r.open > 0 || r.running > 0);
+      return { total: rows.length, bots: rows };
     }
     case "run_status": {
       const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 30);
@@ -3541,6 +3715,9 @@ function bots() {
   }
   return botStore;
 }
+/** 上一次删除任务的快照：底部撤销条用（会话内有效，不落库） */
+let lastRemovedTodo = null;
+
 /** 已弹过的通知时间（只存在内存里：重启后重新计，通知不是审计数据） */
 const botNotifyLog = [];
 let botUnread = 0;
@@ -4578,12 +4755,12 @@ const actions = {
     snap.tasks = (store.state.todos || []).filter((t) => ids.has(t.id)).map((t) => ({
       id: t.id, key: t.key, title: t.title, status: t.status, missionState: t.missionState || null, agentId: t.agentId || null,
     }));
-    // 可监视的任务：最近 30 条（供「任务」页签里的选择器用）
+    // 可监视的任务：最近 200 条（搜索用；不再只给 30 条，老任务也要找得到）
     // 草稿 / 阅读位置：聊天面自己的小状态，跟 bot 快照一起下发最省一次 IPC
     snap.botUi = store.state.botUi || {};
     snap.recentTodos = [...(store.state.todos || [])]
       .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-      .slice(0, 30)
+      .slice(0, 200)
       .map((t) => ({ id: t.id, key: t.key, title: t.title, status: t.status, missionState: t.missionState || null }));
     return snap;
   },
@@ -4705,7 +4882,40 @@ const actions = {
   /** bot 对话可选模型（composer 右下角选择器） */
   botModels: async () => CHAT_MODEL_CATALOG,
   botStatus: async ({ id, status, mutedUntil } = {}) => bots().setStatus(String(id || ""), { status, mutedUntil }),
-  botRemove: async ({ id } = {}) => { bots().remove(String(id || "")); return { ok: true }; },
+  botRemove: async ({ id } = {}) => {
+    const res = bots().remove(String(id || ""));
+    broadcast();
+    return res;
+  },
+  /** 撤销上一次删机器人（会话内有效，重启即失效） */
+  botUndoRemove: async () => {
+    const res = bots().undoRemove();
+    broadcast();
+    return res;
+  },
+  /** 把一条已有任务派给某个机器人：用它的执行体、任务归它，并挂上监视（跑完它来汇报） */
+  botAssignTask: async ({ todoId, botId } = {}) => {
+    const todo = (store.state.todos || []).find((t) => t.id === String(todoId || ""));
+    if (!todo) throw new Error("任务不存在");
+    const bot = bots().list().find((b) => b.id === String(botId || ""));
+    if (!bot) throw new Error("机器人不存在");
+    if ((bot.capability || "read") === "read") throw new Error(`${bot.name} 只有只读档，接不了任务`);
+    const agent = (store.state.agents || []).find((a) => a.id === bot.executorAgentId);
+    if (!agent) throw new Error(`${bot.name} 还没绑定执行体（设置 → 能力）`);
+    if ((agent.role || "worker") === "supervisor") throw new Error(`${bot.name} 的执行体是主管，不能接子任务`);
+    if (bot.hostId && agent.hostId && agent.hostId !== bot.hostId) {
+      throw new Error(`${bot.name} 的执行体不在它绑定的主机上`);
+    }
+    todo.botId = bot.id;
+    todo.agentId = agent.id;
+    todo.updatedAt = now();
+    try { bots().watch({ botId: bot.id, todoId: todo.id, title: `${todo.key} ${todo.title}` }); } catch { /* 监视失败不挡派活 */ }
+    store.addMessage(threadForTodo(todo).id, null, "system", "system", `${bot.name} 接手了这条任务`);
+    store.addEvent("todo.assigned.bot", `todo.assigned.bot ${todo.key} → ${bot.name}`);
+    store.persist();
+    broadcast();
+    return { ok: true, botId: bot.id, botName: bot.name, agentId: agent.id, agent: agent.alias || agent.name };
+  },
   botTick: async ({ botId, force } = {}) => bots().tick({ botId: String(botId || ""), force: Boolean(force) }),
   /** 被动回复：流式把增量推给渲染层（harness:bot-delta），结束返回完整回合 */
   /** 群聊：列表 / 新建或更新 / 删除 / 发一句（按 replyMode 决定发给谁） */
@@ -4894,6 +5104,12 @@ const actions = {
   },
   botChatRemove: async ({ threadId } = {}) => {
     const res = bots().removeChat({ threadId: String(threadId || "") });
+    broadcast();
+    return res;
+  },
+  /** 清空一条会话的消息（默认会话也允许；回合记录一起清） */
+  botChatClear: async ({ threadId } = {}) => {
+    const res = bots().clearChat({ threadId: String(threadId || "") });
     broadcast();
     return res;
   },
@@ -6006,6 +6222,54 @@ const actions = {
    * 收集箱 → TODO：一次把「我今天想到的一堆事」变成任务。
    * 一行一条；自动去掉 - * • / 1. 1) / [ ] 前缀，去重，最多 100 条。
    */
+  /** 取消任务：保留历史（状态置 cancelled），正在跑的 run 一起停掉 */
+  cancelTodo: ({ id }) => {
+    const todo = store.state.todos.find((t) => t.id === id);
+    if (!todo) throw new Error("todo not found");
+    if (todo.status === "cancelled") return { ok: true, key: todo.key };
+    actions.setStatus({ id: todo.id, status: "cancelled" });
+    store.addMessage(threadForTodo(todo).id, null, "system", "system", `已取消 · ${todo.key}`);
+    store.addEvent("todo.cancelled", `todo.cancelled ${todo.key}`);
+    store.persist();
+    return { ok: true, key: todo.key };
+  },
+  /** 删除任务：会话与 run 留着（审计），任务记录与链接一起删；6 秒内可撤销 */
+  removeTodo: ({ id }) => {
+    const todo = store.state.todos.find((t) => t.id === id);
+    if (!todo) throw new Error("todo not found");
+    const threadIds = (store.state.threads || []).filter((t) => t.todoId === todo.id).map((t) => t.id);
+    lastRemovedTodo = {
+      todo: JSON.parse(JSON.stringify(todo)),
+      links: (store.state.todoLinks || []).filter((l) => l.todoId === todo.id),
+      threads: (store.state.threads || []).filter((t) => threadIds.includes(t.id)).map((t) => ({ id: t.id, todoId: t.todoId })),
+    };
+    for (const r of store.state.runs.filter((x) => x.todoId === todo.id && ["running", "waiting_input", "queued"].includes(x.status))) {
+      active.get(r.id)?.client.cancel();
+    }
+    store.state.todos = store.state.todos.filter((t) => t.id !== todo.id);
+    store.state.todoLinks = (store.state.todoLinks || []).filter((l) => l.todoId !== todo.id);
+    store.state.delegations = (store.state.delegations || []).filter((d) => d.childTodoId !== todo.id);
+    for (const t of store.state.threads || []) if (t.todoId === todo.id) t.todoId = null;
+    store.addEvent("todo.removed", `todo.removed ${todo.key} ${todo.title}`);
+    store.persist();
+    return { ok: true, key: todo.key, title: todo.title, canUndo: true };
+  },
+  /** 撤销删除任务：把任务与链接放回去（会话本来就没删） */
+  undoRemoveTodo: () => {
+    if (!lastRemovedTodo) throw new Error("没有可撤销的删除");
+    const { todo, links, threads } = lastRemovedTodo;
+    if (!store.state.todos.some((t) => t.id === todo.id)) store.state.todos.unshift(todo);
+    store.state.todoLinks = store.state.todoLinks || [];
+    for (const link of links) if (!store.state.todoLinks.some((l) => l.id === link.id)) store.state.todoLinks.push(link);
+    for (const row of threads) {
+      const thread = (store.state.threads || []).find((t) => t.id === row.id);
+      if (thread) thread.todoId = row.todoId;
+    }
+    lastRemovedTodo = null;
+    store.addEvent("todo.restored", `todo.restored ${todo.key}`);
+    store.persist();
+    return { ok: true, key: todo.key, title: todo.title };
+  },
   createTodos: ({ text = "", titles = [] }) => {
     const raw = Array.isArray(titles) && titles.length ? titles.map(String) : String(text).split("\n");
     const seen = new Set();

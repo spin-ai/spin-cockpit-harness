@@ -105,6 +105,11 @@ export function routineDue(routine, { now = Date.now(), probe } = {}) {
     if (routine.lastFiredAt >= slot) {
       return { due: false, reason: `今天 ${routine.atHour}:00 已经跑过`, nextAt: slot + DAY };
     }
+    // 建日程时今天的点已经过了（例如 22:00 建了一个 9:00 的早报）：不补跑，从明天开始
+    const created = Number(routine.createdAt) || 0;
+    if (!routine.lastFiredAt && created && created <= now && created >= slot) {
+      return { due: false, reason: `今天的 ${routine.atHour}:00 在建日程时已经过了，从明天开始`, nextAt: slot + DAY };
+    }
     return { due: true, reason: `到点（${routine.atHour}:00）`, nextAt: slot + DAY };
   }
 
@@ -143,7 +148,11 @@ export function nextRunAt(routine, now = Date.now()) {
   if (!routine || !routine.enabled) return null;
   if (routine.kind === "daily") {
     const slot = todayAt(routine.atHour, now);
-    return routine.lastFiredAt >= slot ? slot + DAY : Math.max(now, slot);
+    if (routine.lastFiredAt >= slot) return slot + DAY;
+    // 建日程时今天的点已经过了：下一次是明天，不是"现在"
+    const created = Number(routine.createdAt) || 0;
+    if (created && created <= now && created >= slot) return slot + DAY;
+    return Math.max(now, slot);
   }
   if (routine.kind === "every") return (routine.lastFiredAt || now) + routine.everyMs;
   if (routine.kind === "once") return !routine.onceAt || routine.lastFiredAt >= routine.onceAt ? null : routine.onceAt;

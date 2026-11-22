@@ -141,7 +141,7 @@ export function QuickCommandMenu({ point, commands, onRun, onEdit, onCreate, onR
       <div className="term-qc-head">
         <span>快捷命令</span>
         <button className="term-qc-add" title="新建快捷命令" aria-label="新建快捷命令" onClick={onCreate}>
-          <BoltIcon size={12} />
+          <BoltIcon size={14} />
         </button>
       </div>
       <div className="term-qc-list">
@@ -213,7 +213,7 @@ export function QuickCommandDialog({ initial, onSave, onCancel }: {
       >
         <div className="row between gap8">
           <h3>{initial ? "编辑快捷命令" : "新建快捷命令"}</h3>
-          <button className="icon-btn" title="关闭" aria-label="关闭" onClick={onCancel}><XIcon size={13} /></button>
+          <button className="icon-btn" title="关闭" aria-label="关闭" onClick={onCancel}><XIcon size={14} /></button>
         </div>
         <label>
           名称

@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { confirmDialog } from "./ConfirmHost";
 import type { Delegation, ElementContext, Message, MissionPlanRecord, Run, State, Thread, Todo } from "../types";
 import { RUN_STATUS, STATUS, agentOf, duration, lastRun, missingKeyInfo, timeAgo } from "../ui";
 import { CheckSquareIcon, ChevronDownIcon, CopyCheckIcon, CopyIcon, FileTextIcon, PanelExpandIcon, PanelRestoreIcon, PencilIcon, RefreshIcon, SendIcon, SparkleIcon, WrenchIcon } from "./Icons";
@@ -49,15 +50,16 @@ function RunFocusCard({ run, todo, onOpenTerminal, onClose }: {
   onClose?: () => void;
 }) {
   const text = String(run.result || run.error || "");
+  // 默认收起：只在头行显示一句摘要，避免一次失败白占三行
   const [open, setOpen] = useState(false);
   const long = text.length > RUN_FOCUS_CLAMP;
-  const shown = open || !long ? text : `${text.slice(0, RUN_FOCUS_CLAMP)}…`;
+  const preview = String(text.split("\n")[0] || "").trim();
   return (
     <section className={`run-focus is-${run.resultSource || "none"}`} aria-label="运行产出">
       <div className="run-focus-head">
         <span className="mono tiny">{run.id}</span>
         <span className={`pill status ${run.status === "failed" ? "failed" : run.status === "completed" ? "done" : "running"}`}>{RUN_STATUS[run.status] || run.status}</span>
-        <span className="tiny muted">{runSourceLabel(run.resultSource, run.error)}{run.resultTruncated ? " · 只保留尾部" : ""}</span>
+        <span className="tiny muted ellipsis" title={preview}>{runSourceLabel(run.resultSource, run.error)} · {preview || "（无输出）"}</span>
         <span className="spacer" />
         {run.terminalId && (
           <button
@@ -73,15 +75,17 @@ function RunFocusCard({ run, todo, onOpenTerminal, onClose }: {
             aria-label={open ? "收起全文" : "展开全文"}
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
-          ><ChevronDownIcon size={12} className={open ? "rot-180" : ""} /></button>
+          ><ChevronDownIcon size={14} className={open ? "rot-180" : ""} /></button>
         )}
         {onClose && (
-          <button className="icon-btn" title="收起这次运行的产出" aria-label="收起这次运行的产出" onClick={onClose}><XIcon size={12} /></button>
+          <button className="icon-btn" title="收起这次运行的产出" aria-label="收起这次运行的产出" onClick={onClose}><XIcon size={14} /></button>
         )}
       </div>
-      <div className={`run-focus-body${run.resultSource === "pty_tail" ? " is-mono" : ""}`}>
-        {run.resultSource === "pty_tail" ? <pre>{shown}</pre> : <RichText text={shown} />}
-      </div>
+      {open && (
+        <div className={`run-focus-body${run.resultSource === "pty_tail" ? " is-mono" : ""}`}>
+          {run.resultSource === "pty_tail" ? <pre>{text}</pre> : <RichText text={text} />}
+        </div>
+      )}
     </section>
   );
 }
@@ -734,9 +738,9 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     mark(created?.id ?? null);
   };
 
-  const stop = () => {
+  const stop = async () => {
     if (!active) return;
-    if (confirmStop && !window.confirm("停止当前运行？")) return;
+    if (confirmStop && !(await confirmDialog("停止当前运行？"))) return;
     void act("stop", { runId: active.id });
   };
 
@@ -787,12 +791,12 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
           </RowMenu>
           {onToggleMaximize && !embedded && (
             <button className="pane-collapse" title={maximized ? "还原（Esc）" : "最大化"} aria-label={maximized ? "还原 Chat" : "最大化 Chat"} onClick={onToggleMaximize}>
-              {maximized ? <PanelRestoreIcon size={13} /> : <PanelExpandIcon size={13} />}
+              {maximized ? <PanelRestoreIcon size={14} /> : <PanelExpandIcon size={14} />}
             </button>
           )}
           {onCollapse && !embedded && (
             <button className="pane-collapse" title="收起 Chat" aria-label="收起 Chat" aria-expanded={true} onClick={onCollapse}>
-              <ChevronDownIcon size={13} className="rot-180" />
+              <ChevronDownIcon size={14} className="rot-180" />
             </button>
           )}
         </div>
@@ -821,7 +825,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                   </button>
                   <span className="row gap4">
                     {run.terminalId && <button className="link tiny" onClick={() => openGlobalTerminal({ terminalId: run.terminalId!, cwd: t?.cwd || run.cwd || "", title: t?.title || "终端", taskId: run.todoId })}>终端</button>}
-                    <button className="link tiny" onClick={() => { if (!confirmStop || window.confirm("停止这个运行？")) void act("stop", { runId: run.id }); }}>停止</button>
+                    <button className="link tiny" onClick={async () => { if (!confirmStop || await confirmDialog("停止这个运行？")) void act("stop", { runId: run.id }); }}>停止</button>
                   </span>
                 </div>
               );
@@ -837,7 +841,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                   </button>
                   <span className="row gap4">
                     <button className="link tiny" onClick={() => openGlobalTerminal({ terminalId: term.id, cwd: term.cwd, title: term.title })}>打开</button>
-                    <button className="icon-btn" title="结束进程（不可恢复）" aria-label="结束进程" onClick={() => void window.harness.closeTerminal(term.id)}><XIcon size={12} /></button>
+                    <button className="icon-btn" title="结束进程（不可恢复）" aria-label="结束进程" onClick={() => void window.harness.closeTerminal(term.id)}><XIcon size={14} /></button>
                   </span>
                 </div>
               );
@@ -860,32 +864,24 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
       {!thread ? (
         <div className="chat-empty-inline">
           <span className="inline-empty">还没有会话。新建一个，或点一条任务回到它的对话。</span>
-          <button className="btn tiny-btn" onClick={onNewThread} title="新建会话（⌘N）">新建会话</button>
+          <button className="btn tiny" onClick={onNewThread} title="新建会话（⌘N）">新建会话</button>
         </div>
       ) : (
         <>
-          <div className="ds-chat-tabs" role="tablist" aria-label="会话视图">
-            <button role="tab" aria-selected={chatTab === "chat"} className={chatTab === "chat" ? "on" : ""} onClick={() => setChatTab("chat")}>对话</button>
-            <button role="tab" aria-selected={chatTab === "trajectory"} className={chatTab === "trajectory" ? "on" : ""} onClick={() => setChatTab("trajectory")}>轨迹</button>
-          </div>
           <div className="thread-bar">
             <div className="thread-title-row">
-              <span className={`thread-dot ${botThread ? "running" : todo ? STATUS[todo.status].cls : "todo"}`} />
-              <span className="thread-key mono">{botThread ? "机器人" : todo?.key ?? "draft"}</span>
+              <span
+                className={`thread-dot ${botThread ? "running" : todo ? STATUS[todo.status].cls : "todo"}`}
+                title={botThread ? "机器人会话" : todo ? (todo.confirmed ? "已确认" : STATUS[todo.status].label) : "草稿"}
+              />
               <span className="thread-title" title={todo?.title ?? thread.title}>{todo?.title ?? thread.title}</span>
-              {todo && mission && <span className={`pill status ${missionPillClass(mission.missionState)}`}>{missionStateLabel(mission.missionState)}</span>}
-              {todo && !mission && <span className={`pill status ${STATUS[todo.status].cls}`}>{todo.confirmed ? "已确认" : STATUS[todo.status].label}</span>}
+              {active && <span className="run-live tiny">{duration(active, now)}</span>}
+            </div>
+            <div className="ds-chat-tabs" role="tablist" aria-label="会话视图">
+              <button role="tab" aria-selected={chatTab === "chat"} className={chatTab === "chat" ? "on" : ""} onClick={() => setChatTab("chat")}>对话</button>
+              <button role="tab" aria-selected={chatTab === "trajectory"} className={chatTab === "trajectory" ? "on" : ""} onClick={() => setChatTab("trajectory")}>轨迹</button>
             </div>
             <div className="thread-meta">
-              <span className={`thread-scope ${scopeProjectId ? "" : "global"}`} title={botThread ? "机器人自己的记忆与人格" : scopeProjectId ? "对话作用于该项目" : "全局对话：切换项目时不隐藏"}>
-                {botThread ? "机器人会话" : scopeProjectId ? project?.name ?? "项目" : "全局"}
-              </span>
-              {agent && <><span className="thread-meta-sep">/</span><span className="ellipsis" title={agent.name}>@{agent.alias || agent.name}</span></>}
-              {thread.modelName && <><span className="thread-meta-sep">·</span><span className="ellipsis" title={thread.modelName}>{thread.modelName}</span></>}
-              <span className="spacer" />
-              {botThread && onOpenBotSettings && (
-                <button className="link tiny" onClick={onOpenBotSettings} title="在右侧打开机器人配置">配置机器人</button>
-              )}
               {mission && (
                 <button className="link tiny" onClick={() => void openCarrier()} title="在航母舞台上看这个 Mission 的弹射起飞">看弹射</button>
               )}
@@ -897,20 +893,26 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                   <select className="composer-select" value={active?.id || ""} onChange={(e) => setSteerRunId(e.target.value)} title="选择这次纠偏的目标 Agent">
                     {activeRuns.map((r) => <option key={r.id} value={r.id}>{agentOf(state.agents, r.agentId)?.name || r.agentId}</option>)}
                   </select>
-                  <span className="run-live">{duration(active, now)}</span>
                   <button className="link composer-stop" onClick={stop}>停止</button>
                 </>
               ) : active ? (
-                <>
-                  <span className="run-live">{duration(active, now)}</span>
-                  <button className="link composer-stop" onClick={stop}>停止</button>
-                </>
-              ) : last ? (
-                <span className="muted">上次 {RUN_STATUS[last.status] ?? last.status}</span>
+                <button className="link composer-stop" onClick={stop}>停止</button>
               ) : null}
               {botBusy && botThread && (
                 <button className="link composer-stop" onClick={() => void act("botCancel", { botId: botThread })}>停止</button>
               )}
+              <RowMenu title="会话信息">
+                {botThread && onOpenBotSettings && (
+                  <button onClick={onOpenBotSettings}>配置机器人</button>
+                )}
+                <div className="row-menu-info">
+                  {todo && <div><span>任务</span><em className="mono">{todo.key}</em></div>}
+                  <div><span>作用域</span><em>{botThread ? "机器人" : scopeProjectId ? project?.name ?? "项目" : "全局"}</em></div>
+                  {agent && <div><span>Agent</span><em>{agent.alias || agent.name}</em></div>}
+                  {thread.modelName && <div><span>模型</span><em>{thread.modelName}</em></div>}
+                  <div><span>状态</span><em>{active ? "运行中" : last ? RUN_STATUS[last.status] ?? last.status : "未运行"}</em></div>
+                </div>
+              </RowMenu>
             </div>
           </div>
 
@@ -951,10 +953,13 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
             if (steps > 0) return null;
             return (
               <div className="chat-empty-hint">
-                <span className="inline-empty">这条任务还没有对话记录{todo ? "；任务说明和验收在「任务详情」标签里" : ""}。</span>
+                <span className="inline-empty">
+                  {todo ? <>还没有对话记录 · <span className="faint">{todo.key}</span> 的说明与验收在</> : "还没有对话记录"}
+                </span>
                 {todo && (
-                  <button className="btn tiny" title="看任务的描述 / 验收 / 环境 / 产物" onClick={() => window.dispatchEvent(new Event("harness:task-detail"))}>任务详情</button>
+                  <button className="link tiny" title="看任务的描述 / 验收 / 环境 / 产物" onClick={() => window.dispatchEvent(new Event("harness:task-detail"))}>任务详情</button>
                 )}
+                <span className="faint tiny">· 在下面说一句就开始</span>
               </div>
             );
           })()}
@@ -1035,7 +1040,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
               )}
               {msgs.length === 0 && (
                 <div className="chat-empty">
-                  <div className="chat-empty-mark"><SparkleIcon size={15} /></div>
+                  <div className="chat-empty-mark"><SparkleIcon size={14} /></div>
                   {botThread ? (
                     <>
                       <b>还没有回合</b>
@@ -1102,8 +1107,8 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
               </div>
               <div className="dispatch-preview-reason">{proposal.reason}</div>
               <div className="row gap6" style={{ justifyContent: "flex-end" }}>
-                <button className="btn tiny-btn" onClick={() => setProposal(null)}>取消</button>
-                <button className="btn tiny-btn primary" disabled={sending} onClick={() => void send({ text: proposal.text, allocation: { projectId: proposal.projectId, agentId: proposal.agentId } })}>确认派活</button>
+                <button className="btn tiny" onClick={() => setProposal(null)}>取消</button>
+                <button className="btn tiny primary" disabled={sending} onClick={() => void send({ text: proposal.text, allocation: { projectId: proposal.projectId, agentId: proposal.agentId } })}>确认派活</button>
               </div>
             </div>
           )}
@@ -1327,16 +1332,16 @@ export function MissionOverview({ mission, plan, delegations, state, act, onOpen
         <span className="tiny muted">{done.length}/{delegations.length} 子任务</span>
         <span className="spacer" />
         {mission.missionState === "in_review" && (
-          <button className="btn tiny-btn primary" onClick={() => void act("confirm", { id: mission.id })}>确认完成</button>
+          <button className="btn tiny primary" onClick={() => void act("confirm", { id: mission.id })}>确认完成</button>
         )}
         {["interrupted", "failed"].includes(mission.missionState || "") && (
-          <button className="btn tiny-btn" onClick={() => void act("resumeMission", { id: mission.id })}>恢复 Mission</button>
+          <button className="btn tiny" onClick={() => void act("resumeMission", { id: mission.id })}>恢复 Mission</button>
         )}
         {mission.missionState !== "done" && mission.missionState !== "cancelled" && (
-          <button className="link mission-danger" onClick={() => { if (window.confirm("取消整个 Mission？所有未完成子任务会一起停止。")) void act("cancelMission", { id: mission.id }); }}>取消 Mission</button>
+          <button className="link mission-danger" onClick={async () => { if (await confirmDialog("取消整个 Mission？所有未完成子任务会一起停止。")) void act("cancelMission", { id: mission.id }); }}>取消 Mission</button>
         )}
         <button className="pane-fold" onClick={onToggle} title={open ? "收起 Mission 详情" : "展开 Mission 详情"} aria-label={open ? "收起 Mission 详情" : "展开 Mission 详情"} aria-expanded={open}>
-          <ChevronDownIcon size={12} className={open ? "rot-180" : ""} />
+          <ChevronDownIcon size={14} className={open ? "rot-180" : ""} />
         </button>
       </div>
       {open && draft && (
@@ -1346,7 +1351,7 @@ export function MissionOverview({ mission, plan, delegations, state, act, onOpen
             <span className="tiny muted">rev {draft.revision}</span>
             <span className="spacer" />
             <span className="tiny faint">批准在终端（可对着代码看依赖与 worktree）</span>
-            <button className="btn tiny-btn primary" onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: "terminal" }))}>去终端批准</button>
+            <button className="btn tiny primary" onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: "terminal" }))}>去终端批准</button>
           </div>
           {draft.plan.summary && <p className="mission-summary">{draft.plan.summary}</p>}
           <ol className="mission-steps">
@@ -1468,11 +1473,11 @@ function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry, canR
           {m.delivery === "failed" && <button className="ds-delivery failed" onClick={onRetry}>投递失败 · 重发</button>}
           <span className="ds-time">{timeAgo(m.createdAt, now)}</span>
           <button className="ds-action" title="复制这条消息" aria-label="复制这条消息" onClick={onCopy}>
-            {copied ? <CopyCheckIcon size={15} /> : <CopyIcon size={15} />}
+            {copied ? <CopyCheckIcon size={14} /> : <CopyIcon size={14} />}
           </button>
           {canEdit && !editing && (
             <button className="ds-action" title="编辑后重发" aria-label="编辑后重发" onClick={() => { setDraft(m.content); setEditing(true); }}>
-              <PencilIcon size={15} />
+              <PencilIcon size={14} />
             </button>
           )}
         </div>
@@ -1511,16 +1516,16 @@ function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry, canR
       <div className="ds-assistant-body"><RichText text={shown} /></div>
       {collapsible && (
         <button className="ds-more" aria-expanded={expanded} title={expanded ? "收起" : "展开全部"} aria-label={expanded ? "收起" : "展开全部"} onClick={() => setExpanded((v) => !v)}>
-          <ChevronDownIcon size={13} className={expanded ? "rot-180" : ""} />
+          <ChevronDownIcon size={14} className={expanded ? "rot-180" : ""} />
         </button>
       )}
       <div className="ds-actions">
         <button className="ds-action" title="复制回答" aria-label="复制回答" onClick={onCopy}>
-          {copied ? <CopyCheckIcon size={15} /> : <CopyIcon size={15} />}
+          {copied ? <CopyCheckIcon size={14} /> : <CopyIcon size={14} />}
         </button>
         {canRegenerate && onRegenerate && (
           <button className="ds-action" title="重新生成" aria-label="基于上一轮提问重新生成" onClick={onRegenerate}>
-            <RefreshIcon size={15} />
+            <RefreshIcon size={14} />
           </button>
         )}
         <span className="ds-time">{agentName} · {timeAgo(m.createdAt, now)}</span>
@@ -1702,7 +1707,7 @@ function FileChip({ path, onOpen }: { path: string; onOpen: (target: string) => 
   const short = name.length > 28 ? `${name.slice(0, 26)}…` : name;
   return (
     <span className="ds-file-chip" title={path}>
-      <FileTextIcon size={12} />
+      <FileTextIcon size={14} />
       <button className="ds-file-chip-name" onClick={(e) => { e.stopPropagation(); onOpen(path); }}>{short}</button>
     </span>
   );
@@ -1771,7 +1776,7 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
       <div className="md-code-head">
         <span>{lang || "code"}</span>
         <button className="md-code-copy" onClick={() => void copy()} title="复制代码">
-          {copied ? <CopyCheckIcon size={12} /> : <CopyIcon size={12} />}
+          {copied ? <CopyCheckIcon size={14} /> : <CopyIcon size={14} />}
           {copied ? "已复制" : "复制"}
         </button>
       </div>

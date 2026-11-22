@@ -95,8 +95,7 @@ export function WarRoom3D({ model, now, selectedId, onSelect, motion, reduced, l
   return (
     <div className="war3d-frame">
       <div className="war3d" ref={hostRef} />
-      <span className="war3d-badge">LAUNCH CONTROL · THREE.JS</span>
-      <span className="war3d-hint">发射台 = 主屏实时画面 · GO/NO-GO = 各系统状态 · 拖动环绕 · 双击复位</span>
+      <span className="war3d-hint">大屏 = 发射流程 · 推进位 = 并发 worker · 发射许可 = approval · 复盘墙 = review · 拖动环绕 · 双击复位</span>
     </div>
   );
 }

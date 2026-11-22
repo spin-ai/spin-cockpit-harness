@@ -40,6 +40,12 @@ export const BOT_READ_TOOLS = [
     status: str("可选：todo / in_progress / in_review / done / all，默认 all"),
     limit: int("默认 20，最多 50"),
   }),
+  fn("todo_get", "读一条任务的详情：背景 brief、验收口径、状态、负责人（执行体 / 机器人）、最近几次运行。回答“这条任务要什么、做到哪了”先用它。", {
+    todo: str("任务编号或 id，例如 #12 / t123"),
+  }, ["todo"]),
+  fn("bot_list", "列出工作区里的机器人：名字、角色、职责、能力档位、绑定的执行体、手里还有几条没完的活。分派前用它看谁合适、谁忙。", {
+    busy_only: bool("true = 只看手里有活的"),
+  }),
   fn("run_status", "看正在跑 / 排队的运行（Agent、任务、状态、耗时），用来回答“现在在忙什么、卡在哪”。默认只列未结束的。", {
     limit: int("默认 10，最多 30"),
     include_done: bool("true = 连已结束的运行一起看（默认 false）"),
@@ -117,13 +123,23 @@ export const BOT_WRITE_TOOLS = [
   fn("run_start", "启动一条**已经建好**的任务（仅 work 档）。只有 bot 打开了「无人值守」且任务属于它绑定的项目时才允许；每小时有上限。", {
     todo: str("任务编号或 id"),
   }, ["todo"]),
-  fn("task_create", "创建一个任务并指派给某个 worker（只建 todo；默认不起 run）。用于把一句话目标拆成可验收的子任务。", {
+  fn("todo_update", "改一条**已有任务**：状态（todo / in_progress / waiting_input / in_review）、负责人（agent 执行体或 bot 机器人）、优先级、验收口径，或补一条备注。确认完成 / 取消是人的动作，这里一律不允许。", {
+    todo: str("任务编号或 id"),
+    status: str("todo / in_progress / waiting_input / in_review"),
+    agent: str("改派给某个执行体（alias 或名字，如 de-a）"),
+    bot: str("改派给某个机器人（会用它绑定的执行体；与 agent 二选一）"),
+    priority: str("P0 / P1 / P2 / P3"),
+    acceptance: { type: "array", items: { type: "string" }, description: "替换验收口径，1–5 条" },
+    comment: str("给这条任务留一句备注（写在它的会话里）"),
+  }, ["todo"]),
+  fn("task_create", "创建一个任务并指派给某个 worker 执行体，或派给另一个机器人（bot）。只建 todo；默认不起 run。用于把一句话目标拆成可验收的子任务。", {
     title: str("任务标题，短且可验收"),
     brief: str("背景 / 做到什么算完成"),
-    agent: str("派给谁：Agent 的 alias 或名字（如 SE / DE-A / DE-B）"),
+    agent: str("派给哪个执行体：Agent 的 alias 或名字（如 SE / DE-A / DE-B）"),
+    bot: str("派给哪个机器人（名字或 id）：用它的执行体、任务归它，跑完它自己汇报；与 agent 二选一"),
     acceptance: { type: "array", items: { type: "string" }, description: "验收口径，1–3 条" },
     start: bool("只有用户明确说「开跑 / 开始 / 直接干」时才传 true；默认 false"),
-  }, ["title", "agent"]),
+  }, ["title"]),
 ];
 
 /**
@@ -131,26 +147,40 @@ export const BOT_WRITE_TOOLS = [
  * 执行端（main）用它做统一的超时/裁剪，不再每个 case 各写一遍。
  */
 export const BOT_TOOL_META = Object.freeze({
-  memory_search: { risk: "read", timeoutMs: 5000, maxResultChars: 8000 },
-  knowledge_search: { risk: "read", timeoutMs: 8000, maxResultChars: 8000 },
-  todo_list: { risk: "read", timeoutMs: 3000, maxResultChars: 8000 },
-  run_status: { risk: "read", timeoutMs: 3000, maxResultChars: 8000 },
-  workspace_list: { risk: "read", timeoutMs: 5000, maxResultChars: 12000 },
-  workspace_read: { risk: "read", timeoutMs: 5000, maxResultChars: 12000 },
-  workspace_grep: { risk: "read", timeoutMs: 10000, maxResultChars: 12000 },
-  git_status: { risk: "read", timeoutMs: 10000, maxResultChars: 12000 },
-  git_log: { risk: "read", timeoutMs: 10000, maxResultChars: 12000 },
-  git_diff: { risk: "read", timeoutMs: 15000, maxResultChars: 12000 },
-  run_log: { risk: "read", timeoutMs: 5000, maxResultChars: 12000 },
-  memory_write: { risk: "self", timeoutMs: 3000, maxResultChars: 2000 },
-  memory_forget: { risk: "self", timeoutMs: 3000, maxResultChars: 2000 },
-  handoff_to_bot: { risk: "self", timeoutMs: 3000, maxResultChars: 2000 },
-  plan_set: { risk: "self", timeoutMs: 3000, maxResultChars: 4000 },
-  plan_update: { risk: "self", timeoutMs: 3000, maxResultChars: 2000 },
-  routine_propose: { risk: "self", timeoutMs: 3000, maxResultChars: 4000 },
-  task_create: { risk: "write", timeoutMs: 10000, maxResultChars: 4000, requiresCapability: ["work", "dispatch"] },
-  run_start: { risk: "write", timeoutMs: 10000, maxResultChars: 2000, requiresCapability: ["work"] },
+  memory_search: { risk: "read", label: "查记忆", timeoutMs: 5000, maxResultChars: 8000 },
+  knowledge_search: { risk: "read", label: "查资料", timeoutMs: 8000, maxResultChars: 8000 },
+  todo_list: { risk: "read", label: "看任务", timeoutMs: 3000, maxResultChars: 8000 },
+  todo_get: { risk: "read", label: "任务详情", timeoutMs: 3000, maxResultChars: 8000 },
+  bot_list: { risk: "read", label: "看同事", timeoutMs: 3000, maxResultChars: 8000 },
+  run_status: { risk: "read", label: "看运行", timeoutMs: 3000, maxResultChars: 8000 },
+  workspace_list: { risk: "read", label: "看目录", timeoutMs: 5000, maxResultChars: 12000 },
+  workspace_read: { risk: "read", label: "读文件", timeoutMs: 5000, maxResultChars: 12000 },
+  workspace_grep: { risk: "read", label: "搜代码", timeoutMs: 10000, maxResultChars: 12000 },
+  git_status: { risk: "read", label: "看 git 状态", timeoutMs: 10000, maxResultChars: 12000 },
+  git_log: { risk: "read", label: "看提交", timeoutMs: 10000, maxResultChars: 12000 },
+  git_diff: { risk: "read", label: "看改动", timeoutMs: 15000, maxResultChars: 12000 },
+  run_log: { risk: "read", label: "读运行结果", timeoutMs: 5000, maxResultChars: 12000 },
+  memory_write: { risk: "self", label: "记一条", timeoutMs: 3000, maxResultChars: 2000 },
+  memory_forget: { risk: "self", label: "忘一条", timeoutMs: 3000, maxResultChars: 2000 },
+  handoff_to_bot: { risk: "self", label: "交给同事", timeoutMs: 3000, maxResultChars: 2000 },
+  plan_set: { risk: "self", label: "写计划", timeoutMs: 3000, maxResultChars: 4000 },
+  plan_update: { risk: "self", label: "更新计划", timeoutMs: 3000, maxResultChars: 2000 },
+  routine_propose: { risk: "self", label: "提日程", timeoutMs: 3000, maxResultChars: 4000 },
+  task_create: { risk: "write", label: "建任务", timeoutMs: 10000, maxResultChars: 4000, requiresCapability: ["work", "dispatch"] },
+  todo_update: { risk: "write", label: "改任务", timeoutMs: 5000, maxResultChars: 4000, requiresCapability: ["work", "dispatch"] },
+  run_start: { risk: "write", label: "起运行", timeoutMs: 10000, maxResultChars: 2000, requiresCapability: ["work"] },
 });
+
+/**
+ * 工具目录：UI 的工具面板 / 流式提示都从这里取，不再在渲染层手写一份清单。
+ * `label` 是人话（「看目录」），`risk` 决定分组（只读 / 只写自己的 / 写任务）。
+ */
+export const BOT_TOOL_CATALOG = Object.entries(BOT_TOOL_META).map(([name, meta]) => ({
+  name,
+  label: meta.label || name,
+  risk: meta.risk,
+  requiresCapability: meta.requiresCapability || null,
+}));
 
 export const BOT_READ_TOOL_NAMES = BOT_READ_TOOLS.map((t) => t.function.name);
 export const BOT_SELF_TOOL_NAMES = BOT_SELF_TOOLS.map((t) => t.function.name);
@@ -177,4 +207,17 @@ export function parseToolArgs(raw) {
   if (!raw) return {};
   if (typeof raw === "object") return raw;
   try { return JSON.parse(String(raw)); } catch { return {}; }
+}
+
+/**
+ * 按 id / 全名 / 名字里的 handle（「SE · 系统架构」→ se）找一个机器人。
+ * 机器人之间的派活、分派前看同伴都用同一套匹配，别各写一份。
+ */
+export function matchBotRef(list, ref) {
+  const raw = String(ref || "").trim().replace(/^@/, "").toLowerCase();
+  if (!raw) return null;
+  const handleOf = (b) => String(b.name || "").split("·")[0].trim().toLowerCase();
+  return (Array.isArray(list) ? list : []).find((b) => b.id === String(ref || "")
+    || String(b.name || "").toLowerCase() === raw
+    || handleOf(b) === raw) || null;
 }

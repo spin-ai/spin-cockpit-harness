@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { confirmDialog } from "./ConfirmHost";
 import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
 import { RowMenu } from "./RowMenu";
@@ -167,7 +168,7 @@ export function Persona({ act }: { act: Act }) {
 
   // AI/统计建模：动作会一直跑到结束，所以启动后不 await，改为轮询进度
   const startModel = async (mode: "llm" | "stats", limitOverride?: number, names?: string[], ask = true, ignoreCache = false) => {
-    if (ask && mode === "llm" && !window.confirm("建模会把联系人的部分发言样本发给模型分析（默认最多 12 人，同一份样本只算一次）。继续？")) return;
+    if (ask && mode === "llm" && !(await confirmDialog("建模会把联系人的部分发言样本发给模型分析（默认最多 12 人，同一份样本只算一次）。继续？"))) return;
     try {
       const st = await act("personaModelStatus");
       if (st?.running) { setNotice("已有建模任务在跑"); return; }
@@ -257,7 +258,7 @@ export function Persona({ act }: { act: Act }) {
   const rejectStat = async () => {
     const list = visibleQueue.filter((o) => o.evidenceStat && !o.sensitive);
     if (!list.length) return;
-    if (!window.confirm(`拒绝这 ${list.length} 条「证据是统计值」的结论？\n\n统计结论已经由「可观测特征」承担，这些留着只会让待确认列表变成过时数字的回放。\n拒绝会记入「不再打扰」，同一结论不会再被提出来。`)) return;
+    if (!(await confirmDialog(`拒绝这 ${list.length} 条「证据是统计值」的结论？\n\n统计结论已经由「可观测特征」承担，这些留着只会让待确认列表变成过时数字的回放。\n拒绝会记入「不再打扰」，同一结论不会再被提出来。`))) return;
     setBusy(true);
     try {
       for (const item of list) await act("personaResolve", { id: item.id, accept: false });
@@ -269,7 +270,7 @@ export function Persona({ act }: { act: Act }) {
   /** 只确认「有原话可回查」的那批：批量但不盲目 */
   const acceptVerified = async () => {
     if (!confirmable.length) return;
-    if (!window.confirm(`确认这 ${confirmable.length} 条？\n\n它们的引用都能在聊天记录里核对上，且不含敏感项。\n其余「引用待核对」和「证据是统计值」的会留在队列里等你逐条看。`)) return;
+    if (!(await confirmDialog(`确认这 ${confirmable.length} 条？\n\n它们的引用都能在聊天记录里核对上，且不含敏感项。\n其余「引用待核对」和「证据是统计值」的会留在队列里等你逐条看。`))) return;
     setBusy(true);
     try {
       for (const item of confirmable) await act("personaResolve", { id: item.id, accept: true });
@@ -318,7 +319,7 @@ export function Persona({ act }: { act: Act }) {
   };
 
   const removePerson = async (person: Person) => {
-    if (!window.confirm(`删除「${person.name}」的全部观察？人设卡会一起消失。`)) return;
+    if (!(await confirmDialog(`删除「${person.name}」的全部观察？人设卡会一起消失。`))) return;
     try {
       const res = await act("personaRemove", { personId: person.id });
       setNotice(`已删除 ${res?.removed || 0} 条`);
@@ -350,7 +351,7 @@ export function Persona({ act }: { act: Act }) {
   const batchRemove = async () => {
     const ids = [...picked];
     if (!ids.length) return;
-    if (!window.confirm(`删除所选 ${ids.length} 人的全部观察？`)) return;
+    if (!(await confirmDialog(`删除所选 ${ids.length} 人的全部观察？`))) return;
     try {
       const res = await act("personaRemoveMany", { personIds: ids });
       setNotice(`已删除 ${res?.people || 0} 人 / ${res?.removed || 0} 条观察`);
@@ -368,7 +369,7 @@ export function Persona({ act }: { act: Act }) {
   const batchModel = async () => {
     const names = [...picked].map((id) => people.find((p) => p.id === id)?.name).filter(Boolean) as string[];
     if (!names.length) return;
-    if (!window.confirm(`对所选 ${names.length} 人跑建模（未缓存的会调用模型）？`)) return;
+    if (!(await confirmDialog(`对所选 ${names.length} 人跑建模（未缓存的会调用模型）？`))) return;
     setPicking(false);
     await startModel("llm", 0, names, false);
   };
@@ -383,7 +384,7 @@ export function Persona({ act }: { act: Act }) {
     const keep = people.find((p) => p.id === ids[0]);
     const rest = ids.slice(1).map((id) => people.find((p) => p.id === id)?.name).filter(Boolean) as string[];
     if (!keep || !rest.length) return;
-    if (!window.confirm(`把 ${rest.join("、")} 合并到「${keep.name}」？\n\n观察 / 关系 / 可观测特征都会并过去，被合并的名字记进别名（同一份导出再导入时不会再建出一个人）。\n这个操作没有撤销。`)) return;
+    if (!(await confirmDialog(`把 ${rest.join("、")} 合并到「${keep.name}」？\n\n观察 / 关系 / 可观测特征都会并过去，被合并的名字记进别名（同一份导出再导入时不会再建出一个人）。\n这个操作没有撤销。`))) return;
     try {
       await act("personaMerge", { keepId: keep.id, aliasIds: ids.slice(1) });
       setNotice(`已把 ${rest.length} 人合并到「${keep.name}」`);
@@ -411,7 +412,7 @@ export function Persona({ act }: { act: Act }) {
   };
 
   const removePersonById = async (p: PersonRow) => {
-    if (!window.confirm(`删除「${p.name}」的全部观察？人设卡会一起消失。`)) return;
+    if (!(await confirmDialog(`删除「${p.name}」的全部观察？人设卡会一起消失。`))) return;
     try {
       const snap = await act("personaRemoveMany", { personIds: [p.id] });
       setNotice(`已删除 ${snap?.removed || 0} 条`);
@@ -655,7 +656,7 @@ export function Persona({ act }: { act: Act }) {
                   title="删除这条依据"
                   aria-label="删除这条依据"
                   onClick={() => void act("personaObsRemove", { id: e.id }).then(async () => { setNotice("已删除该条事实"); if (card) await openPerson(card.person.id); })}
-                ><XIcon size={12} /></button>
+                ><XIcon size={14} /></button>
                 <q>{e.quote || e.value}</q>
                 <div className="persona-ev-meta">
                   <span>{row.label}</span>
@@ -687,7 +688,7 @@ export function Persona({ act }: { act: Act }) {
             className="btn primary"
             onClick={() => { setOnlyMine(false); queueRef.current?.scrollIntoView({ block: "start" }); }}
           >{t("action.confirmPending")} <em>{stats?.pending || 0}</em></button>
-          <button className="btn" aria-expanded={showImport} title={showImport ? "收起导入" : "导入聊天记录"} onClick={() => setShowImport((v) => !v)}><ChevronDownIcon size={12} className={showImport ? "rot-180" : ""} />{t("action.importChats")}</button>
+          <button className="btn" aria-expanded={showImport} title={showImport ? "收起导入" : "导入聊天记录"} onClick={() => setShowImport((v) => !v)}><ChevronDownIcon size={14} className={showImport ? "rot-180" : ""} />{t("action.importChats")}</button>
           <button
             className="btn"
             disabled={Boolean(job?.running)}
@@ -702,28 +703,28 @@ export function Persona({ act }: { act: Act }) {
                   const plan = await act("personaModelPlan", { minMessages: 30 });
                   const calls = plan?.calls ?? plan?.eligible ?? 0;
                   if (!calls) { setNotice(`没有需要建模的人：可建模 ${plan?.eligible || 0} 人，样本都和上次一样（要重建请用「忽略缓存重跑」）`); return; }
-                  if (!window.confirm(`一键全部建模：\n\n可建模 ${plan.eligible} 人（已缓存 ${plan.cached} 人跳过）\n本次预计 ${calls} 次模型调用，按顺序逐人跑，可随时取消。\n\n继续？`)) return;
+                  if (!(await confirmDialog(`一键全部建模：\n\n可建模 ${plan.eligible} 人（已缓存 ${plan.cached} 人跳过）\n本次预计 ${calls} 次模型调用，按顺序逐人跑，可随时取消。\n\n继续？`))) return;
                   await startModel("llm", 0, undefined, false);
                 } catch (err) { setNotice(String((err as Error)?.message || err)); }
               }}
             >一键全部建模（未建模的全部跑一遍）</button>
             <button
               disabled={Boolean(job?.running)}
-              onClick={() => {
-                if (!window.confirm("忽略已分析缓存，重新对前 12 人调模型？\n\n缓存只是为了不重复花钱；如果上次只写了「一句话」却没出结论（旧版本的问题），或者你删过结论，就用这个重跑。")) return;
+              onClick={async () => {
+                if (!(await confirmDialog("忽略已分析缓存，重新对前 12 人调模型？\n\n缓存只是为了不重复花钱；如果上次只写了「一句话」却没出结论（旧版本的问题），或者你删过结论，就用这个重跑。"))) return;
                 void startModel("llm", 12, undefined, false, true);
               }}
             >忽略缓存重跑（默认 12 人）</button>
             <button onClick={() => void startModel("stats")} disabled={Boolean(job?.running)}>只跑统计（不调用模型，不消耗额度）</button>
             <button onClick={() => { setJob(null); setNotice(`上次任务：${job?.cards || 0} 人出卡`); }}>查看上次进度</button>
           </RowMenu>
-          <button className="icon-btn" onClick={() => void reload()} title="刷新" aria-label="刷新"><RefreshIcon size={13} /></button>
+          <button className="icon-btn" onClick={() => void reload()} title="刷新" aria-label="刷新"><RefreshIcon size={14} /></button>
         </>}
       />
       {(error || notice) && (
         <div className={`notes-banner ${error ? "error" : ""}`}>
           <span className="ellipsis">{error || notice}</span>
-          <button className="notes-banner-x" title="关闭提示" aria-label="关闭提示" onClick={() => { setError(""); setNotice(""); }}><XIcon size={12} /></button>
+          <button className="notes-banner-x" title="关闭提示" aria-label="关闭提示" onClick={() => { setError(""); setNotice(""); }}><XIcon size={14} /></button>
         </div>
       )}
 
@@ -738,11 +739,11 @@ export function Persona({ act }: { act: Act }) {
           <div className="pr-modeljob-bar"><i style={{ width: `${job.running ? Math.max(4, progress) : 100}%` }} /></div>
           <div className="row gap6">
             {job.running
-              ? <button className="btn tiny-btn" onClick={() => void act("personaModelCancel").then(() => setNotice("已请求取消"))}>取消</button>
+              ? <button className="btn tiny" onClick={() => void act("personaModelCancel").then(() => setNotice("已请求取消"))}>取消</button>
               : <>
-                {job.llmAdded > 0 && <button className="btn tiny-btn primary" onClick={() => void act("personaModelResolve", { accept: true }).then(async () => { setNotice("本次 AI 结论已全部确认"); await reload(); })}>确认本次 AI 结论</button>}
-                {job.llmAdded > 0 && <button className="btn tiny-btn" onClick={() => void act("personaModelResolve", { accept: false }).then(async () => { setNotice("本次 AI 结论已全部拒绝"); await reload(); })}>全部拒绝</button>}
-                <button className="icon-btn" title="收起" aria-label="收起建模任务" onClick={() => setJob(null)}><XIcon size={12} /></button>
+                {job.llmAdded > 0 && <button className="btn tiny primary" onClick={() => void act("personaModelResolve", { accept: true }).then(async () => { setNotice("本次 AI 结论已全部确认"); await reload(); })}>确认本次 AI 结论</button>}
+                {job.llmAdded > 0 && <button className="btn tiny" onClick={() => void act("personaModelResolve", { accept: false }).then(async () => { setNotice("本次 AI 结论已全部拒绝"); await reload(); })}>全部拒绝</button>}
+                <button className="icon-btn" title="收起" aria-label="收起建模任务" onClick={() => setJob(null)}><XIcon size={14} /></button>
               </>}
           </div>
         </div>
@@ -761,8 +762,8 @@ export function Persona({ act }: { act: Act }) {
             onChange={(e) => setPaste(e.target.value)}
           />
           <div className="row gap6">
-            <button className="btn tiny-btn primary" onClick={() => void importPaste()} disabled={busy || !paste.trim()}>解析并进待确认</button>
-            <button className="btn tiny-btn" onClick={() => void importFile()} disabled={busy}>选择文件…</button>
+            <button className="btn tiny primary" onClick={() => void importPaste()} disabled={busy || !paste.trim()}>解析并进待确认</button>
+            <button className="btn tiny" onClick={() => void importFile()} disabled={busy}>选择文件…</button>
             <span className="tiny faint">规则抽取，结果全部进待确认；重复内容按 hash 去重。</span>
           </div>
         </div>
@@ -787,16 +788,16 @@ export function Persona({ act }: { act: Act }) {
           <button className="link tiny" onClick={pickAll}>全选</button>
           <button className="link tiny" onClick={() => setPicked(new Set())} disabled={!picked.size}>清空</button>
           <span style={{ flex: 1 }} />
-          <button className="btn tiny-btn primary" onClick={() => void batchModel()} disabled={!picked.size}>建模所选</button>
-          <button className="btn tiny-btn" onClick={() => void batchCopyCards()} disabled={!picked.size}>复制角色卡</button>
+          <button className="btn tiny primary" onClick={() => void batchModel()} disabled={!picked.size}>建模所选</button>
+          <button className="btn tiny" onClick={() => void batchCopyCards()} disabled={!picked.size}>复制角色卡</button>
           <button
-            className="btn tiny-btn"
+            className="btn tiny"
             onClick={() => void batchMerge()}
             disabled={picked.size < 2}
             title="把所选合并到第一个点选的人（观察 / 关系 / 可观测特征并过去，旧名字记进别名）"
           >合并到「{[...picked].map((id) => people.find((p) => p.id === id)?.name).filter(Boolean)[0] || "第 1 个"}」</button>
-          <button className="btn tiny-btn" onClick={() => void batchRemove()} disabled={!picked.size}>删除</button>
-          <button className="icon-btn" title="退出多选" aria-label="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}><XIcon size={13} /></button>
+          <button className="btn tiny" onClick={() => void batchRemove()} disabled={!picked.size}>删除</button>
+          <button className="icon-btn" title="退出多选" aria-label="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}><XIcon size={14} /></button>
         </div>
       )}
 
@@ -899,11 +900,11 @@ export function Persona({ act }: { act: Act }) {
               <div className="persona-head">
                 <span className="persona-ava">{card.person.isSelf ? "我" : card.person.name.slice(0, 1)}</span>
                 <div style={{ minWidth: 0 }}>
-                  <h2>
+                  <div className="section-title">
                     {card.person.name}
                     <span className="tag">{card.person.isSelf ? "本人" : card.person.relation || "关系未知"}</span>
                     {(card.person as PersonRow).tags?.map((t) => <span key={t} className={`ptag ${t === "已建模" || t === "人设卡" ? "on" : ""}`}>{t}</span>)}
-                  </h2>
+                  </div>
                   <p>
                     <span>依据 {card.counts.confirmed} 条原话</span>
                     <span>·</span>
@@ -928,7 +929,7 @@ export function Persona({ act }: { act: Act }) {
                       <i style={{ width: `${card.completeness}%` }} />
                     </span>
                   </div>
-                  <button className="btn tiny-btn" onClick={() => setAdding({ field: "traits", value: "" })}>＋ 事实</button>
+                  <button className="btn tiny" onClick={() => setAdding({ field: "traits", value: "" })}>＋ 事实</button>
                   <RowMenu title="人物操作">
                     <button onClick={() => void copyInject()}>复制注入片段</button>
                     <button onClick={() => void exportCard()}>导出角色卡 JSON</button>
@@ -951,7 +952,7 @@ export function Persona({ act }: { act: Act }) {
                     ? `已有 ${card.counts.pending} 条待确认观察。确认后会按「性格 / 处事 / 关系」归到对应小节。`
                     : "先在右侧确认观察，或导入一段聊天记录。"}
                   action={card.counts.pending
-                    ? <button className="btn tiny-btn" onClick={() => { setOnlyMine(true); queueRef.current?.scrollIntoView({ block: "start" }); }}>去确认这 {card.counts.pending} 条</button>
+                    ? <button className="btn tiny" onClick={() => { setOnlyMine(true); queueRef.current?.scrollIntoView({ block: "start" }); }}>去确认这 {card.counts.pending} 条</button>
                     : undefined}
                 />
               ) : (
@@ -984,8 +985,8 @@ export function Persona({ act }: { act: Act }) {
                           if (e.key === "Enter" && adding.value.trim()) void saveFact();
                         }}
                       />
-                      <button className="btn tiny-btn" onClick={() => setAdding(null)}>取消</button>
-                      <button className="btn tiny-btn primary" disabled={!adding.value.trim()} onClick={() => void saveFact()}>保存</button>
+                      <button className="btn tiny" onClick={() => setAdding(null)}>取消</button>
+                      <button className="btn tiny primary" disabled={!adding.value.trim()} onClick={() => void saveFact()}>保存</button>
                     </div>
                   )}
 
@@ -1106,8 +1107,8 @@ export function Persona({ act }: { act: Act }) {
                 )}
                 <div className="qfoot">
                   <span className="src">{o.sourceKind === "doc" ? "资料" : "聊天"} · {fmtDate(o.createdAt)}{(o.evidenceCount || 1) > 1 ? ` · 已见 ${o.evidenceCount} 次` : ""}{o.reviewAt ? " · 复审" : ""}{o.quoteVerified === false ? " · 引用待核对" : ""}</span>
-                  <button className="btn tiny-btn" onClick={() => void resolve(o.id, false)}>拒绝</button>
-                  <button className="btn tiny-btn ok" onClick={() => void resolve(o.id, true, o.sensitive)}>确认</button>
+                  <button className="btn tiny" onClick={() => void resolve(o.id, false)}>拒绝</button>
+                  <button className="btn tiny ok" onClick={() => void resolve(o.id, true, o.sensitive)}>确认</button>
                 </div>
               </div>
             ))}
@@ -1129,8 +1130,8 @@ export function Persona({ act }: { act: Act }) {
                   <q>{r.value}</q>
                   <div className="qfoot">
                     <span className="src">{r.expiresAt ? `到期 ${fmtDate(r.expiresAt)}` : "未到期"}</span>
-                    <button className="btn tiny-btn" onClick={() => void reviewOne(r.id, false)}>已过期</button>
-                    <button className="btn tiny-btn ok" onClick={() => void reviewOne(r.id, true)}>仍然成立</button>
+                    <button className="btn tiny" onClick={() => void reviewOne(r.id, false)}>已过期</button>
+                    <button className="btn tiny ok" onClick={() => void reviewOne(r.id, true)}>仍然成立</button>
                   </div>
                 </div>
               ))}
@@ -1150,8 +1151,8 @@ export function Persona({ act }: { act: Act }) {
                   <q>{m.drop.value} → {m.keep.value}</q>
                   <div className="qfoot">
                     <span className="src">依据 {m.drop.evidence} + {m.keep.evidence}</span>
-                    <button className="btn tiny-btn" onClick={() => setSkipMerges((prev) => new Set(prev).add(`${m.keep.id}:${m.drop.id}`))}>不合并</button>
-                    <button className="btn tiny-btn ok" onClick={() => void mergeOne(m)}>合并</button>
+                    <button className="btn tiny" onClick={() => setSkipMerges((prev) => new Set(prev).add(`${m.keep.id}:${m.drop.id}`))}>不合并</button>
+                    <button className="btn tiny ok" onClick={() => void mergeOne(m)}>合并</button>
                   </div>
                 </div>
               ))}
@@ -1177,7 +1178,7 @@ export function Persona({ act }: { act: Act }) {
                 aria-label="回看时间点"
               />
               <button
-                className="btn tiny-btn"
+                className="btn tiny"
                 disabled={!asOfAt || !selected}
                 onClick={() => void (async () => {
                   try { setAsOf(await act("personaAsOf", { personId: selected, at: new Date(`${asOfAt}T23:59:59`).getTime(), mode: asOfMode })); }
@@ -1256,7 +1257,7 @@ export function Persona({ act }: { act: Act }) {
               onChange={(e) => setAsk(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void runAsk(); } }}
             />
-            <button className="btn tiny-btn primary" onClick={() => void runAsk()} disabled={busy || !ask.trim()}>查画像</button>
+            <button className="btn tiny primary" onClick={() => void runAsk()} disabled={busy || !ask.trim()}>查画像</button>
             {answer && (
               <div className="kv-answer">
                 <div className="kv-answer-head"><b>{answer.found ? "依据" : "未知"}</b><span className="tiny faint">{answer.citations.length} 条来源</span></div>

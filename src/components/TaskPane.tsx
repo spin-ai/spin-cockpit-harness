@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { confirmDialog } from "./ConfirmHost";
+import { UndoBar, type UndoAction } from "./UndoBar";
 import { createPortal } from "react-dom";
 import type { State, Todo, TodoStatus } from "../types";
 import { STATUS, activeRun, agentOf, duration, lastRun } from "../ui";
@@ -151,6 +153,8 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
   const [broadcastFor, setBroadcastFor] = useState<Todo | null>(null);
   const [broadcastPick, setBroadcastPick] = useState<string[]>([]);
   const [broadcastBusy, setBroadcastBusy] = useState(false);
+  /** 删除任务后的撤销条：挂在 pane 根上，行被删掉也不会跟着卸载 */
+  const [undo, setUndo] = useState<UndoAction | null>(null);
   useEffect(() => { try { localStorage.setItem("cmh.todo.layout", layout); } catch { /* ignore */ } }, [layout]);
   const [projectH, setProjectH] = useStoredSize("cmh.layout.projectH", 150, 80, 420);
   const [projectCollapsed, setProjectCollapsed] = useState(() => {
@@ -294,10 +298,11 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
 
   return (
     <aside className={`todo-pane mode-${mode}${tasksFolded ? " tasks-folded" : ""}${maximized ? " pane-max-target" : ""}`} tabIndex={0} aria-label="TODO 列表">
+      <UndoBar action={undo} onDone={() => setUndo(null)} />
       <div className="task-tools">
         {/* 左栏只有一个搜索框：同时过滤下面两个列表（项目 / 任务） */}
         <div className="pane-search">
-          <SearchIcon size={12} className="search-ico" />
+          <SearchIcon size={14} className="search-ico" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -321,15 +326,15 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
           )}
           <span className="spacer" />
           <div className="pane-actions">
-            <button className="pane-add" title="收集想法 / 新建任务（一行一条，⌘⇧N）" aria-label="新建任务" onClick={() => { setLayout("list"); setTasksFolded(false); setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); }}><PlusIcon size={13} /></button>
+            <button className="pane-add" title="收集想法 / 新建任务（一行一条，⌘⇧N）" aria-label="新建任务" onClick={() => { setLayout("list"); setTasksFolded(false); setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); }}><PlusIcon size={14} /></button>
             {onToggleMaximize && (
               <button className="pane-collapse" title={maximized ? "还原（Esc）" : "最大化"} aria-label={maximized ? "还原 TODO" : "最大化 TODO"} onClick={onToggleMaximize}>
-                {maximized ? <PanelRestoreIcon size={13} /> : <PanelExpandIcon size={13} />}
+                {maximized ? <PanelRestoreIcon size={14} /> : <PanelExpandIcon size={14} />}
               </button>
             )}
             {onCollapse && (
               <button className="pane-collapse" title="收起 TODO" aria-label="收起 TODO" onClick={onCollapse}>
-                <PanelCollapseIcon size={13} />
+                <PanelCollapseIcon size={14} />
               </button>
             )}
             <RowMenu title="任务视图">
@@ -347,7 +352,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
               aria-expanded={!tasksFolded}
               onClick={() => setTasksFolded((v) => !v)}
             >
-              <ChevronDownIcon size={13} className={tasksFolded ? "" : "rot-180"} />
+              <ChevronDownIcon size={14} className={tasksFolded ? "" : "rot-180"} />
             </button>
           </div>
         </div>
@@ -392,8 +397,8 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
             <div className="task-create-foot">
               <span className="tiny muted">一行一条 · <kbd>⌘Enter</kbd> 加入</span>
               <span className="row gap6">
-                <button className="btn tiny-btn" onClick={() => { setCreating(false); setCaptureText(""); }}>取消</button>
-                <button className="btn tiny-btn primary" disabled={!captureLines.length} onClick={() => void createTasks()}>
+                <button className="btn tiny" onClick={() => { setCreating(false); setCaptureText(""); }}>取消</button>
+                <button className="btn tiny primary" disabled={!captureLines.length} onClick={() => void createTasks()}>
                   加入 {captureLines.length || ""} 条
                 </button>
               </span>
@@ -486,8 +491,8 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
                         placeholder="标签"
                       />
                       <div className="row gap6" style={{ justifyContent: "flex-end" }}>
-                        <button className="btn tiny-btn" onClick={() => setEditing(null)}>取消</button>
-                        <button className="btn tiny-btn primary" onClick={() => void saveEdit()}>保存</button>
+                        <button className="btn tiny" onClick={() => setEditing(null)}>取消</button>
+                        <button className="btn tiny primary" onClick={() => void saveEdit()}>保存</button>
                       </div>
                     </div>
                   ) : (
@@ -525,6 +530,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
                     onAsk={() => askInChat(t)}
                     onBroadcast={() => openBroadcast(t)}
                     onDetail={() => { onSelect(t.id); window.dispatchEvent(new CustomEvent("harness:task-detail")); }}
+                    onRemoved={(action) => setUndo(action)}
                   />
                 </div>
               ))}
@@ -576,7 +582,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
             <div className="row gap8">
               {!botsCollapsed && <button className="link" onClick={onManageBots}>管理</button>}
               <button className="icon-btn" title={botsCollapsed ? "展开机器人" : "收起机器人"} aria-label={botsCollapsed ? "展开机器人" : "收起机器人"} onClick={() => setBotsCollapsed((v) => !v)}>
-                <ChevronDownIcon size={12} className={botsCollapsed ? "" : "rot-180"} />
+                <ChevronDownIcon size={14} className={botsCollapsed ? "" : "rot-180"} />
               </button>
             </div>
           </div>
@@ -632,13 +638,13 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
                         else if (e.key === "Escape") { e.preventDefault(); setRejecting(null); }
                       }}
                     />
-                    <button className="btn tiny-btn primary" onClick={() => { void act("rejectMissionPlan", { id: m.id, feedback: rejecting.text }); setRejecting(null); }}>确认退回</button>
-                    <button className="btn tiny-btn" onClick={() => setRejecting(null)}>取消</button>
+                    <button className="btn tiny primary" onClick={() => { void act("rejectMissionPlan", { id: m.id, feedback: rejecting.text }); setRejecting(null); }}>确认退回</button>
+                    <button className="btn tiny" onClick={() => setRejecting(null)}>取消</button>
                   </div>
                 ) : (
                   <div className="row gap6" style={{ marginTop: 6 }}>
-                    <button className="btn tiny-btn primary" onClick={() => void act("approveMissionPlan", { id: m.id })}>批准并分派</button>
-                    <button className="btn tiny-btn" onClick={() => setRejecting({ id: m.id, text: "" })}>退回</button>
+                    <button className="btn tiny primary" onClick={() => void act("approveMissionPlan", { id: m.id })}>批准并分派</button>
+                    <button className="btn tiny" onClick={() => setRejecting({ id: m.id, text: "" })}>退回</button>
                   </div>
                 )}
               </div>
@@ -664,9 +670,9 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
               setProjectViewMenu((open) => (open ? null : { x: r.left, y: r.bottom + 6 }));
             }}
           >
-            <SlidersIcon size={13} />
+            <SlidersIcon size={14} />
           </button>
-          <button className="icon-btn" title="添加项目" aria-label="添加项目" onClick={onAddProject}><FolderPlusIcon size={13} /></button>
+          <button className="icon-btn" title="添加项目" aria-label="添加项目" onClick={onAddProject}><FolderPlusIcon size={14} /></button>
           <button className="icon-btn" title="管理项目" aria-label="管理项目" onClick={onManageProjects}><EllipsisIcon size={13} /></button>
           </div>
           <button
@@ -676,7 +682,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
             aria-expanded={!projectCollapsed}
             onClick={() => setProjectCollapsed((v) => !v)}
           >
-            <ChevronDownIcon size={13} className={projectCollapsed ? "" : "rot-180"} />
+            <ChevronDownIcon size={14} className={projectCollapsed ? "" : "rot-180"} />
           </button>
         </div>
         {(!projectCollapsed || searching) && <div className="project-panel-list">
@@ -702,7 +708,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
                       title="新建终端"
                       aria-label={`在 ${p.name} 新建终端`}
                       onClick={() => { if (!isCurrent) onSwitchProject(p.id); requestTerminalAt(p.path); }}
-                    ><PlusIcon size={13} /></button>
+                    ><PlusIcon size={14} /></button>
                     <button
                       className="icon-btn"
                       title="项目操作"
@@ -757,8 +763,8 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
         >
           <div className="pvp-section">
             <div className="pvp-label">Selection</div>
-            <div className="pvp-row static"><span>主机</span><em>本机</em><ChevronRightIcon size={12} /></div>
-            <div className="pvp-row static"><span>项目</span><em>{visibleProjects.length} / {state.projects.length}</em><ChevronRightIcon size={12} /></div>
+            <div className="pvp-row static"><span>主机</span><em>本机</em><ChevronRightIcon size={14} /></div>
+            <div className="pvp-row static"><span>项目</span><em>{visibleProjects.length} / {state.projects.length}</em><ChevronRightIcon size={14} /></div>
           </div>
           <div className="pvp-section">
             <div className="pvp-label">排序方式</div>
@@ -796,8 +802,8 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
               ))}
             </div>
             <div className="row gap6" style={{ justifyContent: "flex-end" }}>
-              <button className="btn tiny-btn" onClick={() => setBroadcastFor(null)} disabled={broadcastBusy}>取消</button>
-              <button className="btn tiny-btn primary" disabled={broadcastBusy || broadcastPick.length < 2} onClick={() => void startBroadcast()}>
+              <button className="btn tiny" onClick={() => setBroadcastFor(null)} disabled={broadcastBusy}>取消</button>
+              <button className="btn tiny primary" disabled={broadcastBusy || broadcastPick.length < 2} onClick={() => void startBroadcast()}>
                 {broadcastBusy ? "启动中…" : `开始并行 (${broadcastPick.length})`}
               </button>
             </div>
@@ -839,7 +845,7 @@ function WorktreeLine({ todo, state, act }: { todo: Todo; state: State; act: Act
           title="清理这个 worktree（先确认没有未提交改动）"
           onClick={async (e) => {
             e.stopPropagation();
-            if (!window.confirm(`清理 worktree「${run.branch}」？\n${run.cwd}\n未提交的改动会丢失。`)) return;
+            if (!(await confirmDialog(`清理 worktree「${run.branch}」？\n${run.cwd}\n未提交的改动会丢失。`))) return;
             const ok = await act("cleanupWorktree", { runId: run.id });
             if (ok === null) return;
             window.dispatchEvent(new CustomEvent("harness:toast", { detail: ok ? "worktree 已清理" : "worktree 清理失败" }));
@@ -850,17 +856,18 @@ function WorktreeLine({ todo, state, act }: { todo: Todo; state: State; act: Act
   );
 }
 
-function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk, onBroadcast, onDetail }: { todo: Todo; state: State; act: Act; confirmStop: boolean; onEdit: () => void; onAsk: () => void; onBroadcast: () => void; onDetail: () => void }) {
+function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk, onBroadcast, onDetail, onRemoved }: { todo: Todo; state: State; act: Act; confirmStop: boolean; onEdit: () => void; onAsk: () => void; onBroadcast: () => void; onDetail: () => void; onRemoved: (action: UndoAction) => void }) {
   const active = activeRun(todo, state.runs);
   const last = lastRun(todo, state.runs);
+  const bots = state.bots || [];
   if (todo.kind === "mission") {
     return (
       <div className="task-quick" onClick={(e) => e.stopPropagation()}>
-        {todo.missionState === "in_review" && <button className="btn tiny-btn primary" onClick={() => act("confirm", { id: todo.id })}>确认 Mission</button>}
-        {active && <button className="btn tiny-btn" onClick={() => { if (!confirmStop || window.confirm("停止主管运行？")) void act("stop", { runId: active.id }); }}>停止主管</button>}
+        {todo.missionState === "in_review" && <button className="btn tiny primary" onClick={() => act("confirm", { id: todo.id })}>确认 Mission</button>}
+        {active && <button className="btn tiny" onClick={async () => { if (!confirmStop || await confirmDialog("停止主管运行？")) void act("stop", { runId: active.id }); }}>停止主管</button>}
         <RowMenu title="更多 Mission 操作">
           {todo.missionState === "done" && <button onClick={() => act("unconfirm", { id: todo.id })}>撤销确认</button>}
-          {!["done", "cancelled"].includes(todo.missionState || "") && <button className="danger" onClick={() => { if (window.confirm("取消整个 Mission？")) void act("cancelMission", { id: todo.id }); }}>取消 Mission</button>}
+          {!["done", "cancelled"].includes(todo.missionState || "") && <button className="danger" onClick={async () => { if (await confirmDialog("取消整个 Mission？")) void act("cancelMission", { id: todo.id }); }}>取消 Mission</button>}
         </RowMenu>
       </div>
     );
@@ -868,20 +875,20 @@ function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk, onBroadcas
   const runnable = state.agents.filter((a) => a.chatRunnable ?? state.executors?.find((e) => e.id === a.cli)?.implemented);
   const chatAgent = runnable.find((a) => a.id === todo.agentId) || runnable[0] || null;
   const acpWorkers = state.agents.filter((a) => (a.role || "worker") !== "supervisor" && a.chatRunnable !== false);
-  const stop = (runId: string) => {
-    if (confirmStop && !window.confirm(`停止 ${todo.key} 的运行？`)) return;
+  const stop = async (runId: string) => {
+    if (confirmStop && !(await confirmDialog(`停止 ${todo.key} 的运行？`))) return;
     void act("stop", { runId });
   };
   /** 行内只留当前状态的那一个主动作，其余进 ⋯：一行最多 1 primary + ⋯ */
   const primary = active ? (
-    <button className="btn tiny-btn" title="停止这次运行" onClick={() => stop(active.id)}>停止</button>
+    <button className="btn tiny" title="停止这次运行" onClick={() => stop(active.id)}>停止</button>
   ) : todo.confirmed ? (
-    <button className="btn tiny-btn" onClick={() => act("unconfirm", { id: todo.id })}>撤销确认</button>
+    <button className="btn tiny" onClick={() => act("unconfirm", { id: todo.id })}>撤销确认</button>
   ) : todo.status === "in_review" ? (
-    <button className="btn tiny-btn primary" onClick={() => act("confirm", { id: todo.id })}>确认</button>
+    <button className="btn tiny primary" onClick={() => act("confirm", { id: todo.id })}>确认</button>
   ) : todo.status === "todo" ? (
     <button
-      className="btn tiny-btn primary"
+      className="btn tiny primary"
       disabled={!chatAgent}
       title={chatAgent ? "派给 Agent 开始执行" : "没有可用的 Agent"}
       onClick={() => chatAgent && act("run", { id: todo.id, agentId: chatAgent.id })}
@@ -901,6 +908,33 @@ function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk, onBroadcas
         {!active && last && ["failed", "cancelled"].includes(last.status) && <button onClick={() => act("retry", { id: todo.id })}>重试</button>}
         {!active && last && last.status === "interrupted" && Boolean(last.acpSession) && (
           <button onClick={() => act("runResume", { runId: last.id })}>续跑</button>
+        )}
+        {bots.length > 0 && !todo.confirmed && (
+          <>
+            <div className="row-menu-label">派给机器人</div>
+            {bots.slice(0, 8).map((b) => (
+              <button
+                key={b.id}
+                title={b.persona?.mission || "派给它：任务归它，跑完由它回报"}
+                onClick={() => void act("botAssignTask", { todoId: todo.id, botId: b.id })}
+              >
+                派给 · {b.name}
+              </button>
+            ))}
+          </>
+        )}
+        {!todo.confirmed && !["done", "cancelled"].includes(todo.status) && (
+          <>
+            <button onClick={async () => {
+              if (!(await confirmDialog({ title: `取消任务「${todo.title}」？`, desc: "任务保留，状态置为已取消；正在跑的运行会停掉。", ok: "取消任务" }))) return;
+              await act("cancelTodo", { id: todo.id });
+            }}>取消任务</button>
+            <button className="danger" onClick={async () => {
+              if (!(await confirmDialog({ danger: true, title: `删除任务「${todo.title}」？`, desc: "任务记录会删掉；会话与运行记录保留。6 秒内可以撤销。" }))) return;
+              const res = await act("removeTodo", { id: todo.id }) as { ok?: boolean; key?: string } | null;
+              if (res?.ok) onRemoved({ label: `已删除 ${res.key || "任务"}`, run: () => act("undoRemoveTodo") });
+            }}>删除任务</button>
+          </>
         )}
       </RowMenu>
     </div>

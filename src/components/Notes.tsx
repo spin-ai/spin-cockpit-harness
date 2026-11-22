@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { confirmDialog } from "./ConfirmHost";
 import type { State } from "../types";
 import { renderMarkdown } from "../markdown";
 import { relTime } from "../ui";
@@ -383,9 +384,9 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
     } catch (err) { fail(err); } finally { setQuickBusy(false); }
   };
 
-  const closeTab = (where: "left" | "right", pageId: string) => {
+  const closeTab = async (where: "left" | "right", pageId: string) => {
     const doc = docs[pageId];
-    if (doc?.dirty && !window.confirm(`「${doc.title}」有未保存修改，关闭？`)) return;
+    if (doc?.dirty && !(await confirmDialog(`「${doc.title}」有未保存修改，关闭？`))) return;
     setPane(where, (p) => {
       const idx = p.tabs.indexOf(pageId);
       const tabs = p.tabs.filter((x) => x !== pageId);
@@ -457,7 +458,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   const curateWithModel = async () => {
     const n = Math.min(8, draftCount);
     if (!n) return;
-    if (!window.confirm(`用模型整理 ${n} 个草稿页面？\n\n每页一次调用（约 2k tokens），只改「摘要 + 要点」；结果先进「审核」，你看过逐行 diff 才写入页面。内容没变过的页面会跳过。`)) return;
+    if (!(await confirmDialog(`用模型整理 ${n} 个草稿页面？\n\n每页一次调用（约 2k tokens），只改「摘要 + 要点」；结果先进「审核」，你看过逐行 diff 才写入页面。内容没变过的页面会跳过。`))) return;
     setBusy(true);
     setNotice(`模型整理中：0/${n} 页…（逐页调用模型，可切走，完成后会提示）`);
     try {
@@ -541,7 +542,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
 
   /** 删除资料（连带其引用）；页面保留 */
   const deleteSource = async (source: { id: string; title: string }) => {
-    if (!window.confirm(`把资料「${source.title}」移入回收站？引用它的页面会失去这条引用。`)) return;
+    if (!(await confirmDialog(`把资料「${source.title}」移入回收站？引用它的页面会失去这条引用。`))) return;
     setBusy(true);
     try {
       const res = await invoke("wiki.deleteSource", { id: source.id });
@@ -553,7 +554,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
 
   /** 删除页面（关掉相关 tab） */
   const deletePage = async (page: { id: string; title: string }) => {
-    if (!window.confirm(`把页面「${page.title}」移入回收站？可在「回收站」恢复。`)) return;
+    if (!(await confirmDialog(`把页面「${page.title}」移入回收站？可在「回收站」恢复。`))) return;
     setBusy(true);
     try {
       await invoke("wiki.deletePage", { id: page.id });
@@ -575,7 +576,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   };
 
   const purgeTrash = async (item: TrashItem) => {
-    if (!window.confirm(`彻底删除「${item.title}」？此操作不可恢复。`)) return;
+    if (!(await confirmDialog(`彻底删除「${item.title}」？此操作不可恢复。`))) return;
     try {
       await invoke("wiki.purgeTrash", { id: item.id });
       setNotice("已彻底删除");
@@ -820,7 +821,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       <button className={tab === "pages" ? "on" : ""} onClick={() => setTab("pages")}>{t("tab.pages")}</button>
       <button className={tab === "sources" ? "on" : ""} onClick={() => setTab("sources")} title="页面引用的原始输入：粘贴文本 / URL / 本地 Markdown">{t("tab.sources")}</button>
       <button className={tab === "docs" ? "on" : ""} onClick={() => setTab("docs")} title="导入的 PDF / Office / 网页，可检索并带页码出处">{t("tab.library")}</button>
-      <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>{t("tab.review")}{reviews.length + suggestions.length + claimIssues.length ? `·${reviews.length + suggestions.length + claimIssues.length}` : ""}</button>
+      <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>{t("tab.review")}</button>
       <button className={tab === "vault" ? "on" : ""} onClick={() => setTab("vault")}>{t("tab.local")}</button>
       <button className={tab === "trash" ? "on" : ""} onClick={() => setTab("trash")}>{t("tab.trash")}</button>
     </div>
@@ -837,12 +838,12 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
             if (!d) return null;
             return <button key={pageId} className={`notes-tab ${current.active === pageId ? "on" : ""}`} onClick={() => { setFocus(which); setPane(which, (p) => ({ ...p, active: pageId })); }} title={d.title}>{d.dirty && <span className="notes-tab-dirty" />}<span className="ellipsis">{d.title}</span><i onClick={(e) => { e.stopPropagation(); closeTab(which, pageId); }} title="关闭标签" aria-label="关闭标签"><XIcon size={10} /></i></button>;
           })}
-          <button className="notes-tab-add" title="新建页面" aria-label="新建页面" onClick={() => void createPage()}><PlusIcon size={13} /></button>
+          <button className="notes-tab-add" title="新建页面" aria-label="新建页面" onClick={() => void createPage()}><PlusIcon size={14} /></button>
         </div>
         {!doc ? (
           <div className="notes-hub">
             <div className="notes-hub-mark"><SparkleIcon size={16} /></div>
-            <h2>从这里开始</h2>
+            <div className="section-title">从这里开始</div>
             <p className="notes-hub-sub">页面是整理后的知识；资料是原始输入；本地目录可以直接编辑 Markdown 并写回磁盘。</p>
             <div className="notes-hub-cards">
               <button className="notes-hub-card" onClick={() => void createPage()} disabled={busy}>
@@ -906,8 +907,8 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               </div>
               <div className="notes-doc-actions">
                 <div className="notes-mode"><button className={mode === "preview" ? "on" : ""} onClick={() => setMode("preview")}>阅读</button><button className={mode === "edit" ? "on" : ""} onClick={() => setMode("edit")}>编辑</button></div>
-                {doc.dirty && <button className="btn tiny-btn primary" onClick={() => void saveDoc(doc.id)} disabled={busy}>{doc.local ? "保存到文件" : "保存 draft"}</button>}
-                {!doc.local && doc.status === "draft" && <button className="btn tiny-btn ok" onClick={() => void reviewPage(doc.id, "accept")} disabled={busy}>接受</button>}
+                {doc.dirty && <button className="btn tiny primary" onClick={() => void saveDoc(doc.id)} disabled={busy}>{doc.local ? "保存到文件" : "保存 draft"}</button>}
+                {!doc.local && doc.status === "draft" && <button className="btn tiny ok" onClick={() => void reviewPage(doc.id, "accept")} disabled={busy}>接受</button>}
                 <RowMenu title="页面操作">
                   {doc.local ? (
                     <>
@@ -1138,7 +1139,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   const deletePickedPages = async () => {
     const ids = [...picked];
     if (!ids.length) return;
-    if (!window.confirm(`删除所选 ${ids.length} 个页面？（可在回收站恢复）`)) return;
+    if (!(await confirmDialog(`删除所选 ${ids.length} 个页面？（可在回收站恢复）`))) return;
     const titles = ids.map((id) => pages.find((p) => p.id === id)?.title).filter(Boolean) as string[];
     let ok = 0;
     for (const id of ids) {
@@ -1159,7 +1160,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   const deletePickedSources = async () => {
     const ids = [...picked];
     if (!ids.length) return;
-    if (!window.confirm(`删除所选 ${ids.length} 份资料？引用会被移除。`)) return;
+    if (!(await confirmDialog(`删除所选 ${ids.length} 份资料？引用会被移除。`))) return;
     try { await invoke("wiki.deleteSource", { ids }); setNotice(`已删除 ${ids.length} 份资料`); }
     catch (err) { fail(err); }
     setPicked(new Set()); setPicking(false); await refresh();
@@ -1234,8 +1235,8 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               }}
             />
             <div className="row gap6" style={{ justifyContent: "flex-end" }}>
-              <button className="btn tiny-btn" onClick={() => setQuickOpen(false)} disabled={quickBusy}>取消</button>
-              <button className="btn tiny-btn primary" onClick={() => void saveQuick()} disabled={quickBusy || !quickText.trim()}>
+              <button className="btn tiny" onClick={() => setQuickOpen(false)} disabled={quickBusy}>取消</button>
+              <button className="btn tiny primary" onClick={() => void saveQuick()} disabled={quickBusy || !quickText.trim()}>
                 {quickBusy ? "保存中…" : "存为知识库草稿"}
               </button>
             </div>
@@ -1275,7 +1276,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               <div className="row-menu-label">本地目录</div>
               <button onClick={() => void pickLocalFolder()} disabled={busy}>{vault.path ? "更换本地目录…" : "打开本地目录…"}</button>
               <div className="row-menu-label">查看</div>
-              {graph ? <button className="icon-btn" title="关闭图谱" aria-label="关闭图谱" onClick={() => setGraph(false)}><XIcon size={13} /></button> : <button onClick={() => void openGraph()}>图谱</button>}
+              {graph ? <button className="icon-btn" title="关闭图谱" aria-label="关闭图谱" onClick={() => setGraph(false)}><XIcon size={14} /></button> : <button onClick={() => void openGraph()}>图谱</button>}
               <button onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: "memory" }))}>打开记忆页…</button>
               <button onClick={toggleSplit}>{split ? "取消分屏" : "分屏"}</button>
               <div className="row-menu-label">导出</div>
@@ -1291,7 +1292,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       {(error || notice) && (
         <div className={`notes-banner ${error ? "error" : ""}`}>
           <span className="ellipsis">{error || notice}</span>
-          <button className="notes-banner-x" title="关闭提示" aria-label="关闭提示" onClick={() => { setError(""); setNotice(""); }}><XIcon size={12} /></button>
+          <button className="notes-banner-x" title="关闭提示" aria-label="关闭提示" onClick={() => { setError(""); setNotice(""); }}><XIcon size={14} /></button>
         </div>
       )}
       <ListContextMenu
@@ -1319,10 +1320,10 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
           <button className="link tiny" onClick={() => setPicked(new Set(tab === "sources" ? filteredSources.map((x) => x.id) : filteredPages.map((p) => p.id)))}>全选</button>
           <button className="link tiny" onClick={() => setPicked(new Set())} disabled={!picked.size}>清空</button>
           <span style={{ flex: 1 }} />
-          {tab === "pages" && <button className="btn tiny-btn" onClick={() => void reviewPicked("accept")} disabled={!picked.size}>接受</button>}
-          {tab === "pages" && <button className="btn tiny-btn" onClick={() => void reviewPicked("reject")} disabled={!picked.size}>退回</button>}
-          <button className="btn tiny-btn" onClick={() => void (tab === "sources" ? deletePickedSources() : deletePickedPages())} disabled={!picked.size}>删除</button>
-          <button className="icon-btn" title="退出多选" aria-label="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}><XIcon size={13} /></button>
+          {tab === "pages" && <button className="btn tiny" onClick={() => void reviewPicked("accept")} disabled={!picked.size}>接受</button>}
+          {tab === "pages" && <button className="btn tiny" onClick={() => void reviewPicked("reject")} disabled={!picked.size}>退回</button>}
+          <button className="btn tiny" onClick={() => void (tab === "sources" ? deletePickedSources() : deletePickedPages())} disabled={!picked.size}>删除</button>
+          <button className="icon-btn" title="退出多选" aria-label="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}><XIcon size={14} /></button>
         </div>
       )}
 
@@ -1331,7 +1332,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
         <aside className="workbench-side">
           {tabsBar}
           {tab !== "docs" && <div className="notes-search-wrap">
-            <SearchIcon size={12} className="notes-search-icon" />
+            <SearchIcon size={14} className="notes-search-icon" />
             <input
               className="notes-search"
               value={query}
@@ -1339,7 +1340,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setQuery(""); void search(""); } }}
               placeholder="搜索页面 / 来源 / 本地"
             />
-            {query && <button className="notes-search-clear" title="清除（Esc）" aria-label="清除搜索" onClick={() => { setQuery(""); void search(""); }}><XIcon size={12} /></button>}
+            {query && <button className="notes-search-clear" title="清除（Esc）" aria-label="清除搜索" onClick={() => { setQuery(""); void search(""); }}><XIcon size={14} /></button>}
           </div>}
           {(searchStatus !== "all" || searchKind !== "all" || searchTime !== "all" || searchHits.length > 0) && (
             <div className="notes-search-filters">
@@ -1431,7 +1432,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
             {tab === "sources" && filteredSources.map((s) => (
               <div key={s.id} className="notes-row">
                 <button className="notes-file" onClick={() => void openSource(s.id)}>
-                  <FileTextIcon size={12} className="notes-source-icon" />
+                  <FileTextIcon size={14} className="notes-source-icon" />
                   <span className="ellipsis">{s.title}</span>
                   <em title="被引用次数">{s.citations || 0}</em>
                 </button>
@@ -1486,7 +1487,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
                 {vaultGroups.map(([folder, files]) => (
                   <div key={folder || "__root"} className="notes-vault-group">
                     <div className="notes-folder-label">{folder || "根目录"} <em>{files.length}</em></div>
-                    {files.map((f) => <button key={f.path} className={`notes-file ${activeDoc?.local && activeDoc.localPath === f.path ? "on" : ""}`} title={f.path} onClick={() => void openVaultFile(f.path)}><FileTextIcon size={12} className="notes-source-icon" /><span className="ellipsis">{f.title}</span></button>)}
+                    {files.map((f) => <button key={f.path} className={`notes-file ${activeDoc?.local && activeDoc.localPath === f.path ? "on" : ""}`} title={f.path} onClick={() => void openVaultFile(f.path)}><FileTextIcon size={14} className="notes-source-icon" /><span className="ellipsis">{f.title}</span></button>)}
                   </div>
                 ))}
                 {filteredVaultFiles.length === 0 && !vault.error && <div className="notes-empty-list">{query ? "没有匹配的本地文件。" : "目录里还没有 Markdown 文件。"}</div>}
@@ -1509,7 +1510,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
             {tab === "trash" && trash.filter((item) => !query || item.title.toLowerCase().includes(query.toLowerCase())).map((item) => (
               <div key={item.id} className="notes-row">
                 <button className="notes-file" onClick={() => void restoreTrash(item)} title="点击恢复">
-                  <FileTextIcon size={12} className="notes-source-icon" />
+                  <FileTextIcon size={14} className="notes-source-icon" />
                   <span className="ellipsis">{item.title}</span>
                   <em>{item.kind === "page" ? "页面" : "资料"}</em>
                 </button>
@@ -1648,7 +1649,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       {sourceDraft && (
         <div className="notes-source-modal">
           <div className="notes-source-card">
-            <div className="notes-source-head"><b>导入资料</b><button className="icon-btn" title="关闭" aria-label="关闭导入资料" onClick={() => setSourceDraft(null)}><XIcon size={13} /></button></div>
+            <div className="notes-source-head"><b>导入资料</b><button className="icon-btn" title="关闭" aria-label="关闭导入资料" onClick={() => setSourceDraft(null)}><XIcon size={14} /></button></div>
             <div className="notes-source-mode three">
               <button className={sourceDraft.mode === "text" ? "on" : ""} onClick={() => setSourceDraft({ ...sourceDraft, mode: "text" })}>文本 / Markdown</button>
               <button className={sourceDraft.mode === "url" ? "on" : ""} onClick={() => setSourceDraft({ ...sourceDraft, mode: "url" })}>URL</button>
@@ -1692,7 +1693,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
                     : `${suggestionKindLabel(preview.sug.kind)}建议 · 置信度 ${confidenceLabel(preview.sug.confidence)}`}
                 </span>
               </div>
-              <button className="icon-btn" title="关闭" aria-label="关闭预览" onClick={() => setPreview(null)}><XIcon size={13} /></button>
+              <button className="icon-btn" title="关闭" aria-label="关闭预览" onClick={() => setPreview(null)}><XIcon size={14} /></button>
             </div>
             {preview.lines.length > 0 ? (
               <div className="notes-diff" role="presentation">
@@ -1729,9 +1730,9 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       {sourceView && (
         <div className="notes-source-modal" onClick={() => setSourceView(null)}>
           <div className="notes-source-card" onClick={(e) => e.stopPropagation()}>
-            <div className="notes-source-head"><div><b>{sourceView.title}</b><span className="mono">{sourceView.kind} {sourceView.uri ? `· ${sourceView.uri}` : ""}</span></div><button className="icon-btn" title="关闭" aria-label="关闭来源" onClick={() => setSourceView(null)}><XIcon size={13} /></button></div>
+            <div className="notes-source-head"><div><b>{sourceView.title}</b><span className="mono">{sourceView.kind} {sourceView.uri ? `· ${sourceView.uri}` : ""}</span></div><button className="icon-btn" title="关闭" aria-label="关闭来源" onClick={() => setSourceView(null)}><XIcon size={14} /></button></div>
             <div className="notes-source-read">{sourceView.content || "（source 内容未加载）"}</div>
-            <div className="notes-source-actions"><button className="btn tiny-btn" onClick={() => sendSourceToChat(sourceView)}>发送到 Chat 整理</button></div>
+            <div className="notes-source-actions"><button className="btn tiny" onClick={() => sendSourceToChat(sourceView)}>发送到 Chat 整理</button></div>
           </div>
         </div>
       )}

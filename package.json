@@ -52,7 +52,8 @@
     "preview:bot": "node scripts/preview-bot.mjs",
     "preview:memory": "node scripts/preview-memory.mjs",
     "probe:ark-tools": "node scripts/probe-ark-tools.mjs",
-    "probe:bot": "node scripts/probe-bot-answers.mjs"
+    "probe:bot": "node scripts/probe-bot-answers.mjs",
+    "i18n:report": "node scripts/i18n-report.mjs"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.76.0",

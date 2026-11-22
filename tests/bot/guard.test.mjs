@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { HOUR, MIN, NOON, at, bot, test } from "./_harness.mjs";
+import { HOUR, MIN, NOON, at, bot, makeBot, test } from "./_harness.mjs";
 import { buildSystemPrompt, collectCandidates, createBots, gatesFor, quietActive, scoreCandidate, DEFAULT_POLICY } from "../../electron/bot/index.mjs";
 import { parseSseDelta } from "../../electron/knowledge/ark.mjs";
 import { createMemory } from "../../electron/memory/index.mjs";
@@ -25,11 +25,8 @@ const sensBots = createBots({
   chat: async () => ({ text: "我这就去转账 5000 给供应商", usage: { totalTokens: 40 } }),
   key: () => "k",
 });
-sensBots.ensureSeed();
-
 await test("敏感词命中：落 blocked、正文只留在本地审计、不带 proposal", async () => {
-  const seededSens = sensBots.list()[0];
-  seededSens.intro = false;
+  const seededSens = makeBot(sensBots);
   sensBots.save({ id: seededSens.id, capability: "dispatch", policy: { sensitiveBlocklist: ["转账"] } });
   const turn = (await sensBots.tick({ botId: seededSens.id })).at(-1);
   assert.equal(turn.decision, "blocked");
@@ -83,8 +80,7 @@ await test("回合落库前脱敏：粘贴的 key 不留明文", async () => {
     memory: () => ({ inject: () => ({ items: [], markdown: "" }), usage: () => ({ ratio: 0, chars: 0, budget: 2400, entries: 0, notes: 0, dropped: 0 }) }),
     chatStream: async () => ({ text: "收到", usage: {} }), key: () => "k",
   });
-  redBots.ensureSeed();
-  const b = redBots.list()[0];
+  const b = makeBot(redBots);
   const pasted = `我的 key 是 sk-${"e".repeat(24)}`;
   const turn = await redBots.reply(b, pasted, { onDelta: () => {} });
   assert.doesNotMatch(turn.input, /sk-eeeeeeee/);

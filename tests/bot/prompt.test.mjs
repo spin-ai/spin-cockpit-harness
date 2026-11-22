@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { HOUR, MIN, NOON, at, bot, test } from "./_harness.mjs";
+import { HOUR, MIN, NOON, at, bot, makeBot, test } from "./_harness.mjs";
 import { buildSystemPrompt, collectCandidates, createBots, gatesFor, quietActive, scoreCandidate, DEFAULT_POLICY } from "../../electron/bot/index.mjs";
 import { parseSseDelta } from "../../electron/knowledge/ark.mjs";
 import { createMemory } from "../../electron/memory/index.mjs";
@@ -68,10 +68,10 @@ const saidBots = createBots({
   key: () => "k",
 });
 saidBots.ensureSeed();
-saidBots.list()[0].intro = false;
+const saidBot = makeBot(saidBots);
 
 await test("被动回复记得自己主动说过什么，且带上记忆正文", async () => {
-  const b = saidBots.list()[0];
+  const b = saidBot;
   await saidBots.tick({ botId: b.id });
   await saidBots.reply(b, "你刚说什么？", { onDelta: () => {} });
   const system = seen.at(-1) || "";
@@ -82,6 +82,6 @@ await test("被动回复记得自己主动说过什么，且带上记忆正文",
 await test("主动回合也进最近上下文（不再只取 replied）", () => {
   const answered = saidStore.state.botTurns.filter((t) => t.decision === "answered");
   assert.equal(answered.length, 1);
-  const prompt = buildSystemPrompt(saidBots.list()[0], "", { proactive: false, recentProactive: answered.map((t) => t.reply) });
+  const prompt = buildSystemPrompt(saidBot, "", { proactive: false, recentProactive: answered.map((t) => t.reply) });
   assert.match(prompt, /有两项待确认/);
 });

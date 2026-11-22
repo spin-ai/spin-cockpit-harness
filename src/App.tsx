@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ElementContext, State } from "./types";
 import { Rail } from "./components/Rail";
-import { RUN_STATUS, duration } from "./ui";
 import { TaskPane } from "./components/TaskPane";
 import { TaskChat } from "./components/TaskChat";
 import { TerminalPanel } from "./components/TerminalPanel";
@@ -9,6 +8,7 @@ import { FilePanel } from "./components/FilePanel";
 import { GitView } from "./components/GitView";
 import { Projects } from "./components/Views";
 import { ApprovalModal } from "./components/ApprovalModal";
+import { ConfirmHost } from "./components/ConfirmHost";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { Splitter, useStoredSize } from "./components/Splitter";
 import { LangProvider } from "./i18n";
@@ -324,12 +324,6 @@ export default function App() {
     const host = state.hosts.find((h) => h.id === (running?.hostId || latest?.hostId || agent?.hostId));
     return host && host.kind === "ssh" ? { id: host.id, name: host.name || host.addr, root: workdir } : null;
   }, [state, thread, selected, workdir]);
-  /** runbar：当前选中的任务上「正在跑的那个 run」，没有就取最后一个 */
-  const runbarRun = useMemo(() => {
-    if (!selected) return null;
-    const rs = state?.runs.filter((r) => r.todoId === selected.id) ?? [];
-    return [...rs].reverse().find((r) => ["queued", "running", "waiting_input"].includes(r.status)) ?? rs[rs.length - 1] ?? null;
-  }, [state?.runs, selected]);
   /** BOT 模式右列检查器的对象：正在看的 BOT 会话，否则第一个 BOT */
   const inspectorBotId = (thread?.kind === "bot" ? thread.botId : null) ?? state?.bots?.[0]?.id ?? null;
   const projectCounts = useMemo(() => {
@@ -712,15 +706,6 @@ export default function App() {
             </div>
             {sep1 === "6px" ? <Splitter onDelta={resizeTodo} /> : <div className="splitter-off" />}
             <div className={`terminal-slot is-stacked${maximized === "terminal" ? " pane-max-target" : ""}`}>
-              {/* 没有选中任务时不显示这一条：空态的「没有选中任务 / 选中一行后会出现 run」是废话 */}
-              {!collapsed.terminal && selected && (
-                <div className="runbar">
-                  <span className="mono tiny muted">{runbarRun?.id || "—"}</span>
-                  <span className="rb-title ellipsis">{`${selected.key} ${selected.title}`}</span>
-                  <span className="spacer" />
-                  <span className="rb-note">{runbarRun ? `${RUN_STATUS[runbarRun.status] || runbarRun.status} · ${duration(runbarRun, now)}` : "未开始"}</span>
-                </div>
-              )}
               <div className="terminal-slot-main" style={{ display: collapsed.terminal ? "none" : "flex" }}>
                 <TerminalPanel state={state} todo={selected} act={act} onOpenThread={openSession} onPickedContext={setPendingContext} previewRoot={workdir} previewHost={previewHost} onCollapse={() => togglePane("terminal")} terminalFontSize={state.settings?.terminalFontSize} terminalScrollback={state.settings?.terminalScrollback} previewHomeUrl={state.settings?.previewHomeUrl} maximized={maximized === "terminal"} onToggleMaximize={() => toggleMaximize("terminal")} chat={<TaskChat state={scoped} globalState={state} thread={thread} threads={scoped.threads} now={now} act={act} onSelect={selectTodo} onOpenGlobal={(id) => void openTodoFromPalette(id)} onNewThread={() => void newThread()} onOpenThread={openSession} context={pendingContext} onClearContext={() => setPendingContext(null)} enterToSend={state.settings?.enterToSend ?? true} confirmStop={state.settings?.confirmStop ?? false} embedded focusRun={focusRun} onClearFocusRun={() => setFocusRunId(null)} />} onOpenRunFocus={(runId) => { setFocusRunId(runId); window.setTimeout(() => window.dispatchEvent(new Event("harness:chat-tab")), 20); }} onContinueInChat={(taskId) => { const runs = state.runs.filter((r) => r.todoId === taskId); const last = runs.length ? runs[runs.length - 1] : null; setFocusRunId(last?.id ?? null); const th = state.threads.find((t) => t.todoId === taskId); if (th) setThreadId(th.id); window.setTimeout(() => window.dispatchEvent(new Event("harness:chat-tab")), 20); }} />
               </div>
@@ -796,6 +781,7 @@ export default function App() {
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
+      <ConfirmHost />
       {state.approvals?.length > 0 && <ApprovalModal approval={state.approvals[0]} pendingCount={state.approvals.length} act={act} />}
       {errors.length > 0 && (
         <div className="errstack" role="alert" aria-live="assertive">
@@ -810,7 +796,7 @@ export default function App() {
                   onClick={() => void navigator.clipboard?.writeText(e.action ? `${e.action}: ${e.text}` : e.text)}
                   title="复制完整报错，便于贴出来定位"
                 >复制</button>
-                <button className="errcard-btn" title="关闭这条报错" aria-label="关闭这条报错" onClick={() => setErrors((prev) => prev.filter((x) => x.id !== e.id))}><XIcon size={12} /></button>
+                <button className="errcard-btn" title="关闭这条报错" aria-label="关闭这条报错" onClick={() => setErrors((prev) => prev.filter((x) => x.id !== e.id))}><XIcon size={14} /></button>
               </div>
               <pre className="errcard-body">{e.text}</pre>
             </div>
