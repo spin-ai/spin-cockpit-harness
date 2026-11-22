@@ -412,6 +412,21 @@ let store = null;
 const approvals = new Map();
 const terminals = new Map();
 const terminalUrls = new Map();
+/**
+ * 拆掉一条 pty：先摘监听，再 destroy（关读流 + SIGHUP）。
+ *
+ * 只 kill 不 destroy 会留下还在读的 fd：退出过程中 pty 继续推数据，node-pty 的
+ * ThreadSafeFunction 会往已经开始清理的 V8 环境里回调 → Napi 抛异常 → terminate → abort
+ * （见 2026-11-22 的 CrashReporter：CleanupHandles → uv__async_io → CallJS → ThrowAsJavaScriptException）。
+ */
+function destroyPty(term) {
+  if (!term) return;
+  try { term.removeAllListeners?.(); } catch { /* ignore */ }
+  try {
+    if (typeof term.destroy === "function") term.destroy();
+    else term.kill();
+  } catch { /* ignore */ }
+}
 const PROJECT_COLORS = ["teal", "indigo", "amber", "slate", "orange"];
 
 function slugify(input) {
@@ -7440,7 +7455,17 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
-app.on("before-quit", () => {
+/** before-quit 会跑两次：第一次只拆 pty，等一个 tick 再真退（pty 的 exit 回调要在环境还在时落地） */
+let ptyTeardownAt = 0;
+app.on("before-quit", (event) => {
+  if (!ptyTeardownAt && terminals.size) {
+    event.preventDefault();
+    ptyTeardownAt = Date.now();
+    for (const [, term] of terminals) destroyPty(term);
+    terminals.clear();
+    setTimeout(() => app.quit(), 200);
+    return;
+  }
   try { clearInterval(dreamIdleTimer); } catch { /* ignore */ }
   for (const id of [...recordings.keys()]) stopRecording(id, "quit");
   try { closeAllTunnels(); } catch { /* ignore */ }
@@ -7471,7 +7496,7 @@ app.on("before-quit", () => {
     if (store) syncTerminalRecord(id, { status: "detached", tail: info.recent || info.tail || "", endedAt: Date.now() });
     settleTerminalRun(info, "cancelled");
     const term = terminals.get(id);
-    if (term) { try { term.kill(); } catch { /* ignore */ } }
+    if (term) destroyPty(term);
   }
   // 退出前把内存状态写完并合并 WAL，再关闭连接（node:sqlite）
   try { store?.close?.(); } catch { /* ignore */ }
