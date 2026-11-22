@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### Fixed（聊天窗口 M1：输入法 / 中断留痕 / 长会话按页加载）
+- **中文输入法不再误发**：composer 用 `compositionstart/end` + `isComposing` + `keyCode 229` 三重判断，候选态回车只上屏；结合 `enterToSend`，Shift+Enter 仍是换行（REQ-bot-chat SR-Chat-10）
+- **中断留痕**：`bots().reply()` 被 abort 时不再删回合，而是落成 `decision: "interrupted"` 并保留已生成前缀（≤4000 字），聊天里显示「被打断」+ 半截；非取消的报错仍然不落账（SR-Chat-08）
+- **长会话按页加载**：转录一次只渲染最近 40 个块（1:1 与群聊同一套），顶上给「加载更早的 N 个回合」，加载时用 `scrollHeight` 差值保持阅读位置；200 轮实测 DOM 从「全量上万」降到 1461 节点、翻页后 2921（SR-Chat-02 前端部分）
+- `preview-bot.mjs` 新增 6 条断言：输入法候选态不发送 / 上屏后才发送 / 200 轮只渲染 40 块 / DOM ≤3000 / 有「加载更早」/ 点了多一页；`tests/bot/reply.test.mjs` 的取消用例改为断言「留 interrupted + 半截」，并补一条「非取消报错不落账」
+
+### Changed（终端页：Chat 回到左栏，任务列表在它下面）
+- **Chat 重新挂回终端页**：`App.tsx` 左栏换成 `.left-stack`，上段是 `TaskChat`（派活 / 纠偏 / 历史 / 进展），下段是原来的 TODO·项目面板；中间一条横向分隔条调高度（默认 320px，范围 140–900，存 `localStorage.cmh.layout.chatH`）
+- **开合 / 最大化照旧**：Chat 可收起成 34px 横条，可最大化铺满工作区（Esc 还原）；任务面板收起时 Chat 自动吃掉整列
+- **入口对齐**：`harness:focus-chat`（问清楚 / 插件草稿）和「打开会话」（BOT 页、右栏会话历史、命令行面板）都会展开 Chat 再落到那条 thread；点任务行只切 thread，**不**改展开态、不重排（AGENTS §2.3 第 19 条）
+- TerminalPanel 的拾取元素上下文重新接回 Chat（`pendingContext`），runbar 新增「Chat」chip 直跳左栏；删掉从未挂载过的 `.term-dock` 样式
+
 ### Fixed（群聊：发出去看不到实时响应）
 - **`botGroupSend` 补流式**：之前调 `bots().reply(bot, value, {})`，既没 `onDelta` 也没 `signal` —— UI 要等全部成员都跑完才 `load()`，所以群里发一句后界面一片空白。现在每个成员都带 `onDelta` / `onTool`（payload 加 `groupId` + `name`），并按 botId 分块推到前端
 - **自己的话立刻出现**：owner 那句先 `persist + broadcast`；前端再用乐观气泡（`ds-pending`）兑，回声到了就收，不会重复

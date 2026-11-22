@@ -127,3 +127,27 @@
 | Orca 草稿族 | `third-part/orca/` → `src/renderer/src/components/native-chat/drafts/`（25 个文件） |
 | Orca 滚动输入层 | 同上 → `viewport/scroll/native-chat-reader-scroll-input.ts` |
 | Orca 失败通知卡 | 同上 → `messages/notices/` |
+
+---
+
+## 6. 运行时证据（craft-anything 实测）
+
+源码之外，又用 **Craft Anything 0.6.1**（`deep_mode`）读了**装好的包**和**跑着的窗口**，两条结论被实测钉死：
+
+| 证据 | 方法 | 结果 |
+|---|---|---|
+| 装机包结构 | `js_app_map` on `/Applications/Cockpit Harness.app/…/app.asar` | 58 个源文件 / **75 个 IPC 频道（70 成对）**/ 3 个窗口 / 单渲染入口（vite，`dist/assets/index-*.js` 2.4 MB） |
+| 对照 Orca.app | 同工具同口径（`Orca.app` 1.4.268） | **5986 个源文件 / 1339 个 IPC 频道 / 11 个窗口 / 3 个 renderer 入口** |
+| 聊天窗口实际 DOM | `web_page_show` + CDP（`--remote-debugging-port`，后台启动） | 一个会话 **36 个消息块 → 2415 个 DOM 节点**；内容高 9472px / 视口 560px（16.9 屏）；容器是裸 `div.bot-stream`，**没有 `role`、没有 `aria-live`**；`textarea` 只有 `placeholder`，没有 `aria-label` |
+| 工具事件是否被消费 | 装机 bundle 静态计数 | `onBotTool` **0 次**、`onBotDelta` 1 次 → 聊天窗口确实从不订阅工具事件（P0-2 成立） |
+| 是否虚拟化 | bundle 标记词 | 我们：`virtualizer` 0 / `IntersectionObserver` 11 / `indexedDB` 0；Orca：`virtualizer` 36 / `IntersectionObserver` 58 / `indexedDB` 8 / `isComposing` 69 / `aria-live` 43 |
+
+**实测修正了三条判断**
+
+1. 「长会话没设防」从推断变实测：36 条就 2415 个节点，且 bundle 里没有任何虚拟化库 —— 分页这件事不能再往后拖。
+2. 「无障碍凑合」不成立：`aria-live` 只在流式块上，**完成态的转录容器没有任何 role**；composer 输入框没有 `aria-label`（读屏只念到 placeholder）。
+3. 「Orca 更重」有了量级：它的 IPC 频道是我们的 **17 倍**，也说明它把聊天、终端、Agent 全做进了一个 Electron 壳里；这不是要追的数字，而是「我们的单文件聊天迟早要拆」的证据。
+
+**没能测的**：滚动帧率（窗口是后台启动的，`requestAnimationFrame` 被节流，测出来的 worst frame 不可信）；真实流式期的 DOM 写入频率（需要真跑一次模型调用）。要测这两个，得把窗口切到前台或给 preview 注入一段假流。
+
+证据落在本机临时工程 `/tmp/ca-chat`（`core_journal_read` 可读），不随仓库分发。

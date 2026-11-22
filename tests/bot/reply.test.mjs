@@ -58,7 +58,7 @@ await test("被动回复：没有 key 直接报错，不落回合", async () => 
   assert.equal(store.state.botTurns.length, before);
 });
 
-await test("取消：signal abort 时 reply 不落回合", async () => {
+await test("取消：signal abort 时回合留成 interrupted，半截回复不丢", async () => {
   const abortStore = { state: { bots: [], botTurns: [] }, persist() {} };
   const aborting = createBots({
     store: abortStore,
@@ -76,5 +76,23 @@ await test("取消：signal abort 时 reply 不落回合", async () => {
   const p = aborting.reply(aborting.list()[0], "在吗", { signal: controller.signal, onDelta: () => {} });
   setTimeout(() => controller.abort(), 20);
   await assert.rejects(() => p, /abort/i);
-  assert.equal(abortStore.state.botTurns.length, 0);
+  assert.equal(abortStore.state.botTurns.length, 1);
+  const kept = abortStore.state.botTurns[0];
+  assert.equal(kept.decision, "interrupted");
+  assert.equal(kept.reply, "你");
+  assert.equal(kept.input, "在吗");
+});
+
+await test("报错（非取消）：回合不留在账上", async () => {
+  const errStore = { state: { bots: [], botTurns: [] }, persist() {} };
+  const failing = createBots({
+    store: errStore,
+    now: () => NOON,
+    memory: () => ({ inject: () => ({ items: [] }) }),
+    chatStream: async () => { throw new Error("上游 500"); },
+    key: () => "k",
+  });
+  failing.ensureSeed();
+  await assert.rejects(() => failing.reply(failing.list()[0], "在吗"), /上游 500/);
+  assert.equal(errStore.state.botTurns.length, 0);
 });

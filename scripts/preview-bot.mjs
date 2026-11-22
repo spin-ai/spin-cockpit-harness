@@ -113,6 +113,13 @@ const MOCK = String.raw`
     recentTodos: [{ id: "td1", key: "FEAT-1", title: "首页标题改大", status: "in_review", missionState: null }],
   };
   const calls = [];
+  // 窗口化用例：把快照里的回合撑到 n 条（渲染层只该画最近 40 个块）
+  window.__fillTurns = (n) => {
+    snapshot.turns = Array.from({ length: n }, (_, i) => turn({
+      id: "tbig" + i, decision: i % 2 ? "replied" : "answered",
+      input: "第 " + i + " 问", reply: "第 " + i + " 答", threadId: "th-bot-b1",
+    }));
+  };
   let emit = () => {};
   const api = {
     getState: async () => state,
@@ -138,8 +145,10 @@ const MOCK = String.raw`
         setTimeout(() => put(owner), 80);
         await new Promise((r) => setTimeout(r, 220));
         say("b1", text("先说一半。"));
-        await new Promise((r) => setTimeout(r, 400));
+        await new Promise((r) => setTimeout(r, 200));
         say("b1", "，说完了。");
+        // 最后一段增量之后再收尾：resolution 之后不该再有 delta（否则块被重新建出来）
+        await new Promise((r) => setTimeout(r, 220));
         put({ id: "gm-b1-" + uniq, groupId: payload.id, seq: state.botGroupMessages.length, author: "bot", botId: "b1", botName: "PM · 项目经理", text: text("先说一半，说完了。"), decision: "replied", createdAt: Date.now(), meta: null });
         result = { messages: [] };
       }
@@ -150,6 +159,7 @@ const MOCK = String.raw`
     clipboardRead: async () => "",
     clipboardWrite: async () => {},
     onBotDelta: (cb) => { window.__delta = cb; return () => {}; }, onBotTool: () => () => {}, onBotMessage: () => () => {},
+    onBotPhase: () => () => {}, onBotGroupMessage: () => () => {},
     onState: (cb) => { emit = cb; setTimeout(() => cb(state), 0); return () => {}; },
     onPluginChatDraft: () => () => {}, onPluginNotify: () => () => {}, onPluginOpenView: () => () => {},
     onTerminalAdopt: () => () => {}, onQuickCapture: () => () => {},
@@ -520,6 +530,61 @@ await run(`
 const botMetrics = await streamMetrics();
 check("view=bot：回合流自己滚", botMetrics && botMetrics.overflow === "auto" && botMetrics.selfScrolls, JSON.stringify(botMetrics));
 await followAfterSend("view=bot");
+
+// 输入法：候选态的回车只上屏，不发送（SR-Chat-10）
+await run(`
+  window.dispatchEvent(new CustomEvent("harness:view", { detail: "bot" }));
+  await new Promise((r) => setTimeout(r, 400));
+  const item = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("PM"));
+  if (item) { item.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 300)); }
+  return true;`);
+const composerSet = (text) => `
+  const box = document.querySelector(".ds-composer textarea");
+  if (!box) throw new Error("没有输入框");
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+  setter.call(box, ${JSON.stringify("")} + ${JSON.stringify("")});
+  return box;`;
+await run(`
+  const box = document.querySelector(".ds-composer textarea");
+  if (!box) throw new Error("没有输入框");
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+  setter.call(box, "nihao");
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 60));
+  box.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
+  const before = window.__calls.filter((c) => c.type === "botChat").length;
+  box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, isComposing: true }));
+  await new Promise((r) => setTimeout(r, 120));
+  const afterIme = window.__calls.filter((c) => c.type === "botChat").length;
+  box.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "你好" }));
+  box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 200));
+  const afterEnter = window.__calls.filter((c) => c.type === "botChat").length;
+  window.__imeResult = { before, afterIme, afterEnter };
+  return true;`);
+const ime = await ev(`JSON.stringify(window.__imeResult)`);
+const imeObj = JSON.parse(ime || "{}");
+check("输入法：候选态回车不发送", imeObj.afterIme === imeObj.before, ime);
+check("输入法：上屏后再回车才发送", imeObj.afterEnter === imeObj.before + 1, ime);
+
+// 窗口化：200 轮只画最近 40 个块，点「加载更早」再放一页（SR-Chat-02）
+await run(`
+  window.__fillTurns(200);
+  const b2 = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("DE-A"));
+  const b1 = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("PM"));
+  if (b2) { b2.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 250)); }
+  if (b1) { b1.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 400)); }
+  return true;`);
+await run(`window.dispatchEvent(new CustomEvent("harness:view", { detail: "bot" })); await new Promise((r) => setTimeout(r, 400)); return true;`);
+await sleep(300);
+const winStats = () => ev(`(() => { const s = document.querySelector(".bot-stream"); return JSON.stringify({ blocks: s ? s.children.length : 0, nodes: s ? s.querySelectorAll("*").length : 0, hasEarlier: !!document.querySelector(".ds-load-earlier") }); })()`);
+const w1 = JSON.parse((await winStats()) || "{}");
+check("窗口化：200 轮只渲染最近 40 个块", w1.blocks > 0 && w1.blocks <= 45, JSON.stringify(w1));
+check("窗口化：DOM 节点没爆（≤3000）", w1.nodes <= 3000, JSON.stringify(w1));
+check("窗口化：顶上给出「加载更早」", w1.hasEarlier === true, JSON.stringify(w1));
+await run(`document.querySelector(".ds-load-earlier")?.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 250)); return true;`);
+const w2 = JSON.parse((await winStats()) || "{}");
+check("窗口化：加载更早后多出一页", w2.blocks > w1.blocks, JSON.stringify(w2));
 
 check("没有控制台报错", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 
