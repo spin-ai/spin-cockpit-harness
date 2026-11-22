@@ -135,6 +135,7 @@ const MOCK = String.raw`
       else if (type === "botChatNew") result = { id: "th-bot-b1-3", title: "新话题" };
       else if (type === "botChatFork") result = { thread: { id: "th-bot-b1-fork" }, copied: 2 };
       else if (type === "botChat") result = { ok: true, result: turns[0] };
+      else if (type === "botRetry") result = { ok: true };
       else if (type === "botUiSave") { draftStore[payload.key] = { draft: payload.draft || "", scroll: payload.scroll ?? null, updatedAt: Date.now() }; result = { ok: true }; }
       else if (type === "botGroupSend") {
         // 模拟群聊：先落自己的话，再逐个成员流式回（和主进程 botGroupSend 一样）
@@ -687,6 +688,25 @@ const restored = await ev(`(() => {
 const restoredObj = JSON.parse(restored || "{}");
 check("阅读位置：切走再回来后那一轮还在同一个视口位置（±120px）",
   restoredObj.nodeFound === true && Math.abs((restoredObj.nodeTop ?? 9999) - (restoredObj.wantOffset ?? 0)) <= 120, restored);
+
+// 重试：助手消息上有「重试这一轮」，点了复用原轮（SR-Chat-05）
+await run(`
+  window.dispatchEvent(new CustomEvent("harness:view", { detail: "bot" }));
+  await new Promise((r) => setTimeout(r, 400));
+  const b1 = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("PM"));
+  if (b1) { b1.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 400)); }
+  return true;`);
+check("重试：助手消息上有「重试这一轮」", await ev(`!!document.querySelector('.ds-action[aria-label="重试这一轮"]')`));
+await run(`
+  const before = window.__calls.filter((c) => c.type === "botRetry").length;
+  document.querySelector('.ds-action[aria-label="重试这一轮"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 400));
+  const calls = window.__calls.filter((c) => c.type === "botRetry");
+  window.__retry = { before, after: calls.length, turnId: calls.at(-1)?.payload?.turnId || "" };
+  return true;`);
+const retry = await ev(`JSON.stringify(window.__retry)`);
+const retryObj = JSON.parse(retry || "{}");
+check("重试：点了用 turnId 调 botRetry", retryObj.after === retryObj.before + 1 && Boolean(retryObj.turnId), retry);
 
 check("没有控制台报错", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 

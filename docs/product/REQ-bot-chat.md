@@ -36,7 +36,7 @@
 | US-Chat-06 | 切走再回来还在原处（判据：切会话 / 重开应用回到上次位置 ±80px）                                                         | ✅ turnId + offset，500ms 采样，切回来落原处 | dsh 位置采样 500ms + 恢复                    | P1，改 |
 | US-Chat-07 | 我打了一半的字不会丢（判据：切会话、崩溃重启后草稿还在；发送失败原文回填输入框）                                                     | ✅ 500ms 节流落库 + 切会话取回 | Orca 草稿（IndexedDB + journal）           | P1，改 |
 | US-Chat-08 | 中文输入不出错（判据：拼音候选里按回车只上屏，不发送；Shift+Enter 换行；⌘/Ctrl+Enter 发送）                                   | ✗ 没有 composing 判断             | dsh `keyboard-composition.ts`          | P0，改 |
-| US-Chat-09 | 对一条消息能重试、追问、分支（判据：重试用同一条输入重跑且不重复原消息；引用只带 1–3 行；分支复制到新会话而源会话不动）                               | ◐ 有引用 / 分支，无重试                | dsh `MessageIconActions`（复制 / 分支 / 用量） | P1，改 |
+| US-Chat-09 | 对一条消息能重试、追问、分支（判据：重试用同一条输入重跑且不重复原消息；引用只带 1–3 行；分支复制到新会话而源会话不动）                               | ◐ 复制 / 引用 / 分支 / 重试已做；赞踩未做 | dsh `MessageIconActions`（复制 / 分支 / 用量） | P1，改 |
 | US-Chat-10 | 出错时我在聊天里就能看到并重试（判据：失败卡写明原因 + 「重试」；草稿不丢；不只剩页头一条 banner）                                       | ✗ 只有页头 banner                 | Orca `messages/notices/`；dsh 失败卡       | P1，改 |
 | US-Chat-11 | 上下文快满时我提前知道（判据：占用 >80% 时 composer 上方有提示；压缩后留下「已压缩 N 轮 → 摘要」卡）                                | ✗ 静默截断                        | dsh compaction 卡 + quota 提示            | P2，改 |
 | US-Chat-12 | 读屏和键盘也能完整用（判据：转录是 `role=log` 且 `aria-live`；每条有可读发送者 / 状态；输入框有 `aria-label`；Esc 停止；发送后焦点回输入框） | ◐ role=log / article / label 已做；Esc 停止与焦点恢复未做 | dsh 大量 `aria-live` / 语义角色              | P1，改 |
@@ -173,7 +173,7 @@
 | SR-Chat-02 | **历史分页**：`botTurnsPage({ botId, threadId, beforeTurnId, limit=40 })` → `{ turns, hasMore, headTurnId }`；会话面默认只取最近 40 轮，滚到顶再取一页；`botSnapshot` 不再返回全部 `botTurns`              | ✗ 全量        | US-Chat-04，改    |
 | SR-Chat-03 | **草稿持久化**：`bot_drafts(botId, threadId, text, attachments, updatedAt)`；输入 500ms 节流写；上限 8k 字符；发送成功即清；同一 bot 多 thread 各一份                                                      | ✅ `bot_ui` 表 + `saveBotUi` 单行写 | IR-Chat-07，改    |
 | SR-Chat-04 | **阅读位置**：`bot_threads.scroll = { turnId, offset }`；滚动采样 500ms 或 `scrollend` 写一次；打开会话时按 `turnId` 定位（找不到则回底）                                                                  | ✅ `bot_ui.scroll` = `{ turnId, offset }` | US-Chat-06，改    |
-| SR-Chat-05 | **重试**：`botRetry({ turnId })` 复用原 `turn.input` + 原 `threadId`，新建一轮（不改写原轮）；同一轮重复点击幂等（带 `retryOf`）                                                                            | ✗           | IR-Chat-06，改    |
+| SR-Chat-05 | **重试**：`botRetry({ turnId })` 复用原 `turn.input` + 原 `threadId`，新建一轮（不改写原轮）；同一轮重复点击幂等（带 `retryOf`）                                                                            | ✅ `botRetry`：复用原话 + 原会话，`trigger.kind=retry` 指回原轮 | IR-Chat-06，改    |
 | SR-Chat-06 | **反馈**：`bot_turns.feedback ∈ {up, down}` + `feedbackNote`；`botFeedback({ turnId, value })`，同一轮可改不可叠加                                                                        | ✗           | IR-Chat-06，改    |
 | SR-Chat-07 | **用量字段**：`turn.cost` 增 `ttftMs`（首个增量时间）与 `model`；UI 只读，不估算费用                                                                                                                | ✅ tokens / ms / ttftMs / model | IR-Chat-06/09，改 |
 | SR-Chat-08 | **中断语义**：abort → `decision = "interrupted"`，`reply` 保留已生成前缀（≤4000 字）；UI 显示「已停止」；不进会话镜像                                                                                      | ◐ 现在整轮删除    | IR-Chat-01，改    |

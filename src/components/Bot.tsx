@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { EmptyState } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
 import { RowMenu } from "./RowMenu";
-import { CopyIcon, FileTextIcon, GitIcon, LinkIcon, PencilIcon, PlusIcon, QuoteIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, WrenchIcon, XIcon } from "./Icons";
+import { CopyIcon, FileTextIcon, GitIcon, LinkIcon, PencilIcon, PlusIcon, QuoteIcon, RefreshIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, WrenchIcon, XIcon } from "./Icons";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "./Icons";
 import { useT } from "../i18n";
 import { RichText } from "./TaskChat";
@@ -1389,6 +1389,15 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     catch (err) { notify(String((err as Error)?.message || err)); }
   };
 
+  /** 重试一轮：后端复用原话重跑，前端只负责刷新 */
+  const retryTurn = async (turnId: string) => {
+    setBusy("retry");
+    setError("");
+    try { await act("botRetry", { turnId }); await load(); }
+    catch (err) { setError(String((err as Error)?.message || err)); }
+    finally { setBusy(""); }
+  };
+
   // Esc = 停止当前生成（聊天面里最常按的那个键）
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -2366,6 +2375,9 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                   )}
                   <div className="ds-actions">
                     <button className="ds-action" title="复制这条回复" aria-label="复制这条回复" onClick={() => void window.harness.clipboardWrite(turn.reply || "")}><CopyIcon size={15} /></button>
+                    {turn.input && (
+                      <button className="ds-action" title="重试这一轮（复用原话）" aria-label="重试这一轮" disabled={Boolean(busy)} onClick={() => void retryTurn(turn.id)}><RefreshIcon size={15} /></button>
+                    )}
                     <button className="ds-action" title="引用这条继续问" aria-label="引用这条继续问" onClick={() => quote(turn.reply || "")}><QuoteIcon size={15} /></button>
                     {openThreadId && <button className="ds-action" title="复制到新会话，换个说法重开" aria-label="分支到新会话" onClick={() => forkChat(openThreadId)}><GitIcon size={15} /></button>}
                     <span className="ds-time">{hm(turn.createdAt)}</span>

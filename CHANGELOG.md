@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed（聊天窗口 M5：重试这一轮）
+- **助手消息可重试**：新增 `botRetry({ turnId })` —— 复用那一轮的原话与所在会话重跑一轮，原轮不改写，用 `trigger.kind = "retry" | ref = 原轮 id` 指回（不加列）；消息动作行第 4 个常驻图标是「重试这一轮」（复制 / 引用 / 分支 / 重试，仍 ≤4）（REQ-bot-chat SR-Chat-05）
+- `preview-bot.mjs` 增 2 条断言：图标在 / 点了带 turnId 调 `botRetry`
+
 ### Changed（聊天窗口 M4：阅读位置）
 - **切走再回来接着读**：滚动停 500ms 采样一次 `{ turnId, offset }`，落进 `bot_ui.scroll`（单行写、贴底时不算）；重进同一 bot / 会话时把那一轮放回同一视口位置，找不到就落到最新（REQ-bot-chat SR-Chat-04）
 - `preview-bot.mjs` 增 2 条断言：滚动 500ms 落盘 turnId+offset / 切回来那一轮在 ±120px 内回到原位

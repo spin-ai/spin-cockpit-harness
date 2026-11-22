@@ -4140,6 +4140,32 @@ const actions = {
     return { ok: true };
   },
   /** 接受建议：只建 todo（confirmed=false），不起 run —— 起 run 仍由人在桌面点确认 */
+  /**
+   * 重试一轮：复用那条回合的原话与所在会话，新开一轮（原轮不改写）。
+   * 用 trigger.kind = "retry" 指回原轮，不加列。
+   */
+  botRetry: async ({ turnId } = {}) => {
+    const turn = (store.state.botTurns || []).find((t) => t.id === String(turnId || ""));
+    if (!turn) throw new Error("找不到这一轮");
+    if (!turn.input) throw new Error("这一轮没有原话，不能重试");
+    const bot = bots().list().find((b) => b.id === turn.botId);
+    if (!bot) throw new Error("机器人不在了");
+    const controller = new AbortController();
+    botAborts.set(bot.id, controller);
+    try {
+      const next = await bots().reply(bot, turn.input, {
+        threadId: turn.threadId || "",
+        signal: controller.signal,
+        onDelta: (delta) => sendDelta({ botId: bot.id }, delta),
+        onTool: (tool) => sendTool({ botId: bot.id }, tool),
+      });
+      if (next) next.trigger = { kind: "retry", ref: turn.id };
+      broadcast();
+      return { ok: true, turn: next };
+    } finally {
+      botAborts.delete(bot.id);
+    }
+  },
   botAcceptProposal: async ({ turnId } = {}) => {
     const turn = (store.state.botTurns || []).find((t) => t.id === String(turnId || ""));
     if (!turn?.proposal) throw new Error("这一轮没有建议");
