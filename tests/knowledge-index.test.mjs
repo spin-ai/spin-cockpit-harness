@@ -174,7 +174,7 @@ async function main() {
       const ws = XLSX.utils.aoa_to_sheet([["季度", "收入"], ["Q1", 120], ["Q2", 150]]);
       XLSX.utils.book_append_sheet(wb, ws, "收入表");
       const file = path.join(dir, "收入表.xlsx");
-      XLSX.writeFile(wb, file);
+      fs.writeFileSync(file, XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
       const res = await kb.ingestFile({ source: file });
       check("xlsx 解析", res.ok && res.parser === "xlsx" && res.engine === "builtin", `${res.pages ?? 0} 页 / ${res.engine} · ${res.parser}`);
       const { hits } = await kb.search("收入", { mode: "fts" });

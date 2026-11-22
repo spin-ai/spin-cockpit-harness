@@ -57,7 +57,7 @@ cases.push(check("xlsx：转成表格并转义单元格（不会注入 HTML）",
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([["名字", "备注"], ["alpha", "<b>不是标签</b>"]]), "Sheet1");
   const file = path.join(dir, "a.xlsx");
-  XLSX.writeFile(book, file);
+  fs.writeFileSync(file, XLSX.write(book, { type: "buffer", bookType: "xlsx" }));
   const res = await renderOffice({ file, ext: "xlsx" });
   assert.equal(res.error, undefined, res.error);
   assert.match(res.html, /alpha/);
@@ -72,7 +72,7 @@ cases.push(check("xlsx：大表按行截断并标记", async () => {
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), "big");
   const file = path.join(dir, "big.xlsx");
-  XLSX.writeFile(book, file);
+  fs.writeFileSync(file, XLSX.write(book, { type: "buffer", bookType: "xlsx" }));
   const res = await renderOffice({ file, ext: "xlsx" });
   assert.equal(res.truncated, true);
   const trs = (res.html.match(/<tr>/g) || []).length;

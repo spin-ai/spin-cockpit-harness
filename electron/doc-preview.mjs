@@ -104,7 +104,8 @@ async function renderDocx(file) {
 async function renderExcel(file) {
   const mod = await import("xlsx");
   const XLSX = mod.default ?? mod;
-  const book = XLSX.readFile(file, { cellDates: true, sheetRows: MAX_ROWS + 1 });
+  /* 0.20 的 ESM 构建不带 fs：直接喂 buffer，别用 readFile */
+  const book = XLSX.read(fs.readFileSync(file), { type: "buffer", cellDates: true, sheetRows: MAX_ROWS + 1 });
   const parts = [];
   let truncated = false;
   for (const name of book.SheetNames.slice(0, MAX_SHEETS)) {

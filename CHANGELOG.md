@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### Security（依赖：把两个 high 清掉，`npm audit` 归零）
+- **`xlsx` 换成 0.20.3 构建**：npm 上的 `xlsx@0.18.5` 停在两年前，原型污染 / ReDoS 两个 advisory 一直没有修复版（官方修复只发在 SheetJS CDN，本机访问不到）；改用 npm 上的同版本重发布 `@e965/xlsx@0.20.3`，通过 npm alias 仍以 `xlsx` 引入，调用方零改动
+- **0.20 的 ESM 构建不再自带 `fs`**：`doc-preview` 与 `knowledge/parse` 的 xlsx 读取改成「读 buffer + `XLSX.read(buf,{type:'buffer'})`」，不再依赖 `readFile`；用例里的造数据也改成写 buffer
+- **`adm-zip` 统一到 0.6.1**：`epub2@3` 自己锁的 `adm-zip@0.5.18` 有 8 条 advisory（内存放大 / 解压软链覆盖 / SUID 位 / 重名条目…），加 `overrides` 强制走 0.6.1；EPUB 解析实测正常
+- 结果：`npm audit --registry=https://registry.npmjs.org` → **0 vulnerabilities**（此前 3 high）
+
 ### Changed（场景：不再绑项目，舞台上的一行 chrome 收干净）
 - **场景是全局列表**：不再按当前项目过滤；`project_id` 只作「建议项目」，卡片显示来源、没标注显示「全局」。舞台取运行态也按场景的建议项目，不再跟着当前项目漂
 - **阵容按机器人存**：渲染层写 `botId`，主进程 `normalizeCoordinationCast` 两种都认（老数据按执行体反查成机器人）——以前只认 `agentId` 会把 UI 保存的阵容整份丢掉，场景永远存不下阵容

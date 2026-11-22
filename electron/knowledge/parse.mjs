@@ -79,7 +79,8 @@ async function parseXlsx(file) {
   } catch {
     throw attempt("xlsx");
   }
-  const book = XLSX.readFile(file);
+  // 0.20 的 ESM 构建不带 fs：读 buffer 再解析
+  const book = XLSX.read(fs.readFileSync(file), { type: "buffer" });
   const pages = book.SheetNames.map((name, i) => {
     const csv = XLSX.utils.sheet_to_csv(book.Sheets[name], { blankrows: false });
     return { page_no: i + 1, markdown: `## ${name}\n\n${csv}` };
