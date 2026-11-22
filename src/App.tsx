@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { State } from "./types";
+import type { ElementContext, State } from "./types";
 import { Rail } from "./components/Rail";
+import { RUN_STATUS, duration } from "./ui";
 import { TaskPane } from "./components/TaskPane";
+import { TaskChat } from "./components/TaskChat";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { FilePanel } from "./components/FilePanel";
 import { GitView } from "./components/GitView";
@@ -11,7 +13,7 @@ import { CommandPalette, type Command } from "./components/CommandPalette";
 import { Splitter, useStoredSize } from "./components/Splitter";
 import { LangProvider } from "./i18n";
 import { CollapsedPane } from "./components/CollapsedPane";
-import { FilesIcon, ListIcon, TerminalIcon, XIcon } from "./components/Icons";
+import { ChatIcon, ChevronDownIcon, FilesIcon, ListIcon, TerminalIcon, XIcon } from "./components/Icons";
 import { Settings, type SettingsSection } from "./components/Settings";
 import { Guide } from "./components/Guide";
 import { Notes } from "./components/Notes";
@@ -50,7 +52,11 @@ export default function App() {
   const [activeBotId, setActiveBotId] = useState<string | null>(null);
   /** 工作区右侧的机器人配置抽屉：当前在看哪个 bot */
   const [botDrawerId, setBotDrawerId] = useState<string | null>(null);
-  const [todoW, setTodoW] = useStoredSize("cmh.layout.todoW", 220, 180, 520);
+  /** 预览里拾取的元素上下文：随下一次派活发出去 */
+  const [pendingContext, setPendingContext] = useState<ElementContext | null>(null);
+  const [todoW, setTodoW] = useStoredSize("cmh.layout.todoW.v2", 360, 240, 560);
+  // 左栏上下两段：上面 Chat、下面任务列表；中间分隔条可拖高度
+  const [chatH, setChatH] = useStoredSize("cmh.layout.chatH", 320, 140, 900);
   const [filesW, setFilesW] = useStoredSize("cmh.layout.filesW", 280, 180, 640);
   const [focusedPane, setFocusedPane] = useState<PaneId | null>(null);
   // 窗口变窄（或整窗放大）时，固定宽度的侧栏要跟着收，否则工作区会横向溢出
@@ -62,14 +68,15 @@ export default function App() {
   }, []);
   const [collapsed, setCollapsed] = useState<Record<PaneId, boolean>>(() => {
     try {
-      const raw = JSON.parse(localStorage.getItem("cmh.layout.collapsed") || "{}");
-      return { todo: !!raw.todo, chat: !!raw.chat, terminal: !!raw.terminal, files: !!raw.files };
+      const raw = JSON.parse(localStorage.getItem("cmh.layout.collapsed.v2") || "{}");
+      // 右栏（文件 / 会话 / Git）默认收起：终端吃满剩下的宽度，需要时点窄条或打开文件再展开
+      return { todo: !!raw.todo, chat: !!raw.chat, terminal: !!raw.terminal, files: raw.files !== false };
     } catch {
-      return { todo: false, chat: false, terminal: false, files: false };
+      return { todo: false, chat: false, terminal: false, files: true };
     }
   });
   useEffect(() => {
-    try { localStorage.setItem("cmh.layout.collapsed", JSON.stringify(collapsed)); } catch { /* ignore */ }
+    try { localStorage.setItem("cmh.layout.collapsed.v2", JSON.stringify(collapsed)); } catch { /* ignore */ }
   }, [collapsed]);
   useEffect(() => {
     const reset = () => {
@@ -142,15 +149,20 @@ export default function App() {
     return () => window.removeEventListener("harness:open-settings", onOpen);
   }, []);
 
-  /** 打开一条会话：终端模式的左栏「派活 / 纠偏」就作用在这个 thread 上 */
+  /** 打开一条会话：终端模式的左栏上段 Chat 就作用在这个 thread 上 */
   const openSession = useCallback((threadId?: string | null) => {
     if (threadId) setThreadId(threadId);
+    // 显式「打开会话」才展开 Chat；点任务行不算（不许悄悄重排 / 改展开态）
+    setCollapsed((c) => (c.chat ? { ...c, chat: false } : c));
     setView("terminal");
   }, []);
 
-  // 「问清楚」/ 点任务 / 插件草稿都落到会话：面板收着就先展开 dock
+  // 「问清楚」/ 点任务 / 插件草稿都落到会话：Chat 收着就先展开，再切到终端页
   useEffect(() => {
-    const onFocusChat = () => setView("terminal");
+    const onFocusChat = () => {
+      setCollapsed((c) => (c.chat ? { ...c, chat: false } : c));
+      setView("terminal");
+    };
     window.addEventListener("harness:focus-chat", onFocusChat);
     return () => window.removeEventListener("harness:focus-chat", onFocusChat);
   }, []);
@@ -390,6 +402,7 @@ export default function App() {
 
   useEffect(() => {
     // 切会话时丢掉未发送的元素上下文，避免把 A 任务的元素发给 B
+    setPendingContext(null);
   }, [threadId]);
 
   const addProject = useCallback(async () => {
@@ -658,6 +671,42 @@ export default function App() {
         {scoped && (
           <div className="workspace-view" style={{ display: view === "terminal" ? "contents" : "none" }}>
           <>
+            <div className={`left-stack${collapsed.todo ? " todo-collapsed" : ""}`} style={{ ["--left-chat-h" as string]: `${chatH}px` }}>
+            {/* 左栏上段：Chat（派活 / 纠偏） */}
+            {collapsed.chat ? (
+              <button
+                className="stack-head"
+                title="展开 Chat"
+                aria-label="展开 Chat"
+                aria-expanded={false}
+                onClick={() => togglePane("chat")}
+              >
+                <span className="stack-head-title"><ChatIcon size={15} />Chat</span>
+                <span className="spacer" />
+                <ChevronDownIcon size={13} />
+              </button>
+            ) : (
+              <TaskChat
+                state={scoped}
+                globalState={state}
+                thread={thread}
+                threads={scoped.threads}
+                now={now}
+                act={act}
+                onSelect={selectTodo}
+                onOpenGlobal={(id) => void openTodoFromPalette(id)}
+                onNewThread={() => void newThread()}
+                onOpenThread={openSession}
+                context={pendingContext}
+                onClearContext={() => setPendingContext(null)}
+                onCollapse={() => togglePane("chat")}
+                enterToSend={state.settings?.enterToSend ?? true}
+                confirmStop={state.settings?.confirmStop ?? false}
+                maximized={maximized === "chat"}
+                onToggleMaximize={() => toggleMaximize("chat")}
+              />
+            )}
+            {!collapsed.chat && !collapsed.todo && <Splitter orientation="horizontal" onDelta={(d) => setChatH((h) => h + d)} />}
             {collapsed.todo ? (
               <CollapsedPane label="TODO" title="TODO 列表" icon={<ListIcon size={16} />} onExpand={() => togglePane("todo")} />
             ) : (
@@ -672,7 +721,6 @@ export default function App() {
                 onAddProject={() => void addProject()}
                 onManageProjects={() => setView("projects")}
                 onSwitchProject={(id) => void switchProject(id)}
-                onCollapse={() => togglePane("todo")}
                 maximized={maximized === "todo"}
                 onToggleMaximize={() => toggleMaximize("todo")}
                 confirmStop={state.settings?.confirmStop}
@@ -684,6 +732,7 @@ export default function App() {
                 activeBotId={thread?.kind === "bot" ? thread.botId ?? null : null}
               />
             )}
+            </div>
             {sep1 === "6px" ? <Splitter onDelta={resizeTodo} /> : <div className="splitter-off" />}
             <div className={`terminal-slot is-stacked${maximized === "terminal" ? " pane-max-target" : ""}`}>
               {/* 没有选中任务时不显示这一条：空态的「没有选中任务 / 选中一行后会出现 run」是废话 */}
@@ -692,14 +741,11 @@ export default function App() {
                   <span className="mono tiny muted">{runbarRun?.id || "—"}</span>
                   <span className="rb-title ellipsis">{`${selected.key} ${selected.title}`}</span>
                   <span className="spacer" />
-                  <span className="rb-note">同一份状态：</span>
-                  <button className="rb-chip" title="回到左栏那一行" onClick={() => setCollapsed((c) => ({ ...c, todo: false }))}>TODO 行</button>
-                  <button className="rb-chip link" title="在右栏「会话」里看这次对话" onClick={() => { setCollapsed((c) => (c.files ? { ...c, files: false } : c)); window.setTimeout(() => window.dispatchEvent(new Event("harness:open-session-tab")), 80); }}>会话</button>
-                  <span className="rb-chip on">终端标签</span>
+                  <span className="rb-note">{runbarRun ? `${RUN_STATUS[runbarRun.status] || runbarRun.status} · ${duration(runbarRun, now)}` : "未开始"}</span>
                 </div>
               )}
               <div className="terminal-slot-main" style={{ display: collapsed.terminal ? "none" : "flex" }}>
-                <TerminalPanel state={state} todo={selected} act={act} onOpenThread={openSession} onPickedContext={() => { /* 派活入口已去掉：拾取的元素请在对话里直接描述 */ }} previewRoot={workdir} previewHost={previewHost} onCollapse={() => togglePane("terminal")} terminalFontSize={state.settings?.terminalFontSize} terminalScrollback={state.settings?.terminalScrollback} previewHomeUrl={state.settings?.previewHomeUrl} maximized={maximized === "terminal"} onToggleMaximize={() => toggleMaximize("terminal")} />
+                <TerminalPanel state={state} todo={selected} act={act} onOpenThread={openSession} onPickedContext={setPendingContext} previewRoot={workdir} previewHost={previewHost} onCollapse={() => togglePane("terminal")} terminalFontSize={state.settings?.terminalFontSize} terminalScrollback={state.settings?.terminalScrollback} previewHomeUrl={state.settings?.previewHomeUrl} maximized={maximized === "terminal"} onToggleMaximize={() => toggleMaximize("terminal")} />
               </div>
               {collapsed.terminal && (
                 <CollapsedPane label="TERM" title="终端" icon={<TerminalIcon size={16} />} onExpand={() => togglePane("terminal")} />

@@ -327,16 +327,17 @@ button{cursor:pointer}
 .task-scope{flex:none;height:28px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface-hover);color:var(--muted);font-size:11.5px;white-space:nowrap}
 .task-scope:hover{border-color:var(--border-strong);color:var(--fg)}
 .task-search::placeholder{color:var(--faint)}
-.task-filters{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;min-width:0}
-.task-filter-chips{display:flex;align-items:center;gap:2px;min-width:0;overflow-x:auto;scrollbar-width:none}
-.task-filter-chips::-webkit-scrollbar{display:none}
-.task-view-toggle{display:flex;align-items:center;gap:2px;flex:none;margin-left:auto}
-.task-view-toggle button{width:var(--icon-size);height:var(--icon-size);display:grid;place-items:center;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--muted);padding:0}
-.task-view-toggle button:hover{background:var(--surface-hover);color:var(--fg)}
-.task-view-toggle button.on{background:var(--surface);border-color:var(--border);color:var(--fg)}
-.task-filters button{border:1px solid transparent;background:transparent;color:var(--muted);font-size:11.5px;padding:2px 6px;border-radius:5px}
-.task-filters button:hover{background:var(--surface-hover)}
-.task-filters button.on{background:var(--surface);border-color:var(--border);color:var(--fg)}
+.task-filter-select{flex:none;max-width:96px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--fg-2);font-size:11.5px;padding:0 4px}
+.task-filter-select:hover{border-color:var(--border-strong);color:var(--fg)}
+/* 任务头图标组里的 ⋯ 与其他图标同尺寸（20px），不自带按钮外观 */
+.pane-actions .btn.row-menu-trigger{width:var(--icon-size);height:var(--icon-size);min-width:var(--icon-size);padding:0;border:0;background:transparent;color:var(--muted);display:grid;place-items:center}
+.pane-actions .btn.row-menu-trigger:hover{background:var(--surface-hover);color:var(--fg)}
+.pane-head .btn.row-menu-trigger{width:var(--icon-size);height:var(--icon-size);min-width:var(--icon-size);padding:0;border:0;background:transparent;color:var(--muted);display:grid;place-items:center}
+.pane-head .btn.row-menu-trigger:hover{background:var(--surface-hover);color:var(--fg)}
+.row-menu-pop button{display:flex;align-items:center;gap:8px}
+.row-menu-pop button .row-menu-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.row-menu-pop button .row-menu-hint{margin-left:auto;flex:none;font-size:10.5px;color:var(--faint)}
+.row-menu-pop button.on{background:var(--brand-soft);color:var(--fg)}
 .todo-group-head{border:0;background:transparent;width:100%;text-align:left;cursor:pointer;font:600 11.5px var(--font-sans);letter-spacing:.02em;color:var(--muted);padding:6px 8px 6px;display:flex;justify-content:space-between}
 .todo-group-head:hover{color:var(--fg)}
 .todo-group-head .chev{font-size:10px;color:var(--faint);width:8px}
@@ -347,6 +348,9 @@ button{cursor:pointer}
 .task-quick{display:flex;gap:3px;justify-content:flex-end;max-height:0;overflow:hidden;opacity:0;transition:max-height .12s,opacity .12s}
 .task-row:hover .task-quick,.task-row.on .task-quick,.task-row:focus-within .task-quick,.task-row:focus .task-quick{max-height:36px;opacity:1;margin-top:2px}
 .task-quick .btn{height:22px;padding:0 6px;font-size:11.5px;flex:none}
+/* 任务行里的 ⋯：和旁边 22px 小按钮同高，不带按钮外观 */
+.task-quick .row-menu-trigger{width:22px;height:22px;min-width:22px;padding:0;border:0;background:transparent;color:var(--muted);display:grid;place-items:center}
+.task-quick .row-menu-trigger:hover{background:var(--surface-hover);color:var(--fg)}
 .task-row{padding:8px 9px 8px 12px}
 .task-row::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;border-radius:2px;background:var(--border)}
 .task-row.on::before{background:var(--brand)}
@@ -514,14 +518,6 @@ button{cursor:pointer}
 
 /* chat usability: mode hint, jump-to-bottom, message actions, rich text */
 .chat-body-wrap{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
-.chat-history{position:relative;display:flex;align-items:center}
-.chat-history-pop{position:absolute;right:0;top:calc(100% + 8px);z-index:40;width:280px;max-width:70vw;max-height:50vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 10px 30px rgba(15,23,42,.16);padding:4px}
-.chat-history-item{width:100%;display:grid;grid-template-columns:8px minmax(0,1fr) auto;align-items:center;gap:7px;border:0;background:transparent;color:var(--fg-2);text-align:left;padding:7px 8px;border-radius:6px;font-size:12.5px;cursor:pointer;min-width:0}
-.chat-history-item:hover{background:var(--surface-hover);color:var(--fg)}
-.chat-history-item.on{background:var(--brand-soft);color:var(--fg)}
-.chat-history-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chat-history-meta{font-size:10.5px;color:var(--faint);white-space:nowrap}
-.chat-history-item .thread-dot{width:6px;height:6px}
 .chat-jump{position:absolute;right:12px;bottom:10px;z-index:2;border:1px solid var(--border);background:var(--surface);color:var(--fg-2);font-size:11.5px;line-height:1;padding:6px 9px;border-radius:999px;box-shadow:0 4px 14px rgba(15,23,42,.14)}
 .chat-jump:hover{background:var(--surface-hover);color:var(--fg)}
 .chat-toggle{height:24px;border:1px solid var(--input);background:var(--surface);border-radius:6px;font-size:11.5px;padding:0 7px;color:var(--faint)}
@@ -1253,9 +1249,12 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .runbar{flex:none;display:flex;align-items:center;gap:7px;height:30px;padding:0 10px;border-bottom:1px solid var(--border);background:var(--page-canvas);font-size:11px;overflow:auto}
 .rb-title{font-size:11.5px;color:var(--fg-2);max-width:34ch;white-space:nowrap}
 .rb-note{font-size:10.5px;color:var(--faint);white-space:nowrap}
-.rb-chip{flex:none;height:19px;padding:0 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--muted);font-size:10.5px;display:inline-flex;align-items:center;white-space:nowrap}
-.rb-chip:hover{border-color:var(--border-strong);color:var(--fg-2)}
-.rb-chip.on{background:var(--brand-soft);border-color:var(--brand-line);color:var(--fg-2)}
+/* 空会话：一行提示 + 一个入口（不占常驻 chrome） */
+.chat-empty-inline{display:flex;align-items:center;gap:8px;padding:10px 12px;flex:none}
+.chat-empty-inline .inline-empty{padding:0;flex:1;min-width:0}
+/* composer 里的 ⋯ 只当溢出入口，不自带按钮外观 */
+.composer-actions .row-menu-trigger{height:24px;width:24px;min-width:24px;padding:0;border:0;background:transparent;color:var(--muted);display:grid;place-items:center}
+.composer-actions .row-menu-trigger:hover{background:var(--surface-hover);color:var(--fg)}
 /* 终端模式左栏：上段 Chat（派活 / 纠偏），下段任务列表；中间横条拖高度 */
 .left-stack{min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .left-stack > .chat-pane{flex:none;height:var(--left-chat-h,320px);max-height:calc(100% - 172px);min-height:0}
@@ -1269,8 +1268,13 @@ body.resizing-row,body.resizing-row *{cursor:row-resize!important;user-select:no
 .stack-head:hover{background:var(--surface-hover);color:var(--fg-2)}
 .stack-head .stack-head-title{display:inline-flex;align-items:center;gap:6px;min-width:0}
 .stack-head .spacer{flex:1 1 auto}
-/* 任务段收起后，腾出的高度交给项目区 */
-.todo-pane.tasks-folded .project-panel{flex:1 1 auto;max-height:none}
+/* 任务段收起后，腾出的高度交给展开的项目列表 */
+.todo-pane.tasks-folded .project-panel:not(.collapsed){flex:1 1 auto;max-height:none}
+/* 任务段收起、项目也收起：腾出的高度给 Chat，避免左栏底部留一大片空白 */
+.left-stack:has(> .todo-pane.tasks-folded) > .chat-pane{flex:1 1 auto;height:auto;max-height:none}
+.left-stack:has(> .todo-pane.tasks-folded) > .todo-pane{flex:0 0 auto}
+.left-stack:has(> .todo-pane.tasks-folded .project-panel:not(.collapsed)) > .chat-pane{flex:none;height:var(--left-chat-h,320px);max-height:calc(100% - 172px)}
+.left-stack:has(> .todo-pane.tasks-folded .project-panel:not(.collapsed)) > .todo-pane{flex:1 1 auto}
 .main.pane-max .left-stack > *{visibility:hidden}
 .main.pane-max .left-stack > .pane-max-target{visibility:visible;position:absolute;inset:0 0 0 64px;z-index:12;border:0;background:var(--surface);height:auto}
 /* BOT 工作台：整页 BotConsole（左 bot 列表 / 中 回合流 / 右 inspector） */
@@ -4568,10 +4572,10 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
   border:0;background:transparent;padding:56px 16px;box-shadow:none;
 }
 .chat-pane .chat-scroll > .chat-empty .chat-empty-mark{display:none}
-.chat-pane .chat-scroll > .chat-empty b,
-.bot-main .bot-stream > .bot-empty .empty-state b{font-size:20px;font-weight:500;color:var(--fg);line-height:1.4}
-.chat-pane .chat-scroll > .chat-empty p,
-.bot-main .bot-stream > .bot-empty .empty-state p{font-size:13px;color:var(--faint);max-width:360px}
+.chat-pane .chat-scroll > .chat-empty > b,
+.bot-main .bot-stream > .bot-empty .empty-state > b{font-size:20px;font-weight:500;color:var(--fg);line-height:1.4}
+.chat-pane .chat-scroll > .chat-empty > p,
+.bot-main .bot-stream > .bot-empty .empty-state > p{font-size:13px;color:var(--faint);max-width:360px}
 .bot-main .bot-stream > .bot-empty .empty-state{min-height:0;padding:0;gap:8px}
 .bot-main .bot-stream > .bot-empty .empty-state-mark{display:none}
 .bot-main .bot-why summary{display:inline-flex;align-items:center;gap:4px;padding:0;min-height:22px;color:var(--faint)}

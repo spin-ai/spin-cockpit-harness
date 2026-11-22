@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Delegation, ElementContext, Message, MissionPlanRecord, State, Thread, Todo } from "../types";
 import { RUN_STATUS, STATUS, agentOf, duration, lastRun, missingKeyInfo, timeAgo } from "../ui";
-import { ChevronDownIcon, CopyCheckIcon, CopyIcon, FileTextIcon, LinkIcon, PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon, PencilIcon, RefreshIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, WrenchIcon } from "./Icons";
+import { ChevronDownIcon, CopyCheckIcon, CopyIcon, FileTextIcon, LinkIcon, PanelExpandIcon, PanelRestoreIcon, PencilIcon, RefreshIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, WrenchIcon } from "./Icons";
 import { requestTerminalAdopt } from "../terminal-events";
+import { RowMenu } from "./RowMenu";
 import { templateOf } from "../office/templates";
 import { XIcon } from "./Icons";
 
@@ -98,7 +99,6 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   const [mentionDismissed, setMentionDismissed] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalog>({ models: [], efforts: [] });
   const [modelLoading, setModelLoading] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
   /** 机器人会话的流式回复：消息要等整轮结束才落库，不在这里拼就看不到“及时回复” */
   const [botStream, setBotStream] = useState("");
   const [botPending, setBotPending] = useState<string | null>(null);
@@ -147,7 +147,6 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     runtime: "acp" | "terminal"; worktree: string; reason: string; summary: string;
   } | null>(null);
   const [inputHistoryIndex, setInputHistoryIndex] = useState<number | null>(null);
-  const historyRef = useRef<HTMLDivElement>(null);
   const inputHistoryDraft = useRef("");
 
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -190,15 +189,6 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     return counts;
   }, [state.messages]);
   const historyThreads = useMemo(() => [...threads].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)), [threads]);
-
-  useEffect(() => {
-    if (!historyOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (!historyRef.current?.contains(e.target as Node)) setHistoryOpen(false);
-    };
-    window.addEventListener("mousedown", onDown, true);
-    return () => window.removeEventListener("mousedown", onDown, true);
-  }, [historyOpen]);
 
   useEffect(() => { try { localStorage.setItem("cmh.chat.showTool", showTool ? "1" : "0"); } catch { /* ignore */ } }, [showTool]);
 
@@ -649,42 +639,38 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
       <div className="pane-head" onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest("button")) onToggleMaximize?.(); }}>
         <span>Chat</span>
         <div className="row gap6">
-          {todo && <span className={`pill status ${mission ? missionPillClass(mission.missionState) : STATUS[todo.status].cls}`}>{todo.confirmed ? "已确认" : mission ? missionStateLabel(mission.missionState) : STATUS[todo.status].label}</span>}
-          {historyThreads.length > 1 && (
-            <div className="chat-history" ref={historyRef}>
-              <button className="link" onClick={() => setHistoryOpen((v) => !v)}>历史</button>
-              {historyOpen && (
-                <div className="chat-history-pop">
-                  {historyThreads.map((item) => {
-                    const itemTodo = item.todoId ? state.todos.find((t) => t.id === item.todoId) ?? null : null;
-                    return (
-                      <button
-                        key={item.id}
-                        className={`chat-history-item ${item.id === thread?.id ? "on" : ""}`}
-                        onClick={() => { setHistoryOpen(false); onOpenThread?.(item.id); }}
-                      >
-                        <span className={`thread-dot ${itemTodo ? STATUS[itemTodo.status].cls : "todo"}`} />
-                        <span className="chat-history-title ellipsis">{itemTodo?.title || item.title || "新任务"}</span>
-                        <span className="chat-history-meta">{threadMsgCounts[item.id] || 0} 条 · {timeAgo(item.updatedAt, now)}前</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-          <button className={`link ${progressOpen ? "on" : ""}`} onClick={() => setProgressOpen((v) => !v)} title="所有项目 / 终端的全局进展">
-            进展{progressCount > 0 ? ` ${progressCount}` : ""}
-          </button>
-          <button className="link" onClick={onNewThread} title="新建会话">＋ 新任务</button>
+          <RowMenu title="会话与进展">
+            {historyThreads.length > 1 && (
+              <>
+                <div className="row-menu-label">历史会话</div>
+                {historyThreads.slice(0, 8).map((item) => {
+                  const itemTodo = item.todoId ? state.todos.find((t) => t.id === item.todoId) ?? null : null;
+                  return (
+                    <button
+                      key={item.id}
+                      className={item.id === thread?.id ? "on" : ""}
+                      title={itemTodo?.title || item.title || "新任务"}
+                      onClick={() => onOpenThread?.(item.id)}
+                    >
+                      <span className="row-menu-title">{itemTodo ? `${itemTodo.key} ` : ""}{itemTodo?.title || item.title || "新任务"}</span>
+                      <span className="row-menu-hint">{threadMsgCounts[item.id] || 0} 条</span>
+                    </button>
+                  );
+                })}
+              </>
+            )}
+            <button onClick={() => setProgressOpen((v) => !v)} title="所有项目 / 终端的全局进展">
+              {progressOpen ? "收起全局进展" : `全局进展${progressCount > 0 ? ` ${progressCount}` : ""}`}
+            </button>
+          </RowMenu>
           {onToggleMaximize && (
             <button className="pane-collapse" title={maximized ? "还原（Esc）" : "最大化"} aria-label={maximized ? "还原 Chat" : "最大化 Chat"} onClick={onToggleMaximize}>
               {maximized ? <PanelRestoreIcon size={13} /> : <PanelExpandIcon size={13} />}
             </button>
           )}
           {onCollapse && (
-            <button className="pane-collapse" title="收起 Chat" aria-label="收起 Chat" onClick={onCollapse}>
-              <PanelCollapseIcon size={13} />
+            <button className="pane-collapse" title="收起 Chat" aria-label="收起 Chat" aria-expanded={true} onClick={onCollapse}>
+              <ChevronDownIcon size={13} className="rot-180" />
             </button>
           )}
         </div>
@@ -750,7 +736,10 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
       )}
 
       {!thread ? (
-        <div className="inline-empty">点「＋ 新任务」开始</div>
+        <div className="chat-empty-inline">
+          <span className="inline-empty">还没有会话。新建一个，或点一条任务回到它的对话。</span>
+          <button className="btn tiny-btn" onClick={onNewThread} title="新建会话（⌘N）">新建会话</button>
+        </div>
       ) : (
         <>
           <div className="thread-bar">
@@ -1116,18 +1105,14 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                   </>
                 )}
                 {!todo && !botThread && (
-                  <>
-                    <button className={`chat-toggle ${chatOnly ? "on" : ""}`} title="不创建可见任务，只和 Agent 对话；可随时转为任务" onClick={() => { setChatOnly((v) => !v); setProposal(null); }}>只聊</button>
-                    <button className={`chat-toggle ${previewAllocation && !chatOnly ? "on" : ""}`} title="发送前先看项目 / Agent / 执行方式建议" onClick={() => setPreviewAllocation((v) => !v)}>预览分配</button>
-                  </>
+                  <button className={`chat-toggle ${chatOnly ? "on" : ""}`} title="不创建可见任务，只和 Agent 对话；可随时转为任务" onClick={() => { setChatOnly((v) => !v); setProposal(null); }}>只聊</button>
                 )}
-                {!botThread && <button
-                  className={`chat-toggle ${showTool ? "on" : ""}`}
-                  title={showTool ? "隐藏工具与思考" : "显示工具与思考"}
-                  onClick={() => setShowTool((v) => !v)}
-                >
-                  工具
-                </button>}
+                {!botThread && (
+                  <RowMenu title="更多发送选项">
+                    {!todo && <button onClick={() => setPreviewAllocation((v) => !v)}>{previewAllocation ? "取消预览分派" : "发送前预览分派"}</button>}
+                    <button onClick={() => setShowTool((v) => !v)}>{showTool ? "隐藏工具与思考" : "显示工具与思考"}</button>
+                  </RowMenu>
+                )}
                 <button
                   className={`ds-send mode-${baseMode}`}
                   disabled={!text.trim() || sending}

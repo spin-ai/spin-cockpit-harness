@@ -4,10 +4,11 @@ import type { State, Todo, TodoStatus } from "../types";
 import { STATUS, activeRun, agentOf, duration, lastRun, timeAgo } from "../ui";
 import { Splitter, useStoredSize } from "./Splitter";
 import {
-  BoardIcon, ChevronDownIcon, ChevronRightIcon, EllipsisIcon, FolderPlusIcon, ListIcon,
+  ChevronDownIcon, ChevronRightIcon, EllipsisIcon, FolderPlusIcon,
   PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon, PlusIcon, SlidersIcon,
 } from "./Icons";
 import { ListContextMenu } from "./ListContextMenu";
+import { RowMenu } from "./RowMenu";
 import { requestTerminalAt } from "../terminal-events";
 import { requestTerminalAdopt } from "../terminal-events";
 import { assignmentsForBot } from "../selectors/assignments";
@@ -182,8 +183,13 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
   useEffect(() => {
     try { localStorage.setItem("cmh.layout.projectCollapsed", projectCollapsed ? "1" : "0"); } catch { /* ignore */ }
   }, [projectCollapsed]);
+  /** 任务段折叠：只收起筛选 + 列表，段头（任务 / 搜索 / ＋）留在原位 */
+  const [tasksFolded, setTasksFolded] = useState(() => {
+    try { return localStorage.getItem("cmh.layout.tasksFolded") === "1"; } catch { return false; }
+  });
+  useEffect(() => { try { localStorage.setItem("cmh.layout.tasksFolded", tasksFolded ? "1" : "0"); } catch { /* ignore */ } }, [tasksFolded]);
   useEffect(() => {
-    const reset = () => setProjectCollapsed(false);
+    const reset = () => { setProjectCollapsed(false); setTasksFolded(false); };
     window.addEventListener("harness:reset-layout", reset);
     return () => window.removeEventListener("harness:reset-layout", reset);
   }, []);
@@ -201,7 +207,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
   }, [state.todos, selectedId]);
 
   useEffect(() => {
-    const onNew = () => { setLayout("list"); setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); };
+    const onNew = () => { setLayout("list"); setTasksFolded(false); setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); };
     window.addEventListener("harness:new-task", onNew);
     return () => window.removeEventListener("harness:new-task", onNew);
   }, []);
@@ -305,18 +311,24 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
   };
 
   return (
-    <aside className={`todo-pane mode-${mode}${maximized ? " pane-max-target" : ""}`} tabIndex={0} aria-label="TODO 列表">
+    <aside className={`todo-pane mode-${mode}${tasksFolded ? " tasks-folded" : ""}${maximized ? " pane-max-target" : ""}`} tabIndex={0} aria-label="TODO 列表">
       <div className="task-tools">
         <div className="task-search-row">
           <span className="task-section-title" title="任务列表">任务</span>
           <input className="task-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索" />
+          {/* 状态筛选收成下拉：和搜索/范围同一行（一个区域只有一行 chrome） */}
+          <select className="task-filter-select" value={filter} title="按状态筛选" onChange={(e) => setFilter(e.target.value as Filter)}>
+            {([["all", "全部"], ["needs", "待处理"], ["active", "进行中"], ["review", "待确认"], ["confirmed", "已完成"]] as [Filter, string][]).map(([id, label]) => (
+              <option key={id} value={id}>{label}</option>
+            ))}
+          </select>
           {onToggleScope && (
             <button className="task-scope" title="任务范围：只看当前项目 / 看所有项目" onClick={onToggleScope}>
               {allProjects ? "全部项目" : "本项目"}
             </button>
           )}
           <div className="pane-actions">
-            <button className="pane-add" title="收集想法 / 新建任务（一行一条，⌘⇧N）" aria-label="新建任务" onClick={() => { setLayout("list"); setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); }}><PlusIcon size={13} /></button>
+            <button className="pane-add" title="收集想法 / 新建任务（一行一条，⌘⇧N）" aria-label="新建任务" onClick={() => { setLayout("list"); setTasksFolded(false); setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); }}><PlusIcon size={13} /></button>
             {onToggleMaximize && (
               <button className="pane-collapse" title={maximized ? "还原（Esc）" : "最大化"} aria-label={maximized ? "还原 TODO" : "最大化 TODO"} onClick={onToggleMaximize}>
                 {maximized ? <PanelRestoreIcon size={13} /> : <PanelExpandIcon size={13} />}
@@ -327,21 +339,27 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
                 <PanelCollapseIcon size={13} />
               </button>
             )}
-          </div>
-        </div>
-        <div className="task-filters">
-          {/* 筛选横向滚动：窄窗也不换行（换行会把「看板」挤掉） */}
-          <div className="task-filter-chips">
-            {([["all", "全部"], ["needs", "待处理"], ["active", "进行中"], ["review", "待确认"], ["confirmed", "已完成"]] as [Filter, string][]).map(([id, label]) => (
-              <button key={id} className={filter === id ? "on" : ""} aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>
-            ))}
-          </div>
-          <div className="task-view-toggle">
-            <button className={layout === "list" ? "on" : ""} title="列表" aria-label="列表" aria-pressed={layout === "list"} onClick={() => chooseLayout("list")}><ListIcon size={13} /></button>
-            <button className={layout === "board" ? "on" : ""} title="看板" aria-label="看板" aria-pressed={layout === "board"} onClick={() => chooseLayout("board")}><BoardIcon size={13} /></button>
+            <RowMenu title="任务视图">
+              <label className="row-menu-label">视图
+                <select value={layout} onChange={(e) => chooseLayout(e.target.value as "list" | "board")}>
+                  <option value="list">列表</option>
+                  <option value="board">看板</option>
+                </select>
+              </label>
+            </RowMenu>
+            <button
+              className="pane-collapse"
+              title={tasksFolded ? "展开任务列表" : "收起任务列表"}
+              aria-label={tasksFolded ? "展开任务列表" : "收起任务列表"}
+              aria-expanded={!tasksFolded}
+              onClick={() => setTasksFolded((v) => !v)}
+            >
+              <ChevronDownIcon size={13} className={tasksFolded ? "" : "rot-180"} />
+            </button>
           </div>
         </div>
       </div>
+      {!tasksFolded && (
       <div className="todo-scroll">
         {layout === "board" && (
           <div className="todo-board">
@@ -543,6 +561,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
           </div>
         )}
       </div>
+      )}
       {mode === "bot" && activeBotId && (() => {
         const bot = (state.bots ?? []).find((b) => b.id === activeBotId);
         const rows = bot ? assignmentsForBot(state.todos, state.delegations, bot, state.activeProjectId).rows.slice(0, 6) : [];
@@ -648,17 +667,8 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
       )}
 
       
-      <section className={`project-panel ${projectCollapsed ? "collapsed" : ""}`} style={projectCollapsed ? undefined : { height: projectH }}>
+      <section className={`project-panel ${projectCollapsed ? "collapsed" : ""}`} style={projectCollapsed || tasksFolded ? undefined : { height: projectH }}>
         <div className="project-panel-head">
-          <button
-            className="project-panel-chev"
-            title={projectCollapsed ? "展开项目区" : "收起项目区"}
-            aria-label={projectCollapsed ? "展开项目区" : "收起项目区"}
-            aria-expanded={!projectCollapsed}
-            onClick={() => setProjectCollapsed((v) => !v)}
-          >
-            <ChevronDownIcon size={12} className={projectCollapsed ? "rot-270" : ""} />
-          </button>
           <span className="project-panel-title">项目</span>
           <span className="spacer" />
           <div className="project-panel-actions">
@@ -678,6 +688,15 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
           <button className="icon-btn" title="添加项目" aria-label="添加项目" onClick={onAddProject}><FolderPlusIcon size={13} /></button>
           <button className="icon-btn" title="管理项目" aria-label="管理项目" onClick={onManageProjects}><EllipsisIcon size={13} /></button>
           </div>
+          <button
+            className="project-panel-chev"
+            title={projectCollapsed ? "展开项目列表" : "收起项目列表"}
+            aria-label={projectCollapsed ? "展开项目列表" : "收起项目列表"}
+            aria-expanded={!projectCollapsed}
+            onClick={() => setProjectCollapsed((v) => !v)}
+          >
+            <ChevronDownIcon size={13} className={projectCollapsed ? "" : "rot-180"} />
+          </button>
         </div>
         {!projectCollapsed && <div className="project-panel-list">
           {projectView.group === "flat" && flatSessions.map(({ term, project }) => project && (
@@ -721,7 +740,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
                     <span className={`dot ${p.color}`} />
                     <span className="ellipsis">{p.name}</span>
                     {isCurrent && <span className="tag ok">当前</span>}
-                    <span className="count">{projectCounts[p.id] ?? 0}</span>
+                    {(projectCounts[p.id] ?? 0) > 0 && <span className="count">{projectCounts[p.id]}</span>}
                   </button>
                   <span className="project-row-actions">
                     <button
@@ -918,9 +937,11 @@ function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk, onBroadcas
     return (
       <div className="task-quick" onClick={(e) => e.stopPropagation()}>
         {todo.missionState === "in_review" && <button className="btn tiny-btn primary" onClick={() => act("confirm", { id: todo.id })}>确认 Mission</button>}
-        {todo.missionState === "done" && <button className="btn tiny-btn" onClick={() => act("unconfirm", { id: todo.id })}>撤销确认</button>}
         {active && <button className="btn tiny-btn" onClick={() => { if (!confirmStop || window.confirm("停止主管运行？")) void act("stop", { runId: active.id }); }}>停止主管</button>}
-        {!["done", "cancelled"].includes(todo.missionState || "") && <button className="btn tiny-btn" onClick={() => { if (window.confirm("取消整个 Mission？")) void act("cancelMission", { id: todo.id }); }}>取消</button>}
+        <RowMenu title="更多 Mission 操作">
+          {todo.missionState === "done" && <button onClick={() => act("unconfirm", { id: todo.id })}>撤销确认</button>}
+          {!["done", "cancelled"].includes(todo.missionState || "") && <button className="danger" onClick={() => { if (window.confirm("取消整个 Mission？")) void act("cancelMission", { id: todo.id }); }}>取消 Mission</button>}
+        </RowMenu>
       </div>
     );
   }
@@ -931,29 +952,37 @@ function QuickActions({ todo, state, act, confirmStop, onEdit, onAsk, onBroadcas
     if (confirmStop && !window.confirm(`停止 ${todo.key} 的运行？`)) return;
     void act("stop", { runId });
   };
+  /** 行内只留当前状态的那一个主动作，其余进 ⋯：一行最多 1 primary + ⋯ */
+  const primary = active ? (
+    <button className="btn tiny-btn" title="停止这次运行" onClick={() => stop(active.id)}>停止</button>
+  ) : todo.confirmed ? (
+    <button className="btn tiny-btn" onClick={() => act("unconfirm", { id: todo.id })}>撤销确认</button>
+  ) : todo.status === "in_review" ? (
+    <button className="btn tiny-btn primary" onClick={() => act("confirm", { id: todo.id })}>确认</button>
+  ) : todo.status === "todo" ? (
+    <button
+      className="btn tiny-btn primary"
+      disabled={!chatAgent}
+      title={chatAgent ? "派给 Agent 开始执行" : "没有可用的 Agent"}
+      onClick={() => chatAgent && act("run", { id: todo.id, agentId: chatAgent.id })}
+    >派活</button>
+  ) : null;
   return (
     <div className="task-quick" onClick={(e) => e.stopPropagation()}>
-      <button className="btn tiny-btn" onClick={onDetail} title="在终端区域看完整详情：描述 / 验收 / 运行记录 / 产物">详情</button>
-      <button className="btn tiny-btn" onClick={onEdit} title="编辑标题 / 描述 / 验收 / 优先级（⌘E）">编辑</button>
-      <button className="btn tiny-btn" onClick={onAsk} title="带着预填问题跳到 Chat，先理清再动手">问清楚</button>
-      {active && <button className="btn tiny-btn" onClick={() => stop(active.id)}>停止</button>}
-      {!active && !todo.confirmed && todo.status === "in_review" && <button className="btn tiny-btn primary" onClick={() => act("confirm", { id: todo.id })}>确认</button>}
-      {!active && todo.confirmed && <button className="btn tiny-btn" onClick={() => act("unconfirm", { id: todo.id })}>撤销确认</button>}
-      {!active && !todo.confirmed && todo.status === "todo" && (
-        <button
-          className="btn tiny-btn"
-          disabled={!chatAgent}
-          title={chatAgent ? undefined : "没有可用的 Agent"}
-          onClick={() => chatAgent && act("run", { id: todo.id, agentId: chatAgent.id })}
-        >派活</button>
-      )}
-      {!active && !todo.confirmed && todo.status === "todo" && acpWorkers.length >= 2 && (
-        <button className="btn tiny-btn" title="选择多个 Agent，各自独立 worktree / 终端并行" onClick={onBroadcast}>并行</button>
-      )}
-      {!active && last && ["failed", "cancelled"].includes(last.status) && <button className="btn tiny-btn" onClick={() => act("retry", { id: todo.id })}>重试</button>}
-      {!active && last && last.status === "interrupted" && Boolean(last.acpSession) && (
-        <button className="btn tiny-btn" title="恢复上次中断的 ACP 会话，继续没做完的部分" onClick={() => act("runResume", { runId: last.id })}>续跑</button>
-      )}
+      {primary}
+      <RowMenu title="更多任务操作">
+        <button onClick={onDetail}>详情</button>
+        <button onClick={onEdit}>编辑（⌘E）</button>
+        <button onClick={onAsk}>问清楚（带到 Chat）</button>
+        {!active && !todo.confirmed && todo.status === "todo" && acpWorkers.length >= 2 && (
+          <button onClick={onBroadcast}>多 Agent 并行</button>
+        )}
+        {active && <button onClick={() => stop(active.id)}>停止运行</button>}
+        {!active && last && ["failed", "cancelled"].includes(last.status) && <button onClick={() => act("retry", { id: todo.id })}>重试</button>}
+        {!active && last && last.status === "interrupted" && Boolean(last.acpSession) && (
+          <button onClick={() => act("runResume", { runId: last.id })}>续跑</button>
+        )}
+      </RowMenu>
     </div>
   );
 }
