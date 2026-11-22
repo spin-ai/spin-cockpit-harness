@@ -12,7 +12,7 @@ import { redactSecrets } from "../redact.mjs";
 import { suppressionReason } from "./guard.mjs";
 import { notifyDecision } from "./notify.mjs";
 import { WAIT_LIMIT_MS, describeRoutine, nextRunAt, normalizeRoutine, routineDue } from "./routine.mjs";
-import { BOT_READ_TOOLS, BOT_READ_TOOL_NAMES, parseToolArgs } from "./tools.mjs";
+import { BOT_READ_TOOLS, BOT_READ_TOOL_NAMES, BOT_WRITE_TOOLS, BOT_WRITE_TOOL_NAMES, parseToolArgs } from "./tools.mjs";
 
 const HOUR = 60 * 60 * 1000;
 const MINUTE = 60 * 1000;
@@ -197,11 +197,11 @@ export function buildSystemPrompt(bot, injected = "", { proactive = true, recent
     `习惯：${persona.habit || DEFAULT_PERSONA.habit}`,
     policy.escalate ? `必须请人来做（不要声称已经办了）：${policy.escalate}` : "",
     recent.length ? `你最近主动说过（别自相矛盾、也别重复）：\n${recent.map((t) => `- ${clip(t, 120)}`).join("\n")}` : "",
-    `能力档位：${bot.capability === "dispatch" ? "可以起 Agent 任务，但必须先问人、由人审批" : bot.capability === "work" ? "能起任务并跟踪执行体" : "只读：能读记忆、资料和运行状态，不能写文件、不能起任务"}`,
+    `能力档位：${bot.capability === "dispatch" ? "可以起 Agent 任务（先建 todo），但必须先问人、由人确认起 run" : bot.capability === "work" ? "可以建任务、并跟踪执行体" : "只读：能读记忆、资料和运行状态，不能建任务"}`,
     bot.capability === "read"
       ? "不要声称自己能写代码、改文件、跑命令或起任务；需要动手时，让对方在 Chat 里派活。"
-      : `只读工具（可以直接调，不用问）：${BOT_READ_TOOL_NAMES.join(" / ")}。除此之外你不能写文件、跑命令、起任务——要动手就先说清楚会建一个什么任务，并请人确认。`,
-    bot.capability === "dispatch" ? "不要声称能直接改代码；要动手就先说明会建一个任务、并请人确认。" : "",
+      : `可直接调的工具：${[...BOT_READ_TOOL_NAMES, ...BOT_WRITE_TOOL_NAMES].join(" / ")}。task_create 会真的建一条 todo 并指派给 worker；默认只建任务、不起 run，只有用户明确说「开跑 / 开始 / 直接干」时才可传 start=true。不要声称能改文件或跑任意命令。`,
+    bot.capability === "dispatch" ? "不要声称能直接改代码；用 task_create 建任务，起 run 仍请人确认。" : "",
     proactive
       ? "你会收到一条「工作区事件」和几条记忆。只输出你要说的一句话（最多两句）。"
       : "现在有人在直接跟你说话。正常对话，别复述人格设定，别解释自己是 AI。",
@@ -811,7 +811,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
    *  - 最多 4 轮，防模型在两个工具之间来回问；网关不支持 tools 时自动退回纯对话。
    */
   async function chatStreamWithTools(messages, bot, onDelta, signal, onTool) {
-    const tools = bot.capability === "read" || !runTool ? [] : BOT_READ_TOOLS;
+    const tools = bot.capability === "read" || !runTool ? [] : [...BOT_READ_TOOLS, ...BOT_WRITE_TOOLS];
     const model = String(bot.model || "").trim() || undefined;
     const trace = [];
     const events = [];
@@ -860,7 +860,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
         },
       ];
       for (const call of calls) {
-        const allowed = BOT_READ_TOOL_NAMES.includes(call.name);
+        const allowed = BOT_READ_TOOL_NAMES.includes(call.name) || BOT_WRITE_TOOL_NAMES.includes(call.name);
         let result;
         if (allowed) {
           const args = parseToolArgs(call.args);
@@ -885,7 +885,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
           const rejectedAt = now();
           trace.push({ name: call.name, rejected: true, ok: false, at: rejectedAt, preview: "不在只读工具表里（写操作必须走提议 → 人确认）" });
           events.push({ kind: "tool", name: call.name, argsRaw: String(call.args || "{}").slice(0, 6000), result: "不在只读工具表里（写操作必须走提议 → 人确认）", at: rejectedAt, ms: 0, ok: false, rejected: true });
-          result = { error: `工具 ${call.name} 不可用：你只能查询，不能写文件 / 跑命令 / 起任务；要动手请先请人确认。` };
+          result = { error: `工具 ${call.name} 不可用：你可以查，也可以建任务（task_create）；改文件 / 跑任意命令仍不允许。` };
         }
         conversation = [...conversation, {
           role: "tool", tool_call_id: call.id || call.name,
@@ -991,6 +991,15 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     }
     // 工具调用留痕：没有这一步，“它到底查了什么”只能靠猜
     if (res?.toolTrace?.length) pending.tools = res.toolTrace.slice(0, 40);
+    // 这一轮建过的任务：挂到回合上，Bot 的「任务」页签与看板才能反查到
+    const created = (res?.toolTrace || [])
+      .filter((t) => t.name === "task_create" && t.ok && t.result)
+      .map((t) => { try { return JSON.parse(t.result); } catch { return null; } })
+      .filter((x) => x && x.ok && x.todoId);
+    if (created.length) {
+      pending.todoIds = created.map((x) => x.todoId);
+      pending.todoId = pending.todoIds[0];
+    }
     pending.trace = [...(res?.events || []), ...(res?.toolTrace || [])].slice(0, 200);
     // 成功后补镜像（streaming 阶段还不该进会话，否则 Chat 里会先出现一条空回复）
     try { mirror(pending); } catch (err) { log.warn?.(`[bot] 镜像到会话失败：${String(err?.message || err)}`); }

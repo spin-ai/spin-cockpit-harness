@@ -2953,7 +2953,7 @@ const sendGroupMessage = (groupId, message) => {
  * 只做「查」：记忆 / 知识库 / 任务 / 运行。写操作不在这里 ——
  * 要动手就得走「提议 → 人确认 → 起 run」，也就是 capability 的三档。
  */
-async function botReadTool(name, args = {}) {
+async function botReadTool(name, args = {}, ctx = {}) {
   const st = store.state;
   const projectId = st.activeProjectId || null;
   switch (name) {
@@ -2987,6 +2987,62 @@ async function botReadTool(name, args = {}) {
           kind: t.kind || "task",
         }));
       return { total: st.todos.length, rows };
+    }
+    case "task_create": {
+      const bot = ctx?.bot;
+      if (!bot || !["work", "dispatch"].includes(bot.capability || "")) {
+        return { error: "当前能力档不能建任务（只读档只能查）" };
+      }
+      const title = String(args.title || "").trim().replace(/\s+/g, " ").slice(0, 200);
+      if (!title) return { error: "title 不能为空" };
+      const brief = String(args.brief || "").trim().slice(0, 2000);
+      const ref = String(args.agent || "").trim().replace(/^@/, "").toLowerCase();
+      const handleOf = (a) => String(a.name || "").split("·")[0].trim().toLowerCase();
+      const agent = st.agents.find((a) => a.id === String(args.agent || "")
+        || String(a.alias || "").toLowerCase() === ref
+        || String(a.name || "").toLowerCase() === ref
+        || handleOf(a) === ref);
+      if (!agent) return { error: `找不到 worker：${args.agent || "（空）"}；可用：${st.agents.filter((a) => (a.role || "worker") !== "supervisor").map((a) => a.alias || a.name).join(" / ")}` };
+      if ((agent.role || "worker") === "supervisor") return { error: `${agent.name} 是主管，不能接子任务` };
+      const project = st.projects.find((p) => p.id === st.activeProjectId) || st.projects[0] || null;
+      const cwd = project?.path || agent.cwd || workspaceRoot;
+      const existed = st.todos.find((t) => t.status === "todo" && t.title === title && t.agentId === agent.id && t.botId === bot.id);
+      if (existed) {
+        // 同一轮重复建 / 用户改口说「开跑」：任务已存在时，start=true 就把这次当成启动
+        let runId = null;
+        if (args.start === true) {
+          const active = ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"];
+          if (!st.runs.some((r) => r.todoId === existed.id && active.includes(r.status))) {
+            const before = new Set(st.runs.map((r) => r.id));
+            try {
+              actions.run({ id: existed.id, agentId: agent.id });
+              runId = st.runs.find((r) => r.todoId === existed.id && !before.has(r.id))?.id || null;
+            } catch (err) {
+              return { ok: true, existed: true, key: existed.key, todoId: existed.id, agent: agent.alias || agent.name, started: false, error: String(err?.message || err) };
+            }
+          }
+        }
+        store.persist(); broadcast();
+        return { ok: true, existed: true, key: existed.key, todoId: existed.id, agent: agent.alias || agent.name, started: Boolean(runId), runId };
+      }
+      const todo = actions.createTodo({ title, desc: brief, agentId: agent.id, cwd, priority: "P1", botId: bot.id });
+      if (Array.isArray(args.acceptance) && args.acceptance.length) {
+        todo.acceptance = args.acceptance.map((x) => String(x).trim()).filter(Boolean).slice(0, 5);
+      }
+      // 只有用户明确说「开跑 / 开始 / 直接干」时模型才会传 start=true；默认只建 todo。
+      let runId = null;
+      if (args.start === true) {
+        const before = new Set(st.runs.map((r) => r.id));
+        try {
+          actions.run({ id: todo.id, agentId: agent.id });
+          runId = st.runs.find((r) => r.todoId === todo.id && !before.has(r.id))?.id || null;
+        } catch (err) {
+          store.persist(); broadcast();
+          return { ok: true, key: todo.key, todoId: todo.id, agent: agent.alias || agent.name, started: false, error: String(err?.message || err) };
+        }
+      }
+      store.persist(); broadcast();
+      return { ok: true, key: todo.key, todoId: todo.id, agent: agent.alias || agent.name, started: Boolean(runId), runId };
     }
     case "run_status": {
       const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 30);
@@ -3894,8 +3950,17 @@ const actions = {
   botSnapshot: async () => {
     botUnread = 0;
     const snap = bots().snapshot();
-    // bot 建过/跑过的任务（回合里带 todoId），给「任务」页签用
-    const ids = new Set((store.state.botTurns || []).map((t) => t.todoId).filter(Boolean));
+    // bot 建过/跑过的任务：回合上的 todoId / todoIds，加上 task_create 工具结果，
+    // 给「任务」页签与群聊回执用（重启后 tools 仍在，todoIds 只在内存）。
+    const ids = new Set();
+    for (const t of store.state.botTurns || []) {
+      if (t.todoId) ids.add(t.todoId);
+      for (const id of t.todoIds || []) ids.add(id);
+      for (const tool of t.tools || []) {
+        if (tool?.name !== "task_create" || !tool.ok || !tool.result) continue;
+        try { const r = JSON.parse(tool.result); if (r?.todoId) ids.add(r.todoId); } catch { /* 老数据 */ }
+      }
+    }
     snap.tasks = (store.state.todos || []).filter((t) => ids.has(t.id)).map((t) => ({
       id: t.id, key: t.key, title: t.title, status: t.status, missionState: t.missionState || null, agentId: t.agentId || null,
     }));

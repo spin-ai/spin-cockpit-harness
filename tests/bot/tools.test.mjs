@@ -53,7 +53,8 @@ await test("只读档不暴露工具；work 档写明可用工具与写操作边
   assert.equal(readPrompt.includes("memory_search"), false);
   const workPrompt = buildSystemPrompt({ name: "能干", capability: "work", persona: {} }, "", { proactive: false });
   for (const name of BOT_READ_TOOL_NAMES) assert.ok(workPrompt.includes(name), `work 档缺工具 ${name}`);
-  assert.ok(workPrompt.includes("不能写文件、跑命令、起任务"));
+  assert.ok(workPrompt.includes("task_create"), "work 档缺建任务工具");
+  assert.ok(workPrompt.includes("不要声称能改文件"));
 });
 
 const store = { state: { bots: [], botTurns: [] }, persist() {} };
