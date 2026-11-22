@@ -1,0 +1,2103 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>两种开发逻辑 · 工作台原型</title>
+<!--
+  Owner 工作台原型（对话开发 / 多终端开发，一个外壳两种 owner）
+  ──────────────────────────────────────────────────────────────
+  这一版只解决一件事：**工作台的 owner 变成一等概念**。
+  现在的问题不是功能多，而是 rail 是「功能清单」、4 个 pane 是全局共享的，
+  于是每个 pane 都得靠 if (botThread) / if (todo) 补救。
+
+  两种逻辑 = 同一批对象上的两个入口：
+    ① 对话开发   Bot 工作台：主面 = 会话；执行过程是 run 级 inspector；终端属于 run，不属于「我的标签栏」
+    ② 多终端开发 项目工作台：主面 = 终端网格；TODO 是左栏总览；Chat 只是一个 pane
+
+  两屏可点：机器人（对话）⇄ 项目（终端）。rail 是对象集合，模式名只出现在页头一个词。
+  三层：两个操作面 / 一套执行面（Todo → Run → Terminal）/ 一层能力（记忆·知识·人物·技能）。
+  关键交互：会话里的 run 卡片 → 右栏「过程」→ 这条 run 自己的终端回放；项目里 runbar 可以从终端跳回会话。
+  双击即可打开，无构建、无依赖；右上 ◐ 切亮暗；?ws=bot|project、?bot=golo|nan|draft、
+  ?theme=light|dark、?run=r8122|r8126、?dock=1、?pinned=1、?notes=1 均可定格；⌘⇧N 记一条。
+  设计约束与 src/design-system.css 一致：一个主面、hairline 分节、一个 primary、中文 ≥11.5px。
+-->
+<style>
+:root{
+  --font-sans:"Geist Variable","Geist",-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:"Geist Mono Variable","Geist Mono","SF Mono",SFMono-Regular,ui-monospace,Menlo,Consolas,monospace;
+  --radius:10px;--radius-sm:6px;--radius-lg:14px;
+  --shadow-1:0 1px 2px rgba(10,10,10,.045);
+  --shadow-2:0 10px 24px rgba(0,0,0,.16);
+  --shadow-float:0 18px 46px rgba(0,0,0,.22),0 2px 8px rgba(0,0,0,.10);
+  --green:#3f9a68;--green-soft:#edf8f2;--green-line:#d5eedf;
+  --amber:#a97a2f;--amber-soft:#fdf8ee;--amber-line:#f2e3c4;
+  --red:#cf5f5d;--red-soft:#fdf2f2;--red-line:#f4d7d7;
+  --purple:#7d67d1;--purple-soft:#f4f2fd;--purple-line:#e3ddf8;
+}
+:root[data-theme="light"]{
+  --page-canvas:#fafafa;--surface:#ffffff;--surface-hover:#f5f5f5;--surface-selected:#ededed;
+  --sidebar:#fafafa;--border:#e5e5e5;--border-strong:#d4d4d4;--input:#e5e5e5;
+  --fg:#0a0a0a;--fg-2:#3f3f3f;--muted:#5c5c5c;--faint:#8a8a8a;
+  --brand:#171717;--brand-soft:#f2f2f2;--brand-line:#dedede;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --page-canvas:#0a0a0a;--surface:#171717;--surface-hover:#262626;--surface-selected:#2e2e2e;
+  --sidebar:#111111;--border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.14);--input:rgba(255,255,255,.16);
+  --fg:#f0f0f0;--fg-2:#d4d4d4;--muted:#a3a3a3;--faint:#737373;
+  --brand:#e5e5e5;--brand-soft:#262626;--brand-line:#3a3a3a;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{margin:0;background:var(--page-canvas);color:var(--fg);font:13px/1.56 var(--font-sans);letter-spacing:-.006em;-webkit-font-smoothing:antialiased}
+button,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(128,128,128,.28);border-radius:8px;border:3px solid transparent;background-clip:content-box}
+
+.app{display:grid;grid-template-columns:64px minmax(0,1fr);height:100%}
+
+/* ---------- rail：只放对象入口 ---------- */
+.rail{background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;gap:2px;padding:12px 0}
+.rail-btn{position:relative;width:52px;height:48px;border:0;background:transparent;color:var(--muted);border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:11px;line-height:1}
+.rail-btn.on{background:var(--surface-selected);color:var(--fg)}
+.rail-btn:hover{background:var(--surface-hover);color:var(--fg)}
+.rail-btn.dim{opacity:.45}
+.rail-sep{width:24px;height:1px;background:var(--border);margin:6px 0}
+.rail-spacer{flex:1}
+.rail-sep{width:24px;height:1px;background:var(--border);margin:5px 0}
+.rail-badge{position:absolute;top:2px;right:7px;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:var(--amber);color:#fff;font-size:10px;font-style:normal;font-weight:600;display:grid;place-items:center;line-height:1}
+.rail-badge[hidden]{display:none!important}
+
+/* ---------- 屏 ---------- */
+.shell{min-width:0;min-height:0;position:relative}
+.screen{display:none;height:100%}
+.screen.on{display:grid}
+[data-screen="bot"]{grid-template-columns:236px minmax(0,1fr) 336px}
+[data-screen="project"]{grid-template-columns:236px minmax(0,1fr) 296px}
+
+/* 三列共用 */
+.cl{border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-height:0}
+.cm{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--page-canvas)}
+.cs{border-left:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-height:0}
+
+/* ---------- 通用件 ---------- */
+.btn{height:30px;padding:0 11px;border:1px solid var(--input);background:var(--surface);color:var(--fg-2);border-radius:6px;display:inline-flex;align-items:center;gap:5px;font-size:13px;white-space:nowrap}
+.btn:hover{background:var(--surface-hover);border-color:var(--border-strong)}
+.btn.primary{background:var(--fg);border-color:var(--fg);color:var(--page-canvas)}
+.btn.primary:hover{opacity:.88}
+.btn.tiny{height:26px;padding:0 8px;font-size:11.5px}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.btn.ghost:hover{background:var(--surface-hover);color:var(--fg)}
+.btn.danger{color:var(--red);border-color:var(--red-line);background:var(--red-soft)}
+.btn.on{background:var(--brand-soft);border-color:var(--brand-line);color:var(--fg)}
+.tag{font-size:11.5px;line-height:17px;padding:0 6px;border-radius:5px;border:1px solid var(--border);background:var(--surface-hover);color:var(--fg-2);white-space:nowrap}
+.tag.ok{color:var(--green);border-color:var(--green-line);background:var(--green-soft)}
+.tag.warn{color:var(--amber);border-color:var(--amber-line);background:var(--amber-soft)}
+.tag.fail{color:var(--red);border-color:var(--red-line);background:var(--red-soft)}
+.tag.ai{color:var(--purple);border-color:var(--purple-line);background:var(--purple-soft)}
+.tag.mono{font-family:var(--mono);font-size:11px}
+.mono{font-family:var(--mono)}
+.tiny{font-size:11.5px}
+.muted{color:var(--muted)}
+.faint{color:var(--faint)}
+.spacer{flex:1}
+.row{display:flex;align-items:center;gap:8px}
+.row.between{justify-content:space-between}
+.ellipsis{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.note{font-size:11.5px;line-height:1.6;color:var(--muted)}
+.note b{color:var(--fg-2);font-weight:500}
+.hint{font-size:11.5px;color:var(--faint)}
+.kbd{font-family:var(--mono);font-size:10.5px;color:var(--faint);border:1px solid var(--border);border-radius:4px;padding:0 4px}
+
+/* ---------- 工作台页头 ---------- */
+.wshead{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--border);background:var(--page-canvas);flex:none}
+.owner{display:flex;align-items:center;gap:10px;min-width:0}
+.owner-avatar{width:30px;height:30px;border-radius:999px;display:grid;place-items:center;font-size:13px;font-weight:600;color:#fff;flex:none}
+.owner-avatar.a{background:#5b6cc0}.owner-avatar.b{background:#3f8f86}.owner-avatar.c{background:#b46a3c}
+.owner-avatar.p{background:var(--surface-hover);color:var(--fg-2);border:1px solid var(--border-strong);border-radius:8px}
+.owner-copy{min-width:0}
+.owner-copy h1{margin:0;font-size:22px;font-weight:600;letter-spacing:-.03em;line-height:1.2}
+.owner-sub{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:2px;font-size:11.5px;color:var(--faint)}
+.ws-actions{display:flex;align-items:center;gap:6px;flex:none}
+
+/* ---------- 左栏 ---------- */
+.cl-head{padding:12px 12px 8px;border-bottom:1px solid var(--border);flex:none}
+.cl-head h2{margin:0;font-size:11.5px;font-weight:600;letter-spacing:.02em;color:var(--muted)}
+.cl-body{overflow:auto;padding:8px;display:flex;flex-direction:column;gap:2px;flex:1;min-height:0}
+.grp{margin-top:8px}
+.grp:first-child{margin-top:2px}
+.grp-head{display:flex;align-items:center;gap:6px;padding:2px 6px 4px;font-size:10.5px;letter-spacing:.06em;color:var(--faint);text-transform:uppercase}
+.grp-head b{font-weight:600;color:var(--muted);letter-spacing:0;font-size:11px;text-transform:none}
+.grp-head .n{font-family:var(--mono);font-size:10.5px}
+.item{display:grid;grid-template-columns:8px minmax(0,1fr);gap:8px;align-items:start;padding:6px 8px;border:0;background:transparent;border-radius:7px;text-align:left;width:100%}
+.item:hover{background:var(--surface-hover)}
+.item.on{background:var(--surface-selected);box-shadow:inset 2px 0 0 var(--brand)}
+.item .st{width:6px;height:6px;border-radius:999px;background:var(--faint);margin-top:6px}
+.item .st.run{background:var(--green)}
+.item .st.wait{background:var(--amber)}
+.item .st.fail{background:var(--red)}
+.item .st.done{background:var(--border-strong)}
+.item-main{min-width:0}
+.item-main b{display:block;font-size:12px;font-weight:500;color:var(--fg-2);line-height:1.35}
+.item-main span{display:block;font-size:11px;color:var(--faint);margin-top:1px}
+.item.on .item-main b{color:var(--fg)}
+.chip-run{display:inline-flex;align-items:center;gap:4px;margin-top:4px;padding:0 5px;height:17px;border:1px solid var(--border);border-radius:4px;background:var(--surface);font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+.chip-run:hover{border-color:var(--border-strong);color:var(--fg)}
+.cl-foot{border-top:1px solid var(--border);padding:8px;flex:none}
+.cap-strip{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-bottom:8px}
+.cap-k{font-size:10.5px;color:var(--faint)}
+.cap-chip{height:20px;padding:0 6px;border:1px solid var(--border);border-radius:5px;background:var(--page-canvas);font-size:10.5px;color:var(--fg-2);display:inline-flex;align-items:center;gap:4px}
+.cap-chip:hover{border-color:var(--border-strong);color:var(--fg)}
+.cap-chip em{font-style:normal;color:var(--faint);font-family:var(--mono);font-size:10px}
+.segmented{display:inline-flex;padding:2px;border:1px solid var(--border);border-radius:7px;background:var(--surface-hover)}
+.segmented button{height:22px;padding:0 8px;border:0;background:transparent;border-radius:5px;font-size:11.5px;color:var(--muted)}
+.segmented button.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow-1)}
+
+/* ---------- 会话 ---------- */
+.stream{flex:1;overflow:auto;padding:18px 22px 24px;display:flex;flex-direction:column;gap:14px;min-height:0}
+.msg{display:flex;gap:10px;min-width:0}
+.msg.me{justify-content:flex-end}
+.msg-body{min-width:0;max-width:min(66ch,100%)}
+.msg-meta{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--faint);margin-bottom:4px}
+.msg-meta b{font-weight:600;color:var(--fg-2)}
+.bubble{padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:13.5px;line-height:1.6}
+.msg.me .bubble{background:var(--brand-soft);border-color:var(--brand-line)}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
+
+/* run 卡片：会话里唯一能「看过程」的入口 */
+.run-card{margin-top:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);overflow:hidden;text-align:left;width:100%;padding:0;display:block}
+.run-card:hover{border-color:var(--border-strong)}
+.run-card.on{border-color:var(--brand-line);box-shadow:inset 0 0 0 1px var(--brand-line)}
+.run-top{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--border);background:var(--surface-hover)}
+.run-top .rid{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.run-top b{font-size:12px;font-weight:600}
+.run-body{display:flex;align-items:center;gap:10px;padding:8px 10px;flex-wrap:wrap}
+.run-meta{display:flex;align-items:center;gap:10px;font-size:11px;color:var(--faint);font-family:var(--mono);flex:1;min-width:0}
+.run-acts{display:flex;gap:6px;flex:none}
+
+/* 工具调用芯片 */
+.tool-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;background:var(--surface);font-size:11px;color:var(--fg-2)}
+.tool-chip em{font-style:normal;font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+
+.composer{border-top:1px solid var(--border);padding:10px 20px 14px;background:var(--page-canvas);flex:none}
+.composer-box{display:flex;align-items:flex-end;gap:8px;border:1px solid var(--input);border-radius:10px;background:var(--surface);padding:8px 10px}
+.composer-box textarea{flex:1;resize:none;border:0;background:transparent;outline:none;min-height:22px;max-height:110px;font-size:13.5px;line-height:1.55}
+.composer-hint{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--faint);flex-wrap:wrap}
+
+/* ---------- 右栏 inspector ---------- */
+.tabs{display:flex;gap:2px;padding:8px 10px 0;border-bottom:1px solid var(--border);flex:none;overflow:auto}
+.tabs button{height:28px;border:0;background:transparent;color:var(--muted);font-size:12px;padding:0 9px;border-radius:6px 6px 0 0;white-space:nowrap}
+.tabs button.on{background:var(--page-canvas);color:var(--fg);font-weight:600;box-shadow:inset 0 -1px 0 var(--border)}
+.tabs button:hover{color:var(--fg)}
+.side-body{overflow:auto;padding:12px 14px 20px;display:flex;flex-direction:column;gap:14px;flex:1;min-height:0}
+.side-body h3{margin:0 0 6px;font-size:11px;font-weight:600;color:var(--faint);letter-spacing:.04em}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 10px;font-size:12px}
+.kv span{color:var(--muted)}
+.kv b{font-weight:500;color:var(--fg-2);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kv b.mono{font-family:var(--mono);font-size:11.5px}
+.term{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--page-canvas);padding:9px 10px;font-family:var(--mono);font-size:11px;line-height:1.62;color:var(--fg-2);white-space:pre-wrap;word-break:break-word;max-height:260px;overflow:auto}
+.term .p{color:var(--faint)}
+.term .ok{color:var(--green)}
+.term .bad{color:var(--red)}
+.term .cur{color:var(--fg)}
+.term .dim{color:var(--faint)}
+.tool-list{display:flex;flex-direction:column;gap:5px}
+.tool-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;font-size:11.5px;line-height:1.5}
+.tool-row span{color:var(--faint);font-family:var(--mono);font-size:10.5px;padding-top:1px}
+.tool-row b{font-weight:500;color:var(--fg-2)}
+.bars{display:flex;flex-direction:column;gap:9px}
+.bar-row{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:var(--muted)}
+.bar-line{display:flex;justify-content:space-between;gap:8px}
+.bar-line b{font-weight:500;color:var(--fg-2)}
+.bar{height:5px;border-radius:99px;background:var(--surface-hover);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--fg);opacity:.72}
+.field{padding:6px 0;border-bottom:1px solid var(--border)}
+.field:last-child{border-bottom:0}
+.field span{display:block;font-size:11px;color:var(--faint)}
+.field b{display:block;font-weight:500;font-size:12.5px;color:var(--fg-2);line-height:1.5;margin-top:1px}
+.callout{border:1px solid var(--purple-line);background:var(--purple-soft);border-radius:8px;padding:8px 9px;font-size:11.5px;line-height:1.55;color:var(--fg-2)}
+:root[data-theme="dark"] .callout{background:color-mix(in srgb,var(--purple) 12%,var(--surface));border-color:color-mix(in srgb,var(--purple) 34%,var(--border))}
+.callout b{color:var(--fg)}
+
+/* ---------- 项目工作台：终端 ---------- */
+.termbar{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border);background:var(--sidebar);flex:none;overflow:auto}
+.tgroup{display:flex;align-items:center;gap:4px}
+.tgroup-label{font-size:10.5px;color:var(--faint);letter-spacing:.04em;padding:0 2px;flex:none}
+.ttab{height:26px;padding:0 9px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--muted);font-size:11.5px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.ttab:hover{background:var(--surface-hover);color:var(--fg)}
+.ttab.on{background:var(--surface);border-color:var(--border);color:var(--fg);box-shadow:var(--shadow-1)}
+.ttab .dot{width:5px;height:5px;border-radius:999px;background:var(--green)}
+.ttab .dot.warn{background:var(--amber)}
+.ttab .dot.done{background:var(--border-strong)}
+.tsep{width:1px;height:18px;background:var(--border);flex:none}
+.termgrid{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:1px;background:var(--border)}
+.pane{background:var(--page-canvas);display:flex;flex-direction:column;min-width:0;min-height:0}
+.pane-head{display:flex;align-items:center;gap:6px;padding:5px 9px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);flex:none;background:var(--sidebar)}
+.pane-head b{font-weight:500;color:var(--fg-2);font-size:11.5px}
+.pane-head .mini{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+.pane-head .acts{margin-left:auto;display:flex;gap:2px}
+.icon-btn{width:20px;height:20px;border:0;background:transparent;border-radius:5px;color:var(--faint);display:grid;place-items:center;padding:0}
+.icon-btn:hover{background:var(--surface-hover);color:var(--fg)}
+.pane-body{flex:1;min-height:0;overflow:auto;padding:8px 10px;font-family:var(--mono);font-size:11px;line-height:1.65;color:var(--fg-2);white-space:pre-wrap;word-break:break-word}
+.pane-body .ok{color:var(--green)}.pane-body .bad{color:var(--red)}.pane-body .dim{color:var(--faint)}.pane-body .p{color:var(--faint)}
+.termgrid.single{grid-template-columns:1fr;grid-template-rows:1fr}
+.termgrid.single .pane:nth-child(n+2){display:none}
+
+/* 派活 dock：Chat 只是一个 pane */
+.dock{flex:none;border-top:1px solid var(--border);background:var(--surface)}
+.dock-head{display:flex;align-items:center;gap:8px;padding:7px 12px;cursor:default}
+.dock-head b{font-size:11.5px;font-weight:600;color:var(--fg-2)}
+.dock-head .hint{font-size:11px}
+.dock-body{display:none;padding:0 12px 12px}
+.dock.open .dock-body{display:block}
+.dock-body .composer-box{background:var(--page-canvas)}
+.dock-msg{display:flex;gap:8px;padding:6px 0;font-size:12px;color:var(--fg-2);border-top:1px dashed var(--border)}
+.dock-msg:first-child{border-top:0}
+.dock-msg b{font-weight:600;color:var(--fg);flex:none;font-size:11.5px}
+.dock-msg .m{min-width:0}
+
+/* ---------- 项目段（项目工作台左栏） ---------- */
+.proj-list{display:flex;flex-direction:column;gap:1px;padding:6px 8px 8px;border-bottom:1px solid var(--border)}
+.proj-list[hidden]{display:none!important}
+.proj-row{display:grid;grid-template-columns:minmax(0,1fr);gap:1px;padding:6px 7px;border:0;background:transparent;border-radius:6px;text-align:left;width:100%;min-width:0}
+.proj-row:hover{background:var(--surface-hover)}
+.proj-row.on{background:var(--surface-selected);box-shadow:inset 2px 0 0 var(--brand)}
+.pr-name{flex:1;min-width:0;font-size:12px;color:var(--fg-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proj-row.on .pr-name{color:var(--fg);font-weight:500}
+.pr-meta{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--faint);white-space:nowrap;flex:none}
+.proj-row.add{display:flex;align-items:center;gap:6px;color:var(--faint);font-size:11.5px}
+.cl-head.sub{border-top:1px solid var(--border)}
+.st{width:6px;height:6px;border-radius:999px;background:var(--faint);display:inline-block;flex:none}
+.st.run{background:var(--green)}.st.wait{background:var(--amber)}.st.fail{background:var(--red)}.st.done{background:var(--border-strong)}
+
+/* ---------- 机器人列表 / 模式词 ---------- */
+.mode-word{color:var(--fg-2);font-weight:500;white-space:nowrap}
+.own-row{display:grid;grid-template-columns:22px minmax(0,1fr);gap:8px;align-items:center;padding:5px 7px;border:0;background:transparent;border-radius:6px;width:100%;text-align:left;min-width:0}
+.own-row:hover{background:var(--surface-hover)}
+.own-row.on{background:var(--surface-selected);box-shadow:inset 2px 0 0 var(--brand)}
+.own-row .oa{width:22px;height:22px;border-radius:999px;display:grid;place-items:center;font-size:10.5px;font-weight:600;color:#fff;flex:none}
+.own-row .oa.a{background:#5b6cc0}.own-row .oa.b{background:#3f8f86}.own-row .oa.c{background:#b46a3c}
+.own-row .nm{min-width:0}
+.own-row .nm b{display:block;font-size:12px;font-weight:500;color:var(--fg-2);line-height:1.3}
+.own-row.on .nm b{color:var(--fg)}
+.own-row .nm span{display:block;font-size:10.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3}
+
+/* ---------- Mission 计划卡（两面同源） ---------- */
+.plan-card{margin:8px 8px 4px;padding:9px 10px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface-hover)}
+.plan-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.plan-top b{font-size:12.5px;font-weight:600}
+.plan-meta{margin-top:3px;font-size:11px;color:var(--faint)}
+.plan-acts{display:flex;gap:6px;margin-top:7px}
+.plan-note{margin-top:6px;font-size:10.5px;color:var(--faint);line-height:1.45}
+
+/* ---------- run 三面同源条 ---------- */
+.runbar{display:flex;align-items:center;gap:7px;padding:4px 10px;border-bottom:1px solid var(--border);background:var(--page-canvas);flex:none;font-size:11px;overflow:auto}
+.rb-title{font-size:11.5px;color:var(--fg-2);white-space:nowrap}
+.rb-note{font-size:10.5px;color:var(--faint);white-space:nowrap}
+.rb-chip{display:inline-flex;align-items:center;height:18px;padding:0 6px;border:1px solid var(--border);border-radius:4px;background:var(--surface);font-size:10.5px;color:var(--muted);white-space:nowrap}
+.rb-chip.on{background:var(--brand-soft);border-color:var(--brand-line);color:var(--fg-2)}
+.rb-chip.link:hover{border-color:var(--border-strong);color:var(--fg)}
+
+/* ---------- 待治理（周期性的活，不是工具） ---------- */
+.gov{border:1px solid var(--border);border-radius:8px;background:var(--page-canvas);padding:8px 9px}
+.gov-h{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.gov-h b{font-size:11.5px;font-weight:600;color:var(--fg-2)}
+.gov-h .mono{font-size:10.5px;color:var(--faint)}
+.gov-row{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);line-height:1.75}
+.gov-row em{font-style:normal;font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+
+/* ---------- 记一条（门铃，不属于任何面） ---------- */
+.sheet{position:fixed;inset:0;z-index:70;background:rgba(10,10,10,.42);display:flex;align-items:flex-start;justify-content:center;padding-top:14vh}
+.sheet[hidden]{display:none!important}
+.sheet-box{width:min(520px,calc(100vw - 40px));border:1px solid var(--border-strong);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--shadow-float);padding:14px}
+.sheet textarea{width:100%;margin-top:10px;border:1px solid var(--input);border-radius:8px;background:var(--page-canvas);padding:8px 10px;font-size:13px;line-height:1.55;resize:vertical;outline:none}
+.sheet textarea:focus{border-color:var(--border-strong)}
+
+/* ---------- 复核队列块（记忆 / 知识 / 人物 / 视觉 的右栏共用） ---------- */
+[data-screen="memory"],[data-screen="knowledge"],[data-screen="people"],[data-screen="vision"]{grid-template-columns:232px minmax(0,1fr) 304px}
+.lib-body{padding:14px 18px 24px;overflow:auto;display:flex;flex-direction:column;gap:16px;min-height:0}
+.lib-body h3{margin:0 0 6px;font-size:11px;font-weight:600;color:var(--faint);letter-spacing:.04em}
+.lrow{display:flex;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid var(--border);font-size:12px;color:var(--fg-2)}
+.lrow:last-child{border-bottom:0}
+.lrow b{font-weight:500;color:var(--fg-2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lrow .meta{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--faint);flex:none}
+.pane-block{border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:var(--surface)}
+.gov-head{display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--border);background:var(--page-canvas)}
+.gov-head h1{margin:0;font-size:20px;font-weight:600;letter-spacing:-.02em;line-height:1.2}
+.gov-body{display:grid;grid-template-columns:minmax(300px,392px) minmax(0,1fr);min-height:0}
+.gov-queue{border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-height:0}
+.gov-list{overflow:auto;padding:8px;display:flex;flex-direction:column;gap:3px;flex:1;min-height:0}
+.gov-item{display:grid;grid-template-columns:minmax(0,1fr);gap:2px;padding:8px 9px;border:1px solid transparent;border-radius:8px;background:transparent;text-align:left;width:100%}
+.gov-item:hover{background:var(--surface-hover)}
+.gov-item.on{background:var(--surface-selected);border-color:var(--border)}
+.gov-item b{font-size:12px;font-weight:500;color:var(--fg-2);line-height:1.45}
+.gov-item.done b{font-weight:400;color:var(--muted)}
+.gov-item.on b{color:var(--fg)}
+.gi-kind{font-size:10.5px;color:var(--faint)}
+.gi-kind.warn{color:var(--amber)}
+.gi-kind.fail{color:var(--red)}
+.gi-meta{font-size:10.5px;color:var(--faint);font-family:var(--mono)}
+.gov-pane{padding:18px 24px 24px;overflow:auto;min-height:0;display:flex;flex-direction:column;gap:14px}
+.gov-pane > *{max-width:720px}
+.gov-pane-h{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.gov-pane h2{margin:0;font-size:16px;font-weight:600;letter-spacing:-.01em;line-height:1.4}
+.gov-acts{display:flex;gap:6px;flex-wrap:wrap}
+.gov-empty{margin:24px 10px;padding:18px 14px;border:1px dashed var(--border-strong);border-radius:8px;font-size:12px;color:var(--muted);text-align:center;line-height:1.75}
+.gov-empty b{display:block;color:var(--fg-2);margin-bottom:2px}
+#govTabs em{font-style:normal;font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-left:3px}
+#govTabs button.on em{color:var(--fg-2)}
+
+/* ---------- 调用型工具：结果与上下文 chip ---------- */
+.tool-result{margin-top:8px;border:1px solid var(--green-line);background:var(--green-soft);border-radius:8px;padding:8px 9px;font-size:11.5px;line-height:1.6;color:var(--fg-2)}
+:root[data-theme="dark"] .tool-result{background:color-mix(in srgb,var(--green) 12%,var(--surface));border-color:color-mix(in srgb,var(--green) 32%,var(--border))}
+.tool-result b{color:var(--fg)}
+.ctx-chips{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px}
+.ctx-chips:empty{display:none}
+.ctx-chip{display:inline-flex;align-items:center;gap:3px;height:20px;padding:0 3px 0 6px;border:1px solid var(--border-strong);border-radius:5px;background:var(--brand-soft);font-size:10.5px;color:var(--fg-2)}
+.ctx-chip button{width:14px;height:14px;border:0;background:transparent;color:var(--faint);display:grid;place-items:center;padding:0;border-radius:3px}
+.ctx-chip button:hover{background:var(--surface-hover);color:var(--fg)}
+.cap-chip.warn{border-color:var(--amber-line);background:var(--amber-soft);color:var(--amber)}
+:root[data-theme="dark"] .cap-chip.warn{background:color-mix(in srgb,var(--amber) 14%,var(--surface));border-color:color-mix(in srgb,var(--amber) 34%,var(--border))}
+
+/* ---------- 会话里的计划卡（同一份 Mission 的另一面） ---------- */
+.plan-chip{display:grid;grid-template-columns:minmax(0,1fr);gap:3px;margin-top:8px;padding:9px 10px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface-hover);text-align:left;width:100%}
+.plan-chip:hover{border-color:var(--fg-2)}
+.pc-top{display:flex;align-items:center;gap:6px}
+.pc-top b{font-size:12.5px;font-weight:600}
+.pc-meta{font-size:11px;color:var(--faint)}
+.pc-link{font-size:11px;color:var(--muted)}
+
+/* ---------- 会话细节（Rakazo / Grok Bot 的 bot 面） ---------- */
+.grounding{display:flex;align-items:center;gap:6px;padding:7px 20px;border-bottom:1px solid var(--border);background:var(--surface);flex:none;flex-wrap:wrap}
+.g-k{font-size:10.5px;color:var(--faint)}
+.g-chip{height:20px;padding:0 6px;border:1px solid var(--border);border-radius:5px;background:var(--page-canvas);font-size:10.5px;color:var(--fg-2);display:inline-flex;align-items:center;gap:4px}
+.g-chip:hover{border-color:var(--border-strong);color:var(--fg)}
+.g-chip em{font-style:normal;font-family:var(--mono);font-size:10px;color:var(--faint)}
+.msg-spacer{width:24px;flex:none}
+.msg-cont{margin-top:-6px}
+.why-toggle{display:inline-flex;align-items:center;gap:4px;margin-top:7px;border:0;background:transparent;padding:0;font-size:11px;color:var(--muted)}
+.why-toggle:hover{color:var(--fg)}
+.why-toggle svg{transition:transform .12s}
+.why-toggle[aria-expanded="true"] svg{transform:rotate(180deg)}
+.why-body{margin-top:6px;border:1px solid var(--border);border-radius:6px;background:var(--page-canvas);padding:7px 9px;display:flex;flex-direction:column;gap:4px}
+.why-row{display:grid;grid-template-columns:46px minmax(0,1fr);gap:8px;font-size:11px;line-height:1.5}
+.why-row span{color:var(--faint)}
+.why-row b{font-weight:500;color:var(--fg-2)}
+.ask-card{margin-bottom:8px;padding:9px 10px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface-hover)}
+.ask-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.ask-top b{font-size:12.5px;font-weight:600}
+.ask-top .hint{font-size:10.5px}
+
+/* ---------- 终端标签 / 状态栏 / 执行方式（Orca / Multica） ---------- */
+.tt-dot{width:6px;height:6px;border-radius:999px;background:var(--faint);flex:none}
+.tt-dot.live{background:var(--green)}
+.tt-dot.done{background:var(--border-strong)}
+.tt-dot.wait{background:var(--amber)}
+.tt-ava{width:14px;height:14px;border-radius:999px;display:grid;place-items:center;font-size:8.5px;font-weight:600;color:#fff;flex:none}
+.tt-ava.a{background:#5b6cc0}.tt-ava.b{background:#3f8f86}.tt-ava.c{background:#b46a3c}
+.tt-state{font-size:9.5px;line-height:14px;padding:0 4px;border-radius:3px;border:1px solid var(--border);color:var(--muted)}
+.tt-state.run{color:var(--green);border-color:var(--green-line);background:var(--green-soft)}
+.tt-state.done{color:var(--faint)}
+.tt-meta{font-family:var(--mono);font-size:10px;color:var(--faint)}
+.statusbar{display:flex;align-items:center;gap:12px;height:26px;padding:0 12px;border-top:1px solid var(--border);background:var(--sidebar);font-size:11px;color:var(--muted);flex:none;overflow:auto}
+.sb-item{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.sb-item.mono{font-family:var(--mono);font-size:10.5px}
+.exec-modes{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.em-k{font-size:10.5px;color:var(--faint)}
+
+/* ---------- 原型说明 ---------- */
+.notes-btn{position:fixed;right:14px;bottom:14px;z-index:40;height:28px;padding:0 10px;border:1px solid var(--border-strong);border-radius:999px;background:var(--surface);color:var(--muted);font-size:11.5px;box-shadow:var(--shadow-1)}
+.notes-btn:hover{color:var(--fg)}
+.notes{position:fixed;right:14px;bottom:52px;z-index:41;width:380px;max-height:min(70vh,620px);overflow:auto;border:1px solid var(--border-strong);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--shadow-float);padding:14px 16px}
+.notes h4{margin:0 0 4px;font-size:12.5px;font-weight:600}
+.notes h4.h{margin-top:14px}
+.notes p{margin:0 0 8px;font-size:11.5px;line-height:1.6;color:var(--muted)}
+.notes ol,.notes ul{margin:0 0 8px;padding-left:16px;font-size:11.5px;line-height:1.65;color:var(--muted)}
+.notes li b{color:var(--fg-2);font-weight:500}
+.notes .x{position:absolute;top:8px;right:8px}
+.notes .mini-tbl{width:100%;border-collapse:collapse;margin:0 0 8px;font-size:11px}
+.notes .mini-tbl td{padding:4px 0;border-bottom:1px solid var(--border);vertical-align:top;line-height:1.5}
+.notes .mini-tbl tr:last-child td{border-bottom:0}
+.notes .mini-tbl td:first-child{width:54px;padding-right:8px;color:var(--faint);font-size:10.5px;white-space:nowrap}
+.notes .mini-tbl td b{color:var(--fg-2);font-weight:600}
+.notes .mini-tbl td span{display:block;color:var(--faint);font-size:10.5px}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--fg);color:var(--page-canvas);font-size:12px;padding:6px 12px;border-radius:999px;z-index:60;box-shadow:var(--shadow-2)}
+
+@media (max-width:1240px){
+  [data-screen="bot"]{grid-template-columns:216px minmax(0,1fr)}
+  [data-screen="project"]{grid-template-columns:216px minmax(0,1fr)}
+  [data-screen="memory"],[data-screen="knowledge"],[data-screen="people"],[data-screen="vision"]{grid-template-columns:216px minmax(0,1fr)}
+  .cs{display:none}
+}
+@media (max-width:960px){
+  [data-screen="bot"]{grid-template-columns:minmax(0,1fr)}
+  [data-screen="project"]{grid-template-columns:minmax(0,1fr)}
+  [data-screen="memory"],[data-screen="knowledge"],[data-screen="people"],[data-screen="vision"]{grid-template-columns:minmax(0,1fr)}
+  .cl{display:none}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail" aria-label="主导航">
+    <button class="rail-btn on" data-go="bot" title="BOT：有身份、有记忆、会主动开口的 AI">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V5M9 13h.01M15 13h.01M9 16.5h6"/></svg>
+      <span>BOT</span>
+    </button>
+    <button class="rail-btn" data-go="project" title="终端：这个代码库的多终端工作区">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>
+      <span>终端</span>
+    </button>
+    <div class="rail-sep"></div>
+    <button class="rail-btn" data-mock="场景：办公室 / 作战室 / 航母（只投影，不调度）">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11M15 9v11"/></svg>
+      <span>场景</span>
+    </button>
+    <div class="rail-sep"></div>
+    <button class="rail-btn" data-go="memory" title="记忆：四层 + 复核队列">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3v18M5 7v10M19 7v10M8.5 5v14M15.5 5v14"/></svg>
+      <span>记忆</span><em class="rail-badge">4</em>
+    </button>
+    <button class="rail-btn" data-go="knowledge" title="知识：资料 / 解析 / 检索 / 引用">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M8 7h7M8 11h5"/></svg>
+      <span>知识</span><em class="rail-badge">4</em>
+    </button>
+    <button class="rail-btn" data-go="people" title="人物：画像 / 证据链 / 置信度">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="8" r="3.4"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>
+      <span>人物</span><em class="rail-badge">2</em>
+    </button>
+    <div class="rail-sep"></div>
+    <button class="rail-btn" data-go="vision" title="视觉：截图 / 扫描页 / PDF → 块">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M8 12h8M12 8v8"/></svg>
+      <span>视觉</span>
+    </button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" data-mock="使用说明">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.4 2.3c-.7.3-.9.9-.9 1.7M12 17h.01"/></svg>
+      <span>说明</span>
+    </button>
+    <button class="rail-btn" data-mock="设置">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9 2 2 0 1 1-2.8 2.8 1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0 1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3 2 2 0 1 1-2.8-2.8 1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9 2 2 0 1 1 2.8-2.8 1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3 2 2 0 1 1 2.8 2.8 1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4"/></svg>
+      <span>设置</span>
+    </button>
+  </nav>
+
+  <div class="shell">
+
+    <!-- ══════════════ ① Bot 工作台：会话是主面 ══════════════ -->
+    <section class="screen" data-screen="bot">
+      <aside class="cl" aria-label="BOT / 它接的活">
+        <div class="cl-head">
+          <div class="row between">
+            <h2>BOT</h2>
+            <div class="row" style="gap:2px">
+              <span class="hint">3 个</span>
+              <button class="icon-btn" id="botFold" title="收起机器人列表" aria-label="收起机器人列表" aria-expanded="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" style="transition:transform .12s;transform:rotate(180deg)"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="proj-list" id="botList">
+          <button class="own-row on" data-pick="bot:golo">
+            <span class="oa a">戈</span>
+            <span class="nm"><b>戈洛</b><span>项目值守 · 主动 · 2 跑</span></span>
+          </button>
+          <button class="own-row" data-pick="bot:nan">
+            <span class="oa b">南</span>
+            <span class="nm"><b>南</b><span>资料管家 · 主动 · 配额 1/4</span></span>
+          </button>
+          <button class="own-row" data-pick="bot:draft">
+            <span class="oa c">起</span>
+            <span class="nm"><b>起草机</b><span>写作 · 被动 · 只读档位</span></span>
+          </button>
+        </div>
+        <div class="cl-head sub">
+          <div class="row between">
+            <h2>它接的活</h2>
+            <span class="hint" id="botWorkCount">2 跑 · 1 等确认</span>
+          </div>
+        </div>
+        <div class="cl-body">
+          <div class="grp">
+            <div class="grp-head"><b>进行中</b><span class="n">2</span></div>
+            <button class="item on" data-run="r8122">
+              <span class="st run"></span>
+              <span class="item-main"><b>T-2960 视觉解析收尾</b><span>run r8122 · 8m12s · 终端</span></span>
+            </button>
+            <button class="item" data-run="r8126">
+              <span class="st run"></span>
+              <span class="item-main"><b>T-2951 检索评估</b><span>run r8126 · 2m04s · 终端</span></span>
+            </button>
+          </div>
+          <div class="grp">
+            <div class="grp-head"><b>等你确认</b><span class="n">1</span></div>
+            <button class="item" data-mock="dispatch 档位：只建 todo，不起 run">
+              <span class="st wait"></span>
+              <span class="item-main"><b>把块级信息接进知识库</b><span>它提议 · 你还没点头</span></span>
+            </button>
+          </div>
+          <div class="grp">
+            <div class="grp-head"><b>它带的 Mission</b><span class="n">1</span></div>
+            <button class="item" data-go="project">
+              <span class="st wait"></span>
+              <span class="item-main"><b>v0.3 交付</b><span>4 子任务 · 计划待批准</span></span>
+            </button>
+          </div>
+          <div class="grp">
+            <div class="grp-head"><b>监视中</b><span class="n">1</span></div>
+            <button class="item" data-mock="看这个任务的进度（不占对话流）">
+              <span class="st done"></span>
+              <span class="item-main"><b>T-2874 打包体积</b><span>只回报，除非失败</span></span>
+            </button>
+          </div>
+          <div class="grp">
+            <div class="grp-head"><b>最近的 run</b><span class="n">4</span></div>
+            <button class="item" data-run="r8104">
+              <span class="st done"></span>
+              <span class="item-main"><b>r8104 类型检查</b><span>昨天 18:02 · 1m22s</span></span>
+            </button>
+            <button class="item" data-run="r8091">
+              <span class="st fail"></span>
+              <span class="item-main"><b>r8091 文档校验</b><span>昨天 17:40 · 失败</span></span>
+            </button>
+          </div>
+        </div>
+        <div class="cl-foot">
+          <div class="cap-strip">
+            <span class="cap-k">能力</span>
+            <button class="cap-chip" data-tab="memory">记忆 <em>342</em></button>
+            <button class="cap-chip" data-tab="knowledge">知识 <em>1.2k</em></button>
+            <button class="cap-chip" data-tab="skills">技能 <em>3</em></button>
+          </div>
+          <div class="note" style="margin-bottom:8px">
+            <b>这里没有项目看板。</b>BOT 只有「它接的活」；项目 TODO 在终端那一侧。
+          </div>
+          <button class="btn tiny ghost" data-go="project" style="width:100%;justify-content:center">打开项目</button>
+        </div>
+      </aside>
+
+      <main class="cm">
+        <header class="wshead">
+          <div class="owner">
+            <span class="owner-avatar a" id="botAvatar">戈</span>
+            <div class="owner-copy">
+              <h1 id="botName">戈洛</h1>
+              <div class="owner-sub">
+                <span class="mode-word">BOT</span>
+                <span>·</span>
+                <span class="tag" id="botMode">主动</span>
+                <span id="botRole">项目值守 · 记得 342 条</span>
+                <span>·</span>
+                <span id="botQuota">本小时 3 / 8 条</span>
+                <span>·</span>
+                <span class="mono">¥ 0.42 今日</span>
+              </div>
+            </div>
+          </div>
+          <div class="spacer"></div>
+          <div class="ws-actions">
+            <button class="btn tiny ghost" data-capture title="记一条（⌘⇧N）">记一条</button>
+            <button class="btn tiny" data-mock="暂停：只记录沉默，不主动开口">暂停</button>
+            <button class="btn tiny" data-mock="静音 1 小时">静音 1h</button>
+            <button class="btn tiny ghost" id="theme" title="切亮 / 暗">◐</button>
+          </div>
+        </header>
+
+        <div class="grounding">
+          <span class="g-k">这一轮注入</span>
+          <button class="g-chip" data-tab="memory">记忆 <em>2,140 / 2,400</em></button>
+          <button class="g-chip" data-tab="knowledge">知识 <em>3 条引用</em></button>
+          <button class="g-chip" data-tab="skills">技能 <em>3</em></button>
+          <span class="spacer"></span>
+          <span class="hint">不够就先裁，不硬塞</span>
+        </div>
+
+        <div class="stream" id="botStream">
+          <div class="msg me">
+            <div class="msg-body">
+              <div class="msg-meta"><b>你</b><span>10:24</span></div>
+              <div class="bubble">视觉解析那边收个尾。重点是块级信息要接进知识库，Reader 契约别动。</div>
+            </div>
+          </div>
+
+          <div class="msg">
+            <span class="owner-avatar a" style="width:24px;height:24px;font-size:11px;flex:none;margin-top:2px">戈</span>
+            <div class="msg-body">
+              <div class="msg-meta"><b>戈洛</b><span>10:24</span><span class="tag ai">主动</span></div>
+              <div class="bubble">
+                我理解的是：只加块级入口，不改 <span class="mono">readPage</span> 的返回结构。起了两个 run，第一个在改 reader。
+                <!-- run 卡片：这是「看过程」的唯一入口，不是终端标签 -->
+                <button class="run-card on" data-run="r8122" aria-label="打开 run r8122 的过程">
+                  <span class="run-top">
+                    <span class="rid">r8122</span>
+                    <b>T-2960 视觉解析收尾</b>
+                    <span class="spacer"></span>
+                    <span class="tag ok">运行中</span>
+                  </span>
+                  <span class="run-body">
+                    <span class="run-meta">
+                      <span>terminal · pty</span>
+                      <span>8m12s</span>
+                      <span>.worktrees/T-2960</span>
+                    </span>
+                    <span class="run-acts">
+                      <span class="btn tiny primary">看过程</span>
+                    </span>
+                  </span>
+                </button>
+                <div class="chips">
+                  <span class="tool-chip">Skills <em>visual-parse</em></span>
+                  <span class="tool-chip">MCP <em>files · shell</em></span>
+                  <span class="tool-chip">记忆 <em>L3 · L2</em></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="msg">
+            <span class="owner-avatar a" style="width:24px;height:24px;font-size:11px;flex:none;margin-top:2px">戈</span>
+            <div class="msg-body">
+              <div class="msg-meta"><b>戈洛</b><span>10:31</span></div>
+              <div class="bubble">
+                第二个只是评审，跑测试，不改文件。它跑完了。
+                <button class="run-card" data-run="r8126" aria-label="打开 run r8126 的过程">
+                  <span class="run-top">
+                    <span class="rid">r8126</span>
+                    <b>评审 · 只读</b>
+                    <span class="spacer"></span>
+                    <span class="tag ok">完成</span>
+                  </span>
+                  <span class="run-body">
+                    <span class="run-meta"><span>terminal · pty</span><span>2m04s</span><span>41 passed</span></span>
+                    <span class="run-acts"><span class="btn tiny">看过程</span></span>
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="msg me">
+            <div class="msg-body">
+              <div class="msg-meta"><b>你</b><span>10:36</span></div>
+              <div class="bubble">图形化那部分先别管，只做块级。</div>
+            </div>
+          </div>
+
+          <div class="msg">
+            <span class="owner-avatar a" style="width:24px;height:24px;font-size:11px;flex:none;margin-top:2px">戈</span>
+            <div class="msg-body">
+              <div class="msg-meta"><b>戈洛</b><span>10:36</span></div>
+              <div class="bubble">好。r8122 的范围收窄到块级信息，图形化留到 T-2963。<span class="faint">范围已写入 L3 记忆。</span></div>
+            </div>
+          </div>
+
+          <div class="msg msg-cont">
+            <span class="msg-spacer"></span>
+            <div class="msg-body">
+              <div class="bubble">
+                T-2963 那块要动 4 个文件、2 个依赖，我建议按 Mission 走。计划已经提交到项目侧，批准在你那儿。
+                <button class="plan-chip" data-go="project" aria-label="去终端批准计划">
+                  <span class="pc-top"><b>v0.3 交付</b><span class="tag warn">待批准</span></span>
+                  <span class="pc-meta">4 子任务 · 2 依赖 · 2 worktree</span>
+                  <span class="pc-link">去终端批准 →</span>
+                </button>
+              </div>
+              <button class="why-toggle" data-why aria-expanded="false">
+                10:41 · 为什么现在说
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <div class="why-body" hidden>
+                <div class="why-row"><span>触发源</span><b>todo.changed · T-2963 进入 planning</b></div>
+                <div class="why-row"><span>注入</span><b>L3 视觉解析在收尾 · L2 偏好先给结论 · 知识 3 条</b></div>
+                <div class="why-row"><span>过闸</span><b>静音时段外 · 间隔 14 分钟 · 配额 3 / 8</b></div>
+                <div class="why-row"><span>成本</span><b>905 tokens · 1.8s · ¥0.01</b></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="ask-card">
+            <div class="ask-top">
+              <b>要我把 T-2963 也拆成 Mission 吗？</b>
+              <span class="hint">回一句就会结掉这张卡；不回也不挡聊天</span>
+            </div>
+            <div class="row" style="gap:6px;margin-top:7px">
+              <button class="btn tiny primary" data-go="project">看一眼计划</button>
+              <button class="btn tiny ghost" data-mock="先不用：它会把这条记成观察，14 天内不再追问">先不用</button>
+            </div>
+          </div>
+          <div class="composer-box">
+            <textarea id="say" rows="1" placeholder="跟戈洛说话，或直接派活…"></textarea>
+            <button class="btn primary" data-mock="会话里的派活仍然只建 todo，起 run 走审批">发送</button>
+          </div>
+          <div class="composer-hint">
+            <span class="kbd">⌘↵</span><span>发送</span>
+            <span>·</span>
+            <span>派活 = 建 todo + 起 run；bot 自己不能越过你点头</span>
+            <span class="spacer"></span>
+            <span>它起的 run 都在右栏「过程」里，不占你的终端</span>
+          </div>
+        </div>
+      </main>
+
+      <aside class="cs" aria-label="Bot 检查器">
+        <div class="tabs" role="tablist">
+          <button class="on" data-tab="process">过程</button>
+          <button data-tab="memory">记忆</button>
+          <button data-tab="knowledge">知识</button>
+          <button data-tab="people">人物</button>
+          <button data-tab="skills">技能</button>
+          <button data-tab="routine">日程</button>
+        </div>
+        <div class="side-body" id="sideBody"></div>
+      </aside>
+    </section>
+
+    <!-- ══════════════ ② 项目工作台：终端是主面 ══════════════ -->
+    <section class="screen" data-screen="project">
+      <aside class="cl" aria-label="项目与 TODO">
+        <div class="cl-head">
+          <div class="row between">
+            <h2>项目</h2>
+            <div class="row" style="gap:2px">
+              <span class="hint">2 个</span>
+              <button class="icon-btn" id="projFold" title="收起项目列表" aria-label="收起项目列表" aria-expanded="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" style="transition:transform .12s;transform:rotate(180deg)"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="proj-list" id="projList">
+          <button class="proj-row on" data-pick="project:harness">
+            <span class="pr-name">spin-cockpit-harness</span>
+            <span class="pr-meta"><span class="st run"></span>3 跑 · 7 待确认</span>
+          </button>
+          <button class="proj-row" data-pick="project:zcode">
+            <span class="pr-name">zcode-adapter</span>
+            <span class="pr-meta"><span class="st done"></span>空闲 · 2 个任务</span>
+          </button>
+          <button class="proj-row add" data-mock="打开目录，添加项目">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            添加项目
+          </button>
+        </div>
+        <div class="cl-head sub">
+          <div class="row between" style="margin-bottom:8px">
+            <h2>TODO 总览</h2>
+            <button class="btn tiny ghost" data-mock="新建任务">＋</button>
+          </div>
+          <div class="segmented">
+            <button class="on" data-mock="只看当前项目">当前项目</button>
+            <button data-mock="全部项目">全部项目</button>
+          </div>
+        </div>
+        <div class="cl-body">
+          <div class="plan-card">
+            <div class="plan-top">
+              <b>v0.3 交付</b>
+              <span class="tag warn">计划待批准</span>
+            </div>
+            <div class="plan-meta">4 子任务 · 2 依赖 · 2 worktree</div>
+            <div class="plan-acts">
+              <button class="btn tiny primary" data-mock="批准并分派：建子 todo；起 run 仍要人点">批准并分派</button>
+              <button class="btn tiny ghost" data-mock="退回并写反馈">退回</button>
+            </div>
+            <div class="plan-note">来自 BOT「戈洛」的会话 · 批准只在这里</div>
+          </div>
+          <div class="grp">
+            <div class="grp-head"><b>任务</b><span class="n">v0.3 交付 · 3/7</span></div>
+            <button class="item on" data-run="r8122">
+              <span class="st run"></span>
+              <span class="item-main"><b>T-2960 视觉解析收尾</b><span>r8122 · 进行中</span></span>
+            </button>
+            <button class="item" data-run="r8126">
+              <span class="st run"></span>
+              <span class="item-main"><b>T-2951 检索评估</b><span>r8126 · 进行中</span></span>
+            </button>
+            <button class="item" data-mock="展开子任务">
+              <span class="st wait"></span>
+              <span class="item-main"><b>T-2947 设置页合并</b><span>待确认 · 需要你验收</span></span>
+            </button>
+            <button class="item" data-mock="展开子任务">
+              <span class="st"></span>
+              <span class="item-main"><b>T-2938 插件签名</b><span>排队 · 未有可用执行体</span></span>
+            </button>
+            <button class="item" data-mock="已完成">
+              <span class="st done"></span>
+              <span class="item-main"><b>T-2874 打包体积</b><span>已完成 · 昨天</span></span>
+            </button>
+          </div>
+        </div>
+        <div class="cl-foot">
+          <div class="cap-strip">
+            <span class="cap-k">能力</span>
+            <button class="cap-chip" data-ptab="knowledge">知识 <em>47 篇</em></button>
+            <button class="cap-chip" data-ptab="exec">执行体 <em>2</em></button>
+          </div>
+          <div class="note"><b>Mission 是 TODO 的一种</b>（<span class="mono">kind=mission</span>）。
+            计划卡落在 owner 这一侧，会话里只留一条指路——同一个 Mission 只有一处能批准。</div>
+        </div>
+      </aside>
+
+      <main class="cm">
+        <header class="wshead">
+          <div class="owner">
+            <span class="owner-avatar p">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+            </span>
+            <div class="owner-copy">
+              <h1>spin-cockpit-harness</h1>
+              <div class="owner-sub">
+                <span class="mode-word">终端</span><span>·</span>
+                <span>3 个 run 在跑</span><span>·</span>
+                <span>7 个待确认</span><span>·</span>
+                <span class="mono">main · 2 个 worktree</span><span>·</span>
+                <span>本机</span>
+              </div>
+            </div>
+          </div>
+          <div class="spacer"></div>
+          <div class="ws-actions">
+            <button class="btn tiny ghost" data-capture title="记一条（⌘⇧N）">记一条</button>
+            <button class="btn tiny" data-mock="新建终端标签">＋ 终端</button>
+            <button class="btn tiny primary" data-dock>派活</button>
+            <button class="btn tiny ghost" id="theme2" title="切亮 / 暗">◐</button>
+          </div>
+        </header>
+
+        <div class="termbar" role="tablist">
+          <span class="tgroup-label">我的</span>
+          <div class="tgroup">
+            <button class="ttab on" title="~/spin-cockpit-harness"><span class="tt-dot"></span>zsh · harness</button>
+            <button class="ttab" title="npm run dev · :5173"><span class="tt-dot live"></span>npm run dev<span class="tt-meta">28m</span></button>
+          </div>
+          <div class="tsep"></div>
+          <span class="tgroup-label">Agent 的</span>
+          <div class="tgroup">
+            <button class="ttab" data-run="r8122" title="run r8122 · task/T-2960 · 8m12s">
+              <span class="tt-ava a">戈</span>T-2960<span class="tt-state run">跑</span><span class="tt-meta">8m12s</span>
+            </button>
+            <button class="ttab" data-run="r8126" title="run r8126 · task/T-2951 · 已完成">
+              <span class="tt-ava a">评</span>T-2951<span class="tt-state done">完成</span>
+            </button>
+            <button class="ttab" id="pinnedTab" data-run="r8122" hidden><span class="tt-dot wait"></span>r8122</button>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn tiny ghost" data-mock="拆分：向右 / 向下">拆分</button>
+          <button class="btn tiny ghost" data-mock="预览 dev server">预览</button>
+        </div>
+
+        <div class="runbar">
+          <span class="mono tiny muted" id="rbId">r8122</span>
+          <span class="rb-title" id="rbTitle">T-2960 视觉解析收尾</span>
+          <span class="spacer"></span>
+          <span class="rb-note">同一份状态：</span>
+          <span class="rb-chip">TODO 行</span>
+          <button class="rb-chip link" data-openrun="bot">会话卡片</button>
+          <span class="rb-chip on">终端标签</span>
+        </div>
+
+        <div class="termgrid" id="termgrid">
+          <div class="pane">
+            <div class="pane-head">
+              <b>zsh · harness</b><span class="mini">~/spin-cockpit-harness</span>
+              <span class="acts">
+                <button class="icon-btn" data-mock="复制工作目录路径" title="复制路径">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 5H6a1 1 0 0 0-1 1v9"/></svg>
+                </button>
+                <button class="icon-btn" data-mock="在编辑器里打开这个目录" title="在编辑器打开">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M14 5h5v5"/><path d="M19 5l-7 7"/><path d="M12 5H6a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-6"/></svg>
+                </button>
+                <button class="icon-btn" data-mock="拆分窗格" title="拆分">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>
+                </button>
+              </span>
+            </div>
+            <div class="pane-body">$ git status -sb
+## main...origin/main
+ M electron/knowledge/reader.mjs
+?? .worktrees/T-2960
+
+$ git worktree list
+/Users/…/spin-cockpit-harness      ab12cd3 [main]
+/Users/…/.worktrees/T-2960         9f8e7d2 [task/T-2960]</div>
+          </div>
+          <div class="pane">
+            <div class="pane-head">
+              <b>npm run dev</b><span class="mini">:5173</span>
+              <span class="acts">
+                <button class="icon-btn" data-mock="重启 dev server" title="重启">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/></svg>
+                </button>
+                <button class="icon-btn" data-mock="停止" title="停止">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                </button>
+              </span>
+            </div>
+            <div class="pane-body"><span class="dim">10:22:41</span> [vite] server started
+<span class="dim">10:22:41</span>   <span class="ok">➜  Local:</span>   http://localhost:5173/
+<span class="dim">10:31:02</span> [vite] hmr update src/components/Notes.tsx
+<span class="dim">10:31:04</span> [vite] hmr update src/styles.css
+<span class="dim">10:36:19</span> [vite] page reload electron/knowledge/reader.mjs
+<span class="dim">10:36:19</span> (waiting for change…)</div>
+          </div>
+          <div class="pane" data-pane-run="r8122">
+            <div class="pane-head">
+              <b id="projTermTitle">Agent · T-2960</b><span class="mini" id="projTermMeta">run r8122 · 只读回放</span>
+              <span class="acts">
+                <button class="icon-btn" data-mock="接管：这个 pty 变成可输入，run 继续但你能插手" title="接管">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 12h8M9 8l4 4-4 4"/><path d="M16 6v12"/></svg>
+                </button>
+                <button class="icon-btn" data-run="r8122" title="回到会话里看这个过程">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h9a3 3 0 0 1 3 3v7"/><path d="m13 14 3 3 3-3"/></svg>
+                </button>
+                <button class="icon-btn" data-mock="停止这个 run" title="停止">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                </button>
+              </span>
+            </div>
+            <div class="pane-body" id="projTerm"></div>
+          </div>
+          <div class="pane">
+            <div class="pane-head">
+              <b>Agent · T-2951</b><span class="mini">run r8126 · 已结束</span>
+              <span class="acts"><button class="icon-btn" data-run="r8126" title="看过程">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h9a3 3 0 0 1 3 3v7"/><path d="m13 14 3 3 3-3"/></svg>
+              </button></span>
+            </div>
+            <div class="pane-body"><span class="p">$ npm test -- knowledge</span>
+<span class="dim">RUN  v2.1.4  electron/knowledge</span>
+  <span class="ok">✓</span> reader &gt; 保留 page 边界 (12ms)
+  <span class="ok">✓</span> reader &gt; 表格块不合并 (8ms)
+  <span class="ok">✓</span> reader &gt; 引用页码回落 (15ms)
+
+ <span class="ok">Tests  41 passed (41)</span>
+ <span class="dim">Time   1.82s</span></div>
+          </div>
+        </div>
+
+        <div class="dock" id="dock">
+          <div class="dock-head">
+            <b>派活 / 纠偏</b>
+            <span class="hint">Chat 只是一个 pane：默认收起，不抢终端的地方</span>
+            <span class="spacer"></span>
+            <span class="kbd">⌘J</span>
+            <button class="btn tiny ghost" data-dock aria-label="展开或收起派活面板">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" style="transition:transform .12s"><path d="m6 15 6-6 6 6"/></svg>
+            </button>
+          </div>
+          <div class="dock-body">
+            <div class="dock-msg"><b>戈洛</b><span class="m">T-2960 里有个测试红了（引用页码回落），我在看。</span></div>
+            <div class="ctx-chips" id="dockCtx"></div>
+            <div class="exec-modes">
+              <span class="em-k">执行方式</span>
+              <div class="segmented">
+                <button class="on" data-mock="直接改你的工作副本；同一时刻只跑一个，第二个排队等">直接改工作副本</button>
+                <button data-mock="在自己的 worktree 里改，交给你一个分支合并">在 worktree 里改</button>
+              </div>
+              <span class="spacer"></span>
+              <button class="cap-chip" data-mock="执行体：dsh 0.2.1（已装）· 可换 claude / codex / opencode">执行体 dsh ▾</button>
+            </div>
+            <div class="composer-box">
+              <textarea rows="1" placeholder="派活 / 纠偏 / 问一句…"></textarea>
+              <button class="btn primary" data-mock="派活：建 todo + 起 run；run 进「Agent 的」标签">派活</button>
+            </div>
+            <div class="composer-hint">
+              <span>一条能直接跑的活；它在自己的 worktree 里跑。</span>
+              <span class="spacer"></span>
+              <button class="btn tiny ghost" data-go="bot" title="发起 Mission 是 BOT 的活：对主管说一句，计划落到这里批准">
+                要拆成计划？去 BOT 跟主管说 →
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="statusbar">
+          <span class="sb-item">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="9" r="2.2"/><path d="M6 8.2v7.6M8.3 6h4.3a3 3 0 0 1 3 3v.2"/></svg>
+            main
+          </span>
+          <span class="sb-item">2 worktree</span>
+          <span class="sb-item"><span class="st run"></span>3 跑</span>
+          <span class="sb-item"><span class="st wait"></span>7 待确认</span>
+          <span class="spacer"></span>
+          <span class="sb-item">本机</span>
+          <span class="sb-item mono">¥0.42 今日</span>
+          <span class="sb-item mono">38.2k tokens</span>
+          <span class="sb-item"><span class="kbd">⌘K</span></span>
+        </div>
+      </main>
+
+      <aside class="cs" aria-label="文件 / Git / 预览">
+        <div class="tabs" role="tablist">
+          <button class="on" data-ptab="files">文件</button>
+          <button data-ptab="git">Git</button>
+          <button data-ptab="preview">预览</button>
+          <button data-ptab="knowledge">知识</button>
+          <button data-ptab="exec">执行体</button>
+        </div>
+        <div class="side-body" id="projSide"></div>
+      </aside>
+    </section>
+
+    <!-- ══════════════ ③ 记忆：复用现有 Memory 页的骨架（层级 / 主面 / 复核） ══════════════ -->
+    <section class="screen" data-screen="memory">
+      <aside class="cl" aria-label="层级">
+        <div class="cl-head"><div class="row between"><h2>层级</h2><span class="hint">342 条</span></div></div>
+        <div class="cl-body">
+          <div class="grp">
+            <button class="item on"><span class="st run"></span><span class="item-main"><b>L4 结论</b><span>12 条 · 长期有效</span></span></button>
+            <button class="item"><span class="st"></span><span class="item-main"><b>L3 项目</b><span>9 条 · 当前项目</span></span></button>
+            <button class="item"><span class="st"></span><span class="item-main"><b>L2 事实</b><span>87 条 · 观察晋升</span></span></button>
+            <button class="item"><span class="st done"></span><span class="item-main"><b>L1 原始</b><span>234 条 · 只回查</span></span></button>
+          </div>
+          <div class="grp">
+            <div class="grp-head"><b>视图</b></div>
+            <button class="item on"><span class="st"></span><span class="item-main"><b>注入预览</b><span>这一轮用了什么、裁了什么</span></span></button>
+            <button class="item" data-mock="Dream 日志：晋升 / 合并 / 剪枝"><span class="st"></span><span class="item-main"><b>Dream 日志</b><span>04:12 晋升 3 条</span></span></button>
+            <button class="item" data-mock="已废弃条目"><span class="st done"></span><span class="item-main"><b>已废弃</b><span>18 条 · 可恢复</span></span></button>
+          </div>
+        </div>
+        <div class="cl-foot"><div class="note">L1 只回查、不注入；<b>注入预算是硬的</b>，超了先裁 L2。</div></div>
+      </aside>
+      <main class="cm">
+        <header class="wshead">
+          <div class="owner-copy">
+            <h1>记忆</h1>
+            <div class="owner-sub"><span>四层 · 注入预算 2,400 字符</span><span>·</span><span>本 bot 342 条</span><span>·</span><span>索引 3 天前</span></div>
+          </div>
+          <div class="spacer"></div>
+          <div class="ws-actions">
+            <button class="btn tiny ghost" data-mock="按条目 / 来源搜索">搜索</button>
+            <button class="btn tiny ghost" data-mock="跑一次 Dream：扫 L1/L2，提出晋升">跑 Dream</button>
+            <button class="btn tiny ghost theme-btn" title="切亮 / 暗">◐</button>
+          </div>
+        </header>
+        <div class="lib-body">
+          <div>
+            <h3>这一轮注入 · 2,140 / 2,400 字符</h3>
+            <div class="tool-list">
+              <div class="tool-row"><span>L4</span><b>交付前自己跑完 typecheck / build</b></div>
+              <div class="tool-row"><span>L3</span><b>视觉解析插件在收尾；Reader 契约是 page + markdown</b></div>
+              <div class="tool-row"><span>L2</span><b>偏好：先说结论，再展开</b></div>
+              <div class="tool-row"><span>裁掉</span><b>3 条（预算用完）：打包体积 / 插件签名 / 文档口径</b></div>
+            </div>
+          </div>
+          <div>
+            <h3>L4 结论 · 12 条</h3>
+            <div class="lrow"><b>交付前自己跑完 typecheck / build</b><span class="tag ok">今天</span><span class="meta">2 次</span></div>
+            <div class="lrow"><b>不自动改 CHANGELOG</b><span class="tag">12 天前</span><span class="meta">1 次</span></div>
+            <div class="lrow"><b>对外承诺必须人来发</b><span class="tag">20 天前</span><span class="meta">1 次</span></div>
+          </div>
+        </div>
+      </main>
+      <aside class="cs" aria-label="复核">
+        <div class="tabs" role="tablist">
+          <button class="on">复核 4</button>
+          <button data-mock="变更记录">变更</button>
+          <button data-mock="预算与裁剪">预算</button>
+        </div>
+        <div class="side-body">
+          <div class="gov">
+            <div class="gov-h"><b>待复核</b><span class="spacer"></span><span class="mono">4</span></div>
+            <div class="gov-row">未验证观察<span class="spacer"></span><em>2 条</em></div>
+            <div class="gov-row">互相冲突<span class="spacer"></span><em>1 组</em></div>
+            <div class="gov-row">Dream 建议晋升<span class="spacer"></span><em>1 条</em></div>
+          </div>
+          <div>
+            <h3>未验证观察</h3>
+            <div class="lrow"><b>你周末通常不处理 PR</b><span class="meta">0.41</span></div>
+            <div class="row" style="gap:6px;margin:6px 0 12px">
+              <button class="btn tiny primary" data-mock="晋升到 L2">晋升</button>
+              <button class="btn tiny ghost" data-mock="标为过期">过期</button>
+            </div>
+            <div class="lrow"><b>偏好 pnpm 而不是 npm</b><span class="meta">0.38</span></div>
+            <div class="row" style="gap:6px;margin:6px 0 12px">
+              <button class="btn tiny primary" data-mock="接受为观察">接受</button>
+              <button class="btn tiny ghost" data-mock="拒绝并降权">拒绝</button>
+            </div>
+          </div>
+          <div>
+            <h3>注入预算</h3>
+            <div class="bars">
+              <div class="bar-row"><div class="bar-line"><b>L4</b><span>420 / 600</span></div><div class="bar"><i style="width:70%"></i></div></div>
+              <div class="bar-row"><div class="bar-line"><b>L3</b><span>900 / 1,000</span></div><div class="bar"><i style="width:90%"></i></div></div>
+              <div class="bar-row"><div class="bar-line"><b>L2</b><span>820 / 800</span></div><div class="bar warn"><i style="width:100%"></i></div></div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- ══════════════ ④ 知识：复用现有 资料 页的骨架（集合 / 检索 / 引用） ══════════════ -->
+    <section class="screen" data-screen="knowledge">
+      <aside class="cl" aria-label="集合">
+        <div class="cl-head"><div class="row between"><h2>集合</h2><span class="hint">1,204 块</span></div></div>
+        <div class="cl-body">
+          <div class="grp">
+            <button class="item on"><span class="st run"></span><span class="item-main"><b>docs/</b><span>47 篇 · 参与检索</span></span></button>
+            <button class="item"><span class="st"></span><span class="item-main"><b>resources/</b><span>12 份 · 参与检索</span></span></button>
+            <button class="item"><span class="st"></span><span class="item-main"><b>resources/wiki</b><span>32 页 · 未索引</span></span></button>
+            <button class="item"><span class="st done"></span><span class="item-main"><b>归档</b><span>6 份 · 不参与</span></span></button>
+          </div>
+          <div class="grp">
+            <div class="grp-head"><b>视图</b></div>
+            <button class="item on"><span class="st"></span><span class="item-main"><b>检索 / 问答</b><span>带页码引用</span></span></button>
+            <button class="item" data-mock="解析预览：页 / 块 / 未识别页标黄"><span class="st"></span><span class="item-main"><b>解析预览</b><span>页 / 块 / 未识别</span></span></button>
+            <button class="item" data-mock="引用台账：哪些回答引用了哪一页"><span class="st"></span><span class="item-main"><b>引用台账</b><span>3 条待修</span></span></button>
+          </div>
+        </div>
+        <div class="cl-foot"><div class="note">勾选决定<b>检索范围</b>：没勾的集合不进检索，但仍能手动打开。</div></div>
+      </aside>
+      <main class="cm">
+        <header class="wshead">
+          <div class="owner-copy">
+            <h1>知识</h1>
+            <div class="owner-sub"><span>47 篇 · 1,204 块</span><span>·</span><span>索引 3 天前</span><span>·</span><span>引用必须能点回原页</span></div>
+          </div>
+          <div class="spacer"></div>
+          <div class="ws-actions">
+            <button class="btn tiny ghost" data-mock="导入文件 / 目录">导入</button>
+            <button class="btn tiny ghost" data-mock="重建索引（增量）">重建索引</button>
+            <button class="btn tiny ghost theme-btn" title="切亮 / 暗">◐</button>
+          </div>
+        </header>
+        <div class="lib-body">
+          <div>
+            <h3>问：Reader 契约里「块」和「页」怎么分？</h3>
+            <div class="pane-block" style="font-size:12.5px;line-height:1.7;color:var(--fg-2)">
+              页是 Reader 的最小返回单位（<span class="mono">readPage</span>），块是页里的结构单元
+              （heading / paragraph / table）。<b>块不跨页合并</b>，所以页码永远指向页，
+              引用角标也只到页。<span class="tag mono">p.41</span><span class="tag mono">p.58</span>
+            </div>
+            <div class="row" style="gap:6px;margin-top:8px">
+              <button class="btn tiny" data-mock="把这条回答存成页面（进知识，可引用）">存成页面</button>
+              <button class="btn tiny ghost" data-mock="复制带引用的 Markdown">复制引用</button>
+            </div>
+          </div>
+          <div>
+            <h3>命中 · 3 条</h3>
+            <div class="lrow"><b>reader.mjs · 分页契约</b><span class="tag mono">p.41</span><span class="meta">0.82</span></div>
+            <div class="lrow"><b>块级信息不跨页合并</b><span class="tag mono">p.58</span><span class="meta">0.74</span></div>
+            <div class="lrow"><b>解析结果接知识库</b><span class="tag mono">p.12</span><span class="meta">0.61</span></div>
+          </div>
+        </div>
+      </main>
+      <aside class="cs" aria-label="引用与引擎">
+        <div class="tabs" role="tablist">
+          <button class="on">引用 3</button>
+          <button data-mock="解析引擎与后端">引擎</button>
+          <button data-mock="检索质量与评测">评测</button>
+        </div>
+        <div class="side-body">
+          <div>
+            <h3>本次引用</h3>
+            <div class="lrow"><b>reader.mjs p.41</b><span class="meta">今天</span></div>
+            <div class="lrow"><b>blocks 契约 p.58</b><span class="meta">今天</span></div>
+            <div class="lrow"><b>检索规则 p.12</b><span class="meta">今天</span></div>
+          </div>
+          <div>
+            <h3>录入管道</h3>
+            <div class="tool-list">
+              <div class="tool-row"><span>启用</span><b>PDF / 网页 · 文本抽取</b></div>
+              <div class="tool-row"><span>启用</span><b>视觉解析 · 截图 / 扫描页 → 块</b></div>
+              <div class="tool-row"><span>待</span><b>1 个 PDF 待解析 · 12 分钟</b></div>
+            </div>
+            <div class="note" style="margin-top:6px">视觉解析不是独立能力，是知识的一条<b>管道</b>。</div>
+          </div>
+          <div>
+            <h3>待治理</h3>
+            <div class="gov">
+              <div class="gov-h"><b>引用与解析</b><span class="spacer"></span><span class="mono">4</span></div>
+              <div class="gov-row">引用点失效<span class="spacer"></span><em>2 处</em></div>
+              <div class="gov-row">解析失败<span class="spacer"></span><em>1 份</em></div>
+              <div class="gov-row">索引过期<span class="spacer"></span><em>3 天</em></div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- ══════════════ ⑤ 人物：复用现有 Persona 页的骨架（人物 / 人设卡 / 复核） ══════════════ -->
+    <section class="screen" data-screen="people">
+      <aside class="cl" aria-label="人物">
+        <div class="cl-head"><div class="row between"><h2>人物</h2><span class="hint">3 个</span></div></div>
+        <div class="cl-body">
+          <div class="grp">
+            <button class="item on"><span class="st run"></span><span class="item-main"><b>你 · 同事</b><span>证据 12 条 · 0.86</span></span></button>
+            <button class="item"><span class="st"></span><span class="item-main"><b>张三 · 客户</b><span>证据 4 条 · 0.52</span></span></button>
+            <button class="item"><span class="st fail"></span><span class="item-main"><b>李四 · 外部</b><span>证据 1 条 · 0.44</span></span></button>
+          </div>
+          <div class="grp">
+            <div class="grp-head"><b>视图</b></div>
+            <button class="item on"><span class="st"></span><span class="item-main"><b>人设卡</b><span>陈述 / 性格 / 行事</span></span></button>
+            <button class="item" data-mock="证据链：每条判断的原话与时间"><span class="st"></span><span class="item-main"><b>证据链</b><span>19 条原话</span></span></button>
+            <button class="item" data-mock="关系网"><span class="st"></span><span class="item-main"><b>关系网</b><span>3 条关系</span></span></button>
+          </div>
+        </div>
+        <div class="cl-foot"><div class="note">人物建模的是<b>人</b>；BOT 自己的人格卡在「BOT → 人物」tab 里，两张表不共享。</div></div>
+      </aside>
+      <main class="cm">
+        <header class="wshead">
+          <div class="owner-copy">
+            <h1>人物</h1>
+            <div class="owner-sub"><span>3 个人物 · 证据 19 条</span><span>·</span><span>待确认 2</span><span>·</span><span>双时态：当时 vs 现在</span></div>
+          </div>
+          <div class="spacer"></div>
+          <div class="ws-actions">
+            <button class="btn tiny ghost" data-mock="从会话里提取人物">提取</button>
+            <button class="btn tiny ghost theme-btn" title="切亮 / 暗">◐</button>
+          </div>
+        </header>
+        <div class="lib-body">
+          <div>
+            <h3>人设卡 · 你</h3>
+            <div class="field"><span>怎么处事</span><b>先给结论，再展开；不喜欢客套开场</b></div>
+            <div class="field"><span>在意什么</span><b>边界清楚、可回滚、别偷偷改口径</b></div>
+            <div class="field"><span>不喜欢的</span><b>「我理解您的心情」这类模板话</b></div>
+            <div class="field"><span>置信</span><b>0.86 · 证据 12 条 · 最近更新 昨天</b></div>
+          </div>
+          <div>
+            <h3>证据 · 4 条</h3>
+            <div class="lrow"><b>「先说结论」</b><span class="tag">10-28</span><span class="meta">会话</span></div>
+            <div class="lrow"><b>「别偷偷改口径」</b><span class="tag">10-21</span><span class="meta">批注</span></div>
+            <div class="lrow"><b>「回滚比快更重要」</b><span class="tag">10-14</span><span class="meta">会话</span></div>
+          </div>
+        </div>
+      </main>
+      <aside class="cs" aria-label="复核与置信">
+        <div class="tabs" role="tablist">
+          <button class="on">复核 2</button>
+          <button data-mock="置信度变化">置信</button>
+          <button data-mock="关系网">关系</button>
+        </div>
+        <div class="side-body">
+          <div class="gov">
+            <div class="gov-h"><b>待确认</b><span class="spacer"></span><span class="mono">2</span></div>
+            <div class="gov-row">未验证观察<span class="spacer"></span><em>1 条</em></div>
+            <div class="gov-row">证据链缺口<span class="spacer"></span><em>1 人</em></div>
+          </div>
+          <div>
+            <h3>未验证观察</h3>
+            <div class="lrow"><b>张三 最近在做支付</b><span class="meta">0.52</span></div>
+            <div class="row" style="gap:6px;margin:6px 0 12px">
+              <button class="btn tiny primary" data-mock="接受为观察">接受</button>
+              <button class="btn tiny ghost" data-mock="拒绝">拒绝</button>
+            </div>
+          </div>
+          <div>
+            <h3>证据链缺口</h3>
+            <div class="lrow"><b>李四 · 3 条观察没有来源</b><span class="meta">0.44</span></div>
+            <div class="row" style="gap:6px;margin-top:6px">
+              <button class="btn tiny" data-mock="降到 0.44 并标记不可注入">降权</button>
+              <button class="btn tiny ghost" data-mock="加入补证据队列">补证据</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- ══════════════ ⑥ 视觉：复用现有 视觉解析 页的骨架（任务 / 验证台 / 后端） ══════════════ -->
+    <section class="screen" data-screen="vision">
+      <aside class="cl" aria-label="任务">
+        <div class="cl-head"><div class="row between"><h2>任务</h2><span class="hint">今日 12 次</span></div></div>
+        <div class="cl-body">
+          <div class="grp">
+            <div class="grp-head"><b>最近</b></div>
+            <button class="item on"><span class="st run"></span><span class="item-main"><b>settings-dark.png</b><span>3 块 · 已入库 p.41</span></span></button>
+            <button class="item"><span class="st fail"></span><span class="item-main"><b>design.pdf</b><span>12 页 / 0 块 · 失败</span></span></button>
+            <button class="item"><span class="st run"></span><span class="item-main"><b>合同-03.jpg</b><span>5 块 · 已入库</span></span></button>
+          </div>
+          <div class="grp">
+            <div class="grp-head"><b>视图</b></div>
+            <button class="item on"><span class="st"></span><span class="item-main"><b>验证台</b><span>原图 ↔ 块，逐块确认</span></span></button>
+            <button class="item" data-mock="批量：一次解析整个目录"><span class="st"></span><span class="item-main"><b>批量</b><span>排队 2 个</span></span></button>
+            <button class="item" data-mock="后端：视觉模型 / OCR / 本地"><span class="st"></span><span class="item-main"><b>后端</b><span>3 个可用</span></span></button>
+          </div>
+        </div>
+        <div class="cl-foot"><div class="note">视觉只产出<b>块</b>；写不写进知识由你在这里点。</div></div>
+      </aside>
+      <main class="cm">
+        <header class="wshead">
+          <div class="owner-copy">
+            <h1>视觉</h1>
+            <div class="owner-sub"><span>截图 / 扫描页 / PDF → 块</span><span>·</span><span>后端 3 个</span><span>·</span><span>今日 12 次</span></div>
+          </div>
+          <div class="spacer"></div>
+          <div class="ws-actions">
+            <button class="btn tiny ghost" data-mock="拖入或选择文件">导入</button>
+            <button class="btn tiny ghost" data-mock="重跑这一份">重跑</button>
+            <button class="btn tiny ghost theme-btn" title="切亮 / 暗">◐</button>
+          </div>
+        </header>
+        <div class="lib-body">
+          <div class="row" style="gap:14px;align-items:stretch">
+            <div class="pane-block" style="flex:1;min-height:220px;display:grid;place-items:center;border-style:dashed">
+              <span class="hint">原图 · settings-dark.png（1440×960）</span>
+            </div>
+            <div class="pane-block" style="flex:1.2">
+              <h3 style="margin-top:0">分块 · 3 块</h3>
+              <div class="lrow"><b>设置页 · 深色跟随系统开关</b><span class="tag ok">0.92</span></div>
+              <div class="lrow"><b>说明文字 · 切换后即时生效</b><span class="tag ok">0.88</span></div>
+              <div class="lrow"><b>分组标题 · 外观</b><span class="tag warn">0.64</span></div>
+              <div class="note" style="margin-top:8px">置信 &lt; 0.7 的块会被标黄，入库前要你看一眼。</div>
+            </div>
+          </div>
+          <div class="row" style="gap:6px">
+            <button class="btn tiny primary" data-mock="写入知识（p.41）">写入知识</button>
+            <button class="btn tiny ghost" data-mock="只写入选中的块">只写选中</button>
+            <button class="btn tiny ghost" data-mock="丢弃这次结果">丢弃</button>
+          </div>
+        </div>
+      </main>
+      <aside class="cs" aria-label="后端与批量">
+        <div class="tabs" role="tablist">
+          <button class="on">后端</button>
+          <button data-mock="批量队列">批量 2</button>
+          <button data-mock="字段映射">映射</button>
+        </div>
+        <div class="side-body">
+          <div>
+            <h3>解析后端</h3>
+            <div class="tool-list">
+              <div class="tool-row"><span>当前</span><b>视觉模型 · 本机 · 3.2s / 屏</b></div>
+              <div class="tool-row"><span>备选</span><b>OCR · 只出文字，不出结构</b></div>
+              <div class="tool-row"><span>备选</span><b>远端 · 需联网，默认关闭</b></div>
+            </div>
+          </div>
+          <div>
+            <h3>写入目标</h3>
+            <div class="kv">
+              <span>集合</span><b>resources/</b>
+              <span>页面</span><b class="mono">p.41</b>
+              <span>块</span><b>3 个</b>
+            </div>
+          </div>
+          <div class="gov">
+            <div class="gov-h"><b>待处理</b><span class="spacer"></span><span class="mono">1</span></div>
+            <div class="gov-row">解析失败<span class="spacer"></span><em>design.pdf</em></div>
+          </div>
+          <div class="note">失败的那份在<b>知识 → 待治理</b>里，用视觉解析重跑；这里不重复列队列。</div>
+        </div>
+      </aside>
+    </section>
+
+  </div>
+</div>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-box" role="dialog" aria-label="记一条">
+    <div class="row" style="gap:8px">
+      <b style="font-size:12.5px">记一条</b>
+      <span class="hint">收集箱属于 TODO（终端），但门铃在任何面都能按</span>
+      <span class="spacer"></span>
+      <button class="icon-btn" id="sheetClose" title="关闭" aria-label="关闭">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <textarea id="sheetText" rows="3" placeholder="一行一条，⌘↵ 落地"></textarea>
+    <div class="row" style="gap:6px;margin-top:8px">
+      <span class="note" style="margin-right:auto">落地后：<span class="mono">agentId=null</span> · 当前项目 · 落进 TODO 总览</span>
+      <button class="btn tiny ghost" id="sheetCancel">取消</button>
+      <button class="btn tiny primary" data-mock="createTodos：n 条 todo，落进 TODO 总览，不抢当前面">落地到 TODO</button>
+    </div>
+  </div>
+</div>
+
+<button class="notes-btn" id="notesBtn">原型说明</button>
+<div class="notes" id="notes" hidden>
+  <button class="btn tiny ghost x" id="notesClose" aria-label="关闭说明">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+  </button>
+  <h4>三层：两个操作面 / 一套执行面 / 一层能力</h4>
+  <table class="mini-tbl"><tbody>
+    <tr><td>操作面</td><td><b>BOT</b>（角色）· <b>终端</b>（代码）<span>rail 第一组，两个工作台</span></td></tr>
+    <tr><td>执行面</td><td>Todo → Run → Terminal(pty)<span>只有一套，两个面共用</span></td></tr>
+    <tr><td>能力面</td><td>记忆 · 知识 · 人物 · 视觉<span>各自一页（复用现有页面），同时是工作台里的 tab</span></td></tr>
+    <tr><td>投影面</td><td>场景<span>只画，不调度</span></td></tr>
+  </tbody></table>
+  <p>rail 就是这张表：<b>BOT / 终端</b> │ <b>场景</b> │ <b>记忆 / 知识 / 人物</b> │ <b>视觉</b>，底部 说明 / 设置。
+     两个工作台叫「工作台」只是文档里的类型名，nav 上不出现。</p>
+
+  <h4 class="h">能力也不是一类：按「怎么用」分三种</h4>
+  <table class="mini-tbl"><tbody>
+    <tr><td>治理型</td><td>记忆 · 知识 · 人物<span>各一页：左列表 / 中主面 / 右复核队列；rail 上是待办徽标</span></td></tr>
+    <tr><td>调用型</td><td>视觉 · 技能 · MCP<span>视觉有自己的验证台；其余按钮挂在对象旁，结果落回知识</span></td></tr>
+    <tr><td>配置型</td><td>人格卡 · 执行体 · 审批档位<span>一次设定；只在 BOT / 终端的建档页里改</span></td></tr>
+  </tbody></table>
+  <p>三种都不是操作面：它们没有 owner，也不替谁「干活」，只是可查、可改、可调。</p>
+
+  <h4 class="h">这一版改了什么</h4>
+  <ol>
+    <li><b>两个操作面有了短名</b>：<b>BOT</b>（智能机器人）/ <b>终端</b>（智能体终端）。
+      rail：BOT · 终端 │ 场景 │ 记忆 · 知识 · 人物 │ 视觉，底部 说明 / 设置。</li>
+    <li><b>四个能力页直接复用现有页面</b>：记忆 = Memory、知识 = 资料、人物 = Persona、视觉 = 视觉解析，
+      都是「左列表 / 中主面 / 右复核」的原有骨架；没有返回、没有第二套入口，也不再自造「治理台」。</li>
+    <li><b>名字只在两处</b>：rail 上两项，页头一个词。数据层仍是 owner（<span class="mono">bot</span> / <span class="mono">project</span>），
+      不造 <span class="mono">mode</span> 枚举。</li>
+    <li><b>两个左栏同构</b>：owner 列表（可折叠）+ 这个模式下要干的活。换 bot / 换项目只在一个地方，不再有页头 popover。</li>
+    <li><b>run 三面同源</b>：会话卡片 → 右栏「过程」→ 终端标签；项目里多了一条 runbar 明说「同一份状态」，可以从终端跳回会话卡片。</li>
+    <li><b>终端只做派活，不做发起 Mission</b>：dock 默认收起（⌘J），和 BOT 侧同一个 <span class="mono">send()</span>，
+      但只负责「一条能直接跑的活」。要拆成计划，去 BOT 跟主管说一句——发起是「交代」，不属于执行面。</li>
+    <li><b>Super Agent 没有自己的面</b>：Mission 是 <span class="mono">todos(kind=mission)</span>，owner 是项目；
+      主管是 BOT 里 <span class="mono">role=supervisor</span> 的角色。终端需要的是它的<b>产物</b>，不是它的<b>发起</b>：
+      终端里有计划卡（进度 / 依赖 / 子任务）、有批准（因为批准前要对着代码看清楚）、有来源标注；
+      发起只有一个入口——BOT 里对主管说一句。</li>
+    <li><b>会话里的计划卡只指路</b>：显示「待批准 + 去终端批准」，不放可编辑计划；
+      两份可编辑状态就等于两处审批。子任务落进 TODO 分组，run 仍是三面同源。</li>
+    <li><b>记一条是门铃，不是面</b>：任何面都能按 ⌘⇧N，落点固定是 TODO；收集箱属于终端，入口不必属于终端。</li>
+    <li><b>能力在工作台里是摘要</b>：BOT 右栏是 <span class="mono">过程 / 记忆 / 知识 / 人物 / 技能 / 日程</span>，
+      项目右栏是 <span class="mono">文件 / Git / 预览 / 知识 / 执行体</span>；左栏底部还有一条能力条（计数 + 一键跳到 tab）。
+      能力改的是「这一轮吃了什么」，不是「又一个目的地」。</li>
+    <li><b>视觉是一页，也是工具</b>：页里是验证台（原图 ↔ 块，逐块确认后才写入知识）；
+      同一个解析也出现在预览的对象旁——两处同一个结果，不另设「工具箱」入口。</li>
+  </ol>
+
+  <h4 class="h">验收 5 问</h4>
+  <ul>
+    <li>这一页在替谁干活？（bot 名或项目名，唯一）</li>
+    <li>同一个 pane 在另一种模式里是不是同一个意思？</li>
+    <li>一个 run，能不能从会话 / TODO / 终端三处一步进去？</li>
+    <li>这个能力有没有偷偷长出「左栏 + 主面 + 右栏」？</li>
+    <li>换 owner 时有没东西该留没留、该走没走？</li>
+  </ul>
+
+  <h4 class="h">细节参考（third-part/ 只读副本）</h4>
+  <ul>
+    <li><b>Rakazo</b> @8fba288 · 连续同一说话人只留一个标签、日程的「站内 / 旁边」两种落点与 5 分钟交接、记忆预算外显、指令带版本</li>
+    <li><b>Orca</b> @8e0c267e · 标签 = agent 图标 + 状态点 + 耗时；状态栏的密度；45 个 CLI 只看「已装 / 一条命令就能装」</li>
+    <li><b>Multica</b> @58b5c66 · 执行方式按「结果怎么回来」措辞（直接改工作副本 / 给你一个分支），不把 <span class="mono">in_place</span> 这类标识当主标签</li>
+  </ul>
+
+  <h4 class="h">还没定</h4>
+  <p>① 一个 bot 能不能并排开两个会话；② 项目模式里 Chat 是底部 dock 还是可拖成第三列；
+     ③ 团队聊天（多 bot 同一条 thread）谁开口、谁沉默；④ 场景从工作台进是覆盖还是新窗口。</p>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(() => {
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+  /* ---------------- run 数据：会话卡片 / 项目终端 / inspector 三处同源 ---------------- */
+  const RUNS = {
+    r8122: {
+      id: "r8122", title: "T-2960 视觉解析收尾", task: "T-2960", agent: "视觉解析 worker",
+      status: "运行中", tagClass: "ok", kind: "terminal · pty", dur: "8m12s",
+      worktree: ".worktrees/T-2960", branch: "task/T-2960", host: "本机", tokens: "38.2k", cost: "¥0.31",
+      know: "引用 3 条 · p.41 / p.58（Reader 契约）",
+      tools: [
+        ["Skills", "visual-parse/preview · 3 次"],
+        ["MCP · files", "read 12 · write 4"],
+        ["MCP · shell", "exec 3"],
+        ["记忆注入", "L3 视觉解析在收尾 · L2 偏好先给结论"],
+      ],
+      term: [
+        ["p", "$ npm run typecheck"],
+        ["dim", "> tsc -p tsconfig.json --noEmit"],
+        ["ok", "✓ typecheck 0 errors  (3.1s)"],
+        ["cur", ""],
+        ["p", "$ rg -n \"blocks\" electron/knowledge/reader.mjs | head -4"],
+        ["dim", "41:  // page-level blocks (heading / paragraph / table)"],
+        ["dim", "58:  export function readPage(page)"],
+        ["cur", ""],
+        ["cur", "● 正在改 electron/knowledge/reader.mjs"],
+        ["ok", "  + export function blocks(page) { … }   (+42 −3)"],
+        ["cur", ""],
+        ["p", "$ npm test -- knowledge"],
+        ["ok", "  ✓ reader > 保留 page 边界 (12ms)"],
+        ["ok", "  ✓ reader > 表格块不合并 (8ms)"],
+        ["bad", "  ✗ reader > 引用页码回落 (15ms)"],
+        ["dim", "    期望 3，实际 2"],
+        ["cur", ""],
+        ["dim", "—— 正在重试（第 1 次）——"],
+      ],
+    },
+    r8126: {
+      id: "r8126", title: "评审 · 只读", task: "T-2951", agent: "评审 worker",
+      status: "完成", tagClass: "ok", kind: "terminal · pty", dur: "2m04s",
+      worktree: ".worktrees/T-2951", branch: "task/T-2951", host: "本机", tokens: "12.4k", cost: "¥0.09",
+      know: "引用 1 条 · 验收清单",
+      tools: [["MCP · files", "read 21"], ["MCP · shell", "exec 1"], ["记忆注入", "L4 验收前自己跑完 typecheck"]],
+      term: [
+        ["p", "$ npm test -- knowledge"],
+        ["dim", "RUN  v2.1.4  electron/knowledge"],
+        ["ok", "  ✓ reader > 保留 page 边界 (12ms)"],
+        ["ok", "  ✓ reader > 表格块不合并 (8ms)"],
+        ["ok", "  ✓ reader > 引用页码回落 (15ms)"],
+        ["cur", ""],
+        ["ok", " Tests  41 passed (41)"],
+        ["dim", " Time   1.82s"],
+      ],
+    },
+    r8104: {
+      id: "r8104", title: "类型检查", task: "T-2901", agent: "构建 worker",
+      status: "完成", tagClass: "ok", kind: "terminal · pty", dur: "1m22s",
+      worktree: ".worktrees/T-2901", branch: "task/T-2901", host: "本机", tokens: "6.1k", cost: "¥0.04",
+      tools: [["MCP · shell", "exec 2"]],
+      term: [["p", "$ npm run build"], ["ok", "✓ built in 41.2s"], ["dim", "dist/assets/index-8f2c1a.js  1,204.6 kB"]],
+    },
+    r8091: {
+      id: "r8091", title: "文档校验", task: "T-2888", agent: "文档 worker",
+      status: "失败", tagClass: "fail", kind: "terminal · pty", dur: "0m38s",
+      worktree: ".worktrees/T-2888", branch: "task/T-2888", host: "本机", tokens: "3.3k", cost: "¥0.02",
+      tools: [["MCP · shell", "exec 1"]],
+      term: [["p", "$ npm run verify:docs"], ["bad", "✗ prototype/owner-workspaces.html 未在 §5 登记"], ["dim", "1 篇失败"], ["cur", ""], ["dim", "—— 退出码 1 ——"]],
+    },
+  };
+
+  const BOTS = {
+    golo: { name: "戈洛", avatar: "戈", cls: "a", mode: "主动", role: "项目值守 · 记得 342 条", quota: "本小时 3 / 8 条" },
+    nan: { name: "南", avatar: "南", cls: "b", mode: "主动", role: "资料管家 · 记得 96 条", quota: "本小时 1 / 4 条" },
+    draft: { name: "起草机", avatar: "起", cls: "c", mode: "被动", role: "写作 · 记得 18 条", quota: "被动 · 不计配额" },
+  };
+
+  const state = {
+    screen: "bot",
+    lastOwner: "bot",
+    botId: "golo",
+    run: "r8122",
+    tab: "process",
+    ptab: "files",
+    dock: false,
+    pinned: false,
+    toolResult: "",
+  };
+
+  /* ---------------- 主题 ---------------- */
+  const setTheme = (t) => { document.documentElement.dataset.theme = t; };
+  const toggleTheme = () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  $("#theme").addEventListener("click", toggleTheme);
+  $("#theme2").addEventListener("click", toggleTheme);
+
+  /* ---------------- 提示 ---------------- */
+  let toastTimer = null;
+  const toast = (text) => {
+    const el = $("#toast");
+    el.textContent = text;
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.hidden = true; }, 1800);
+  };
+
+  /* ---------------- run 渲染 ---------------- */
+  const termHTML = (run) => run.term
+    .map(([cls, line]) => line === "" ? "\n" : `<span class="${cls}">${line.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</span>`)
+    .join("\n");
+
+  const runHead = (run, opts = {}) => `
+    <div class="row" style="align-items:flex-start;gap:8px">
+      <div style="min-width:0;flex:1">
+        <div class="row" style="gap:6px">
+          <span class="mono tiny muted">${run.id}</span>
+          <span class="tag ${run.tagClass}">${run.status}</span>
+          ${opts.pinned ? `<span class="tag ai">已固定</span>` : ""}
+        </div>
+        <div style="font-size:12.5px;font-weight:600;margin-top:2px">${run.title}</div>
+      </div>
+    </div>`;
+
+  const renderProcess = () => {
+    const run = RUNS[state.run];
+    const canPin = ["r8122", "r8126"].includes(run.id);
+    return `
+      <div>${runHead(run, { pinned: state.pinned && canPin })}</div>
+      <div class="kv">
+        <span>任务</span><b class="mono">${run.task}</b>
+        <span>执行体</span><b>${run.agent}</b>
+        <span>执行方式</span><b>${run.kind}</b>
+        <span>耗时</span><b class="mono">${run.dur}</b>
+        <span>worktree</span><b class="mono" title="${run.worktree}">${run.worktree}</b>
+        <span>分支</span><b class="mono">${run.branch}</b>
+        <span>主机</span><b>${run.host}</b>
+        <span>tokens</span><b class="mono">${run.tokens} · ${run.cost}</b>
+      </div>
+      <div class="row" style="gap:6px">
+        ${canPin
+          ? `<button class="btn tiny ${state.pinned ? "on" : "primary"}" data-pin>${state.pinned ? "取消固定" : "固定到我的布局"}</button>`
+          : ""}
+        <button class="btn tiny ghost" data-go="project">在终端里打开</button>
+      </div>
+      <div class="callout"><b>这条终端属于 run，不属于「我的标签栏」。</b>
+        「固定到我的布局」只是把它钉成终端里的一个标签，关掉标签不会杀掉 run。</div>
+      <div>
+        <h3>终端回放 · 只读</h3>
+        <div class="term">${termHTML(run)}</div>
+      </div>
+      <div>
+        <h3>能力 · 这个 run 消费了什么</h3>
+        <div class="tool-list">
+          ${run.tools.map(([k, v]) => `<div class="tool-row"><span>${k}</span><b>${v}</b></div>`).join("")}
+          ${run.know ? `<div class="tool-row"><span>Knowledge</span><b>${run.know}</b></div>` : ""}
+        </div>
+        <div class="note" style="margin-top:8px">
+          <b>记忆 / 知识 / 人格 / 技能都不是页面</b>：它们是这个 run 的入参，或这个角色的属性。
+        </div>
+      </div>`;
+  };
+
+  const renderMemory = () => `
+    <div>
+      <h3>它这一轮记得什么</h3>
+      <div class="bars">
+        <div class="bar-row"><div class="bar-line"><b>L4 结论</b><span>12 条</span></div><div class="bar"><i style="width:22%"></i></div></div>
+        <div class="bar-row"><div class="bar-line"><b>L3 项目</b><span>9 条</span></div><div class="bar"><i style="width:48%"></i></div></div>
+        <div class="bar-row"><div class="bar-line"><b>L2 事实</b><span>87 条</span></div><div class="bar"><i style="width:76%"></i></div></div>
+        <div class="bar-row"><div class="bar-line"><b>L1 原始</b><span>234 条 · 只回查</span></div><div class="bar"><i style="width:12%;opacity:.35"></i></div></div>
+      </div>
+    </div>
+    <div>
+      <h3>这一轮注入</h3>
+      <div class="tool-list">
+        <div class="tool-row"><span>L3</span><b>视觉解析插件在收尾；Reader 契约是 page + markdown</b></div>
+        <div class="tool-row"><span>L2</span><b>偏好：先说结论，再展开</b></div>
+        <div class="tool-row"><span>L4</span><b>交付前自己跑完 typecheck / build</b></div>
+      </div>
+    </div>
+    <div class="note">注入到这里就结束了：<b>2,140 / 2,400 字符</b>，被裁 3 条（预算用完）。</div>
+    <div class="gov">
+      <div class="gov-h"><b>待治理</b><span class="spacer"></span><span class="mono">4</span></div>
+      <div class="gov-row">未验证观察<span class="spacer"></span><em>2 条</em></div>
+      <div class="gov-row">互相冲突的条目<span class="spacer"></span><em>1 组</em></div>
+      <div class="gov-row">Dream 建议晋升<span class="spacer"></span><em>1 条</em></div>
+      <button class="btn tiny ghost" style="margin-top:7px" data-go="memory">去记忆页复核…</button>
+    </div>`;
+
+  const renderKnowledge = () => `
+    <div>
+      <h3>它能查什么</h3>
+      <div class="kv">
+        <span>集合</span><b>12 个</b>
+        <span>页面</span><b class="mono">1,204</b>
+        <span>索引</span><b>3 天前</b>
+        <span>入口</span><b>和记忆同一个检索</b>
+      </div>
+    </div>
+    <div>
+      <h3>这一轮查到的</h3>
+      <div class="tool-list">
+        <div class="tool-row"><span>0.82</span><b>reader.mjs · 分页契约（p.41）</b></div>
+        <div class="tool-row"><span>0.74</span><b>块级信息 · 表格不合并（p.58）</b></div>
+        <div class="tool-row"><span>0.61</span><b>解析结果接知识库（p.12）</b></div>
+      </div>
+    </div>
+    <div class="note"><b>引用必须能点回原页。</b>没命中就说没找到，不编。</div>
+    <div>
+      <h3>它增强的是「判断」</h3>
+      <div class="note">知识不改它怎么说话，只改它说到哪儿有依据。所以在<b>对话</b>里读，在 <b>run</b> 里当入参。</div>
+    </div>
+    <div class="gov">
+      <div class="gov-h"><b>待治理</b><span class="spacer"></span><span class="mono">4</span></div>
+      <div class="gov-row">引用点失效（原页改了）<span class="spacer"></span><em>2 处</em></div>
+      <div class="gov-row">解析失败待重试<span class="spacer"></span><em>1 份</em></div>
+      <div class="gov-row">索引过期<span class="spacer"></span><em>3 天</em></div>
+      <button class="btn tiny ghost" style="margin-top:7px" data-go="knowledge">去知识页处理…</button>
+    </div>`;
+
+  const renderSkills = () => `
+    <div>
+      <h3>Skills · 3</h3>
+      <div class="tool-list">
+        <div class="tool-row"><span>启用</span><b>visual-parse/preview · 截图 → 块</b></div>
+        <div class="tool-row"><span>启用</span><b>preview · dev server 里拾取元素</b></div>
+        <div class="tool-row"><span>启用</span><b>docs-verify · 状态头 / 内链</b></div>
+      </div>
+    </div>
+    <div>
+      <h3>MCP · 2</h3>
+      <div class="tool-list">
+        <div class="tool-row"><span>启用</span><b>files · read / write / list</b></div>
+        <div class="tool-row"><span>启用</span><b>shell · exec（受 worktree 限制）</b></div>
+      </div>
+    </div>
+    <div>
+      <h3>审批档位</h3>
+      <div class="kv">
+        <span>写文件</span><b>需确认</b>
+        <span>跑命令</span><b>需确认</b>
+        <span>网络</span><b>拒绝</b>
+        <span>合并回主干</span><b>人做</b>
+      </div>
+    </div>
+    <div>
+      <h3>模型</h3>
+      <div class="kv">
+        <span>主模型</span><b>deepseek-chat</b>
+        <span>回退</span><b>deepseek-reasoner</b>
+        <span>thinking</span><b>中 · 只在规划时开</b>
+      </div>
+    </div>
+    <div class="callout"><b>技能挂在执行体上，不挂在角色上。</b>
+      所以 bot 自己调不了，只能起 run 之后由 run 用——这也是它必须先问你一句的原因。</div>`;
+
+  const renderPeople = () => `
+    <div>
+      <h3>它自己 · 人格卡</h3>
+      <div class="field"><span>语气</span><b>直接、短句，不用感叹号；不确定就说不确定</b></div>
+      <div class="field"><span>称呼</span><b>叫你「你」，不自称助手</b></div>
+      <div class="field"><span>长短</span><b>默认 1–2 句；要展开时先给结论</b></div>
+      <div class="field"><span>边界</span><b>不评价你的作息，不替你做对外承诺</b></div>
+      <div class="field"><span>习惯</span><b>先说「我理解的是…」再动手</b></div>
+    </div>
+    <div>
+      <h3>指令与模型</h3>
+      <div class="field"><span>指令</span><b>v3 · 昨天改过（+2 −1）<button class="link" data-mock="看 v2 → v3 的 diff">看 diff</button></b></div>
+      <div class="field"><span>模型</span><b>deepseek-chat · 回退 deepseek-reasoner · thinking 中</b></div>
+    </div>
+    <div>
+      <h3>它了解的人</h3>
+      <div class="tool-list">
+        <div class="tool-row"><span>你</span><b>同事 · 证据 12 条 · 置信 0.86</b></div>
+        <div class="tool-row"><span>张三</span><b>客户 · 证据 4 条 · 置信 0.52</b></div>
+      </div>
+      <div class="note" style="margin-top:6px">人格卡是它<b>自己</b>的字段；人物画像是<b>人</b>的模型，两张表不共享。</div>
+    </div>
+    <div class="gov">
+      <div class="gov-h"><b>待治理</b><span class="spacer"></span><span class="mono">2</span></div>
+      <div class="gov-row">未验证观察<span class="spacer"></span><em>1 条</em></div>
+      <div class="gov-row">证据链缺口<span class="spacer"></span><em>1 人</em></div>
+      <button class="btn tiny ghost" style="margin-top:7px" data-go="people">去人物页复核…</button>
+    </div>`;
+
+  const renderRoutine = () => `
+    <div>
+      <h3>日程 · 4 条</h3>
+      <div class="tool-list">
+        <div class="tool-row"><span>每天 09:30</span><b>待确认项汇总 · 站内（in-chat）</b></div>
+        <div class="tool-row"><span>每 30 分</span><b>监视 T-2874 打包体积 · 旁边（alongside）</b></div>
+        <div class="tool-row"><span>工作日 08:00</span><b>昨日 run 复盘 · 旁边</b></div>
+        <div class="tool-row"><span>watch 文件</span><b>resources/wiki 变化 · 站内</b></div>
+      </div>
+      <div class="note" style="margin-top:6px">
+        <b>站内</b>＝等你空下来再说；<b>旁边</b>＝到点就发。5 分钟没开口就并进正在跑的那一轮，不另起盒子。
+      </div>
+    </div>
+    <div>
+      <h3>它自己的时间</h3>
+      <div class="kv">
+        <span>下次</span><b>今天 11:30 · 监视</b>
+        <span>上次</span><b>10:52 开过口 · 1 条</b>
+        <span>通知</span><b>只报失败</b>
+        <span>额度</span><b class="mono">3 / 8 条每小时</b>
+      </div>
+    </div>
+    <div>
+      <h3>出场规则</h3>
+      <div class="kv">
+        <span>静音时段</span><b class="mono">23:00–08:00</b>
+        <span>最小间隔</span><b class="mono">2 分钟</b>
+        <span>同源去重</span><b>同一事件最多说 2 次</b>
+        <span>近重复</span><b>相似度 ≥ 0.8 压住</b>
+      </div>
+    </div>`;
+
+  const renderSide = () => {
+    const body = $("#sideBody");
+    if (!body) return;
+    body.innerHTML = state.tab === "process" ? renderProcess()
+      : state.tab === "memory" ? renderMemory()
+      : state.tab === "knowledge" ? renderKnowledge()
+      : state.tab === "skills" ? renderSkills()
+      : state.tab === "people" ? renderPeople()
+      : renderRoutine();
+    $$("[data-tab]", body.parentElement).forEach((b) => b.classList.toggle("on", b.dataset.tab === state.tab));
+  };
+
+  /* ---------------- 项目右栏 ---------------- */
+  const renderProjSide = () => {
+    const body = $("#projSide");
+    if (!body) return;
+    if (state.ptab === "files") {
+      body.innerHTML = `
+        <div><h3>资源管理器</h3>
+          <div class="tool-list">
+            <div class="tool-row"><span>~/</span><b>electron/ &nbsp; src/ &nbsp; docs/ &nbsp; tests/</b></div>
+            <div class="tool-row"><span>改</span><b>knowledge/reader.mjs · +42 −3</b></div>
+            <div class="tool-row"><span>新</span><b>.worktrees/T-2960/</b></div>
+          </div>
+        </div>
+        <div><h3>这个 run 改了哪些文件</h3>
+          <div class="tool-list">
+            <div class="tool-row"><span>M</span><b>electron/knowledge/reader.mjs</b></div>
+            <div class="tool-row"><span>M</span><b>electron/knowledge/index.mjs</b></div>
+          </div>
+        </div>
+        <div class="note">文件树跟着 <b>当前 run 的 worktree</b> 走，不跟「当前项目根」走——否则看不到 agent 的改动。</div>`;
+    } else if (state.ptab === "git") {
+      body.innerHTML = `
+        <div><h3>Source Control</h3>
+          <div class="kv"><span>分支</span><b class="mono">main</b><span>未提交</span><b>2 个文件</b><span>worktree</span><b class="mono">2</b></div>
+        </div>
+        <div class="tool-list">
+          <div class="tool-row"><span>M</span><b>electron/knowledge/reader.mjs</b></div>
+          <div class="tool-row"><span>M</span><b>electron/knowledge/index.mjs</b></div>
+        </div>
+        <div class="callout"><b>合并是人的动作。</b>run 在自己的 worktree 里提交，回主干要你点。</div>`;
+    } else if (state.ptab === "knowledge") {
+      body.innerHTML = `
+        <div><h3>这个项目索引了什么</h3>
+          <div class="kv">
+            <span>docs/</span><b class="mono">47 篇</b>
+            <span>resources/</span><b class="mono">12 份</b>
+            <span>wiki</span><b class="mono">32 页</b>
+            <span>索引</span><b>3 天前</b>
+          </div>
+        </div>
+        <div><h3>录入管道</h3>
+          <div class="tool-list">
+            <div class="tool-row"><span>启用</span><b>PDF / 网页 · 文本抽取</b></div>
+            <div class="tool-row"><span>启用</span><b>视觉解析 · 截图 / 扫描页 → 块</b></div>
+            <div class="tool-row"><span>待</span><b>1 个 PDF 待解析 · 12 分钟前</b></div>
+          </div>
+          <div class="note" style="margin-top:6px">视觉解析不是独立能力，它是知识的一条<b>录入管道</b>：解析结果落成页面 / 块，检索再用。</div>
+        </div>
+        <div><h3>最近命中</h3>
+          <div class="tool-list">
+            <div class="tool-row"><span>3 次</span><b>reader 契约</b></div>
+            <div class="tool-row"><span>1 次</span><b>视觉解析</b></div>
+          </div>
+        </div>
+        <div class="gov">
+          <div class="gov-h"><b>待治理</b><span class="spacer"></span><span class="mono">4</span></div>
+          <div class="gov-row">引用点失效<span class="spacer"></span><em>2 处</em></div>
+          <div class="gov-row">待解析<span class="spacer"></span><em>1 份 · 12 分钟</em></div>
+          <button class="btn tiny ghost" style="margin-top:7px" data-go="knowledge">去知识页处理…</button>
+        </div>`;
+    } else if (state.ptab === "exec") {
+      body.innerHTML = `
+        <div><h3>这个项目里的执行体</h3>
+          <div class="tool-list">
+            <div class="tool-row"><span>跑</span><b>视觉解析 worker · dsh · 本机</b></div>
+            <div class="tool-row"><span>跑</span><b>评审 worker · dsh · 本机（只读）</b></div>
+          </div>
+        </div>
+        <div><h3>可用 CLI · 4 / 45 已装</h3>
+          <div class="tool-list">
+            <div class="tool-row"><span>已装</span><b>dsh 0.2.1 · ACP + 审批 + 纠错回执</b></div>
+            <div class="tool-row"><span>已装</span><b>opencode 0.3.4 · pty</b></div>
+            <div class="tool-row"><span>未装</span><b>claude code · 需要 npm i -g</b></div>
+            <div class="tool-row"><span>未装</span><b>codex · 需要 npm i -g</b></div>
+          </div>
+          <div class="note" style="margin-top:6px">目录里有 45 个，只列 <b>已装</b> 和 <b>缺一条命令就能装</b> 的；没装的执行体不会出现在派活下拉里。</div>
+        </div>
+        <div><h3>技能继承</h3>
+          <div class="note">Skills / MCP 来自 agent 档案；项目只提供 <span class="mono">cwd</span>、worktree 和主机。一个 run 一个 worktree。</div>
+        </div>
+        <div><h3>审批档位</h3>
+          <div class="kv">
+            <span>写 worktree</span><b>允许</b>
+            <span>写主干</span><b>人来做</b>
+            <span>合并</span><b>人来做</b>
+            <span>网络</span><b>拒绝</b>
+          </div>
+        </div>
+        <div class="callout"><b>执行体决定「能做什么」。</b>
+          所以技能在这边，「它记得什么」在 BOT 那边——两边各看一半，不要复制。</div>`;
+    } else {
+      body.innerHTML = `
+        <div><h3>预览</h3>
+          <div class="kv"><span>地址</span><b class="mono">localhost:5173</b><span>来源</span><b>npm run dev</b><span>状态</span><b>已连通</b></div>
+        </div>
+        <div class="term" style="font-family:var(--font-sans);font-size:11.5px;line-height:1.6;color:var(--muted)">
+          （这里是一块 PreviewSurface：dev server / 文件 / URL 都能放，跟终端同一套 pane 规则）
+        </div>
+        <div class="note">远端的 dev server 走 ssh 隧道；这台是本机，所以直连。</div>
+        <div>
+          <h3>对这块对象</h3>
+          <div class="row" style="gap:6px;flex-wrap:wrap">
+            <button class="btn tiny" data-tool="vision">视觉解析</button>
+            <button class="btn tiny" data-tool="pick">拾取元素</button>
+            <button class="btn tiny" data-tool="docs">文档校验</button>
+          </div>
+          ${state.toolResult ? `<div class="tool-result">${state.toolResult}</div>` : ""}
+          <div class="note" style="margin-top:6px"><b>调用型工具不占页面</b>：它挂在对象上，你指着什么就能对它用什么；结果落回知识或上下文，不新增页面。</div>
+        </div>`;
+    }
+    $$("[data-ptab]", body.parentElement).forEach((b) => b.classList.toggle("on", b.dataset.ptab === state.ptab));
+  };
+
+  /* ---------------- 屏与状态 ---------------- */
+  const render = () => {
+    $$(".screen").forEach((s) => s.classList.toggle("on", s.dataset.screen === state.screen));
+    $$(".rail-btn").forEach((b) => b.classList.toggle("on", b.dataset.go === state.screen));
+    $("#dock").classList.toggle("open", state.dock);
+    $("#pinnedTab").hidden = !state.pinned;
+    const dockChev = $("#dock .dock-head .icon-btn svg");
+    if (dockChev) dockChev.style.transform = state.dock ? "rotate(180deg)" : "";
+    $$("#botList .own-row").forEach((b) => b.classList.toggle("on", b.dataset.pick === `bot:${state.botId}`));
+    renderSide();
+    renderProjSide();
+    const run = RUNS[state.run];
+    const projTerm = $("#projTerm");
+    if (projTerm) projTerm.innerHTML = termHTML(run);
+    const t = $("#projTermTitle");
+    const m = $("#projTermMeta");
+    if (t) t.textContent = `Agent · ${run.task}`;
+    if (m) m.textContent = `run ${run.id} · ${run.status === "完成" ? "已结束 · 只读回放" : "只读回放"}`;
+    const rbId = $("#rbId"), rbTitle = $("#rbTitle");
+    if (rbId) rbId.textContent = run.id;
+    if (rbTitle) rbTitle.textContent = run.title;
+  };
+
+  const go = (screen) => {
+    if (screen === "bot" || screen === "project") state.lastOwner = screen;
+    state.screen = screen;
+    render();
+  };
+  /** 选中一个 run：会话卡片、TODO 行、终端标签三处都走这一条，不切屏 */
+  const selectRun = (id) => {
+    if (!RUNS[id]) return;
+    state.run = id;
+    state.tab = "process";
+    render();
+    $$(".run-card").forEach((c) => c.classList.toggle("on", c.dataset.run === id));
+    $$(".cl .item").forEach((it) => it.classList.toggle("on", it.dataset.run === id));
+  };
+
+  const setBot = (id) => {
+    const b = BOTS[id];
+    if (!b) return;
+    state.botId = id;
+    $("#botAvatar").className = `owner-avatar ${b.cls}`;
+    $("#botAvatar").textContent = b.avatar;
+    $("#botName").textContent = b.name;
+    $("#botMode").textContent = b.mode;
+    $("#botRole").textContent = b.role;
+    $("#botQuota").textContent = b.quota;
+  };
+
+  /* ---------------- 调用型工具：挂在对象上，结果落回知识 / 上下文 ---------------- */
+  const addCtx = (label) => {
+    const wrap = $("#dockCtx");
+    const chip = document.createElement("span");
+    chip.className = "ctx-chip";
+    chip.innerHTML = `${label}<button data-ctxrm title="移除" aria-label="移除">
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>`;
+    wrap.appendChild(chip);
+  };
+
+  const runTool = (kind) => {
+    if (kind === "vision") {
+      state.toolResult = `<b>视觉解析</b> · 当前这一屏已解析 → 3 块，写入知识（p.41）。会话里可以直接引用。`;
+      toast("视觉解析：3 块已写入知识");
+    } else if (kind === "pick") {
+      addCtx("元素 · 设置页 / 深色开关");
+      state.dock = true;
+      toast("已附着到派活输入框");
+    } else {
+      state.toolResult = `<b>文档校验</b> · 47 篇状态头合法；2 条内链失效，已进治理队列。`;
+      toast("文档校验完成");
+    }
+    render();
+  };
+
+  /* ---------------- 记一条：门铃在任何面，落点在 TODO ---------------- */
+  const openSheet = () => { $("#sheet").hidden = false; setTimeout(() => $("#sheetText").focus(), 30); };
+  const closeSheet = () => { $("#sheet").hidden = true; $("#sheetText").value = ""; };
+
+  /* ---------------- 事件 ---------------- */
+  document.addEventListener("click", (e) => {
+    const mock = e.target.closest("[data-mock]");
+    if (mock) { toast(mock.dataset.mock); return; }
+
+    if (e.target.closest("#theme, #theme2, .theme-btn")) { toggleTheme(); return; }
+
+    // 调用型工具：挂在对象上
+    const toolBtn = e.target.closest("[data-tool]");
+    if (toolBtn) { runTool(toolBtn.dataset.tool); return; }
+    if (e.target.closest("[data-ctxrm]")) { e.target.closest(".ctx-chip").remove(); return; }
+
+    const goEl = e.target.closest("[data-go]");
+    if (goEl) { go(goEl.dataset.go); return; }
+
+    // 记一条：触发在任何面，落点是 TODO
+    if (e.target.closest("[data-capture]")) { openSheet(); return; }
+    if (e.target.closest("#sheetCancel") || e.target.closest("#sheetClose")) { closeSheet(); return; }
+    const sheetBox = e.target.closest(".sheet-box");
+    if (!sheetBox && !$("#sheet").hidden) { closeSheet(); return; }
+
+    // 同一份 run 的另一个视图：从终端跳到会话卡片
+    const openRun = e.target.closest("[data-openrun]");
+    if (openRun) { selectRun(state.run); go(openRun.dataset.openrun); return; }
+
+    const pick = e.target.closest("[data-pick]");
+    if (pick) {
+      const [kind, id] = pick.dataset.pick.split(":");
+      if (kind === "bot") { setBot(id); go("bot"); }
+      else if (id === "harness") { go("project"); }
+      else { go("project"); toast("zcode-adapter 是空项目：原型只画了 harness 的内容"); }
+      return;
+    }
+
+    const fold = e.target.closest("#projFold, #botFold");
+    if (fold) {
+      const list = fold.id === "projFold" ? $("#projList") : $("#botList");
+      list.hidden = !list.hidden;
+      const chev = fold.querySelector("svg");
+      if (chev) chev.style.transform = list.hidden ? "" : "rotate(180deg)";
+      fold.setAttribute("aria-expanded", String(!list.hidden));
+      fold.setAttribute("title", list.hidden ? "展开列表" : "收起列表");
+      return;
+    }
+
+    const runEl = e.target.closest("[data-run]");
+    if (runEl) { selectRun(runEl.dataset.run); return; }
+
+    const tab = e.target.closest("[data-tab]");
+    if (tab) { state.tab = tab.dataset.tab; render(); return; }
+
+    const ptab = e.target.closest("[data-ptab]");
+    if (ptab) { state.ptab = ptab.dataset.ptab; render(); return; }
+
+    if (e.target.closest("[data-dock]")) { state.dock = !state.dock; render(); return; }
+
+    if (e.target.closest("[data-pin]")) {
+      state.pinned = !state.pinned;
+      render();
+      toast(state.pinned ? "已固定到终端的「Agent 的」" : "已取消固定");
+      return;
+    }
+
+    if (e.target.closest("#notesBtn")) { $("#notes").hidden = !$("#notes").hidden; return; }
+    if (e.target.closest("#notesClose")) { $("#notes").hidden = true; return; }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { $("#notes").hidden = true; closeSheet(); }
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "n") {
+      e.preventDefault(); openSheet(); return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
+      e.preventDefault();
+      if (state.screen === "project") { state.dock = !state.dock; render(); }
+    }
+  });
+
+  /* ---------------- URL 定帧 ---------------- */
+  const params = new URLSearchParams(location.search);
+  if (params.get("theme")) setTheme(params.get("theme"));
+  if (["project", "memory", "knowledge", "people", "vision"].includes(params.get("ws") || "")) state.screen = params.get("ws");
+  if (params.get("bot") && BOTS[params.get("bot")]) { state.botId = params.get("bot"); }
+  if (params.get("run") && RUNS[params.get("run")]) state.run = params.get("run");
+  if (params.get("dock") === "1") state.dock = true;
+  if (params.get("pinned") === "1") state.pinned = true;
+  if (params.get("tab") && ["process", "memory", "knowledge", "people", "skills", "routine"].includes(params.get("tab"))) state.tab = params.get("tab");
+  if (params.get("ptab") && ["files", "git", "preview", "knowledge", "exec"].includes(params.get("ptab"))) state.ptab = params.get("ptab");
+  if (params.get("notes") === "1") $("#notes").hidden = false;
+  if (state.botId !== "golo") setBot(state.botId);
+
+  render();
+  const stream = $("#botStream");
+  if (stream) stream.scrollTop = stream.scrollHeight;
+})();
+</script>
+</body>
+</html>

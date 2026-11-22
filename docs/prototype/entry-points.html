@@ -1,0 +1,1196 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>入口总表 · 原型</title>
+<!--
+  入口总表（Cockpit Harness）· 无构建、无依赖，双击打开
+  ─────────────────────────────────────────────────────────
+  一个入口一张卡：卡里就是「事实 + 时序 + 界面」三件套，不横向拆成三章。
+
+  内容对着代码核过（2026-11-14），行号对应当前工作树：
+    · src/components/TaskChat.tsx:451        baseMode = dispatch / steer / queue / run / note
+    · electron/main.mjs:5009                agent.role === "supervisor" → 建 mission 而非 todo
+    · electron/main.mjs:5090                建 todo（派活），tags=["chat"]，P1，带场景验收
+    · electron/main.mjs:4713 / 4771         createTodo（单个）/ createTodos（收集箱批量）
+    · electron/main.mjs:3797                起任务（dispatch 只建 todo）/ :3816 开跑（+run）
+    · electron/main.mjs:2991                IM 入站 → send()，失败降级 queued todo
+    · electron/main.mjs:1872                /task <标题>
+    · src/components/TaskPane.tsx:626       派活 / 并行 / 重试 / 续跑
+
+  外壳与 token 沿用应用（rail + canvas + PageHeader + 单一 surface + hairline），
+  亮暗同构，右上 ◐ 切主题；?theme=light|dark 定格。
+-->
+<style>
+:root{
+  --font-sans:"Geist Variable","Geist",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:"Geist Mono Variable","Geist Mono","SF Mono",SFMono-Regular,ui-monospace,Menlo,Consolas,monospace;
+  --radius:10px;--radius-sm:6px;--radius-lg:14px;
+  --shadow-1:0 1px 2px rgba(10,10,10,.045);
+  --shadow-2:0 10px 24px rgba(0,0,0,.16);
+  --green:#3f9a68;--green-soft:#edf8f2;--green-line:#d5eedf;
+  --amber:#a97a2f;--amber-soft:#fdf8ee;--amber-line:#f2e3c4;
+  --red:#cf5f5d;--red-soft:#fdf2f2;--red-line:#f4d7d7;
+  --purple:#7d67d1;--purple-soft:#f4f2fd;--purple-line:#e3ddf8;
+}
+:root[data-theme="light"]{
+  --app-shell:#f5f5f5;--page-canvas:#fafafa;--surface:#ffffff;--surface-hover:#f5f5f5;--surface-selected:#ededed;
+  --sidebar:#fafafa;--sidebar-accent:#f0f0f0;--border:#e5e5e5;--border-strong:#d4d4d4;--input:#e5e5e5;
+  --fg:#0a0a0a;--fg-2:#404040;--muted:#525252;--faint:#6f6f6f;
+  --brand:#171717;--brand-soft:#f2f2f2;--brand-line:#dedede;
+  --code:#f3f3f3;--stage:#f7f7f7;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --app-shell:#0a0a0a;--page-canvas:#0a0a0a;--surface:#171717;--surface-hover:#262626;--surface-selected:#2e2e2e;
+  --sidebar:#111111;--sidebar-accent:#1f1f1f;
+  --border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.14);--input:rgba(255,255,255,.16);
+  --fg:#f0f0f0;--fg-2:#d4d4d4;--muted:#a3a3a3;--faint:#8a8a8a;
+  --brand:#e5e5e5;--brand-soft:#262626;--brand-line:#3a3a3a;
+  --green:#74cf9e;--green-soft:#15251c;--green-line:#294534;
+  --amber:#e3b76e;--amber-soft:#282113;--amber-line:#463a22;
+  --red:#ef8a86;--red-soft:#2a1717;--red-line:#4a2727;
+  --purple:#b7a1f7;--purple-soft:#231d38;--purple-line:#3a3059;
+  --code:#1d1d1d;--stage:#121212;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--app-shell);color:var(--fg);font:13px/1.56 var(--font-sans);letter-spacing:-.006em;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+a{color:inherit;text-decoration:none}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(128,128,128,.26);border-radius:8px;border:3px solid transparent;background-clip:content-box}
+:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in srgb,var(--fg) 16%,transparent);border-radius:var(--radius-sm)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.tiny{font-size:11.5px}.muted{color:var(--muted)}.faint{color:var(--faint)}.spacer{flex:1}
+.k{color:var(--faint);font-size:11px;flex:none}
+code{font-family:var(--mono);font-size:11.5px;background:var(--code);border-radius:4px;padding:1px 4px;color:var(--fg-2)}
+
+/* ── 外壳 ─────────────────────────────────────────────── */
+.shell{display:grid;grid-template-columns:64px minmax(0,1fr);min-height:100%}
+.rail{background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;gap:2px;padding:12px 0 10px;position:sticky;top:0;height:100vh}
+.rail-btn{width:52px;height:46px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  border-radius:var(--radius);color:var(--muted);font-size:11px;line-height:1}
+.rail-btn:hover{background:var(--sidebar-accent);color:var(--fg-2)}
+.rail-btn.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow-1),0 0 0 1px var(--border)}
+.rail-btn svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.rail-spacer{flex:1}
+.wide{min-height:0;background:var(--page-canvas);padding:18px 24px 40px}
+.page{width:100%;max-width:1280px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+
+/* ── PageHeader ───────────────────────────────────────── */
+.page-header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 20px;align-items:end}
+.page-header-copy{min-width:0;display:flex;flex-direction:column;gap:3px}
+.page-header-kicker{font-size:11px;line-height:1.4;letter-spacing:.16em;text-transform:uppercase;color:var(--brand);font-weight:700}
+.page-header h1{margin:0;font-size:22px;line-height:1.15;font-weight:600;letter-spacing:-.03em}
+.page-header-sub{font-size:12.5px;color:var(--faint);max-width:800px}
+.page-header-actions{display:flex;align-items:center;gap:6px}
+.btn{height:28px;padding:0 10px;border:1px solid var(--input);border-radius:var(--radius-sm);background:var(--surface);
+  color:var(--fg-2);font-size:12.5px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.btn:hover{background:var(--surface-hover);border-color:var(--border-strong)}
+.btn.primary{background:var(--fg);border-color:var(--fg);color:var(--page-canvas)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.btn.tiny{height:24px;padding:0 8px;font-size:11.5px}
+.btn.tiny.primary{background:var(--fg);border-color:var(--fg);color:var(--page-canvas)}
+.btn.hl{box-shadow:0 0 0 2px var(--purple-soft);border-color:var(--purple)}
+
+/* ── surface ──────────────────────────────────────────── */
+.surface{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-1)}
+.surface-head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.surface-head h2{margin:0;font-size:13.5px;font-weight:600;letter-spacing:-.01em}
+.surface-head .lede{font-size:12px;color:var(--muted);min-width:0}
+.surface-body{padding:12px 16px 16px}
+.surface-body.flush{padding:0}
+.count{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:17px;padding:0 5px;
+  border-radius:5px;background:var(--brand-soft);border:1px solid var(--brand-line);color:var(--muted);font-size:11px;font-family:var(--mono)}
+
+/* ── 结论 / 主链 ──────────────────────────────────────── */
+.lede-block{display:flex;flex-direction:column;gap:9px;font-size:12.5px;color:var(--fg-2)}
+.lede-block b{color:var(--fg);font-weight:600}
+.inv{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
+.inv-item{display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-hover)}
+.inv-item .k{font-family:var(--mono);padding-top:1px}
+.inv-item .v{font-size:12px;color:var(--fg-2);min-width:0}
+.layers{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:12px}
+@media (max-width:820px){.layers{grid-template-columns:minmax(0,1fr)}}
+.lane{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);padding:10px 12px}
+.lane-h{display:flex;align-items:baseline;gap:7px;margin-bottom:7px}
+.lane-h b{font-size:12px;font-weight:600;color:var(--fg)}
+.lane-h span{font-size:11px;color:var(--faint)}
+.lane ol,.lane ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0}
+.lane li{position:relative;padding:5px 0 5px 20px;font-size:12px;color:var(--fg-2);border-top:1px solid var(--border)}
+.lane li:first-child{border-top:0}
+.lane li::before{position:absolute;left:0;top:5px;font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+.lane.serial li::before{content:"↳"}
+.lane.serial li:first-child::before{content:"•";color:var(--fg-2)}
+.lane.side li::before{content:"∼";color:var(--purple)}
+.lane li em{margin-left:auto;float:right;font-style:normal;font-size:11px;color:var(--faint)}
+.lane .foot-line{font-size:11px;color:var(--faint);margin-top:7px;padding-top:7px;border-top:1px solid var(--border)}
+
+/* ── 表格 ─────────────────────────────────────────────── */
+.tbl-wrap{overflow-x:auto}
+table.tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+table.tbl th{text-align:left;font-weight:500;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);
+  padding:8px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+table.tbl td{padding:8px 12px;border-bottom:1px solid var(--border);vertical-align:top;color:var(--fg-2)}
+table.tbl tr:last-child td{border-bottom:0}
+table.tbl tbody tr:hover td{background:var(--surface-hover)}
+table.tbl td.id{font-family:var(--mono);font-size:11.5px;color:var(--faint);white-space:nowrap;width:70px}
+table.tbl td.name{color:var(--fg);font-weight:500;white-space:nowrap}
+.pill{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:5px;border:1px solid var(--border);
+  background:var(--surface-hover);color:var(--fg-2);font-size:11px;white-space:nowrap}
+.pill.g{color:var(--green);border-color:var(--green-line);background:var(--green-soft)}
+.pill.a{color:var(--amber);border-color:var(--amber-line);background:var(--amber-soft)}
+.pill.r{color:var(--red);border-color:var(--red-line);background:var(--red-soft)}
+.pill.p{color:var(--purple);border-color:var(--purple-line);background:var(--purple-soft)}
+
+/* ── 目录 chips ───────────────────────────────────────── */
+.toc{display:flex;gap:6px;flex-wrap:wrap}
+.toc a{display:inline-flex;align-items:center;height:26px;padding:0 10px;border:1px solid var(--border);border-radius:999px;
+  background:var(--surface);color:var(--muted);font-size:12px;box-shadow:var(--shadow-1)}
+.toc a:hover{color:var(--fg);border-color:var(--border-strong)}
+
+/* ── 分组 + 入口卡 ────────────────────────────────────── */
+.group{display:flex;flex-direction:column;gap:12px;scroll-margin-top:12px}
+.group-h{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;padding:0 2px}
+.group-h h2{margin:0;font-size:14px;font-weight:600;letter-spacing:-.01em}
+.group-h .n{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.group-h .lede{font-size:12px;color:var(--muted)}
+.cards{display:flex;flex-direction:column;gap:12px}
+
+.card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-1);overflow:hidden}
+.card-h{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.eid{font-family:var(--mono);font-size:11.5px;color:var(--muted);background:var(--brand-soft);border:1px solid var(--brand-line);
+  border-radius:5px;padding:0 5px;height:18px;display:inline-flex;align-items:center}
+.card-h b{font-size:13px;font-weight:600;letter-spacing:-.01em}
+.card-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px 16px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--stage)}
+@media (max-width:760px){.card-facts{grid-template-columns:minmax(0,1fr)}}
+.fact{display:flex;gap:6px;min-width:0;font-size:12px;color:var(--fg-2);align-items:baseline}
+.fact .fk{flex:none;font-size:11px;color:var(--faint)}
+.fact .fv{min-width:0}
+.card-panes{display:grid;grid-template-columns:minmax(0,1.08fr) minmax(0,1fr);gap:0}
+@media (max-width:900px){.card-panes{grid-template-columns:minmax(0,1fr)}}
+.pane{display:flex;flex-direction:column;min-width:0}
+.pane + .pane{border-left:1px solid var(--border)}
+@media (max-width:900px){.pane + .pane{border-left:0;border-top:1px solid var(--border)}}
+.pane-h{padding:7px 14px 0;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+.pane-body{padding:6px 14px 12px;min-width:0}
+
+/* ── 时序（紧凑） ──────────────────────────────────────── */
+.seq{position:relative;min-width:0}
+.seq-head{display:grid;gap:4px;margin-bottom:5px}
+.seq-head .actor{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-hover);
+  padding:4px 6px;min-width:0;display:flex;flex-direction:column;gap:0}
+.seq-head .actor b{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.35}
+.seq-head .actor span{font-size:9.5px;color:var(--faint);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3}
+.seq-head .actor.you{background:var(--brand-soft);border-color:var(--brand-line)}
+.seq-head .actor.core{background:var(--purple-soft);border-color:var(--purple-line)}
+.seq-head .actor.core b{color:var(--purple)}
+.seq-body{position:relative;display:flex;flex-direction:column;gap:2px}
+.seq-msg{position:relative;height:25px;display:flex;align-items:flex-end}
+.seq-msg .lbl{position:absolute;top:0;font-size:11px;line-height:1.45;color:var(--fg-2);background:var(--surface);padding:0 4px;
+  display:flex;align-items:baseline;gap:5px;white-space:nowrap;transform:translateX(-50%)}
+.seq-msg .lbl .ref{font-family:var(--mono);font-size:9.5px;color:var(--faint)}
+.seq-msg .arrow{position:absolute;bottom:6px;height:0;border-top:1.4px solid var(--border-strong)}
+.seq-msg .arrow::after{content:"";position:absolute;right:-1px;top:-3.5px;width:5px;height:5px;
+  border-top:1.4px solid var(--border-strong);border-right:1.4px solid var(--border-strong);transform:rotate(45deg)}
+.seq-msg .arrow.left::after{right:auto;left:-1px;transform:rotate(-135deg)}
+.seq-msg.ret .arrow{border-top-style:dashed;opacity:.8}
+.seq-note{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-hover);
+  padding:4px 8px;font-size:11px;color:var(--fg-2);margin:1px 0;line-height:1.5}
+.seq-note b{color:var(--fg);font-weight:600}
+.seq-note.warn{border-color:var(--amber-line);background:var(--amber-soft);color:var(--amber)}
+.seq-note.ok{border-color:var(--green-line);background:var(--green-soft);color:var(--green)}
+.seq-note .ref{font-family:var(--mono);font-size:9.5px;opacity:.8}
+.seq-self{position:relative;height:21px}
+.seq-self .box{position:absolute;top:1px;transform:translateX(3px);border:1px solid var(--border);border-left:2px solid var(--border-strong);
+  border-radius:0 var(--radius-sm) var(--radius-sm) 0;background:var(--surface-hover);padding:0 6px;font-size:11px;color:var(--fg-2);
+  white-space:nowrap;max-width:96%}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--faint);padding-top:8px;border-top:1px solid var(--border)}
+.legend .it{display:inline-flex;align-items:center;gap:5px}
+.legend .ln{width:20px;border-top:1.4px solid var(--border-strong);display:inline-block}
+.legend .ln.dash{border-top-style:dashed}
+.legend .sw{width:10px;height:10px;border-radius:3px;border:1px solid var(--border);background:var(--surface-hover);display:inline-block}
+.legend .sw.warn{border-color:var(--amber-line);background:var(--amber-soft)}
+.legend .sw.ok{border-color:var(--green-line);background:var(--green-soft)}
+
+/* ── 界面（卡内 mock） ─────────────────────────────────── */
+.mock{display:flex;flex-direction:column;gap:8px;border:1px solid var(--border);border-radius:var(--radius-sm);
+  background:var(--stage);padding:10px;min-width:0}
+.mock-note{font-size:11px;color:var(--faint);line-height:1.55}
+.panel{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);box-shadow:var(--shadow-1)}
+.panel-head{display:flex;align-items:center;gap:6px;padding:6px 9px;border-bottom:1px solid var(--border);font-size:11.5px;color:var(--muted)}
+.composer{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);box-shadow:var(--shadow-1);overflow:hidden}
+.composer.ctx{border-left:2px solid var(--brand-line)}
+.composer-input{padding:8px 10px;font-size:12px;color:var(--fg);min-height:34px;display:flex;align-items:center;gap:2px;flex-wrap:wrap}
+.composer-input.small{font-size:11.5px;color:var(--muted)}
+.composer-input .alias{color:var(--purple);font-family:var(--mono);font-size:11px;background:var(--purple-soft);border-radius:4px;padding:0 4px}
+.caret{display:inline-block;width:1px;height:13px;background:var(--fg);vertical-align:-2px}
+.composer-foot{display:flex;align-items:center;gap:6px;padding:6px 9px;border-top:1px solid var(--border);background:var(--sidebar);flex-wrap:wrap}
+.hint{font-size:11px;color:var(--faint)}
+.chip{display:inline-flex;align-items:center;height:20px;padding:0 6px;border:1px solid var(--border);border-radius:5px;
+  background:var(--surface);font-size:11px;color:var(--fg-2);gap:4px}
+.chip.p{border-color:var(--purple-line);background:var(--purple-soft);color:var(--purple)}
+.todo-row{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:var(--radius-sm);font-size:11.5px;color:var(--fg-2)}
+.todo-row:hover{background:var(--surface-hover)}
+.todo-row.sel{background:var(--surface-selected)}
+.todo-row .key{font-family:var(--mono);font-size:10px;color:var(--faint);flex:none;width:32px}
+.todo-row .st{width:6px;height:6px;border-radius:50%;background:var(--faint);flex:none}
+.todo-row .st.run{background:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+.todo-row .st.wait{background:var(--amber)}
+.todo-row .acts{margin-left:auto;display:flex;gap:4px;flex:none;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.capture{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);padding:6px 9px;font-size:11.5px;color:var(--fg-2);line-height:1.75}
+.capture .ln{display:block}
+.mission{border:1px solid var(--purple-line);border-radius:var(--radius-sm);background:var(--surface);overflow:hidden}
+.mission-head{display:flex;align-items:center;gap:6px;padding:6px 9px;border-bottom:1px solid var(--purple-line);background:var(--purple-soft);font-size:11.5px;color:var(--purple)}
+.mission-body{padding:7px 9px;display:flex;flex-direction:column;gap:5px;font-size:11.5px;color:var(--fg-2)}
+.plan-step{display:flex;gap:6px;align-items:baseline;font-size:11.5px;color:var(--fg-2)}
+.plan-step .n{font-family:var(--mono);font-size:10px;color:var(--faint);flex:none;width:10px}
+.plan-step .who{margin-left:auto;font-size:10.5px;color:var(--faint);flex:none}
+.mission-foot{display:flex;gap:5px;padding:6px 9px;border-top:1px solid var(--border);background:var(--sidebar);align-items:center;flex-wrap:wrap}
+.bot-card{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);padding:8px;display:flex;flex-direction:column;gap:6px}
+.bot-line{display:flex;gap:6px;align-items:flex-start;font-size:11.5px;color:var(--fg-2)}
+.avatar{width:18px;height:18px;border-radius:5px;background:var(--brand-soft);border:1px solid var(--brand-line);display:flex;align-items:center;justify-content:center;font-size:9.5px;color:var(--muted);flex:none}
+.proposal{border:1px dashed var(--border-strong);border-radius:5px;padding:6px 8px;background:var(--surface-hover);font-size:11.5px;color:var(--fg-2)}
+.proposal b{color:var(--fg)}
+.phone{width:224px;margin:0 auto;border:1px solid var(--border-strong);border-radius:14px;background:var(--surface);padding:9px 7px;display:flex;flex-direction:column;gap:5px}
+.bubble{max-width:88%;padding:5px 8px;border-radius:var(--radius);font-size:11px;line-height:1.5}
+.bubble.in{align-self:flex-start;background:var(--surface-hover);border:1px solid var(--border);color:var(--fg-2)}
+.bubble.out{align-self:flex-end;background:var(--brand-soft);border:1px solid var(--brand-line);color:var(--fg)}
+.bubble .meta{display:block;font-size:9.5px;color:var(--faint);margin-top:1px;font-family:var(--mono)}
+.stage{border:1px solid var(--border);border-radius:var(--radius-sm);background:
+  radial-gradient(120% 80% at 50% 0%,var(--surface-hover),transparent 70%),var(--stage);padding:9px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.desk{border:1px solid var(--border);border-radius:5px;background:var(--surface);padding:6px;display:flex;flex-direction:column;gap:4px;align-items:center;font-size:10.5px;color:var(--muted)}
+.desk .seat{width:100%;height:24px;border-radius:4px;background:var(--surface-hover);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:9.5px;color:var(--faint);font-family:var(--mono)}
+.desk.busy .seat{background:var(--green-soft);border-color:var(--green-line);color:var(--green)}
+.desk.wait .seat{background:var(--amber-soft);border-color:var(--amber-line);color:var(--amber)}
+.drawer{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);box-shadow:var(--shadow-2);padding:7px 9px;display:flex;flex-direction:column;gap:4px;font-size:11.5px}
+.drawer .dh{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--fg);font-weight:600}
+.kv{display:grid;grid-template-columns:48px minmax(0,1fr);gap:1px 6px;font-size:11px;color:var(--fg-2)}
+.kv dt{color:var(--faint)}
+.kv dd{margin:0}
+.selbox{position:relative;border:1px solid var(--border);border-radius:5px;background:var(--surface);padding:8px;overflow:hidden}
+.selbox .frame{position:absolute;inset:10px 34px 26px 10px;border:1.5px solid var(--purple);border-radius:4px;box-shadow:0 0 0 3px var(--purple-soft);pointer-events:none}
+.selbox .frame::after{content:"button.primary";position:absolute;left:-1px;top:-15px;font-size:9.5px;font-family:var(--mono);
+  color:var(--purple);background:var(--purple-soft);border:1px solid var(--purple-line);border-radius:3px;padding:0 4px}
+.wire{height:20px;border-radius:4px;background:var(--surface-hover);border:1px solid var(--border)}
+.mini{display:flex;gap:5px;align-items:center;font-size:11px;color:var(--faint);flex-wrap:wrap}
+.palette{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);overflow:hidden;box-shadow:var(--shadow-2)}
+.palette-search{padding:6px 9px;border-bottom:1px solid var(--border);font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px}
+.palette-group{padding:4px 9px 1px;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+.palette-item{display:flex;align-items:center;gap:7px;padding:4px 9px;font-size:11.5px;color:var(--fg-2)}
+.palette-item .hint{margin-left:auto;font-family:var(--mono);font-size:10px}
+.palette-item.on{background:var(--surface-selected)}
+
+/* ── 页脚 ─────────────────────────────────────────────── */
+.foot{display:flex;flex-direction:column;gap:6px;font-size:11.5px;color:var(--faint);padding:4px 2px 0}
+.foot .row{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline}
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" aria-label="目录">
+    <button class="rail-btn on" data-goto="summary" title="归纳">
+      <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M9.5 9.5v10"/></svg>
+      归纳
+    </button>
+    <button class="rail-btn" data-goto="g1" title="一 · 人直接说">
+      <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 11-3.2-6.4"/><path d="M4 12h8"/></svg>
+      Chat
+    </button>
+    <button class="rail-btn" data-goto="g3" title="三 · 任务行">
+      <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h9"/></svg>
+      板
+    </button>
+    <button class="rail-btn" data-goto="g4" title="四 · Mission">
+      <svg viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6.1.8-4.5 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.3 9.4l6.1-.8z"/></svg>
+      主管
+    </button>
+    <button class="rail-btn" data-goto="g5" title="五 · 机器提议">
+      <svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="2"/><path d="M9 11h.01M15 11h.01M9 14.5h6"/></svg>
+      Bot
+    </button>
+    <button class="rail-btn" data-goto="g6" title="六 · 外部消息">
+      <svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 18.5h2"/></svg>
+      IM
+    </button>
+    <button class="rail-btn" data-goto="g7" title="七 · 带上下文">
+      <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M4 9h16M9 4v16"/></svg>
+      上下文
+    </button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" id="themeBtn" title="切换亮暗（◐）">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 010 16z" fill="currentColor" stroke="none"/></svg>
+      亮暗
+    </button>
+  </nav>
+
+  <main class="wide">
+    <div class="page">
+
+      <header class="page-header">
+        <div class="page-header-copy">
+          <div class="page-header-kicker">Harness · Entry points</div>
+          <h1>入口总表</h1>
+          <div class="page-header-sub">一个入口一张卡：从哪进、经过哪几层、人点几次、落到什么、界面长什么样。14 个能造出任务的入口，全部收敛到同一条 <code>todo</code> + <code>run</code>。</div>
+        </div>
+        <div class="page-header-actions">
+          <span class="pill">14 个造任务的入口</span>
+          <span class="pill">4 类来源</span>
+        </div>
+      </header>
+
+      <!-- 结论 -->
+      <section class="surface" id="summary">
+        <div class="surface-head">
+          <h2>先看结论</h2>
+          <span class="lede">入口多 ≠ 链路长；长短看「人点几次」，不看「经过几层」。</span>
+        </div>
+        <div class="surface-body lede-block">
+          <p style="margin:0">
+            能真正造出任务的入口 <b>14 个</b>，UI 上能被点到的 <b>9 个</b>；其余是快捷键壳、外部消息和程序化调用。
+            它们全部收敛到同一套 <code>Todo → Run</code>：新建一律 <code>confirmed=false</code>、<code>parentId=null</code>、
+            <code>kind="task"</code>，并自动 <code>threadForTodo()</code> 建会话。
+          </p>
+          <div class="inv">
+            <div class="inv-item"><span class="k">01</span><span class="v"><b>人主动说</b>：Chat 一个输入框 5 种含义，最短 1 句话 + 1 次「派活」</span></div>
+            <div class="inv-item"><span class="k">02</span><span class="v"><b>先攒后派</b>：收集箱一次写多条，全部 <code>agentId=null</code>，落地时再选人</span></div>
+            <div class="inv-item"><span class="k">03</span><span class="v"><b>机器提议</b>：Bot / IM / 主管只能给「建议」，起 run 仍由人点</span></div>
+            <div class="inv-item"><span class="k">04</span><span class="v"><b>带上下文</b>：元素 / 场景 / 模板 / 插件，补字段但不动状态机</span></div>
+          </div>
+          <div class="layers">
+            <div class="lane serial">
+              <div class="lane-h"><b>串行主链</b><span>这 5 步才是链路，其余是挂件</span></div>
+              <ol>
+                <li>一句话目标</li>
+                <li>Mission + Plan <em>人批准</em></li>
+                <li>Delegation → Todo</li>
+                <li>Run @ worktree</li>
+                <li>人验收 <em>人确认</em></li>
+              </ol>
+              <div class="foot-line">人的动作 = 2 次；小任务走 Chat 直通，没有 Plan 门。</div>
+            </div>
+            <div class="lane side">
+              <div class="lane-h"><b>并行 / 投影</b><span>不占步数，不要求人参与</span></div>
+              <ul>
+                <li>Memory L4 注入 <em>Run 的入参</em></li>
+                <li>Knowledge 检索 <em>Run 的入参</em></li>
+                <li>汇报 / 沉默 <em>Run 的出口</em></li>
+                <li>Scene 舞台 <em>全程投影</em></li>
+              </ul>
+              <div class="foot-line">上一版把它们画进主链，所以看起来像 9 层。</div>
+            </div>
+          </div>
+          <div class="legend">
+            <span class="it"><i class="ln"></i>请求 / 调用</span>
+            <span class="it"><i class="ln dash"></i>返回 / 异步事件</span>
+            <span class="it"><i class="sw"></i>本步同步发生的事</span>
+            <span class="it"><i class="sw warn"></i>分支 / 例外</span>
+            <span class="it"><i class="sw ok"></i>本入口「不做」的事</span>
+          </div>
+        </div>
+      </section>
+
+      <nav class="toc" aria-label="页内跳转">
+        <a href="#g1">一 · 人直接说 <span class="faint">&nbsp;5</span></a>
+        <a href="#g2">二 · 先攒后派 <span class="faint">&nbsp;2</span></a>
+        <a href="#g3">三 · 任务行上动手 <span class="faint">&nbsp;4</span></a>
+        <a href="#g4">四 · 主管 / Mission <span class="faint">&nbsp;3</span></a>
+        <a href="#g5">五 · 机器提议 <span class="faint">&nbsp;2</span></a>
+        <a href="#g6">六 · 外部消息 <span class="faint">&nbsp;2</span></a>
+        <a href="#g7">七 · 带上下文 <span class="faint">&nbsp;2</span></a>
+        <a href="#g8">八 · 程序化 <span class="faint">&nbsp;3</span></a>
+        <a href="#invariants">不变量与例外</a>
+      </nav>
+
+      <!-- 归纳表 -->
+      <section class="surface">
+        <div class="surface-head">
+          <h2>归纳 <span class="count">8 组 · 23 张卡</span></h2>
+          <span class="lede">按「这句话从哪儿来」分组。下表只给规模，细节看下面每张卡。</span>
+        </div>
+        <div class="surface-body flush tbl-wrap">
+          <table class="tbl">
+            <thead><tr><th>组</th><th>来源</th><th>入口数</th><th>人参与</th><th>落到什么</th><th>对应用户心理</th></tr></thead>
+            <tbody>
+              <tr><td class="id">一</td><td class="name">人直接说</td><td>5</td><td><span class="pill r">2 次</span></td><td>todo(<code>confirmed=false</code>) + run</td><td>「我要做这件事」</td></tr>
+              <tr><td class="id">二</td><td class="name">先攒后派</td><td>2</td><td><span class="pill a">2 次</span></td><td>n 条 todo，<code>agentId=null</code></td><td>「先把事记下来」</td></tr>
+              <tr><td class="id">三</td><td class="name">任务行上动手</td><td>4</td><td><span class="pill g">1 次</span></td><td>run / 并行 run / 重试 / 续跑</td><td>「这条已经在板上了」</td></tr>
+              <tr><td class="id">四</td><td class="name">主管 / Mission</td><td>3</td><td><span class="pill r">2 次</span></td><td>mission + 计划 + n 条子 todo</td><td>「一个人做不完」</td></tr>
+              <tr><td class="id">五</td><td class="name">机器提议</td><td>2</td><td><span class="pill g">1 次</span></td><td>todo（dispatch）/ todo+run（work）</td><td>「它提醒我了」</td></tr>
+              <tr><td class="id">六</td><td class="name">外部消息</td><td>2</td><td><span class="pill">0 次</span></td><td>send() / queued todo / 审批</td><td>「不在电脑前」</td></tr>
+              <tr><td class="id">七</td><td class="name">带上下文</td><td>2</td><td><span class="pill g">1 次</span></td><td>todo 带 context / 跳转入口</td><td>「就是这块，你看着办」</td></tr>
+              <tr><td class="id">八</td><td class="name">程序化</td><td>3</td><td><span class="pill">0 次</span></td><td>todo（模板 / 插件 / 斜杠）</td><td>「自动化来的」</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 分组：由脚本按 DATA 填充 -->
+      <section class="group" id="g1">
+        <div class="group-h"><span class="n">一</span><h2>人直接说</h2><span class="lede">Chat 一个输入框，按下发送时由会话状态决定它是「派活 / 纠偏 / 起运行 / 记录」中的哪一种。</span></div>
+        <div class="cards" data-group="一"></div>
+      </section>
+      <section class="group" id="g2">
+        <div class="group-h"><span class="n">二</span><h2>先攒后派</h2><span class="lede">一次写一堆，全部没人、没执行方式；落地时再选 Agent。</span></div>
+        <div class="cards" data-group="二"></div>
+      </section>
+      <section class="group" id="g3">
+        <div class="group-h"><span class="n">三</span><h2>任务行上动手</h2><span class="lede">任务已经在板上，动的是 <code>run</code> 而不是创建。</span></div>
+        <div class="cards" data-group="三"></div>
+      </section>
+      <section class="group" id="g4">
+        <div class="group-h"><span class="n">四</span><h2>主管 / Mission</h2><span class="lede">同一个输入框，选中 <code>role=supervisor</code> 时建的是 <code>kind="mission"</code>。全链路唯一的人工计划门。</span></div>
+        <div class="cards" data-group="四"></div>
+      </section>
+      <section class="group" id="g5">
+        <div class="group-h"><span class="n">五</span><h2>机器提议，人点确认</h2><span class="lede">Bot 只能说「建议」；点按钮那一下才是授权。</span></div>
+        <div class="cards" data-group="五"></div>
+      </section>
+      <section class="group" id="g6">
+        <div class="group-h"><span class="n">六</span><h2>外部消息进门</h2><span class="lede">IM 走同一条 <code>send()</code>，没有第二套创建路径。</span></div>
+        <div class="cards" data-group="六"></div>
+      </section>
+      <section class="group" id="g7">
+        <div class="group-h"><span class="n">七</span><h2>带着上下文来</h2><span class="lede">一个补字段，一个是跳转入口——别混着数。</span></div>
+        <div class="cards" data-group="七"></div>
+      </section>
+      <section class="group" id="g8">
+        <div class="group-h"><span class="n">八</span><h2>程序化</h2><span class="lede">不经过 UI，但仍然走同一个 <code>createTodo</code>。</span></div>
+        <div class="cards" data-group="八"></div>
+      </section>
+
+      <!-- 不变量 -->
+      <section class="surface" id="invariants">
+        <div class="surface-head">
+          <h2>不变量与两个例外</h2>
+          <span class="lede">入口收敛的成本不在「入口多」，在「有的入口偷偷改了状态」。</span>
+        </div>
+        <div class="surface-body" style="display:flex;flex-direction:column;gap:10px">
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead><tr><th>不变量</th><th>成立范围</th><th>怎么保证</th></tr></thead>
+              <tbody>
+                <tr><td class="name">新建 <code>confirmed=false</code></td><td>全部 23 个入口</td><td>createTodo / createTodos / 各调用路径同源</td></tr>
+                <tr><td class="name"><code>parentId=null</code>（除 Mission 子任务）</td><td>全部；子任务是唯一例外</td><td>Delegation 写入时显式设 <code>parentId=mission.id</code></td></tr>
+                <tr><td class="name"><code>kind</code> 默认 <code>"task"</code></td><td>除 E12（<code>mission</code>）</td><td>只有 supervisor 路径带 <code>kind="mission"</code></td></tr>
+                <tr><td class="name">自动建会话</td><td>全部</td><td><code>threadForTodo()</code> 在 createTodo / createTodos 内</td></tr>
+                <tr><td class="name">起 run 需要人的动作</td><td>E1 / E8 / E13 / E16 / E17</td><td>Bot 不能自己起 run；IM 只在有 Agent 时走 send</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="seq-note warn" style="margin:0"><b>例外 1 · E16</b>：Bot <code>work</code> 档建完 todo <b>立刻</b> run。点「开跑」就是授权，因此这条路径没有第二次确认。</div>
+          <div class="seq-note warn" style="margin:0"><b>例外 2 · E17</b>：IM 无可用 Agent 时落 <code>status=queued</code>，不是 <code>todo</code>。队列语义要跟「在板上等人派活」区分开。</div>
+        </div>
+      </section>
+
+      <div class="foot">
+        <div class="row"><b style="color:var(--fg-2)">核对方式</b><span>入口、字段、行号对着 <code>electron/main.mjs</code> / <code>src/components/*.tsx</code> 逐一核过（2026-11-14），对应当前工作树；配色与圆角取 <code>src/design-system.css</code> 的 token，本页没有一次性色值。</span></div>
+        <div class="row"><b style="color:var(--fg-2)">和 ARCH 的关系</b><span>边界与状态机以 <code>docs/arch/ARCH-super-agent.md</code>、<code>ARCH-chat-thread.md</code> 为准；本页只描述「从哪进」，不定义新字段。</span></div>
+        <div class="row"><b style="color:var(--fg-2)">已知取舍</b><span>23 张卡里能造任务的 14 个、UI 可点的 9 个，分布在 Chat / 任务面板 / 机器人 / IM 四处。若收敛，先并「起任务」与「派活」的语义差异，再动 Bot 的 dispatch 档。</span></div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script>
+// ── 主题 ────────────────────────────────────────────────
+(() => {
+  const root = document.documentElement;
+  const q = new URLSearchParams(location.search).get("theme");
+  if (q === "light" || q === "dark") root.dataset.theme = q;
+  document.getElementById("themeBtn").addEventListener("click", () => {
+    root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
+  });
+})();
+
+// ── rail 高亮 ───────────────────────────────────────────
+(() => {
+  const btns = [...document.querySelectorAll(".rail-btn[data-goto]")];
+  btns.forEach((b) => b.addEventListener("click", () => {
+    document.getElementById(b.dataset.goto)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
+  const obs = new IntersectionObserver((es) => {
+    es.forEach((e) => {
+      if (!e.isIntersecting) return;
+      btns.forEach((b) => b.classList.toggle("on", b.dataset.goto === e.target.id));
+    });
+  }, { rootMargin: "-15% 0px -65% 0px" });
+  ["summary", "g1", "g3", "g4", "g5", "g6", "g7"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) obs.observe(el);
+  });
+})();
+</script>
+<script>
+// ── 界面 fragment（同一批 mock 可被多个入口共享） ────────
+const MOCK = {
+  composerDispatch: `
+    <div class="composer ctx">
+      <div class="composer-input">给设置页加一个「深色跟随系统」开关<span class="caret"></span></div>
+      <div class="composer-foot">
+        <span class="chip p">✦ dsh</span>
+        <span class="hint">发送后创建任务并派活…</span>
+        <span class="spacer"></span>
+        <button class="btn tiny primary">派活</button>
+      </div>
+    </div>
+    <div class="mock-note">未绑定 todo → <code>baseMode=dispatch</code>；按钮文案就是这一句的语义。</div>`,
+
+  composerAlias: `
+    <div class="composer ctx">
+      <div class="composer-input"><span class="alias">@spin-app</span>&nbsp;给设置页加一个「深色跟随系统」开关<span class="caret"></span></div>
+      <div class="composer-foot">
+        <span class="chip p">✦ dsh</span>
+        <span class="chip">@spin-app</span>
+        <span class="hint">别名覆盖默认 Agent 与项目</span>
+        <span class="spacer"></span>
+        <button class="btn tiny primary">派活</button>
+      </div>
+    </div>
+    <div class="mock-note">建出的 todo：<code>priority=P1</code>、<code>tags=["chat"]</code>、<code>acceptance</code> 取场景配置。</div>`,
+
+  composerSteer: `
+    <div class="composer">
+      <div class="composer-input">先别改测试，把设置页那两行挪到前面<span class="caret"></span></div>
+      <div class="composer-foot">
+        <span class="chip">T-038 · 运行中</span>
+        <span class="hint">投进当前会话，不新建任务</span>
+        <span class="spacer"></span>
+        <button class="btn tiny">纠偏</button>
+      </div>
+    </div>
+    <div class="mock-note">投递成功时回执里带 runId；没投到会明说，不会假装已送达。</div>`,
+
+  composerRun: `
+    <div class="composer">
+      <div class="composer-input">补上「切主题时记住上次选择」<span class="caret"></span></div>
+      <div class="composer-foot">
+        <span class="chip">T-038 · 未跑过</span>
+        <span class="hint">在原任务上起一次运行</span>
+        <span class="spacer"></span>
+        <button class="btn tiny">发送并运行</button>
+      </div>
+    </div>
+    <div class="mock-note">不新建 todo，<code>mode=run</code>。</div>`,
+
+  composerNote: `
+    <div class="composer">
+      <div class="composer-input">补一句背景：这个开关要和系统设置联动<span class="caret"></span></div>
+      <div class="composer-foot">
+        <span class="chip">T-038 · 已确认</span>
+        <span class="hint">只落消息，不起 run</span>
+        <span class="spacer"></span>
+        <button class="btn tiny">发送</button>
+      </div>
+    </div>
+    <div class="mock-note">已确认的任务不再被打扰；要重跑先「撤销确认」。</div>`,
+
+  capture: `
+    <div class="panel">
+      <div class="panel-head"><span class="k">＋</span> 收集箱 <span class="spacer"></span><span class="tiny faint">⌘Enter 全部变成任务</span></div>
+      <div class="capture">
+        <span class="ln">- 设置页加「深色跟随系统」</span>
+        <span class="ln">2. 修一下统计页空态</span>
+        <span class="ln">[ ] 给 Git 面板加 refresh</span>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="todo-row sel"><span class="key">#041</span><span class="st"></span>设置页加「深色跟随系统」<span class="acts"><span class="pill">已建</span></span></div>
+      <div class="todo-row"><span class="key">#042</span><span class="st"></span>修一下统计页空态<span class="acts"><span class="pill">已建</span></span></div>
+      <div class="todo-row"><span class="key">#043</span><span class="st"></span>给 Git 面板加 refresh<span class="acts"><span class="pill">已建</span></span></div>
+    </div>
+    <div class="mock-note">全部 <code>agentId=null</code>；去前缀、去重、上限 100 条。</div>`,
+
+  palette: `
+    <div class="palette">
+      <div class="palette-search">⌘K&nbsp;<span class="faint">输入命令…</span></div>
+      <div class="palette-group">任务</div>
+      <div class="palette-item on">新建任务<span class="hint">⌘⇧N</span></div>
+      <div class="palette-item">新建会话<span class="hint">⌘N</span></div>
+      <div class="palette-item">快速记录到知识库<span class="hint">⌘⇧K</span></div>
+    </div>
+    <div class="mock-note">⌘⇧N 只是打开收集箱，不另建路径。</div>`,
+
+  rowDispatch: `
+    <div class="panel" style="padding:5px">
+      <div class="todo-row sel">
+        <span class="key">#038</span><span class="st wait"></span>
+        <span style="flex:1;min-width:0">Vault 解析失败要能重试</span>
+        <span class="acts"><button class="btn tiny primary">派活</button></span>
+      </div>
+      <div class="todo-row"><span class="key">#039</span><span class="st run"></span>记忆批量降级<span class="acts"><span class="tiny faint">运行中</span></span></div>
+    </div>
+    <div class="mock-note">只在 <code>status=todo</code> 且无 active run 时出现；没有可用 Agent 则置灰。</div>`,
+
+  broadcast: `
+    <div class="panel">
+      <div class="panel-head">多 Agent 并行 · T-038<span class="spacer"></span><span class="tiny faint">各自 worktree</span></div>
+      <div style="padding:6px 8px;display:flex;flex-direction:column;gap:4px">
+        <div class="todo-row"><span class="st run"></span>worker A · dsh<span class="acts"><span class="pill g">已选</span></span></div>
+        <div class="todo-row"><span class="st run"></span>worker B · dsh<span class="acts"><span class="pill g">已选</span></span></div>
+        <div class="todo-row"><span class="st"></span>worker C<span class="acts"><span class="tiny faint">未选</span></span></div>
+      </div>
+      <div class="mission-foot"><button class="btn tiny primary">开始并行 (2)</button><span class="spacer"></span><span class="tiny faint">≥2 个 worker 才出现</span></div>
+    </div>`,
+
+  rowRetry: `
+    <div class="panel" style="padding:5px">
+      <div class="todo-row sel">
+        <span class="key">#038</span><span class="st"></span>
+        <span style="flex:1;min-width:0">Vault 解析失败要能重试</span>
+        <span class="acts"><span class="pill r">上次失败</span><button class="btn tiny hl">重试</button></span>
+      </div>
+      <div class="todo-row"><span class="key">#037</span><span class="st"></span>迁移脚本 review<span class="acts"><span class="tiny faint">上一次已完成</span></span></div>
+    </div>
+    <div class="mock-note">新 run，旧 run 留在历史里；不改 todo 的 <code>confirmed</code>。</div>`,
+
+  rowResume: `
+    <div class="panel" style="padding:5px">
+      <div class="todo-row sel">
+        <span class="key">#036</span><span class="st"></span>
+        <span style="flex:1;min-width:0">STDF 解析器接入管线</span>
+        <span class="acts"><span class="pill a">上次中断</span><button class="btn tiny hl">续跑</button></span>
+      </div>
+      <div class="todo-row"><span class="key">#038</span><span class="st wait"></span>Vault 解析失败要能重试<span class="acts"><span class="tiny faint">等审批</span></span></div>
+    </div>
+    <div class="mock-note">条件：<code>interrupted</code> + 有 <code>acpSession</code>；接回原会话，不从头来。</div>`,
+
+  composerSupervisor: `
+    <div class="composer ctx">
+      <div class="composer-input">把 STDF 解析器接进管线，先跑通一个真实样本<span class="caret"></span></div>
+      <div class="composer-foot">
+        <span class="chip p">✦ 主管</span>
+        <span class="chip">@pipeline</span>
+        <span class="hint">会先出计划，等你批准</span>
+        <span class="spacer"></span>
+        <button class="btn tiny primary">派活</button>
+      </div>
+    </div>
+    <div class="mock-note">Agent 选择器里带 ✦ 的是 <code>role=supervisor</code>；选它 → 建 mission，不是 todo。</div>`,
+
+  missionApprove: `
+    <div class="mission">
+      <div class="mission-head"><b>✦ Mission</b><span class="mono">M-04</span><span class="spacer"></span><span class="pill a">计划待批准</span></div>
+      <div class="mission-body">
+        <div style="color:var(--fg)">把 STDF 解析器接进管线</div>
+        <div class="plan-step"><span class="n">1</span>读 parser 接口，写适配层<span class="who">worker A</span></div>
+        <div class="plan-step"><span class="n">2</span>pipeline 注册 + 单测<span class="who">worker B</span></div>
+        <div class="plan-step"><span class="n">3</span>端到端跑真实样本<span class="who">worker A</span></div>
+      </div>
+      <div class="mission-foot">
+        <button class="btn tiny primary">批准并分派</button>
+        <button class="btn tiny">退回并说明</button>
+      </div>
+    </div>
+    <div class="panel" style="padding:5px">
+      <div class="todo-row"><span class="key">T-016</span><span class="st wait"></span>读 parser 接口 · 写适配层</div>
+      <div class="todo-row"><span class="key">T-017</span><span class="st wait"></span>pipeline 注册 + 单测</div>
+      <div class="todo-row"><span class="key">T-018</span><span class="st wait"></span>端到端真实样本</div>
+    </div>`,
+
+  missionReject: `
+    <div class="mission">
+      <div class="mission-head"><b>✦ Mission</b><span class="mono">M-04</span><span class="spacer"></span><span class="pill a">计划待批准</span></div>
+      <div class="mission-body">
+        <div style="color:var(--fg)">把 STDF 解析器接进管线</div>
+        <div class="plan-step"><span class="n">1</span>读 parser 接口，写适配层<span class="who">worker A</span></div>
+        <div class="plan-step"><span class="n">2</span>pipeline 注册 + 单测<span class="who">worker B</span></div>
+      </div>
+      <div style="padding:0 9px 8px">
+        <div class="capture" style="font-size:11px">先把第三个任务换成「回归真实样本集」，别只跑一条</div>
+      </div>
+      <div class="mission-foot"><button class="btn tiny primary">确认退回</button><span class="spacer"></span><span class="tiny faint">回到 planning</span></div>
+    </div>
+    <div class="mock-note">退回后<b>一条子任务都不建</b>；反馈会进主管的下一轮。</div>`,
+
+  botDispatch: `
+    <div class="bot-card">
+      <div class="bot-line"><span class="avatar">Z</span><div>「PR #412 的 review 已经两天没人接了，要不要起一条？」</div></div>
+      <div class="proposal"><b>审一下 PR #412 的迁移脚本</b><div class="tiny faint" style="margin-top:2px">建议执行体：worker A</div></div>
+      <div style="display:flex;gap:5px;align-items:center"><button class="btn tiny primary">起任务</button><span class="spacer"></span><span class="tiny faint">capability=dispatch</span></div>
+    </div>
+    <div class="mock-note">只建 todo（<code>botId</code> 挂回它），<b>不起 run</b>。</div>`,
+
+  botWork: `
+    <div class="bot-card">
+      <div class="bot-line"><span class="avatar">Z</span><div>「迁移脚本的 review 我直接开跑了？」</div></div>
+      <div class="proposal"><b>审一下 PR #412 的迁移脚本</b><div class="tiny faint" style="margin-top:2px">建议执行体：worker A · 预计 1 个 run</div></div>
+      <div style="display:flex;gap:5px;align-items:center"><button class="btn tiny primary">开跑</button><span class="spacer"></span><span class="tiny faint">capability=work</span></div>
+    </div>
+    <div class="mock-note">建 todo 后 <b>立刻 run</b>；点「开跑」就是授权，没有第二次确认。</div>`,
+
+  im: `
+    <div class="phone">
+      <div class="bubble out">把统计页的空态修一下<span class="meta">你 · 20:14</span></div>
+      <div class="bubble in">收到，已排进任务队列。桌面不在线时消息会留在 IM 队列，下次启动继续处理。<span class="meta">Harness · 20:14</span></div>
+    </div>
+    <div class="mock-note">有 Agent 时走正常 <code>send()</code>；没有才落 <code>queued</code> todo（<code>desc="来自 IM …"</code>）。</div>`,
+
+  imApproval: `
+    <div class="phone">
+      <div class="bubble in">⚠ worker A 请求运行 <code>rm -rf dist</code><br>1 允许本次 · 2 本次会话 · 3 拒绝<span class="meta">审批 · 20:16</span></div>
+      <div class="bubble out">1<span class="meta">你 · 20:16</span></div>
+      <div class="bubble in">已选择：允许本次<span class="meta">Harness · 20:16</span></div>
+    </div>
+    <div class="mock-note">走 <code>respondPermission</code>，<b>不建任务</b>。</div>`,
+
+  element: `
+    <div class="selbox">
+      <div class="frame"></div>
+      <div style="display:flex;flex-direction:column;gap:4px;padding-right:36px">
+        <div class="wire" style="width:60%"></div>
+        <div class="wire" style="width:34%"></div>
+        <div class="wire" style="width:76%"></div>
+      </div>
+      <div class="mini" style="margin-top:6px"><span class="pill p">context · 1 个元素</span><span class="faint">button.primary · 380×32</span></div>
+    </div>
+    <div class="composer">
+      <div class="composer-input small">把这个按钮改成 26px，跟页头对齐<span class="caret"></span></div>
+      <div class="composer-foot"><span class="chip p">context</span><span class="hint">只在这次派活生效</span><span class="spacer"></span><button class="btn tiny primary">派活</button></div>
+    </div>
+    <div class="mock-note">元素信息进 <code>todo.context</code>，不进全局 prompt。</div>`,
+
+  scene: `
+    <div class="stage">
+      <div class="desk busy"><div class="seat">T-016 · run</div>worker A</div>
+      <div class="desk wait"><div class="seat">T-017 · 等审批</div>worker B</div>
+      <div class="desk"><div class="seat">idle</div>worker C</div>
+    </div>
+    <div class="drawer">
+      <div class="dh">任务抽屉 <span class="spacer"></span><span class="tiny faint">只吃 todoId</span></div>
+      <dl class="kv">
+        <dt>任务</dt><dd>T-017 · pipeline 注册 + 单测</dd>
+        <dt>来自</dt><dd>M-04</dd>
+        <dt>状态</dt><dd>waiting_input</dd>
+      </dl>
+    </div>
+    <div class="mock-note">点工位 = 打开同一抽屉；舞台上的「派活」等价于 E1，不是新入口。</div>`,
+
+  slash: `
+    <div class="composer">
+      <div class="composer-input"><span class="alias">/task</span>&nbsp;修一下统计页空态<span class="caret"></span></div>
+      <div class="composer-foot"><span class="hint">斜杠命令，不经过 Chat 的派活判断</span><span class="spacer"></span><button class="btn tiny">发送</button></div>
+    </div>
+    <div class="mock-note">回一条系统消息「已创建任务 #043 …」，并绑到当前 thread。</div>`,
+
+  template: `
+    <div class="panel" style="padding:5px">
+      <div class="todo-row"><span class="key">#041</span><span class="st"></span>过一遍收件箱<span class="acts"><span class="pill">daily</span></span></div>
+      <div class="todo-row"><span class="key">#042</span><span class="st"></span>看昨天的失败 run<span class="acts"><span class="pill">daily</span></span></div>
+      <div class="todo-row"><span class="key">#043</span><span class="st"></span>整理记忆复核队列<span class="acts"><span class="pill">daily</span></span></div>
+    </div>
+    <div class="mock-note">「由每日模板生成。」<code>agentId=null</code>；不自动派活。</div>`,
+
+  plugin: `
+    <div class="palette">
+      <div class="palette-search">⌘K&nbsp;<span class="faint">命令…</span></div>
+      <div class="palette-group">插件</div>
+      <div class="palette-item on">整理知识库结构<span class="hint">notes</span></div>
+      <div class="palette-item">打开视觉解析<span class="hint">zhulong</span></div>
+    </div>
+    <div class="mock-note">插件也可以直接 <code>pluginHost.emit("todo.created")</code>；两条路共用 <code>createTodo</code>。</div>`,
+};
+
+// ── 入口数据：一张卡 = 事实 + 时序 + 界面 ────────────────
+const ENTRIES = [
+  {
+    id: "E1", group: "一", name: "派活", from: "Chat 输入框", user: "2 次", userCls: "r",
+    cond: "会话未绑定 todo",
+    result: "建 todo（confirmed=false，已带 agentId）+ 起 run，mode=dispatch",
+    refs: "TaskChat.tsx:451 · main.mjs:5110",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "Chat", s: "composer" }, { n: "Main", s: "send()", core: 1 }, { n: "Todo + Run", s: "SQLite" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "一句话目标" },
+      { k: "msg", from: 1, to: 2, label: "act(send)", ref: "TaskChat.tsx:451" },
+      { k: "msg", from: 2, to: 3, label: "createTodo + queueRun", ref: "main.mjs:5110" },
+      { k: "msg", from: 3, to: 1, label: "broadcast → 任务行出现", ret: 1 },
+    ],
+    mock: "composerDispatch",
+  },
+  {
+    id: "E2", group: "一", name: "@别名派活", from: "Chat 输入框 + @", user: "2 次", userCls: "r",
+    cond: "文中带 @agent 或 @project",
+    result: "同上，Agent / 项目由别名决定；priority=P1、tags=[chat]、acceptance 取场景",
+    refs: "main.mjs:5060 · main.mjs:5090",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "Chat", s: "composer" }, { n: "Main", s: "send()", core: 1 }, { n: "Todo + Run" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "@spin-app 加个开关" },
+      { k: "self", who: 2, label: "解析别名 → agent / project / cwd" },
+      { k: "msg", from: 1, to: 2, label: "send({ agentId })" },
+      { k: "msg", from: 2, to: 3, label: "todo：P1 + tags + 场景验收", ref: "main.mjs:5090" },
+    ],
+    mock: "composerAlias",
+  },
+  {
+    id: "E3", group: "一", name: "纠偏（steer）", from: "Chat 输入框", user: "1 次", userCls: "g",
+    cond: "已有 active run",
+    result: "只把这句话投进运行中会话，不建任务；回投递回执",
+    refs: "main.mjs:5118",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "Chat", s: "" }, { n: "Main", s: "send()", core: 1 }, { n: "运行中 run" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "换个方向 / 补一句" },
+      { k: "msg", from: 1, to: 2, label: "send()" },
+      { k: "msg", from: 2, to: 3, label: "投递消息（不建 todo）" },
+      { k: "msg", from: 3, to: 1, label: "投递回执", ret: 1 },
+    ],
+    mock: "composerSteer",
+  },
+  {
+    id: "E4", group: "一", name: "发送并运行", from: "Chat 输入框", user: "1 次", userCls: "g",
+    cond: "已绑 todo、无 run",
+    result: "在原 todo 上起 run，mode=run；不新建任务",
+    refs: "main.mjs:5167",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "Chat", s: "" }, { n: "Main", s: "send()", core: 1 }, { n: "Todo + Run" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "补一句就开跑" },
+      { k: "msg", from: 1, to: 2, label: "send()" },
+      { k: "msg", from: 2, to: 3, label: "run(todo.id)", ref: "main.mjs:5167" },
+      { k: "msg", from: 3, to: 1, label: "事件流 / 状态", ret: 1 },
+    ],
+    mock: "composerRun",
+  },
+  {
+    id: "E5", group: "一", name: "记录（note）", from: "Chat 输入框", user: "1 次", userCls: "g",
+    cond: "todo 已 confirmed",
+    result: "只落消息，不起 run；用来补背景",
+    refs: "TaskChat.tsx:451",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "Chat", s: "" }, { n: "Todo" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "补一句背景" },
+      { k: "msg", from: 1, to: 2, label: "只 addMessage" },
+      { k: "note", ok: 1, text: "<b>不起 run</b>：已确认的任务要保持可读，不再被自动打扰；要重跑先「撤销确认」。" },
+    ],
+    mock: "composerNote",
+  },
+
+  {
+    id: "E6", group: "二", name: "收集箱", from: "任务面板顶部", user: "2 次", userCls: "a",
+    cond: "一行一条，⌘Enter 全部落地",
+    result: "createTodos：agentId=null、项目取当前项目、source=capture",
+    refs: "main.mjs:4771 · TaskPane.tsx:171",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "TaskPane", s: "收集箱" }, { n: "createTodos", s: "Main", core: 1 }, { n: "SQLite" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "多行文本 + ⌘Enter" },
+      { k: "msg", from: 1, to: 2, label: "createTodos({ text })" },
+      { k: "self", who: 2, label: "去前缀 / 去重 / 上限 100" },
+      { k: "msg", from: 2, to: 3, label: "n 条 todo + thread", ref: "main.mjs:4771" },
+      { k: "msg", from: 3, to: 1, label: "列表出现（选第一条）", ret: 1 },
+    ],
+    mock: "capture",
+  },
+  {
+    id: "E7", group: "二", name: "⌘⇧N / 命令面板「新建任务」", from: "全局快捷键", user: "1 次", userCls: "g",
+    cond: "不在输入框里打字",
+    result: "只是 E6 的快捷键壳：打开收集箱，不另建路径",
+    refs: "App.tsx:556 · TaskPane.tsx:110",
+    actors: [{ n: "键盘", s: "user", you: 1 }, { n: "App", s: "菜单 / 快捷键" }, { n: "收集箱", s: "E6" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "⌘⇧N" },
+      { k: "msg", from: 1, to: 2, label: "harness:new-task" },
+      { k: "note", text: "<b>不新增入口</b>：事件只负责把收集箱打开并聚焦，落地仍走 E6。" },
+    ],
+    mock: "palette",
+  },
+
+  {
+    id: "E8", group: "三", name: "派活（行内）", from: "任务行 quick actions", user: "1 次", userCls: "g",
+    cond: "无 active run、status=todo、有可用 Agent",
+    result: "run({ id, agentId })；进调度队列",
+    refs: "TaskPane.tsx:626",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "TaskPane", s: "行内按钮" }, { n: "run()", s: "Main", core: 1 }, { n: "Scheduler" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "点「派活」" },
+      { k: "msg", from: 1, to: 2, label: "act(run)" },
+      { k: "msg", from: 2, to: 3, label: "排队：并发上限 / 同目录串行" },
+      { k: "msg", from: 3, to: 1, label: "状态 → 运行中", ret: 1 },
+    ],
+    mock: "rowDispatch",
+  },
+  {
+    id: "E9", group: "三", name: "并行（broadcast）", from: "任务行 quick actions", user: "2 次", userCls: "a",
+    cond: "≥2 个 ACP worker",
+    result: "每个 Agent 各自独立 worktree / 终端，同一 todo 起多条 run",
+    refs: "TaskPane.tsx:630",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "并行弹窗", s: "" }, { n: "run × N", s: "Main", core: 1 }, { n: "worktree × N" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "勾选 2 个 Agent" },
+      { k: "msg", from: 1, to: 2, label: "开始并行" },
+      { k: "msg", from: 2, to: 3, label: "各建 worktree / 分支" },
+      { k: "note", text: "结果靠人对比；并行<b>不产生</b>「哪个更好」的自动判断。" },
+    ],
+    mock: "broadcast",
+  },
+  {
+    id: "E10", group: "三", name: "重试", from: "任务行 quick actions", user: "1 次", userCls: "g",
+    cond: "上一次 failed / cancelled",
+    result: "retry：新 run，旧 run 保留在历史",
+    refs: "TaskPane.tsx:632",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "TaskPane", s: "" }, { n: "retry", s: "Main", core: 1 }, { n: "Run" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "点「重试」" },
+      { k: "msg", from: 1, to: 2, label: "act(retry)" },
+      { k: "msg", from: 2, to: 3, label: "新 run（父指向旧 run）" },
+      { k: "note", warn: 1, text: "失败原因不会自动进下一轮 prompt；要带上下文请用 <b>续跑</b> 或直接纠偏。" },
+    ],
+    mock: "rowRetry",
+  },
+  {
+    id: "E11", group: "三", name: "续跑", from: "任务行 quick actions", user: "1 次", userCls: "g",
+    cond: "上一次 interrupted 且有 acpSession",
+    result: "runResume：接回原 ACP 会话，不从头来",
+    refs: "TaskPane.tsx:634",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "TaskPane", s: "" }, { n: "runResume", s: "Main", core: 1 }, { n: "ACP 会话" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "点「续跑」" },
+      { k: "msg", from: 1, to: 2, label: "act(runResume)" },
+      { k: "msg", from: 2, to: 3, label: "resume(acpSession)" },
+      { k: "msg", from: 3, to: 1, label: "继续输出", ret: 1 },
+    ],
+    mock: "rowResume",
+  },
+
+  {
+    id: "E12", group: "四", name: "✦ 主管 + 一句话", from: "Chat 输入框", user: "2 次", userCls: "r",
+    cond: "role=supervisor、设置里 superAgentEnabled、主机非 ssh",
+    result: "建 kind=mission、missionState=planning，起 supervisor run 出计划；mode=mission",
+    refs: "main.mjs:5009",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "Chat", s: "Agent 选择器" }, { n: "Main", s: "supervisor 分支", core: 1 }, { n: "Supervisor run" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "选「✦ 主管」+ 一句话目标" },
+      { k: "msg", from: 1, to: 2, label: "send({ agentId })" },
+      { k: "note", text: "<b>分流点</b>：<code>agent.role === \"supervisor\"</code> → <code>kind=mission</code>，而不是普通 todo", ref: "main.mjs:5009" },
+      { k: "msg", from: 2, to: 3, label: "queueRun(mission, supervisor)" },
+      { k: "msg", from: 3, to: 2, label: "MCP 提交计划", ret: 1 },
+    ],
+    mock: "composerSupervisor",
+  },
+  {
+    id: "E13", group: "四", name: "批准并分派", from: "Mission 计划卡", user: "1 次", userCls: "g",
+    cond: "计划卡处于待批准",
+    result: "approveMissionPlan → Delegation 一次写 n 条子 todo（parentId=mission）",
+    refs: "TaskChat.tsx:1090",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "计划卡", s: "" }, { n: "approve", s: "Main", core: 1 }, { n: "子 todo × n" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "点「批准并分派」" },
+      { k: "msg", from: 1, to: 2, label: "approveMissionPlan" },
+      { k: "msg", from: 2, to: 3, label: "一次写 n 条（parentId=mission）" },
+      { k: "note", ok: 1, text: "批准只写 todo：每条子任务的 run 仍各自受调度与审批约束，不会一起冲出去。" },
+    ],
+    mock: "missionApprove",
+  },
+  {
+    id: "E14", group: "四", name: "退回 + 反馈", from: "Mission 计划卡", user: "1 次", userCls: "g",
+    cond: "计划卡处于待批准",
+    result: "rejectMissionPlan(feedback) → 回到 planning 重规划，一条子任务都不建",
+    refs: "TaskChat.tsx:1104",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "计划卡", s: "" }, { n: "reject", s: "Main", core: 1 }, { n: "Supervisor run" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "写反馈 + 确认退回" },
+      { k: "msg", from: 1, to: 2, label: "rejectMissionPlan(feedback)" },
+      { k: "msg", from: 2, to: 3, label: "带反馈重新规划" },
+      { k: "note", warn: 1, text: "<b>不建任何子任务</b>：退回是干净的回滚，不会留下半套 Todo。" },
+    ],
+    mock: "missionReject",
+  },
+
+  {
+    id: "E15", group: "五", name: "「起任务」", from: "机器人页 · 回合建议", user: "1 次", userCls: "g",
+    cond: "bot capability=dispatch",
+    result: "只建 todo（botId 挂回该 bot），不起 run",
+    refs: "main.mjs:3797",
+    actors: [{ n: "日程", s: "tick", core: 1 }, { n: "Bot 回合", s: "bot_turns" }, { n: "你", s: "user", you: 1 }, { n: "Todo" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "到点起一轮" },
+      { k: "msg", from: 1, to: 2, label: "proposal（只到建议）" },
+      { k: "note", warn: 1, text: "bot <b>不能</b>自己建 todo、也不能起 run —— 即使 <code>capability=work</code>。" },
+      { k: "msg", from: 2, to: 1, label: "点「起任务」" },
+      { k: "msg", from: 1, to: 3, label: "createTodo({ botId })", ref: "main.mjs:3797" },
+    ],
+    mock: "botDispatch",
+  },
+  {
+    id: "E16", group: "五", name: "「开跑」", from: "机器人页 · 回合建议", user: "1 次", userCls: "g",
+    cond: "bot capability=work 且有 executorAgentId",
+    result: "建 todo + 立刻 run()；点按钮 = 人的那一次授权",
+    refs: "main.mjs:3816",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "Bot 回合", s: "" }, { n: "Main", s: "botAcceptProposal", core: 1 }, { n: "Todo → Run" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "点「开跑」" },
+      { k: "msg", from: 1, to: 2, label: "botAcceptProposal" },
+      { k: "msg", from: 2, to: 3, label: "createTodo({ botId, agentId })" },
+      { k: "msg", from: 2, to: 3, label: "run({ id }) 立刻", ref: "main.mjs:3816" },
+      { k: "note", warn: 1, text: "这条路径<b>没有第二次确认</b>：点「开跑」就是授权，写进 bot_turns 审计。" },
+    ],
+    mock: "botWork",
+  },
+
+  {
+    id: "E17", group: "六", name: "IM 消息", from: "手机 / IM", user: "0 次", userCls: "",
+    cond: "先 send()；不可执行（无 Agent / 报错）才降级",
+    result: "降级时落 status=queued todo，desc=\"来自 IM &lt;chatId&gt;\"，并回「已排进队列」",
+    refs: "main.mjs:2991",
+    actors: [{ n: "手机 / IM", s: "user", you: 1 }, { n: "IM Gateway", s: "electron/im" }, { n: "Main", s: "send()", core: 1 }, { n: "Todo / Run" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "一句话" },
+      { k: "msg", from: 1, to: 2, label: "入站消息（排队）" },
+      { k: "msg", from: 2, to: 3, label: "createTodo + run", ref: "main.mjs:2991" },
+      { k: "note", warn: 1, text: "<b>降级分支</b>：没有可用 Agent 或 send 报错 → <code>status=queued</code>，回执明说「已排进队列」。" },
+      { k: "msg", from: 2, to: 0, label: "回执发回手机", ret: 1 },
+    ],
+    mock: "im",
+  },
+  {
+    id: "E18", group: "六", name: "IM 里回数字", from: "手机 / IM", user: "0 次", userCls: "",
+    cond: "命中的是权限审批，不是普通消息",
+    result: "respondPermission；不建任务",
+    refs: "main.mjs:2978",
+    actors: [{ n: "手机 / IM", s: "user", you: 1 }, { n: "IM Gateway", s: "" }, { n: "Approval", s: "Main", core: 1 }, { n: "运行中 run" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "回「1」" },
+      { k: "msg", from: 1, to: 2, label: "匹配到 pending approval" },
+      { k: "msg", from: 2, to: 3, label: "respondPermission(option)" },
+      { k: "note", ok: 1, text: "<b>不是入口</b>：不建 todo、不起 run，只解开正在等的那一步。" },
+    ],
+    mock: "imApproval",
+  },
+
+  {
+    id: "E19", group: "七", name: "元素上下文", from: "预览里选中元素", user: "1 次", userCls: "g",
+    cond: "在预览里选中元素再说话",
+    result: "建 todo 带 context（选择器 / DOM / 截图）；acceptance 取场景配置",
+    refs: "main.mjs:5080 · types.ts:239",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "预览 / 元素", s: "" }, { n: "Main", s: "send()", core: 1 }, { n: "Todo" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "点选元素" },
+      { k: "msg", from: 1, to: 2, label: "context + 一句话" },
+      { k: "msg", from: 2, to: 3, label: "todo.context 存元素信息", ref: "main.mjs:5080" },
+      { k: "note", text: "上下文只进这一条 todo，<b>不写进全局 prompt</b>；下一条任务不会带着它。" },
+    ],
+    mock: "element",
+  },
+  {
+    id: "E20", group: "七", name: "舞台 / 场景", from: "场景页", user: "1 次", userCls: "g",
+    cond: "不是创建，是跳转",
+    result: "「派活」复用 E1（onNewThread）；点工位 → 任务抽屉，只吃 todoId",
+    refs: "SceneWorkspace.tsx:237",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "舞台", s: "SceneWorkspace" }, { n: "任务抽屉", s: "只吃 todoId" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "点工位 / 点派活" },
+      { k: "msg", from: 1, to: 0, label: "同一条 todoId 跳转" },
+      { k: "note", ok: 1, text: "舞台<b>不创建任务</b>；「派活」按钮等价于 E1，点工位打开的是同一个抽屉组件。" },
+    ],
+    mock: "scene",
+  },
+
+  {
+    id: "E21", group: "八", name: "/task &lt;标题&gt;", from: "斜杠命令", user: "0 次", userCls: "",
+    cond: "在 Chat 里以 / 开头",
+    result: "createTodo({ title }) 并绑到当前 thread",
+    refs: "main.mjs:1872",
+    actors: [{ n: "你", s: "user", you: 1 }, { n: "Main", s: "命令解析", core: 1 }, { n: "Todo + Thread" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "/task 修一下统计页空态" },
+      { k: "msg", from: 1, to: 2, label: "createTodo({ title })" },
+      { k: "msg", from: 1, to: 0, label: "系统消息：已创建 #043", ret: 1 },
+    ],
+    mock: "slash",
+  },
+  {
+    id: "E22", group: "八", name: "每日模板", from: "启动 / 定时", user: "0 次", userCls: "",
+    cond: "预置 3 条",
+    result: "tags=[daily]、agentId=null；不自动派活",
+    refs: "main.mjs:4701",
+    actors: [{ n: "模板", s: "daily", core: 1 }, { n: "Main", s: "" }, { n: "Todo" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "生成 3 条" },
+      { k: "msg", from: 1, to: 2, label: "createTodos + tags=daily" },
+      { k: "note", ok: 1, text: "<b>只建不用</b>：模板给的是检查清单，跑不跑由人决定。" },
+    ],
+    mock: "template",
+  },
+  {
+    id: "E23", group: "八", name: "插件命令 / 事件", from: "命令面板 · 插件", user: "0 次", userCls: "",
+    cond: "插件菜单项，或 pluginHost.emit(\"todo.created\")",
+    result: "与内置入口共用同一条 createTodo",
+    refs: "App.tsx:487 · main.mjs:4728",
+    actors: [{ n: "插件", s: "pluginHost", core: 1 }, { n: "Main", s: "" }, { n: "Todo" }],
+    steps: [
+      { k: "msg", from: 0, to: 1, label: "命令 / 事件" },
+      { k: "msg", from: 1, to: 2, label: "createTodo" },
+      { k: "msg", from: 1, to: 0, label: "emit(todo.created)", ret: 1 },
+    ],
+    mock: "plugin",
+  },
+];
+
+// ── 渲染：一张卡 = 事实 + 时序 + 界面 ────────────────────
+function renderSeq(e) {
+  const n = e.actors.length;
+  const cols = `repeat(${n},minmax(0,1fr))`;
+  const mid = (i) => `calc(${i} * 100% / ${n} + 100% / ${n} / 2)`;
+  let html = `<div class="seq"><div class="seq-head" style="grid-template-columns:${cols}">` +
+    e.actors.map((a) => `<div class="actor${a.you ? " you" : ""}${a.core ? " core" : ""}"><b>${a.n}</b><span>${a.s || " "}</span></div>`).join("") +
+    `</div><div class="seq-body">` +
+    e.actors.map((_, i) => `<i style="position:absolute;top:-5px;bottom:0;border-left:1px dashed var(--border-strong);left:${mid(i)}"></i>`).join("");
+
+  e.steps.forEach((s) => {
+    if (s.k === "msg") {
+      const lo = Math.min(s.from, s.to), hi = Math.max(s.from, s.to);
+      const left = lo * 100 / n + 100 / n / 2;
+      const width = (hi - lo) * 100 / n;
+      const back = s.to < s.from;
+      html += `<div class="seq-msg${s.ret ? " ret" : ""}">` +
+        `<div class="lbl" style="left:${left + width / 2}%">${s.label}${s.ref ? `<span class="ref">${s.ref}</span>` : ""}</div>` +
+        `<div class="arrow${back ? " left" : ""}" style="left:${left}%;width:${width}%"></div></div>`;
+    } else if (s.k === "self") {
+      html += `<div class="seq-self"><div class="box" style="left:${mid(s.who)}">${s.label}</div></div>`;
+    } else if (s.k === "note") {
+      html += `<div class="seq-note${s.warn ? " warn" : s.ok ? " ok" : ""}">${s.text}${s.ref ? ` <span class="ref">${s.ref}</span>` : ""}</div>`;
+    }
+  });
+  html += `</div></div>`;
+  return html;
+}
+
+function renderCard(e) {
+  return `
+  <article class="card">
+    <header class="card-h">
+      <span class="eid">${e.id}</span>
+      <b>${e.name}</b>
+      <span class="pill">${e.from}</span>
+      <span class="spacer"></span>
+      <span class="pill ${e.userCls}">人 ${e.user}</span>
+    </header>
+    <div class="card-facts">
+      <div class="fact"><span class="fk">条件</span><span class="fv">${e.cond}</span></div>
+      <div class="fact"><span class="fk">结果</span><span class="fv">${e.result}</span></div>
+      <div class="fact"><span class="fk">代码</span><span class="fv mono" style="font-size:11px;color:var(--faint)">${e.refs}</span></div>
+    </div>
+    <div class="card-panes">
+      <div class="pane">
+        <div class="pane-h">时序</div>
+        <div class="pane-body">${renderSeq(e)}</div>
+      </div>
+      <div class="pane">
+        <div class="pane-h">界面示意</div>
+        <div class="pane-body"><div class="mock">${MOCK[e.mock] || ""}</div></div>
+      </div>
+    </div>
+  </article>`;
+}
+
+(() => {
+  document.querySelectorAll(".cards[data-group]").forEach((host) => {
+    const group = host.dataset.group;
+    host.innerHTML = ENTRIES.filter((e) => e.group === group).map(renderCard).join("");
+  });
+})();
+
+</script>
+</body>
+</html>
