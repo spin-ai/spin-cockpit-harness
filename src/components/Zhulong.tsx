@@ -5,6 +5,7 @@ import { Tabs } from "./Tabs";
 import { useT } from "../i18n";
 import { PageHeader } from "./PageHeader";
 import { RowMenu } from "./RowMenu";
+import { ChevronLeftIcon } from "./Icons";
 import { ZhulongOverlay, type ZhBlock, type ZhRelation } from "./ZhulongOverlay";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
@@ -87,11 +88,13 @@ const readAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
  * 版式按本仓库 DESIGN-SYSTEM 重排：
  *   页 = canvas + 一个主面；左侧配置、中间图面、右侧核对，分节用 hairline 不用卡片边框。
  */
-export function Zhulong({ state, act, notify, onOpenSettings }: {
+export function Zhulong({ state, act, notify, onOpenSettings, onBack }: {
   state: State;
   act: Act;
   notify: (message: string) => void;
   onOpenSettings: () => void;
+  /** 回插件市场（本页不再是 rail 一级入口） */
+  onBack?: () => void;
 }) {
   const plugin = state.plugins?.find((p) => p.id === PLUGIN_ID);
   const enabled = Boolean(plugin?.enabled);
@@ -406,7 +409,11 @@ export function Zhulong({ state, act, notify, onOpenSettings }: {
   if (!enabled) {
     return (
       <div className="page zh-page">
-        <PageHeader title={t("page.visual")} subtitle="把手绘架构图 / 界面截图 / PDF 页面解析成区块与关系" />
+        <PageHeader
+          title={t("page.visual")}
+          subtitle="把手绘架构图 / 界面截图 / PDF 页面解析成区块与关系"
+          actions={onBack ? <button className="btn ghost" onClick={onBack} title="回到插件市场" aria-label="回到插件市场"><ChevronLeftIcon size={13} /></button> : undefined}
+        />
         <EmptyState
           mark="◇"
           title="视觉解析插件未启用"
@@ -432,6 +439,7 @@ export function Zhulong({ state, act, notify, onOpenSettings }: {
         )}
         actions={(
           <>
+            {onBack && <button className="btn ghost" onClick={onBack} title="回到插件市场" aria-label="回到插件市场"><ChevronLeftIcon size={13} /></button>}
             <button className="btn" onClick={() => void runProbe()}>{t("action.probeBackend")}</button>
             <button className="btn" disabled={!result || busy} onClick={() => void handoff()} title="把结构化摘要写进 Chat 草稿，人确认后再发">{t("action.handToAgent")}</button>
             {busy ? (

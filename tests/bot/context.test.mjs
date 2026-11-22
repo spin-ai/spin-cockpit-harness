@@ -95,3 +95,16 @@ await test("思考档：只改轮数与工具轮温度，不改 token 上限", (
   assert.ok(effortPolicy("deep").temperature < effortPolicy("").temperature);
   assert.equal(effortPolicy("nonsense").label, "标准");
 });
+
+
+await test("计划：进 system prompt，步骤状态可见", () => {
+  const out = compileContext(
+    { name: "PM", capability: "work", persona: {} },
+    "",
+    { proactive: false, plan: { goal: "修登录", steps: [{ text: "看日志", status: "doing" }, { text: "改代码", status: "todo" }] } },
+  );
+  assert.match(out.system, /你手上的计划（修登录）/);
+  assert.match(out.system, /1\. \[doing\] 看日志/);
+  assert.match(out.system, /2\. \[todo\] 改代码/);
+  assert.ok(out.sectionChars.plan > 0);
+});

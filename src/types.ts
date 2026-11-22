@@ -76,8 +76,14 @@ export interface Scene { projectId: string; text: string; config: SceneConfig; u
 /* ── 人格 bot ─────────────────────────────────────────────────────────
  * 舞台上的「人」是 bot：有名字、人格、记忆、会主动开口。
  * Agent（执行体）是它此刻借的身体；bot 可以换执行体，形象不变。 */
-export interface BotPersona { mission?: string; tone?: string; address?: string; length?: string; boundary?: string; habit?: string }
-export interface BotPolicy { maxTurnsPerHour?: number; minGapMs?: number; quietHours?: [number, number]; escalate?: string }
+export interface BotPersona { mission?: string; tone?: string; address?: string; length?: string; boundary?: string; habit?: string;
+  duty?: { goal?: string; scope?: string; deliverable?: string; forbidden?: string; report?: string } }
+export interface BotPolicy { maxTurnsPerHour?: number; minGapMs?: number; quietHours?: [number, number]; escalate?: string;
+  whoCanAsk?: "owner" | "group" | "anyone"; sensitiveBlocklist?: string[];
+  notify?: { proactive?: boolean; needPermission?: boolean; taskDone?: boolean; failed?: boolean };
+  standing?: { enabled?: boolean; maxRunsPerHour?: number };
+  github?: { enabled?: boolean };
+  webhook?: { enabled?: boolean; token?: string } }
 export interface Bot {
   id: string;
   name: string;
@@ -90,6 +96,16 @@ export interface Bot {
   role?: "supervisor" | "worker";
   /** 它此刻借的执行体；null = 还没绑定 */
   executorAgentId?: string | null;
+  /** 模型 / 思考档（quick / 标准 / deep） */
+  model?: string;
+  effort?: string;
+  /** 内置技能 id 列表（正文在主进程 electron/bot/skills.mjs） */
+  skills?: string[];
+  /** 默认项目 / 默认主机（空 = 跟随当前项目 / 执行体所在主机） */
+  projectId?: string | null;
+  hostId?: string | null;
+  /** 组织：团队名（自由文本） */
+  team?: string;
   channels?: string[];
   policy?: BotPolicy;
   budget?: { tokensPerTurn?: number; tokensPerHour?: number };
@@ -104,11 +120,18 @@ export interface BotRoutine {
   id: string;
   botId: string;
   name?: string;
-  kind?: "daily" | "every" | "watch";
+  kind?: "daily" | "every" | "once" | "watch";
   enabled?: boolean;
   atHour?: number;
   everyMs?: number;
+  onceAt?: number;
+  prompt?: string;
+  mode?: "alongside" | "in-chat" | string;
+  watch?: { kind?: "file" | "cmd"; path?: string; cmd?: string };
+  when?: string;
   nextAt?: number | null;
+  due?: boolean;
+  why?: string;
   lastFiredAt?: number;
   lastError?: string;
 }
@@ -121,8 +144,14 @@ export interface BotTurn {
   trigger?: { kind?: string; ref?: string };
   input?: string;
   reply?: string;
+  injected?: { layer: string; id: string; title: string }[];
   decision?: BotDecision;
   reason?: string;
+  stopReason?: string;
+  context?: { chars?: number; memory?: number; memoryRaw?: number; history?: number; digest?: boolean };
+  handoff?: { to?: string; toName?: string; task?: string; reason?: string } | null;
+  routineProposal?: { name?: string; kind?: string; prompt?: string; when?: string; dismissed?: boolean; acceptedAt?: number } | null;
+  routineId?: string | null;
   runId?: string | null;
   todoId?: string | null;
   cost?: { tokens?: number | null; ms?: number };
@@ -265,7 +294,26 @@ export interface ElementContext {
   source?: { file?: string; line?: number } | null;
   screenshot?: string | null;
 }
-export interface MessageMeta { title?: string; status?: string; hint?: string; description?: string; input?: string; output?: string; }
+/** 工具消息的结构化 meta：家族 / 状态 / 耗时 / 归属都由主进程写入，前端不再猜文本 */
+export interface MessageMeta {
+  title?: string; status?: string; hint?: string; description?: string; input?: string; output?: string;
+  /** ACP kind（read/edit/execute/search/fetch/think…），家族推导的原始输入 */
+  kind?: string;
+  /** read / edit / run / search / net / mcp / plan / think / other */
+  family?: string;
+  /** running / waiting / done / failed / denied / stopped */
+  statusKind?: string;
+  durationMs?: number;
+  /** 子调用指向父工具（子 agent / 嵌套工具） */
+  parentToolId?: string | null;
+  /** 哪个 Agent / 哪个机器人起的这一步（群聊归属） */
+  agentId?: string | null;
+  botId?: string | null;
+  /** 审批消息：决策文案与原命令描述 */
+  decision?: string;
+  allow?: boolean;
+  optionId?: string | null;
+}
 export interface Message { id: string; threadId: string; todoId: string | null; runId: string | null; role: string; kind: string; content: string; injected: boolean; delivery?: Delivery; context?: ElementContext | null; /** ACP 工具调用原始参数 / 完整输出（轨迹用） */ meta?: MessageMeta | null; createdAt: number; /** 被编辑后的新版本取代时指向新 run，UI 不再展示 */ supersededBy?: string | null; }
 export interface Artifact { id: string; todoId: string; runId: string; kind: string; title: string; origin: string; ref: string; deepLink: string; createdAt: number; }
 export interface Event { id: string; ts: number; type: string; text: string; }

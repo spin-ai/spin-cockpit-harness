@@ -29,6 +29,21 @@ test("候选打分：失败 > 待输入 > 普通；未知事件 0 分", () => {
   assert.equal(scoreCandidate({ kind: "whatever" }), 0);
 });
 
+test("候选：GitHub 事件未读且未过期才提，seen/旧/别人的不提", () => {
+  const now = at(12).getTime();
+  const state = {
+    botEvents: [
+      { id: "e1", botId: "b1", key: "pr:1", title: "PR #1 等你 review", at: now - 1000, seen: false },
+      { id: "e2", botId: "b1", key: "ci:2", title: "CI 失败", at: now - 1000, seen: true },
+      { id: "e3", botId: "b1", key: "ci:3", title: "旧事件", at: now - 13 * HOUR, seen: false },
+      { id: "e4", botId: "b2", key: "pr:4", title: "别人的", at: now - 1000, seen: false },
+    ],
+  };
+  const out = collectCandidates(state, { now, botId: "b1" });
+  assert.deepEqual(out.map((c) => c.ref), ["pr:1"]);
+  assert.equal(out[0].kind, "github.pr");
+});
+
 test("闸门：暂停 / 静音 / 静音时段都记 silent", () => {
   assert.equal(gatesFor(bot({ status: "paused" })).decision, "silent");
   assert.equal(gatesFor(bot({ mutedUntil: Date.now() + MIN })).decision, "silent");

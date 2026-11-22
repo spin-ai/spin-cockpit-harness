@@ -5,9 +5,10 @@ import path from "node:path";
 const HOME = process.env.HOME || process.cwd();
 // 老安装仍在 ~/Documents/YieldMind/worktrees；新安装用 Cockpit Harness
 const LEGACY_ROOT = path.join(HOME, "Documents", "YieldMind", "worktrees");
-const ROOT = fs.existsSync(path.join(HOME, "Documents", "YieldMind"))
+// HARNESS_WORKTREE_ROOT 只给用例用：测试不能在用户 Documents 下建 worktree
+const ROOT = process.env.HARNESS_WORKTREE_ROOT || (fs.existsSync(path.join(HOME, "Documents", "YieldMind"))
   ? LEGACY_ROOT
-  : path.join(HOME, "Documents", "Cockpit Harness", "worktrees");
+  : path.join(HOME, "Documents", "Cockpit Harness", "worktrees"));
 
 function run(cmd, args, cwd) {
   const r = spawnSync(cmd, args, { cwd, encoding: "utf8" });
@@ -52,6 +53,30 @@ export function removeWorktree(dir) {
   if (!repo) return false;
   const r = run("git", ["worktree", "remove", "--force", dir], repo);
   return r.ok;
+}
+
+/**
+ * 清掉同一次派活（key + runId）上次留下的 worktree。
+ * 目录名是 `<key>-<runId>-<stamp>`；进程在 `git worktree add` 之后、写 startedAt 之前挂掉，
+ * 就会留下一个没人认领的目录（run 重启后还是 queued，没有 cwd）。同一个 run 只会有一个是活的。
+ */
+export function removeStaleWorktrees(cwd, todoKey, runId) {
+  const repo = repoRoot(cwd);
+  if (!repo || !runId) return 0;
+  const safeKey = String(todoKey || "todo").replace(/[^a-zA-Z0-9_-]/g, "");
+  const root = path.join(ROOT, path.basename(repo));
+  const prefix = `${safeKey}-${runId}-`;
+  let names = [];
+  try { names = fs.readdirSync(root).filter((n) => n.startsWith(prefix)); } catch { return 0; }
+  let removed = 0;
+  for (const name of names) {
+    const dir = path.join(root, name);
+    const r = run("git", ["worktree", "remove", "--force", dir], repo);
+    if (!r.ok) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ } }
+    if (!fs.existsSync(dir)) removed += 1;
+  }
+  if (removed) { try { run("git", ["worktree", "prune"], repo); } catch { /* ignore */ } }
+  return removed;
 }
 
 export const WORKTREE_ROOT = ROOT;

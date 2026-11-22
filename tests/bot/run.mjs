@@ -26,6 +26,9 @@ const suites = [
   "./context.test.mjs",   // 上下文预算 / 长对话压缩 / 温度与工具签名
   "./tidy.test.mjs",      // 记忆整理：80% 才给候选 / 只归档可恢复
   "./templates.test.mjs",  // 内置模板：人格 / 职责 / 日程成品可用
+  "./skills.test.mjs",     // 技能包：id / 正文 / 注入上限 / 未知 id
+  "./github.test.mjs",     // GitHub 事件：解析 / 去重 / TTL
+  "./webhook.test.mjs",    // Webhook 入站：token / 事件 / 去重键
 ];
 
 for (const file of suites) await import(file);

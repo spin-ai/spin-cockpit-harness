@@ -24,13 +24,15 @@ CREATE TABLE IF NOT EXISTS scenes (project_id TEXT PRIMARY KEY, text TEXT, confi
 CREATE TABLE IF NOT EXISTS coordination_scenes (id TEXT PRIMARY KEY, name TEXT, project_id TEXT, template TEXT, config TEXT, created_at INTEGER, updated_at INTEGER);
 CREATE TABLE IF NOT EXISTS terminals (id TEXT PRIMARY KEY, project_id TEXT, todo_id TEXT, run_id TEXT, agent_id TEXT, cwd TEXT, kind TEXT, title TEXT, status TEXT, exit_code INTEGER, output_tail TEXT, created_at INTEGER, ended_at INTEGER);
 -- 人格 bot：身份（人格卡）/ 策略 / 配额都存在档案里；回合另表，便于按时间查与清理
-CREATE TABLE IF NOT EXISTS bots (id TEXT PRIMARY KEY, name TEXT, avatar TEXT, avatar_class TEXT, persona TEXT, capability TEXT, channels TEXT, policy TEXT, budget TEXT, status TEXT, muted_until INTEGER, created_at INTEGER, updated_at INTEGER);
+CREATE TABLE IF NOT EXISTS bots (id TEXT PRIMARY KEY, name TEXT, avatar TEXT, avatar_class TEXT, persona TEXT, capability TEXT, channels TEXT, policy TEXT, budget TEXT, status TEXT, muted_until INTEGER, created_at INTEGER, updated_at INTEGER, skills TEXT, project_id TEXT, host_id TEXT, team TEXT);
 CREATE TABLE IF NOT EXISTS bot_turns (id TEXT PRIMARY KEY, bot_id TEXT, channel TEXT, trigger TEXT, input TEXT, injected TEXT, reply TEXT, decision TEXT, reason TEXT, run_id TEXT, cost TEXT, created_at INTEGER, thread_id TEXT, trace TEXT);
 -- 群聊（参考 ORCA 的 bot group）：群、成员、消息；replyMode 决定一句话发给谁
 CREATE TABLE IF NOT EXISTS bot_groups (id TEXT PRIMARY KEY, name TEXT, reply_mode TEXT, created_at INTEGER, updated_at INTEGER);
 CREATE TABLE IF NOT EXISTS bot_group_members (group_id TEXT, bot_id TEXT, PRIMARY KEY (group_id, bot_id));
 CREATE TABLE IF NOT EXISTS bot_group_messages (id TEXT PRIMARY KEY, group_id TEXT, seq INTEGER, author TEXT, bot_id TEXT, bot_name TEXT, text TEXT, decision TEXT, created_at INTEGER, meta TEXT);
 CREATE TABLE IF NOT EXISTS routines (id TEXT PRIMARY KEY, bot_id TEXT, kind TEXT, data TEXT, updated_at INTEGER);
+-- 外部事件（v1：GitHub PR / CI）：去重键 + seen，bot 说过一次就不再重复
+CREATE TABLE IF NOT EXISTS bot_events (id TEXT PRIMARY KEY, bot_id TEXT, source TEXT, key TEXT, title TEXT, url TEXT, at INTEGER, seen INTEGER);
 -- 聊天面的小状态：草稿与阅读位置（key = botId:threadId / group:groupId）
 CREATE TABLE IF NOT EXISTS bot_ui (k TEXT PRIMARY KEY, draft TEXT, scroll TEXT, updated_at INTEGER);
 -- 人格 / 职责 / 配额的历史：每次改存上一版，恢复 = 生成新一版（不删旧记录）
@@ -165,6 +167,15 @@ export async function openDb(dir, { onTranscript } = {}) {
     // 模型属于 bot（照 rakazo：composer 右下角选一次，写回档案）
     "ALTER TABLE bots ADD COLUMN model TEXT",
     "ALTER TABLE bots ADD COLUMN effort TEXT",
+    // 技能包：内置技能的 id 列表（正文在 electron/bot/skills.mjs）
+    "ALTER TABLE bots ADD COLUMN skills TEXT",
+    // 这个 bot 默认在哪个项目 / 哪台主机上干活（空 = 跟随当前项目 / 执行体所在主机）
+    "ALTER TABLE bots ADD COLUMN project_id TEXT",
+    "ALTER TABLE bots ADD COLUMN host_id TEXT",
+    // 组织：团队名（自由文本；分组/名册先用它，不做权限体系）
+    "ALTER TABLE bots ADD COLUMN team TEXT",
+    // bot 自己的计划（会话内可续；不是人格/配置，不进 revisions）
+    "ALTER TABLE bots ADD COLUMN plan TEXT",
     // 派单链记住「谁派的」：bot 建的任务 / 它派下去的子任务（舞台用它把活挂回机器人）
     "ALTER TABLE todos ADD COLUMN bot_id TEXT",
     "ALTER TABLE delegations ADD COLUMN bot_id TEXT",
@@ -322,7 +333,8 @@ export async function openDb(dir, { onTranscript } = {}) {
     persona: J(r.persona, {}), capability: r.capability || "read",
     role: r.role === "supervisor" ? "supervisor" : "worker",
     executorAgentId: r.executor_agent_id || null,
-    model: r.model || "", effort: r.effort || "",
+    model: r.model || "", effort: r.effort || "", skills: J(r.skills, []),
+    projectId: r.project_id || null, hostId: r.host_id || null, team: r.team || "", plan: J(r.plan, null),
     channels: J(r.channels, ["local"]), policy: J(r.policy, {}), budget: J(r.budget, {}),
     status: r.status || "active", mutedUntil: r.muted_until || 0,
     createdAt: r.created_at || 0, updatedAt: r.updated_at || 0,
@@ -352,6 +364,10 @@ export async function openDb(dir, { onTranscript } = {}) {
     threadId: r.thread_id || null, stopReason: r.stop_reason || "", context: J(r.context, {}), routineProposal: J(r.routine_proposal, null), handoff: J(r.handoff, null),
     cost: J(r.cost, {}), createdAt: r.created_at || 0,
   })).reverse();
+  state.botEvents = rows("SELECT * FROM bot_events ORDER BY at DESC LIMIT 500").map((r) => ({
+    id: r.id, botId: r.bot_id, source: r.source || "github", key: r.key || "",
+    title: r.title || "", url: r.url || "", at: r.at || 0, seen: !!r.seen,
+  }));
   state.routines = rows("SELECT * FROM routines").map((r) => {
     const data = J(r.data, {});
     return { ...data, id: r.id, botId: r.bot_id || "", kind: r.kind || data.kind || "daily", updatedAt: data.updatedAt || r.updated_at || 0 };
@@ -416,7 +432,7 @@ export async function openDb(dir, { onTranscript } = {}) {
     if (closed) return;
     db.exec("BEGIN IMMEDIATE");
     try {
-    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "coordination_scenes", "terminals", "context", "settings", "meta", "bots", "bot_turns", "routines", "bot_groups", "bot_group_members", "bot_group_messages", "bot_revisions"]) run(`DELETE FROM ${t}`);
+    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "coordination_scenes", "terminals", "context", "settings", "meta", "bots", "bot_turns", "routines", "bot_events", "bot_groups", "bot_group_members", "bot_group_messages", "bot_revisions"]) run(`DELETE FROM ${t}`);
     for (const h of state.hosts) run(
       "INSERT INTO hosts (id,name,kind,addr,status,heartbeat,version,port,user,caps,last_probe,latency_ms,max_concurrency,default_cwd,probe_error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [h.id, h.name, h.kind, h.addr, h.status, h.heartbeat || 0, h.version || "—", h.port || 22, h.user || "",
@@ -453,8 +469,8 @@ export async function openDb(dir, { onTranscript } = {}) {
     for (const cs of state.coordinationScenes || []) run("INSERT INTO coordination_scenes VALUES (?,?,?,?,?,?,?)", [cs.id, cs.name || "场景", cs.projectId || null, cs.template || "office", JSON.stringify(cs.config || {}), cs.createdAt || Date.now(), cs.updatedAt || Date.now()]);
     // 显式列名：model / effort 是后加的列
     for (const b of state.bots || []) run(
-      "INSERT INTO bots (id,name,avatar,avatar_class,persona,capability,channels,policy,budget,status,muted_until,created_at,updated_at,executor_agent_id,role,model,effort) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-      [b.id, b.name, b.avatar || "", b.avatarClass || "a", JSON.stringify(b.persona || {}), b.capability || "read", JSON.stringify(b.channels || ["local"]), JSON.stringify(b.policy || {}), JSON.stringify(b.budget || {}), b.status || "active", b.mutedUntil || 0, b.createdAt || Date.now(), b.updatedAt || Date.now(), b.executorAgentId || null, b.role === "supervisor" ? "supervisor" : "worker", b.model || "", b.effort || ""],
+      "INSERT INTO bots (id,name,avatar,avatar_class,persona,capability,channels,policy,budget,status,muted_until,created_at,updated_at,executor_agent_id,role,model,effort,skills,project_id,host_id,team,plan) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [b.id, b.name, b.avatar || "", b.avatarClass || "a", JSON.stringify(b.persona || {}), b.capability || "read", JSON.stringify(b.channels || ["local"]), JSON.stringify(b.policy || {}), JSON.stringify(b.budget || {}), b.status || "active", b.mutedUntil || 0, b.createdAt || Date.now(), b.updatedAt || Date.now(), b.executorAgentId || null, b.role === "supervisor" ? "supervisor" : "worker", b.model || "", b.effort || "", JSON.stringify(b.skills || []), b.projectId || null, b.hostId || null, b.team || "", b.plan ? JSON.stringify(b.plan) : null],
     );
     for (const g of state.botGroups || []) run("INSERT INTO bot_groups VALUES (?,?,?,?,?)", [g.id, g.name || "群聊", JSON.stringify(g.replyMode || { kind: "mentions" }), g.createdAt || Date.now(), g.updatedAt || Date.now()]);
     for (const g of state.botGroups || []) for (const botId of g.memberIds || []) run("INSERT INTO bot_group_members VALUES (?,?)", [g.id, botId]);
@@ -463,6 +479,7 @@ export async function openDb(dir, { onTranscript } = {}) {
       "INSERT INTO bot_group_messages (id,group_id,seq,author,bot_id,bot_name,text,decision,created_at,meta) VALUES (?,?,?,?,?,?,?,?,?,?)",
       [m.id, m.groupId, m.seq || 0, m.author || "owner", m.botId || null, m.botName || "", m.text || "", m.decision || "answered", m.createdAt || Date.now(), m.meta ? JSON.stringify(m.meta) : null],
     );
+    for (const ev of state.botEvents || []) run("INSERT INTO bot_events VALUES (?,?,?,?,?,?,?,?)", [ev.id, ev.botId, ev.source || "github", ev.key || "", ev.title || "", ev.url || "", ev.at || Date.now(), ev.seen ? 1 : 0]);
     for (const rt of state.routines || []) run("INSERT INTO routines VALUES (?,?,?,?,?)", [rt.id, rt.botId || "", rt.kind || "daily", JSON.stringify((({ botId, id, kind, ...rest }) => rest)(rt)), rt.updatedAt || Date.now()]);
     // 显式列名：todo_id / proposal 是后加的列，物理上在 cost / created_at 之后；
     // 以前按位置写会把 cost/created_at/todo_id/proposal 整个错位（todo_id 变成 cost 的 JSON）

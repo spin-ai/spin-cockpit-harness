@@ -24,8 +24,8 @@ const EXPECTED_READ = [
 
 await test("工具表：只读含工作区；写世界的一个都没有", () => {
   assert.deepEqual([...BOT_READ_TOOL_NAMES].sort(), EXPECTED_READ);
-  assert.deepEqual([...BOT_SELF_TOOL_NAMES].sort(), ["handoff_to_bot", "memory_forget", "memory_write", "routine_propose"]);
-  assert.deepEqual([...BOT_WRITE_TOOL_NAMES].sort(), ["task_create"]);
+  assert.deepEqual([...BOT_SELF_TOOL_NAMES].sort(), ["handoff_to_bot", "memory_forget", "memory_write", "plan_set", "plan_update", "routine_propose"]);
+  assert.deepEqual([...BOT_WRITE_TOOL_NAMES].sort(), ["run_start", "task_create"]);
   for (const t of botToolsFor("work")) {
     assert.equal(t.type, "function");
     assert.ok(t.function?.description, `${t.function?.name} 缺描述`);
@@ -44,6 +44,9 @@ await test("档位：read 能看工作区、能记自己的记忆，但没有 ta
   assert.ok(work.includes("task_create"));
   const dispatch = botToolsFor("dispatch").map((t) => t.function.name);
   assert.ok(dispatch.includes("task_create"));
+  assert.equal(dispatch.includes("run_start"), false, "run_start 只有 work 档");
+  const workNames = botToolsFor("work").map((t) => t.function.name);
+  assert.ok(workNames.includes("run_start"));
 });
 
 await test("工具参数：坏 JSON / 空值都退回空对象，不抛", () => {
@@ -265,6 +268,19 @@ await test("群聊 handoff：回合上挂交接对象，prompt 带群聊交接�
   assert.match(system, /你在群聊里/);
 });
 
+await test("通知开关：局部更新不清掉其它开关（嵌套合并）", () => {
+  const st = { state: { bots: [], botTurns: [] }, persist() {} };
+  const b = createBots({ store: st, now: () => NOON, memory: () => ({ inject: () => ({ items: [] }) }), key: () => "k" });
+  b.ensureSeed();
+  const target = b.list()[0];
+  assert.equal(target.policy.notify.taskDone, true);
+  b.save({ id: target.id, policy: { ...(target.policy || {}), notify: { proactive: false } } });
+  const next = b.list().find((x) => x.id === target.id);
+  assert.equal(next.policy.notify.proactive, false);
+  assert.equal(next.policy.notify.taskDone, true, "没提到的开关要保持默认");
+  assert.equal(next.policy.notify.failed, true);
+});
+
 await test("人格历史：旧页保存会冲突；diff 只列改动字段", () => {
   let clock = NOON;
   const st = { state: { bots: [], botTurns: [] }, persist() {} };
@@ -276,12 +292,18 @@ await test("人格历史：旧页保存会冲突；diff 只列改动字段", () 
   b.save({ id: target.id, name: "新名字", expectedUpdatedAt: seen });
   clock += 1000;
   assert.throws(() => b.save({ id: target.id, name: "旧页覆盖", expectedUpdatedAt: seen }), /别处修改/);
+  b.save({ id: target.id, projectId: "p1", hostId: "h1", team: "产品组" });
+  assert.equal(b.list().find((x) => x.id === target.id).projectId, "p1");
+  assert.equal(b.list().find((x) => x.id === target.id).team, "产品组");
+  b.save({ id: target.id, skills: ["status-brief", "pr-review"] });
+  assert.deepEqual(b.list().find((x) => x.id === target.id).skills, ["status-brief", "pr-review"]);
   b.save({ id: target.id, persona: { ...(target.persona || {}), mission: "新职责" } });
   const initial = b.revisions(target.id).find((r) => r.name !== "新名字" && r.name !== "旧页覆盖");
   assert.ok(initial, "应该留着一版改名前的人格");
   const diff = b.revisionDiff(target.id, initial.id);
   assert.ok(diff.some((d) => d.label === "名字"));
   assert.ok(diff.some((d) => d.label === "职责"));
+  assert.ok(diff.some((d) => d.label === "技能"));
   assert.equal(diff.some((d) => d.label === "角色"), false, "没变的字段不列");
 });
 
@@ -327,6 +349,11 @@ await test("记忆归属：bot 私有的写入不外溢，共享写入两边都�
   assert.match(asDe, /谁都能看/, "共享层对所有人可见");
   assert.equal(mem.entrySearch({ query: "只有 PM", owner: "bot:de" }).length, 0, "entrySearch 也不能绕过 owner");
   assert.equal(mem.entrySearch({ query: "只有 PM", owner: "bot:pm" }).length, 1);
+  const md = mem.botMarkdown({ owner: "bot:pm" });
+  assert.match(md, /# MEMORY\.md/);
+  assert.match(md, /只有 PM 该知道/);
+  assert.match(md, /谁都能看/);
+  assert.doesNotMatch(mem.botMarkdown({ owner: "bot:de" }), /只有 PM 该知道/);
   mem.close?.();
   fsMod.rmSync(dir, { recursive: true, force: true });
 });

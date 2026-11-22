@@ -37,7 +37,7 @@ check(designDoc.includes("### 4.1 三种外壳") && designDoc.includes("### 4.4 
   "DESIGN-SYSTEM.md · 页面外壳 / Surface 规范");
 
 // 一级页面统一 PageHeader；阅读页（Guide→GitWiki）是唯一例外
-const pageFiles = ["Views.tsx", "GitView.tsx", "Settings.tsx", "Notes.tsx", "Memory.tsx", "Persona.tsx", "Bots.tsx", "Bot.tsx", "SceneWorkspace.tsx", "Zhulong.tsx"];
+const pageFiles = ["Views.tsx", "GitView.tsx", "Settings.tsx", "Notes.tsx", "Memory.tsx", "Persona.tsx", "Bots.tsx", "Bot.tsx", "SceneWorkspace.tsx", "Zhulong.tsx", "PluginMarket.tsx"];
 const noHeader = pageFiles.filter((f) => {
   const file = path.join(root, "src/components", f);
   return !fs.existsSync(file) || !read(`src/components/${f}`).includes("PageHeader");

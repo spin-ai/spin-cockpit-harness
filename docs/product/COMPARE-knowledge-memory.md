@@ -1,4 +1,4 @@
-> 层：需求 · 状态：记录 · 核对：2026-11-17 · 覆盖：知识与记忆的用户故事级对照，对象是 WeKnora 与 Anthropic 的记忆机制，附 ZCode 参照
+> 层：需求 · 状态：记录 · 核对：2026-11-22 · 覆盖：知识与记忆的用户故事级对照，对象是 WeKnora 与 Anthropic 的记忆机制，附 ZCode 参照
 
 # 竞品对照 · 知识与记忆专项
 
@@ -71,7 +71,7 @@
 |---|---|---|---|---|---|
 | US-M01 | 记住什么有分类（判据：每类有自己的来源与用途） | ✅ 四层 + note 五类（rule/gotcha/guess/preference/decision） | ✅ 应用=1 段 summary；Code=4 类（user/feedback/project/reference）；API=无 schema | ✅ 五类（资料/偏好/事实/事项/兴趣） | ✅ 4 类（用户/反馈/项目/参考） |
 | US-M02 | 谁来写（判据：人写的规则与机器写的经验分开） | ✅ Agent 写 note、人标 verified、Dream 校正 | ✅ Code：`CLAUDE.md` 人写 / auto memory 机器写，明确分开 | ✅ `explicit_only` 与 `auto`（后台抽取，可配延迟与最短间隔） | ✅ 后台在每轮后回顾并写事实文件 |
-| US-M03 | 注入有预算与排序（判据：不挤爆上下文，能解释为什么是它） | ✅ L4 ≤12k 打分注入 + `inject_log` 回填命中率 | ◐ Code：`MEMORY.md` 前 200 行或 25KB + 主题文件按需读；应用：summary 全量 | ◐ 向量召回 + `retrieval_conditioning` 影响问题理解与文档排序 | ◐ `MEMORY.md` 索引自动加载，有大小上限 |
+| US-M03 | 注入有预算与排序（判据：不挤爆上下文，能解释为什么是它） | ✅ 全局 L4 ≤12k；bot 视角 8k + 本轮 query 相关度上浮 + `inject_log` 回填命中率 | ◐ Code：`MEMORY.md` 前 200 行或 25KB + 主题文件按需读；应用：summary 全量 | ◐ 向量召回 + `retrieval_conditioning` 影响问题理解与文档排序 | ◐ `MEMORY.md` 索引自动加载，有大小上限 |
 | US-M04 | 人能看、改、删、导出（判据：不是黑箱） | ✅ Memory 页 + note 编辑 + 导出 Markdown | ✅ 应用：设置里看/改 summary，可导入导出迁移；Code：`/memory` + 纯文件；API：宿主自理 | ✅ 个人记忆管理 + 导出 JSON + 清空 + 管理员接口 | ◐ 可在对话里"记住/忘掉"或手改磁盘文件，**无 App 内管理页** |
 | US-M05 | 猜测必须过人（判据：推断不确认就不生效，拒绝留有记录） | ◐ note 有 `confidence` + Dream 建议队列需人批准；**无 pending 态** | ✗ 无 pending 概念（直接写文件 / 直接进 summary） | ✅ pending → 确认/拒绝，拒绝留抑制记录 | ◐ 抽取后直接写文件，靠人事后清理 |
 | US-M06 | 记错了能改（判据：新事实替代旧事实，能回看当时认知） | ✅ `invalid_at / superseded_by / supersedes` + `entryAsOf` 回看 | ◐ 应用：改 summary；Code：让 Claude 自己改条目 | ✅ 同主题新事实替代旧事实 + 到期归档 + 整理合并 | ◐ 让 Agent 改 / 手改文件 |
@@ -139,3 +139,14 @@
 4. 本项目 Dream 语义 pass 的准确率没有数据（`ARCH-memory` 已标注），所以 US-M05 里"Dream 能兜住"只能算补偿，不能算闸门。
 
 **怎么更新**：改结论时同步改 §3 与本日期；不要把"某家新增了某个功能"直接写进 US 行，先判断它改变的是**判据**还是**实现**。
+
+
+---
+
+## 2026-11-22 刷新（bot 记忆的增量）
+
+- **按 bot 隔离**：`entries.owner` / `notes.owner` 支持 `bot:<id>`；注入与 `entrySearch` 都按「共享 + 自己」过滤。**仍没有项目维度**（US-M08 不变）。
+- **预算与检索**：bot 单轮注入 2400 → **8000 字符**；`inject({ query })` 把本轮问题命中的条目上浮（只改排序，不改门槛）；台账 reason 标「命中本轮问题」。
+- **整理**：到 80% 给归档候选（分数最低 / 最久未更新，置顶与 note 不动），一键归档到 60%；`entryArchive` / `entryRestore` 可恢复，不删除。自动合并 / diff 审阅仍未做。
+- **写入纪律**：bot 只能写 `owner=bot:<id>` 的 note（`noteAdd`，不直写 L4）；密钥命中直接拒写。WeKnora 的 pending→确认→代次隔离仍是参照，不改变 US-M05/M07 的结论。
+- **结论不变**：知识闭环与注入台账仍是本项目最强的一侧；项目隔离、清空代次隔离、可携带导出仍是缺口。

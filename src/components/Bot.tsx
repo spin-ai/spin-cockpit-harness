@@ -1,9 +1,13 @@
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { EmptyState } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
 import { RowMenu } from "./RowMenu";
-import { CopyIcon, FileTextIcon, GitIcon, LinkIcon, PencilIcon, PlusIcon, QuoteIcon, RefreshIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, WrenchIcon, XIcon } from "./Icons";
+import { CopyIcon, FileTextIcon, GitIcon, LinkIcon, ListIcon, PencilIcon, PlusIcon, QuoteIcon, RefreshIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, XIcon } from "./Icons";
+import { FAMILY_UNIT, FAMILY_VERB, STATUS_LABEL, familyOf, formatDuration, humanArgs, isFileLike, objectOf, runsOfFamily, statusOf, summarizeFamilies, turnStatusOf, type ToolFamily, type ToolStatus } from "../tool-family";
+import { requestFilePreview } from "../terminal-events";
+import { ToolFamilyIcon } from "./ToolFamilyIcon";
+import { TrajectoryView, type TrajectoryRecord } from "./TrajectoryView";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "./Icons";
 import { useT } from "../i18n";
 import { RichText, MissionOverview } from "./TaskChat";
@@ -26,13 +30,19 @@ type Routine = {
   lastFiredAt?: number; lastError?: string; when?: string; nextAt?: number | null;
   due?: boolean; why?: string;
 };
-type Policy = { maxTurnsPerHour?: number; minGapMs?: number; quietHours?: [number, number]; escalate?: string; whoCanAsk?: "owner" | "group" | "anyone" };
+type Policy = { maxTurnsPerHour?: number; minGapMs?: number; quietHours?: [number, number]; escalate?: string; whoCanAsk?: "owner" | "group" | "anyone";
+  notify?: { proactive?: boolean; needPermission?: boolean; taskDone?: boolean; failed?: boolean };
+  standing?: { enabled?: boolean; maxRunsPerHour?: number };
+  github?: { enabled?: boolean };
+  webhook?: { enabled?: boolean; token?: string } };
 type Bot = {
   id: string; name: string; avatar?: string; avatarClass?: string;
   persona?: Persona; capability?: "read" | "dispatch" | "work"; role?: "supervisor" | "worker";
   executorAgentId?: string | null; channels?: string[];
   /** 这个 bot 用哪个模型（空 = 跟随默认） */
-  model?: string; effort?: string;
+  model?: string; effort?: string; skills?: string[];
+  projectId?: string | null; hostId?: string | null; team?: string;
+  plan?: { goal?: string; steps?: { text: string; status: string }[]; updatedAt?: number } | null;
   policy?: Policy; budget?: { tokensPerTurn?: number; tokensPerHour?: number };
   status?: "active" | "paused"; mutedUntil?: number;
   createdAt?: number; updatedAt?: number;
@@ -51,7 +61,7 @@ type Turn = {
   /** 上下文账：注入了多少字符、记忆占多少、是否带摘要 */
   context?: { chars?: number; memory?: number; memoryRaw?: number; history?: number; digest?: boolean; sections?: Record<string, number> };
   /** 这一轮用过的工具（只读）：name / args / ms / ok / preview */
-  tools?: { name: string; args?: string; argsRaw?: string; result?: string; at?: number; ms?: number; ok?: boolean; rejected?: boolean; preview?: string }[];
+  tools?: { name: string; args?: string; argsRaw?: string; result?: string; at?: number; ms?: number; ok?: boolean; rejected?: boolean; preview?: string; family?: ToolFamily; statusKind?: ToolStatus; durationMs?: number; agentId?: string | null }[];
   /** 结构化轨迹：每次模型请求（usage / TTFT 可算）+ 每次工具调用（原始参数 / 完整输出） */
   trace?: TraceEvent[];
   /** 这一轮落下的日程建议：模型只出草稿，人点「建日程」后才写 routines */
@@ -97,6 +107,12 @@ type TraceStep = {
   output?: string;
   at?: number;
   ok?: boolean;
+  /** 结构化字段（主进程写入）：家族 / 状态 / 耗时 / 父调用 / 归属 */
+  family?: ToolFamily;
+  status?: ToolStatus;
+  durationMs?: number;
+  parentToolId?: string | null;
+  agentId?: string | null;
 };
 
 type RailTab = "messages" | "schedule" | "settings";
@@ -161,27 +177,15 @@ function SchedulePanel({ state, act, onOpenThread }: { state?: State | null; act
   );
 }
 
-type TraceRecord = {
-  id: string;
-  turn: number;
-  turnId: string;
-  kind: "user" | "assistant" | "thought" | "tool" | "terminal" | "context";
-  at: number;
-  ms: number;
-  title: string;
-  args?: string;
-  result?: string;
-  text?: string;
-  usage?: string;
-};
+
 
 /** 把一轮轮回合拆成轨迹记录：输入 / 思考 / 工具 / 回复 / 终端 */
-function trajectoryRecords(turns: Turn[], state?: State | null): TraceRecord[] {
-  const out: TraceRecord[] = [];
+function trajectoryRecords(turns: Turn[], state?: State | null): TrajectoryRecord[] {
+  const out: TrajectoryRecord[] = [];
   turns.forEach((turn, index) => {
     const n = index + 1;
     const base = turn.createdAt || Date.now();
-    const push = (rec: Omit<TraceRecord, "turn" | "turnId">) => out.push({ ...rec, turn: n, turnId: turn.id });
+    const push = (rec: Omit<TrajectoryRecord, "turn" | "turnId">) => out.push({ ...rec, turn: n, turnId: turn.id });
     if (turn.input) push({ id: `${turn.id}-user`, kind: "user", at: base, ms: 1, title: "用户", text: turn.input });
     for (const injected of turn.injected || []) {
       push({ id: `${turn.id}-ctx-${injected.layer}-${injected.id}`, kind: "context", at: base, ms: 1, title: injected.layer, text: injected.title });
@@ -256,103 +260,6 @@ function trajectoryRecords(turns: Turn[], state?: State | null): TraceRecord[] {
   return out;
 }
 
-function BotTrajectoryView({ turns, state, onJump }: { turns: Turn[]; state?: State | null; onJump: (turnId: string) => void }) {
-  const [foldDuration, setFoldDuration] = useState(true);
-  const [foldTurns, setFoldTurns] = useState(true);
-  const [foldCalls, setFoldCalls] = useState(true);
-  const [query, setQuery] = useState("");
-  const records = useMemo(() => trajectoryRecords(turns, state), [turns, state]);
-  const needle = query.trim().toLowerCase();
-  const visible = records.filter((r) => {
-    if (!needle) return true;
-    return `${r.title} ${r.args || ""} ${r.result || ""} ${r.text || ""}`.toLowerCase().includes(needle);
-  });
-  const domain = useMemo(() => {
-    if (!records.length) return { from: 0, to: 1 };
-    const from = Math.min(...records.map((r) => r.at));
-    const to = Math.max(...records.map((r) => r.at + Math.max(1, r.ms)));
-    return { from, to: Math.max(to, from + 1) };
-  }, [records]);
-  const lanes: { key: string; label: string; kinds: TraceRecord["kind"][] }[] = [
-    { key: "input", label: "输入", kinds: ["user"] },
-    { key: "model", label: "模型", kinds: ["assistant", "thought"] },
-    { key: "tools", label: "工具", kinds: ["tool", "terminal"] },
-  ];
-  const laneOf = (kind: TraceRecord["kind"]) => (kind === "user" || kind === "context" ? "input" : kind === "tool" || kind === "terminal" ? "tools" : "model");
-  const pct = (value: number) => ((value - domain.from) / (domain.to - domain.from)) * 100;
-  const currentTurn = visible[0]?.turn ?? 0;
-  return (
-    <div className="ds-trajectory">
-      <div className="ds-tr-toolbar">
-        <button className={foldDuration ? "on" : ""} onClick={() => setFoldDuration((v) => !v)} aria-pressed={foldDuration}>时长</button>
-        <button className={foldTurns ? "on" : ""} onClick={() => setFoldTurns((v) => !v)} aria-pressed={foldTurns}>轮次</button>
-        <button className={foldCalls ? "on" : ""} onClick={() => setFoldCalls((v) => !v)} aria-pressed={foldCalls}>调用</button>
-        <button disabled title="这一版还没有子调用数据">子调用</button>
-        <span className="ds-tr-spacer" />
-        <input className="ds-tr-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索轨迹" aria-label="搜索轨迹" />
-      </div>
-
-      {foldDuration && (
-        <div className="ds-tr-overview" aria-label="时间轴">
-          <div className="ds-tr-ruler">
-            <span style={{ left: "0%" }}>{hm(domain.from)}</span>
-            <span style={{ left: "50%" }}>{hm((domain.from + domain.to) / 2)}</span>
-            <span style={{ right: "0%" }}>{hm(domain.to)}</span>
-          </div>
-          {lanes.map((lane) => (
-            <div className="ds-tr-lane" key={lane.key}>
-              <span className="ds-tr-lane-label">{lane.label}</span>
-              <div className="ds-tr-track">
-                {visible.filter((r) => laneOf(r.kind) === lane.key).map((r) => (
-                  <button
-                    key={r.id}
-                    className={`ds-tr-block k-${r.kind}`}
-                    style={{ left: `${pct(r.at)}%`, width: `${Math.max(0.6, (Math.max(1, r.ms) / (domain.to - domain.from)) * 100)}%` }}
-                    title={`${hm(r.at)} · ${r.title}${r.ms > 1 ? ` · ${(r.ms / 1000).toFixed(1)}s` : ""}`}
-                    aria-label={`跳到第 ${r.turn} 轮`}
-                    onClick={() => onJump(r.turnId)}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="ds-tr-ledger">
-        {visible.length === 0 && <div className="ds-tr-empty">{needle ? "没有命中" : "这个会话还没有轨迹"}</div>}
-        {visible.map((r, index) => {
-          const showTurn = foldTurns && (index === 0 || visible[index - 1].turn !== r.turn);
-          const folded = !foldCalls && (r.kind === "tool" || r.kind === "terminal");
-          if (folded) return null;
-          return (
-            <Fragment key={r.id}>
-              {showTurn && <div className={`ds-tr-turn ${r.turn === currentTurn ? "on" : ""}`}>第 {r.turn} 轮</div>}
-              <details className="ds-tr-row">
-                <summary className="ds-tr-row-head">
-                  <span className={`ds-tr-chip k-${r.kind}`}>{r.kind === "user" ? "用户" : r.kind === "assistant" ? "助手" : r.kind === "thought" ? "思考" : r.kind === "terminal" ? "终端" : r.kind === "context" ? "注入" : "工具"}</span>
-                  <b className="ds-tr-title">{r.title}</b>
-                  {r.args && <span className="ds-tr-args">{r.args}</span>}
-                  {r.result && <><span className="ds-tr-arrow" aria-hidden>→</span><span className="ds-tr-result">{r.result}</span></>}
-                  {!r.args && !r.result && r.text && <span className="ds-tr-result">{r.text}</span>}
-                  <span className="ds-tr-meta">{hm(r.at)}{r.ms > 1 ? ` · ${(r.ms / 1000).toFixed(1)}s` : ""}{r.usage ? ` · ${r.usage}` : ""}</span>
-                </summary>
-                <div className="ds-tr-detail">
-                  {r.text && <pre>{r.text}</pre>}
-                  {r.args && <div><span>原始参数</span><pre>{r.args}</pre></div>}
-                  {r.result && <div><span>输出</span><pre>{r.result}</pre></div>}
-                  {r.usage && <div><span>用量</span><pre>{r.usage}</pre></div>}
-                  <button className="ds-action-text" onClick={() => onJump(r.turnId)}>跳到这一轮</button>
-                </div>
-              </details>
-            </Fragment>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function traceStepsOf(turn: Turn, state?: State | null): TraceStep[] {
   const msgs = turn.runId
     ? (state?.messages ?? []).filter((m) => m.runId === turn.runId && (m.kind === "thought" || m.kind === "tool"))
@@ -362,7 +269,7 @@ function traceStepsOf(turn: Turn, state?: State | null): TraceStep[] {
     const head = (lines[0] || "").trim();
     const rest = lines.slice(1).join("\n").trim();
     if (m.kind === "thought") {
-      return { id: m.id, kind: "thought", title: "思考", summary: head, output: String(m.content || "").trim(), at: m.createdAt };
+      return { id: m.id, kind: "thought", family: "think", status: "done", title: "思考", summary: head, output: String(m.content || "").trim(), at: m.createdAt };
     }
     const [title, ...tail] = head.split(/\s*·\s*|:\s*/);
     return {
@@ -372,6 +279,12 @@ function traceStepsOf(turn: Turn, state?: State | null): TraceStep[] {
       summary: m.meta?.input || tail.join(" · ") || head,
       output: m.meta?.output || rest || undefined,
       at: m.createdAt,
+      // 结构化优先：家族 / 状态 / 耗时 / 父调用都从 meta 读，正则只给旧数据兜底
+      family: familyOf(m.meta, { title: m.meta?.title, content: head }),
+      status: statusOf(m.meta),
+      durationMs: m.meta?.durationMs,
+      parentToolId: m.meta?.parentToolId ?? null,
+      agentId: m.meta?.agentId ?? null,
     };
   });
   if (!steps.length && turn.tools?.length) {
@@ -383,6 +296,10 @@ function traceStepsOf(turn: Turn, state?: State | null): TraceStep[] {
         summary: tool.argsRaw || (tool.args && tool.args !== "{}" ? tool.args : ""),
         output: tool.result || tool.preview,
         ok: tool.ok,
+        family: tool.family || familyOf(null, { title: tool.name }),
+        status: tool.statusKind || (tool.rejected ? "denied" : tool.ok === false ? "failed" : "done"),
+        durationMs: tool.durationMs ?? tool.ms,
+        agentId: tool.agentId ?? null,
       });
     }
   }
@@ -393,24 +310,37 @@ function traceStepsOf(turn: Turn, state?: State | null): TraceStep[] {
   return steps;
 }
 
-function ToolCard({ step }: { step: TraceStep }) {
-  const name = `${step.title} ${step.summary || ""}`.toLowerCase();
+function ToolCard({ step, child = false }: { step: TraceStep; child?: boolean }) {
   const out = step.output || "";
+  const family = step.family || familyOf(null, { title: step.title });
+  const state = step.status || (step.ok === false ? "failed" : "done");
+  const ms = formatDuration(step.durationMs);
   const body = (inner: React.ReactNode) => <div className="ds-card-body">{inner}</div>;
-  const head = (icon: React.ReactNode, title: string, summary?: string, extra?: React.ReactNode) => (
+  const head = (icon: React.ReactNode, title: string, summary?: React.ReactNode, extra?: React.ReactNode) => (
     <>
       <span className="ds-row-icon" aria-hidden>{icon}</span>
       <span className="ds-tool-title">{title}</span>
       {summary && <><span className="ds-sep" aria-hidden /><span className="ds-tool-summary">{summary}</span></>}
       {extra}
+      {state !== "done" && <span className={`ds-tool-status ${state}`}>{STATUS_LABEL[state]}</span>}
+      {ms && <span className="ds-tool-ms mono">{ms}</span>}
       <ChevronDownIcon size={14} className="ds-tool-chev" />
     </>
   );
 
-  if (/bash|shell|terminal|exec|run|command/.test(name)) {
+  const depthClass = child ? "ds-tool-card child" : "ds-tool-card";
+  const object = objectOf(null, family, step.summary || "");
+  // bot 自带工具（查记忆 / 查任务）说的是「做什么」，不是参数；参数只在没有语义名时露出来
+  const known = TOOL_LABEL[step.title];
+  const query = /(?:^|· )query=([^·]+)/.exec(humanArgs(step.summary || ""))?.[1]?.trim();
+  // 语义名优先（查记忆 / 看目录），没有就用家族动词（已执行 / 已读取）
+  const label = known || FAMILY_VERB[family];
+  const human = known ? (query || "") : humanArgs(step.summary || "");
+  const fileLike = (family === "read" || family === "edit") && isFileLike(object);
+  if (family === "run") {
     return (
-      <details className="ds-tool-card">
-        <summary className="ds-tool-main">{head(<TerminalIcon size={14} />, "终端", step.summary || "命令")}</summary>
+      <details className={depthClass}>
+        <summary className="ds-tool-main">{head(<TerminalIcon size={14} />, label, human || "命令")}</summary>
         {body(
           <>
             <div className="ds-term-cmd">$ {step.summary || ""}</div>
@@ -420,13 +350,13 @@ function ToolCard({ step }: { step: TraceStep }) {
       </details>
     );
   }
-  if (/edit|write|patch|replace|apply|create/.test(name)) {
+  if (family === "edit") {
     const lines = out.split("\n");
     const added = lines.filter((x) => x.startsWith("+") && !x.startsWith("+++")).length;
     const removed = lines.filter((x) => x.startsWith("-") && !x.startsWith("---")).length;
     return (
-      <details className="ds-tool-card">
-        <summary className="ds-tool-main">{head(<PencilIcon size={14} />, "编辑", step.summary, <span className="ds-stat"><em>+{added}</em> <i>-{removed}</i></span>)}</summary>
+      <details className={depthClass}>
+        <summary className="ds-tool-main">{head(<PencilIcon size={14} />, label, step.summary, <span className="ds-stat"><em>+{added}</em> <i>-{removed}</i></span>)}</summary>
         {body(
           <pre className="ds-diff">{lines.map((line, i) => (
             <span key={i} className={line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : ""}>{line}{"\n"}</span>
@@ -435,35 +365,36 @@ function ToolCard({ step }: { step: TraceStep }) {
       </details>
     );
   }
-  if (/read|cat|open|file|view/.test(name)) {
+  if (family === "read") {
     const lineCount = out ? out.split("\n").length : 0;
     return (
-      <details className="ds-tool-card">
-        <summary className="ds-tool-main">{head(<FileTextIcon size={14} />, "读取", step.summary, lineCount ? <span className="ds-stat">{lineCount} 行</span> : null)}</summary>
+      <details className={depthClass}>
+        <summary className="ds-tool-main">{head(<FileTextIcon size={14} />, label, fileLike ? <FileChip path={object} /> : (human || ""), lineCount ? <span className="ds-stat">{lineCount} 行</span> : null)}</summary>
         {body(<pre className="ds-card-pre">{out || "（没有内容）"}</pre>)}
       </details>
     );
   }
-  if (/search|grep|glob|find|query/.test(name)) {
+  if (family === "search") {
     const hits = out ? out.split("\n").filter(Boolean).length : 0;
     return (
-      <details className="ds-tool-card">
-        <summary className="ds-tool-main">{head(<SearchIcon size={14} />, "搜索", step.summary, hits ? <span className="ds-stat">{hits} 处</span> : null)}</summary>
+      <details className={depthClass}>
+        <summary className="ds-tool-main">{head(<SearchIcon size={14} />, label, human, hits ? <span className="ds-stat">{hits} 处</span> : null)}</summary>
         {body(<pre className="ds-card-pre">{out || "没有命中"}</pre>)}
       </details>
     );
   }
-  if (/web|fetch|http|url|browse/.test(name)) {
+  if (family === "net") {
     return (
-      <details className="ds-tool-card">
-        <summary className="ds-tool-main">{head(<LinkIcon size={14} />, "网页", step.summary)}</summary>
+      <details className={depthClass}>
+        <summary className="ds-tool-main">{head(<LinkIcon size={14} />, label, step.summary)}</summary>
         {body(<pre className="ds-card-pre">{out || "没有返回内容"}</pre>)}
       </details>
     );
   }
+  // mcp / plan / other：外部工具与计划卡同一种「输入 → 输出」结构，标题保留工具自己的名字
   return (
-    <details className="ds-tool-card">
-      <summary className="ds-tool-main">{head(<WrenchIcon size={14} />, step.title, step.summary)}</summary>
+    <details className={depthClass} data-family={family}>
+      <summary className="ds-tool-main">{head(<ToolFamilyIcon family={family} />, label, human)}</summary>
       {body(
         <div className="ds-io-card">
           {step.summary && <div className="ds-io-row"><span>输入</span><pre>{step.summary}</pre></div>}
@@ -474,18 +405,61 @@ function ToolCard({ step }: { step: TraceStep }) {
   );
 }
 
+/** 文件 chip：点击在预览面板打开 */
+function FileChip({ path }: { path: string }) {
+  const name = path.split("/").filter(Boolean).pop() || path;
+  const short = name.length > 28 ? `${name.slice(0, 26)}…` : name;
+  return (
+    <span className="ds-file-chip" title={path}>
+      <FileTextIcon size={12} />
+      <button className="ds-file-chip-name" onClick={(e) => { e.stopPropagation(); requestFilePreview({ rel: path, name }); }}>{short}</button>
+    </span>
+  );
+}
+
 function BotTrace({ turn, state, label }: { turn: Turn; state?: State | null; label: string }) {
+  const [showAll, setShowAll] = useState(false);
   const steps = traceStepsOf(turn, state);
   const run = turn.runId ? state?.runs?.find((r) => r.id === turn.runId) : undefined;
+  // 这一轮干了什么：读 2 个文件 · 改 1 处 · 跑 1 条命令；再带上状态与耗时
+  const summary = summarizeFamilies(steps.map((step) => step.family || familyOf(null, { title: step.title })));
+  const traceState = turnStatusOf(steps.map((step) => step.status || (step.ok === false ? "failed" : "done")));
+  const dur = formatDuration(turn.cost?.ms);
+  const stateWord = traceState === "failed" ? "失败" : traceState === "stopped" ? "已停止" : traceState === "denied" ? "被拒" : "";
+  const headLabel = [stateWord || label, summary, dur].filter(Boolean).join(" · ");
   if (!steps.length) return <div className="ds-turn-head"><span>{label}</span></div>;
+  const visible = showAll || steps.length <= 20 ? steps : steps.slice(steps.length - 20);
+  const hidden = steps.length - visible.length;
   return (
-    <details className="ds-process ds-trace">
-      <summary className="ds-process-head">
-        <span className="ds-process-label">{label}</span>
-        <ChevronDownIcon size={14} className="ds-process-chev" />
-      </summary>
+    <div className={`ds-steps k-${traceState}`}>
+      <div className="ds-steps-head">
+        <span className={`ds-steps-label k-${traceState}`}>{headLabel}</span>
+      </div>
+      {hidden > 0 && (
+        <button className="ds-steps-more" onClick={() => setShowAll(true)}>显示更早 {hidden} 步</button>
+      )}
       <div className="ds-process-body">
-        {steps.map((step) => {
+        {runsOfFamily(visible, (step) => step.family || familyOf(null, { title: step.title })).map((bundle) => {
+          if (bundle.items.length >= 3) {
+            const fam = bundle.family;
+            const bad = bundle.items.some((step) => (step.status || "done") === "failed" || step.ok === false);
+            return (
+              <details className="ds-step-run" key={`run-${bundle.items[0].id}`}>
+                <summary className="ds-tool-main ds-step-run-head">
+                  <span className="ds-row-icon" aria-hidden><ToolFamilyIcon family={fam} /></span>
+                  <span className="ds-tool-title">{FAMILY_VERB[fam]}</span>
+                  <span className="ds-tool-summary">{bundle.items.length} {FAMILY_UNIT[fam] || "步"}</span>
+                  {bad && <span className="ds-tool-status failed">有失败</span>}
+                  <ChevronDownIcon size={14} className="ds-tool-chev" />
+                </summary>
+                {bundle.items.map((item) => (
+                  <ToolCard step={item} key={item.id} child={false} />
+                ))}
+              </details>
+            );
+          }
+          const step = bundle.items[0];
+          const child = Boolean(step.parentToolId);
           if (step.kind === "terminal") {
             return (
               <div className="ds-tool-row" key={step.id}>
@@ -519,10 +493,10 @@ function BotTrace({ turn, state, label }: { turn: Turn; state?: State | null; la
               </details>
             );
           }
-          return <ToolCard step={step} key={step.id} />;
+          return <ToolCard step={step} child={child} key={step.id} />;
         })}
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -568,7 +542,7 @@ type Snapshot = {
   /** 每个 bot 的会话列表：默认会话 + 自己新开的 */
   botChats?: Record<string, Chat[]>;
   recent?: { answeredHour?: number; blockedHour?: number; silentHour?: number };
-  agents?: { id: string; name: string; alias: string; cli: string; role: string }[];
+  agents?: { id: string; name: string; alias: string; cli: string; role: string; hostId?: string | null }[];
   tasks?: { id: string; key: string; title: string; status: string; missionState: string | null; agentId: string | null }[];
   recentTodos?: { id: string; key: string; title: string; status: string; missionState: string | null }[];
   /** 聊天面的小状态：草稿与阅读位置（key = botId:threadId / group:groupId） */
@@ -583,9 +557,22 @@ const TOOL_LABEL: Record<string, string> = {
   git_status: "看 git 状态", git_log: "看提交", git_diff: "看改动", run_log: "读运行结果",
   memory_write: "记一条", memory_forget: "忘一条", task_create: "建任务",
 };
-const toolLabel = (tool?: string) => TOOL_LABEL[tool || ""] || "用工具";
+/** 工具名 → 「正在查 / 正在读 / 正在改」；家族由主进程/正则兜底给出，群聊里每个成员各一行 */
+const toolLabel = (tool?: string) => {
+  const name = tool || "";
+  if (TOOL_LABEL[name]) return `正在查 · ${TOOL_LABEL[name]}`;
+  const family = familyOf(null, { title: name });
+  const verb = family === "read" ? "读" : family === "edit" ? "改" : family === "run" ? "跑" : family === "net" ? "看网页" : family === "search" ? "查" : "用工具";
+  return `正在${verb}${name ? ` · ${name}` : ""}`;
+};
 const GLYPH: Record<string, string> = { asked: "?", streaming: "…", interrupted: "⏸", silent: "·", blocked: "✕", escalated: "↗" };
 const CAP_LABEL: Record<string, string> = { read: "只读", dispatch: "可起任务", work: "能执行" };
+const NOTIFY_ROWS = [
+  ["proactive", "主动开口", "它自己觉得值得说时"],
+  ["needPermission", "需要你决定", "提问卡片 / 转人工"],
+  ["taskDone", "任务完成", "它起的 run 完成时"],
+  ["failed", "未能完成", "run 失败 / 回复被拦"],
+] as const;
 /** 群聊：一条真实记录（成员 + replyMode + 消息序列），对齐 ORCA 的 BotGroup */
 
 const dayLabel = (ts: number) => {
@@ -644,24 +631,23 @@ const GroupMessageRow = memo(function GroupMessageRow({ m, senderName, state }: 
  *
  * P0 只读能力：tick 只回答与记录，不建 todo、不起 run；dispatch 见 ARCH-bot §9。
  */
-export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, initialBotId = null, onBackToBots, settingsOnly = false, onClose }: {
+export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initialBotId = null, onBackToBots }: {
   act: Act;
   notify: (message: string) => void;
-  onOpenMemory: () => void;
   onOpenThread: (threadId: string) => void;
+  onOpenTodo?: (todoId: string) => void;
   /** 任务投影需要它；缺省时「分配到的任务」区块只显示未绑定提示 */
   state?: State | null;
   /** 从机器人配置页「打开会话」进来时直接选它 */
   initialBotId?: string | null;
   /** 回机器人配置页 */
   onBackToBots?: () => void;
-  /** 只渲染配置面板（工作区右侧抽屉），不渲染页面头 / bot 列表 / 会话 */
-  settingsOnly?: boolean;
-  onClose?: () => void;
 }) {
   const t = useT();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [memoryOverview, setMemoryOverview] = useState<{ byLayer?: Record<string, number>; notes?: number; injectable?: number } | null>(null);
+  const [skillCatalog, setSkillCatalog] = useState<{ id: string; name: string; description: string }[]>([]);
+  const [webhook, setWebhook] = useState<{ running?: boolean; port?: number } | null>(null);
   /** 人格 / 职责 / 配额的历史（改坏了可恢复） */
   const [revisions, setRevisions] = useState<{ id: string; at: number; by?: string; name?: string; mission?: string }[]>([]);
   /** 某条历史与当前版本的字段差异 */
@@ -674,7 +660,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   /** 模型选择：照 rakazo，模型属于 bot，composer 右下角选一次就写回档案（群聊不需要） */
   const [modelMenu, setModelMenu] = useState<{ x: number; y: number } | null>(null);
   const [modelCatalog, setModelCatalog] = useState<{ id: string; name: string; hint?: string }[]>([]);
-  const [tab, setTab] = useState<"persona" | "memory" | "tasks" | "routines" | "policy" | "needs" | "connectors">("persona");
+  const [tab, setTab] = useState<"persona" | "capability" | "memory" | "routines" | "rules">("persona");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   // 「分配到的任务」：Bot.executorAgentId → Agent，任务来自 state.todos（与场景同一投影）
@@ -690,6 +676,8 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   const [railTab, setRailTab] = useState<"messages" | "schedule" | "settings">("messages");
   /** 中栏：对话 / 轨迹 */
   const [chatView, setChatView] = useState<"chat" | "trajectory">("chat");
+  /** 从某一轮的动作进轨迹时定位到那一轮（null = 看全部） */
+  const [trajectoryTurn, setTrajectoryTurn] = useState<string | null>(null);
   const [chatQuery, setChatQuery] = useState("");
   const [chatHits, setChatHits] = useState<{ threadId: string; snippet: string }[]>([]);
   /** 行内重命名会话（Electron 不实现 window.prompt） */
@@ -1323,11 +1311,25 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   const saveDuty = (key: "goal" | "scope" | "deliverable" | "forbidden" | "report", value: string) =>
     savePatch({ persona: { ...(bot?.persona || {}), duty: { ...(bot?.persona?.duty || {}), [key]: value } } });
   const savePolicy = (patch: Record<string, unknown>) => savePatch({ policy: { ...(bot?.policy || {}), ...patch } });
+  const toggleSkill = (skillId: string) => {
+    const current = new Set(Array.isArray(bot?.skills) ? bot.skills : []);
+    if (current.has(skillId)) current.delete(skillId);
+    else current.add(skillId);
+    void savePatch({ skills: [...current] });
+  };
+  const notifyCfg = { proactive: true, needPermission: true, taskDone: true, failed: true, ...(bot?.policy?.notify || {}) };
+  const standingCfg = { enabled: false, maxRunsPerHour: 1, ...(bot?.policy?.standing || {}) };
+  const toggleNotify = (key: (typeof NOTIFY_ROWS)[number][0]) =>
+    void savePolicy({ notify: { ...notifyCfg, [key]: !notifyCfg[key] } });
   useEffect(() => {
     let alive = true;
     void (async () => {
       const list = await act("botModels") as { id: string; name: string; hint?: string }[] | null;
       if (alive && Array.isArray(list)) setModelCatalog(list);
+      const skills = await act("botSkills") as { id: string; name: string; description: string }[] | null;
+      if (alive && Array.isArray(skills)) setSkillCatalog(skills);
+      const hook = await act("botWebhookInfo") as { running?: boolean; port?: number } | null;
+      if (alive && hook) setWebhook(hook);
     })();
     return () => { alive = false; };
   }, [act]);
@@ -1390,34 +1392,10 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     return asks + props + due;
   };
 
-  /** 已处理（接受 / 忽略）的条数：让队列知道自己在清空 */
-  const needsDone = useMemo(
-    () => (snapshot?.turns ?? []).filter((t) => t.proposal && (t.proposal.acceptedAt || t.proposal.dismissed)
-      && Date.now() - (t.createdAt || 0) <= 7 * 86400000).length,
-    [snapshot?.turns],
-  );
-
   const myRoutines = useMemo(
     () => (snapshot?.routineStatus || snapshot?.routines || []).filter((r) => r.botId === bot?.id),
     [snapshot, bot?.id],
   );
-  /** 接下来（ORCA 的 Up next）：提问 / 待定建议 / 到点的日程，进页面就能看见 */
-  const upNext = useMemo(() => {
-    const rows: { id: string; label: string; title: string; hint?: string; threadId?: string | null }[] = [];
-    for (const a of snapshot?.asks || []) {
-      if (a.botId !== bot?.id) continue;
-      const turn = (snapshot?.turns || []).find((t) => t.id === a.turnId);
-      rows.push({ id: `ask-${a.turnId}`, label: "提问", title: a.text, hint: "回一句就算答了", threadId: turn ? (turn.threadId || defaultThreadId) : null });
-    }
-    for (const t of snapshot?.turns || []) {
-      if (t.botId !== bot?.id || !t.proposal || t.proposal.acceptedAt || t.proposal.dismissed) continue;
-      rows.push({ id: `pr-${t.id}`, label: "建议", title: t.proposal.title || "待确认的建议", hint: "起任务 / 先别", threadId: t.threadId || defaultThreadId });
-    }
-    for (const r of myRoutines.filter((x) => x.due)) {
-      rows.push({ id: `rt-${r.id}`, label: "到点", title: r.name || r.when || "日程", hint: r.mode === "in-chat" ? "等它空下来再跑" : "到点就跑" });
-    }
-    return rows;
-  }, [snapshot?.asks, snapshot?.turns, myRoutines, bot?.id, defaultThreadId]);
 
   /** 新建日程：开一张行内表单（Electron 不实现 window.prompt，之前点了没反应） */
   const startRoutine = (kind: "daily" | "every" | "once" | "watch") => {
@@ -1596,7 +1574,6 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   };
 
   if (!snapshot) {
-    if (settingsOnly) return <div className="bot-settings"><div className="bot-settings-loading">读取中…</div></div>;
     return (
       <div className="page bot-page">
         <PageHeader title={t("page.bots")} actions={onBackToBots ? <button className="btn ghost" onClick={onBackToBots} title="回到机器人配置页" aria-label="回到机器人配置页"><ChevronLeftIcon size={13} /></button> : undefined} />
@@ -1606,7 +1583,6 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   }
 
   if (!snapshot.bots.length) {
-    if (settingsOnly) return <div className="bot-settings"><div className="bot-settings-loading">还没有机器人</div></div>;
     return (
       <div className="page bot-page">
         <PageHeader title={t("page.bots")} actions={onBackToBots ? <button className="btn ghost" onClick={onBackToBots} title="回到机器人配置页" aria-label="回到机器人配置页"><ChevronLeftIcon size={13} /></button> : undefined} />
@@ -1615,82 +1591,20 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     );
   }
 
-  /** 配置面板本体：控制台右栏与工作区右侧抽屉共用 */
+  /** 配置面板本体：控制台右栏「设置」；tab 切换，不一次铺开 */
   const asideContent = (
     <>
-          <div className="bot-tabs">
-            {([["needs", "待处理"], ["persona", "人格卡"], ["memory", "记忆"], ["tasks", "任务"], ["routines", "自动化"], ["connectors", "工具与通道"], ["policy", "出场规则"]] as const).map(([id, label]) => (
-              <button key={id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {/* 分配到的任务：与场景、任务面板同一投影（src/selectors/assignments.ts）。
-              P0 只读——点行只做定位提示，真正派活仍走 Chat + 人工审批。 */}
-          <div className="bot-assign">
-            <div className="bot-label">
-              分配到的任务
-              {assigned.rows.length > 0 && <span className="bot-assign-count">{assigned.rows.length}</span>}
-            </div>
-            {!botEntity?.executorAgentId ? (
-              <p className="bot-note">
-                这个机器人还没绑定执行体（<code>executorAgentId</code>）。Mission 派给 Agent 的任务，
-                只有绑定了执行体才会出现在这里和场景里。
-              </p>
-            ) : assigned.rows.length === 0 ? (
-              <p className="bot-note">当前没有分给它的未完成任务。</p>
-            ) : (
-              <ul className="bot-assign-list">
-                {assigned.rows.slice(0, 6).map((a) => (
-                  <li key={a.todo.id} className={`bot-assign-row st-${a.stage}`} title={a.todo.title}>
-                    <span className="k mono">{a.todo.key}</span>
-                    <span className="t ellipsis">{a.todo.title}</span>
-                    <span className="s">{a.stageLabel}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {assigned.rows.length > 6 && (
-              <p className="bot-note">还有 {assigned.rows.length - 6} 条，去任务面板看全部。</p>
-            )}
-            {botEntity?.executorAgentId && assigned.rows.some((a) => a.mission) && (
-              <p className="bot-note">
-                来自 Mission：{Array.from(new Set(assigned.rows.filter((a) => a.mission).map((a) => a.mission!.key))).join("、")}
-              </p>
-            )}
-          </div>
-          <div className="bot-aside-body">
-            {tab === "needs" && (
-              <div className="bot-assign">
-                <div className="bot-label">待处理 <em>{needs.length}</em></div>
-                {needs.length === 0 && <p className="bot-note">没有需要你点头的事。审批、建议、待验收的都会出现在这里。</p>}
-                {needs.length > 0 && (
-                  <div className="bot-note" style={{ marginBottom: 6 }}>
-                    超过 7 天没处理的建议会自动离开队列{needsDone ? ` · 近 7 天已处理 ${needsDone} 条` : ""}
-                  </div>
-                )}
-                {needs.map((n) => (
-                  <div className="bot-need" key={n.id}>
-                    <span className="tag">{n.kind}</span>
-                    <span className="bot-need-main">
-                      <b className="ellipsis" title={n.title}>{n.title}</b>
-                      {n.hint && <span className="tiny faint">{n.hint}</span>}
-                    </span>
-                    {n.action === "accept" && n.actionLabel && (
-                      <button className="btn tiny-btn" onClick={() => { const t = (snapshot?.turns ?? []).find((x) => x.id === n.turnId); if (t) void acceptProposal(t); }}>{n.actionLabel}</button>
-                    )}
-                    {n.action === "terminal" && n.actionLabel && (
-                      <button className="btn tiny-btn" onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: "terminal" }))}>{n.actionLabel}</button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
+      <div className="bot-tabs">
+        {([["persona", "身份"], ["capability", "能力"], ["memory", "记忆"], ["routines", "自动化"], ["rules", "规则"]] as const).map(([id, label]) => (
+          <button key={id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="bot-aside-body">
             {tab === "persona" && (
               <>
-                <div className="bot-label">人格卡（结构化，失焦保存）</div>
+                <div className="bot-label">身份（结构化，失焦保存）</div>
                 <div className="bot-field">
                   <span>角色</span>
                   <div className="bot-seg">
@@ -1708,6 +1622,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                   autoFocus={renameFocus > 0}
                   onCommit={(value) => void savePatch({ name: value })}
                 />
+                <BotField label="团队" value={bot?.team || ""} onCommit={(value) => void savePatch({ team: value })} />
                 <div className="bot-field">
                   <span>头像</span>
                   <div className="bot-avatars">
@@ -1738,30 +1653,6 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                 <BotField label="长短" value={bot?.persona?.length || ""} onCommit={(value) => void savePersona("length", value)} />
                 <BotField label="边界" value={bot?.persona?.boundary || ""} onCommit={(value) => void savePersona("boundary", value)} />
                 <BotField label="习惯" value={bot?.persona?.habit || ""} onCommit={(value) => void savePersona("habit", value)} />
-                <div className="bot-label" style={{ marginTop: 14 }}>配额</div>
-                <div className="bot-kv">
-                  <span>本小时已说</span><b>{answered.filter((t) => Date.now() - t.createdAt < 3600_000).length} / {bot?.policy?.maxTurnsPerHour ?? 6}</b>
-                  <span>最小间隔</span><b>{Math.round((bot?.policy?.minGapMs ?? 120000) / 1000)}s</b>
-                  <span>能力</span><b>{CAP_LABEL[bot?.capability || "read"]}</b>
-                  <span>频道</span><b>{(bot?.channels || ["local"]).join(" · ")}</b>
-                </div>
-                <div className="bot-field">
-                  <span>思考档</span>
-                  <div className="bot-seg">
-                    {([["quick", "快速"], ["", "标准"], ["deep", "深入"]] as const).map(([id, label]) => (
-                      <button
-                        key={label}
-                        className={(bot?.effort || "") === id ? "on" : ""}
-                        disabled={Boolean(busy)}
-                        title={id === "quick" ? "最多 4 轮工具" : id === "deep" ? "最多 12 轮工具，工具轮更低温" : "默认 8 轮工具"}
-                        onClick={() => void savePatch({ effort: id })}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <p className="bot-note">思考档只改「最多查几轮 / 工具轮温度」，不改单轮 token 上限。</p>
                 <div className="bot-label" style={{ marginTop: 14 }}>历史（改坏了可恢复）</div>
                 {revisions.length ? revisions.slice(0, 6).map((r) => (
                   <div className="bot-mem-row" key={r.id}>
@@ -1827,6 +1718,19 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                     （到 80% 才给候选；只归档，不删除）
                   </p>
                 )}
+                <div className="row gap8" style={{ marginTop: 8 }}>
+                  <button
+                    className="btn tiny"
+                    disabled={Boolean(busy)}
+                    onClick={() => void run("memoryFile", async () => {
+                      const res = (await act("botMemoryOpenFile", { botId: bot?.id })) as { ok?: boolean; path?: string; error?: string } | null;
+                      notify(res?.ok ? `已打开 MEMORY.md` : (res?.error || res?.path || "打不开 MEMORY.md"));
+                    })}
+                  >
+                    MEMORY.md
+                  </button>
+                  <span className="tiny faint">只读镜像；手改不回写，编辑在记忆页做</span>
+                </div>
                 <div className="bot-label" style={{ marginTop: 14 }}>最近一次注入</div>
                 {lastInjected.length ? lastInjected.map((m) => (
                   <div className="bot-mem-row" key={`${m.layer}-${m.id}`}>
@@ -1949,9 +1853,87 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                 {bot?.policy?.escalate && <p className="bot-note">必须转人工：{bot.policy.escalate}</p>}
               </>
             )}
-            {tab === "connectors" && (
+            {tab === "capability" && (
               <>
-                <div className="bot-label">只读工具（{bot?.capability === "read" ? "只读档可用" : "已连接"}）</div>
+                <div className="bot-label">能力档位</div>
+                <div className="bot-seg">
+                  {(["read", "dispatch", "work"] as const).map((cap) => (
+                    <button
+                      key={cap}
+                      className={bot?.capability === cap ? "on" : ""}
+                      disabled={Boolean(busy)}
+                      onClick={() => void run("cap", async () => {
+                        await act("botSave", { id: bot?.id, capability: cap, expectedUpdatedAt: bot?.updatedAt });
+                        notify(cap === "work" ? "已开启：可以直接起 run（点「开跑」即授权）" : cap === "dispatch" ? "已开启：可以提议建任务（仍需你确认）" : "已切回只读");
+                      })}
+                    >
+                      {CAP_LABEL[cap]}
+                    </button>
+                  ))}
+                </div>
+                <div className="bot-grid2">
+                  <label className="bot-num">
+                    <span>默认项目</span>
+                    <select className="project-filter" value={bot?.projectId || ""} onChange={(e) => void savePatch({ projectId: e.target.value })}>
+                      <option value="">跟随当前项目</option>
+                      {(state?.projects || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="bot-num">
+                    <span>默认主机</span>
+                    <select className="project-filter" value={bot?.hostId || ""} onChange={(e) => void savePatch({ hostId: e.target.value })}>
+                      <option value="">执行体所在主机</option>
+                      {(state?.hosts || []).map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+                    </select>
+                  </label>
+                </div>
+                <div className="bot-field edu" style={{ marginTop: 8 }}>
+                  <span>执行体（work 档位起 run 用的 Agent）</span>
+                  <select
+                    className="bot-exec"
+                    value={bot?.executorAgentId || ""}
+                    onChange={(event) => void run("exec", () => act("botSave", { id: bot?.id, executorAgentId: event.target.value, expectedUpdatedAt: bot?.updatedAt }))}
+                  >
+                    <option value="">未绑定</option>
+                    {(snapshot.agents || [])
+                      .filter((a) => a.role !== "supervisor")
+                      .filter((a) => !bot?.hostId || a.hostId === bot.hostId)
+                      .map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}{a.alias ? ` · ${a.alias}` : ""}{a.cli ? ` · ${a.cli}` : ""}{a.hostId ? ` · ${(state?.hosts || []).find((h) => h.id === a.hostId)?.name || a.hostId}` : ""}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <p className="bot-note">
+                  {bot?.capability === "work"
+                    ? `能执行：执行体是 ${(snapshot.agents || []).find((a) => a.id === bot?.executorAgentId)?.name || "未绑定的 Agent"}（CLI Agent）；点「开跑」会起它能跑的 run，跑完回流一条汇报。`
+                    : "可起任务 ≠ 自己动手：bot 只能提议建 todo，起 run 仍要你在桌面确认。"}
+                </p>
+                <label className="bot-num" style={{ marginTop: 6 }}>
+                  <span>模型</span>
+                  <select className="project-filter" value={bot?.model || ""} onChange={(e) => void savePatch({ model: e.target.value })}>
+                    <option value="">跟随默认（DeepSeek V4 Flash）</option>
+                    {modelCatalog.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                </label>
+                <div className="bot-field">
+                  <span>思考档</span>
+                  <div className="bot-seg">
+                    {([["quick", "快速"], ["", "标准"], ["deep", "深入"]] as const).map(([id, label]) => (
+                      <button
+                        key={label}
+                        className={(bot?.effort || "") === id ? "on" : ""}
+                        disabled={Boolean(busy)}
+                        title={id === "quick" ? "最多 4 轮工具" : id === "deep" ? "最多 12 轮工具，工具轮更低温" : "默认 8 轮工具"}
+                        onClick={() => void savePatch({ effort: id })}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="bot-note">思考档只改「最多查几轮 / 工具轮温度」，不改单轮 token 上限。</p>                <div className="bot-label">只读工具（{bot?.capability === "read" ? "只读档可用" : "已连接"}）</div>
                 {([["workspace_list", "看目录"], ["workspace_read", "读文件"], ["workspace_grep", "搜代码"], ["git_status", "git 状态"], ["git_log", "提交历史"], ["git_diff", "未提交改动"], ["run_log", "运行结果"], ["memory_search", "记忆"], ["knowledge_search", "资料库"], ["todo_list", "任务"], ["run_status", "运行"]] as const).map(([id, label]) => (
                   <div className="bot-mem-row" key={id}>
                     <span className="mono">{id}</span>
@@ -1976,93 +1958,31 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                     <span>{p.manifest?.name || p.id}<em className="faint"> · v{p.version}{p.enabled ? "" : " · 已停用"}</em></span>
                   </div>
                 )) : <p className="bot-note">没有已安装的插件。</p>}
-                <p className="bot-note">连接器只说明「它能碰到什么」：写操作一律走「提议 → 人确认」，不在这里。</p>
-              </>
-            )}
-            {tab === "tasks" && (
-              <>
-                <div className="bot-label">监视任务</div>
-                <div className="bot-watch">
-                  <select
-                    className="bot-exec"
-                    value=""
-                    onChange={(event) => { if (event.target.value) void run("watch", () => act("botWatchTask", { todoId: event.target.value, botId: bot?.id })); }}
-                  >
-                    <option value="">选择一个任务交给它监视…</option>
-                    {(snapshot.recentTodos || []).map((t) => (
-                      <option key={t.id} value={t.id}>{t.key} · {t.title.slice(0, 24)} · {t.missionState || t.status}</option>
-                    ))}
-                  </select>
-                </div>
-                {(snapshot.turns || []).filter((t) => t.botId === bot?.id && t.decision === "watching").map((t) => {
-                  const todo = (snapshot.recentTodos || []).find((x) => x.id === t.todoId);
+                <div className="bot-label" style={{ marginTop: 12 }}>技能</div>
+                {skillCatalog.length ? skillCatalog.map((sk) => {
+                  const on = (bot?.skills || []).includes(sk.id);
                   return (
-                    <div className="bot-mem-row" key={t.id}>
-                      <span className="mono">{todo?.key || "—"}</span>
-                      <span>
-                        {todo?.title || t.reply}
-                        <em className="faint"> · {todo?.missionState || todo?.status || "未知"}</em>
-                        <button className="bot-link" onClick={() => void run("unwatch", () => act("botUnwatchTask", { todoId: t.todoId, botId: bot?.id }))}>取消监视</button>
-                      </span>
+                    <div className="bot-mem-row" key={sk.id}>
+                      <span className="mono">{sk.name}</span>
+                      <span className="ellipsis" title={sk.description}>{sk.description}</span>
+                      <button
+                        className={`btn tiny ${on ? "primary" : ""}`}
+                        role="switch"
+                        aria-checked={on}
+                        aria-label={`${sk.name}技能`}
+                        onClick={() => toggleSkill(sk.id)}
+                      >
+                        {on ? "开" : "关"}
+                      </button>
                     </div>
                   );
-                })}
-                <div className="bot-label" style={{ marginTop: 12 }}>bot 经手的任务</div>
-                <p className="bot-note">这里只列「bot 提议后建的 / bot 起过 run 的」任务；别人（或主管）建的任务不会出现在这里。</p>
-                {(snapshot.tasks || []).filter((t) => (snapshot.turns || []).some((x) => x.todoId === t.id && x.botId === bot?.id && x.decision !== "watching")).length === 0 && (
-                  <p className="bot-note">还没有。等它主动提议、你点「开跑」之后，这里会出现对应的任务与状态。</p>
-                )}
-                {(snapshot.tasks || [])
-                  .filter((t) => (snapshot.turns || []).some((x) => x.todoId === t.id && x.botId === bot?.id && x.decision !== "watching"))
-                  .map((t) => (
-                    <div className="bot-mem-row" key={t.id}>
-                      <span className="mono">{t.key}</span>
-                      <span>
-                        {t.title}
-                        <em className="faint"> · {t.missionState || t.status}</em>
-                      </span>
-                    </div>
-                  ))}
+                }) : <p className="bot-note">还没有内置技能。</p>}
+                <p className="bot-note">技能会进 system prompt（最多 2400 字符）；连接器只说明「它能碰到什么」：写操作一律走「提议 → 人确认」。</p>
               </>
             )}
-            {tab === "policy" && (
+            {tab === "rules" && (
               <>
-                <div className="bot-label">能力档位</div>
-                <div className="bot-seg">
-                  {(["read", "dispatch", "work"] as const).map((cap) => (
-                    <button
-                      key={cap}
-                      className={bot?.capability === cap ? "on" : ""}
-                      disabled={Boolean(busy)}
-                      onClick={() => void run("cap", async () => {
-                        await act("botSave", { id: bot?.id, capability: cap, expectedUpdatedAt: bot?.updatedAt });
-                        notify(cap === "work" ? "已开启：可以直接起 run（点「开跑」即授权）" : cap === "dispatch" ? "已开启：可以提议建任务（仍需你确认）" : "已切回只读");
-                      })}
-                    >
-                      {CAP_LABEL[cap]}
-                    </button>
-                  ))}
-                </div>
-                <div className="bot-field edu" style={{ marginTop: 8 }}>
-                  <span>执行体（work 档位起 run 用的 Agent）</span>
-                  <select
-                    className="bot-exec"
-                    value={bot?.executorAgentId || ""}
-                    onChange={(event) => void run("exec", () => act("botSave", { id: bot?.id, executorAgentId: event.target.value, expectedUpdatedAt: bot?.updatedAt }))}
-                  >
-                    <option value="">未绑定</option>
-                    {(snapshot.agents || []).filter((a) => a.role !== "supervisor").map((a) => (
-                      <option key={a.id} value={a.id}>{a.name}{a.alias ? ` · ${a.alias}` : ""}</option>
-                    ))}
-                  </select>
-                </div>
-                <p className="bot-note">
-                  {bot?.capability === "work"
-                    ? `能执行：点「开跑」会建任务并用 ${(snapshot.agents || []).find((a) => a.id === bot?.executorAgentId)?.name || "未绑定的 Agent"} 起一次 run；跑完回流一条汇报。`
-                    : "可起任务 ≠ 自己动手：bot 只能提议建 todo，起 run 仍要你在桌面确认。"}
-                </p>
-                <div className="bot-label" style={{ marginTop: 14 }}>出场规则</div>
-                <div className="bot-label" style={{ marginTop: 14 }}>谁能找它</div>
+                <div className="bot-label">谁能找它</div>
                 <div className="bot-seg">
                   {([["owner", "只有我"], ["group", "群里 @ 它"], ["anyone", "群里任何人"]] as const).map(([key, label]) => (
                     <button
@@ -2101,49 +2021,98 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                   <span>本小时沉默</span><b>{snapshot.recent?.silentHour ?? 0}</b>
                   <span>本小时被拦</span><b>{snapshot.recent?.blockedHour ?? 0}</b>
                 </div>
+                <div className="bot-label" style={{ marginTop: 14 }}>外部事件</div>
+                <div className="bot-mem-row">
+                  <span className="mono">GitHub PR / CI</span>
+                  <span className="ellipsis">用本机 gh 只读拉；需要绑定项目并已 gh auth login</span>
+                  <button
+                    className={`btn tiny ${bot?.policy?.github?.enabled ? "primary" : ""}`}
+                    role="switch"
+                    aria-checked={Boolean(bot?.policy?.github?.enabled)}
+                    aria-label="GitHub 事件"
+                    onClick={() => void savePolicy({ github: { enabled: !bot?.policy?.github?.enabled } })}
+                  >
+                    {bot?.policy?.github?.enabled ? "开" : "关"}
+                  </button>
+                </div>
+                <div className="bot-mem-row">
+                  <span className="mono">Webhook 入站</span>
+                  <span className="ellipsis">本机 127.0.0.1；外部服务 POST 一条事件</span>
+                  <button
+                    className={`btn tiny ${bot?.policy?.webhook?.enabled ? "primary" : ""}`}
+                    role="switch"
+                    aria-checked={Boolean(bot?.policy?.webhook?.enabled)}
+                    aria-label="Webhook 入站"
+                    onClick={() => void run("webhook", async () => {
+                      const res = (await act("botWebhookEnable", { botId: bot?.id, enabled: !bot?.policy?.webhook?.enabled })) as { url?: string; error?: string } | null;
+                      notify(res?.url ? `Webhook：${res.url}` : (res?.error || "Webhook 已关闭"));
+                    })}
+                  >
+                    {bot?.policy?.webhook?.enabled ? "开" : "关"}
+                  </button>
+                </div>
+                {bot?.policy?.webhook?.enabled && bot?.policy?.webhook?.token && (
+                  <div className="bot-mem-row">
+                    <span className="mono">URL</span>
+                    <span className="ellipsis mono" title={`http://127.0.0.1:${webhook?.port || "…"}/hook/${bot.policy.webhook.token}`}>
+                      {`http://127.0.0.1:${webhook?.port || "…"}/hook/${bot.policy.webhook.token}`}
+                    </span>
+                    <button
+                      className="btn tiny"
+                      onClick={() => void window.harness.clipboardWrite(`http://127.0.0.1:${webhook?.port || ""}/hook/${bot.policy?.webhook?.token || ""}`)}
+                    >
+                      复制
+                    </button>
+                  </div>
+                )}
+                <div className="bot-label" style={{ marginTop: 14 }}>无人值守</div>
+                <div className="bot-mem-row">
+                  <span className="mono">自己起 run</span>
+                  <span className="ellipsis">work 档 + 绑定项目 + 每小时上限；越界会拒绝</span>
+                  <button
+                    className={`btn tiny ${standingCfg.enabled ? "primary" : ""}`}
+                    role="switch"
+                    aria-checked={Boolean(standingCfg.enabled)}
+                    aria-label="无人值守"
+                    onClick={() => void savePolicy({ standing: { ...standingCfg, enabled: !standingCfg.enabled } })}
+                  >
+                    {standingCfg.enabled ? "开" : "关"}
+                  </button>
+                </div>
+                <label className="bot-num">
+                  <span>每小时最多起几次</span>
+                  <input
+                    type="number" min={1} max={20}
+                    defaultValue={standingCfg.maxRunsPerHour}
+                    onBlur={(e) => void savePolicy({ standing: { ...standingCfg, maxRunsPerHour: Math.max(1, Math.min(20, Number(e.target.value) || 1)) } })}
+                  />
+                </label>
+                <p className="bot-note">只允许启动「已建好、属于绑定项目」的任务；不开就是全部要人点「开跑」。</p>
+                <div className="bot-label" style={{ marginTop: 14 }}>通知</div>
+                {NOTIFY_ROWS.map(([key, label, hint]) => {
+                  const on = notifyCfg[key] !== false;
+                  return (
+                    <div className="bot-mem-row" key={key}>
+                      <span className="mono">{label}</span>
+                      <span className="ellipsis">{hint}</span>
+                      <button
+                        className={`btn tiny ${on ? "primary" : ""}`}
+                        role="switch"
+                        aria-checked={on}
+                        aria-label={`${label}通知`}
+                        onClick={() => toggleNotify(key)}
+                      >
+                        {on ? "开" : "关"}
+                      </button>
+                    </div>
+                  );
+                })}
+                <p className="bot-note">全局节流仍在：每小时最多 3 条、单条 180 字；未读 ≥5 时只放行「需要你决定」的类别。</p>
               </>
             )}
-          </div>
+      </div>
     </>
   );
-
-  if (settingsOnly) {
-    return (
-      <div className="bot-settings">
-        <div className="bot-settings-head">
-          <span className={`bot-avatar ${bot?.avatarClass || "a"}`}>{bot?.avatar || bot?.name.slice(0, 1)}</span>
-          <div className="bot-settings-title">
-            <b>{bot?.name || "机器人"}</b>
-            <span>{bot?.role === "supervisor" ? "主管" : "员工"} · {CAP_LABEL[bot?.capability || "read"]}</span>
-          </div>
-          <span className="spacer" />
-          <button className="btn tiny" disabled={Boolean(busy)} onClick={() => void tick()}>{busy === "tick" ? "…" : t("action.tick")}</button>
-          {onClose && <button className="icon-btn" title="关闭" aria-label="关闭机器人配置" onClick={onClose}><XIcon size={13} /></button>}
-        </div>
-        <div className="bot-settings-body">
-          <aside className="bot-aside">
-            {isGroup ? (
-              <div className="bot-aside-body">
-                <div className="bot-label">群成员 <em>{members.length}</em></div>
-                {members.map((m) => (
-                  <div className="bot-group-member" key={m.id}>
-                    <span className={`bot-avatar ${m.avatarClass || "a"}`}>{m.avatar || m.name.slice(0, 1)}</span>
-                    <span className="bot-item-main">
-                      <b>{m.name}</b>
-                      <span>{m.role === "supervisor" ? "主管" : "员工"} · {CAP_LABEL[m.capability || "read"]}</span>
-                    </span>
-                    <button className="link tiny" onClick={() => setReplyMode({ kind: "bot", botId: m.id })} title="固定由它回复">只它回</button>
-                  </div>
-                ))}
-                <p className="bot-note">成员各自有自己的会话与记忆，群里只是同一个房间。默认由被 @ 的人回；没 @ 就主管回；「全体」让每个人都回。</p>
-              </div>
-            ) : asideContent}
-          </aside>
-        </div>
-      </div>
-    );
-  }
-
 
   return (
     <div className="page bot-page">
@@ -2259,23 +2228,81 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                   />
                 </div>
               )}
-              {upNext.length > 0 && (
-                <div className="bot-upnext">
-                  <div className="bot-label">接下来 <em>{upNext.length}</em></div>
-                  {upNext.slice(0, 4).map((n) => (
-                    <button
-                      key={n.id}
-                      className="bot-upnext-row"
-                      onClick={() => { if (n.threadId) openChat(n.threadId); else composerRef.current?.focus(); }}
-                      title={n.title}
-                    >
-                      <span className="tag">{n.label}</span>
-                      <b className="ellipsis">{n.title}</b>
-                      {n.hint && <span className="tiny faint">{n.hint}</span>}
+              <div className="bot-upnext">
+                  <div className="bot-label">工作 <em>{needs.length + myRoutines.filter((r) => r.due).length + assigned.rows.length}</em></div>
+                  {needs.length === 0 && !myRoutines.some((r) => r.due) && assigned.rows.length === 0 && (
+                    <p className="bot-note">没有需要你处理的。任务在任务面板，日程在「自动化」。</p>
+                  )}
+                  {needs.slice(0, 4).map((n) => (
+                    <div className="bot-need" key={n.id}>
+                      <span className="tag">{n.kind}</span>
+                      <span className="bot-need-main">
+                        <b className="ellipsis" title={n.title}>{n.title}</b>
+                        {n.hint && <span className="tiny faint">{n.hint}</span>}
+                      </span>
+                      {n.action === "accept" && n.actionLabel && (
+                        <button className="btn tiny" onClick={() => {
+                          const t = (snapshot?.turns ?? []).find((x) => x.id === n.turnId);
+                          if (t) void acceptProposal(t);
+                        }}>{n.actionLabel}</button>
+                      )}
+                      {n.action === "terminal" && n.actionLabel && (
+                        <button className="btn tiny" onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: "terminal" }))}>{n.actionLabel}</button>
+                      )}
+                    </div>
+                  ))}
+                  {myRoutines.filter((r) => r.due).map((r) => (
+                    <button className="bot-upnext-row" key={r.id} onClick={() => composerRef.current?.focus()} title={r.prompt || r.when}>
+                      <span className="tag">到点</span>
+                      <b className="ellipsis">{r.name || r.when || "日程"}</b>
+                      <span className="tiny faint">{r.prompt ? "看日程" : "等它开口"}</span>
+                    </button>
+                  ))}
+                  {assigned.rows.slice(0, 3).map((a) => (
+                    <button className="bot-upnext-row" key={a.todo.id} onClick={() => onOpenTodo?.(a.todo.id)} title={a.todo.title}>
+                      <span className="tag">任务</span>
+                      <b className="ellipsis">{a.todo.key} {a.todo.title}</b>
+                      <span className="tiny faint">{a.stageLabel}</span>
                     </button>
                   ))}
                 </div>
-              )}
+              {bot?.plan?.steps?.length ? (
+                <div className="bot-upnext">
+                  <div className="bot-label">计划 · {bot.plan.goal || "未命名"}</div>
+                  {bot.plan.steps.map((step, index) => (
+                    <div className="bot-mem-row" key={`${index}-${step.text}`}>
+                      <span className="mono">{step.status === "done" ? "✓" : step.status === "doing" ? "→" : step.status === "blocked" ? "!" : index + 1}</span>
+                      <span className={step.status === "done" ? "faint" : ""}>{step.text}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div className="bot-upnext">
+                <div className="bot-label">监视任务</div>
+                <select
+                  className="bot-exec"
+                  value=""
+                  aria-label="选择任务交给它监视"
+                  onChange={(event) => { if (event.target.value) void run("watch", () => act("botWatchTask", { todoId: event.target.value, botId: bot?.id })); }}
+                >
+                  <option value="">选择一个任务交给它监视…</option>
+                  {(snapshot.recentTodos || []).map((t) => (
+                    <option key={t.id} value={t.id}>{t.key} · {t.title.slice(0, 24)} · {t.missionState || t.status}</option>
+                  ))}
+                </select>
+                {(snapshot.turns || []).filter((t) => t.botId === bot?.id && t.decision === "watching").map((t) => {
+                  const todo = (snapshot.recentTodos || []).find((x) => x.id === t.todoId);
+                  return (
+                    <div className="bot-mem-row" key={t.id}>
+                      <span className="mono">{todo?.key || "—"}</span>
+                      <span>
+                        {todo?.title || t.reply}
+                        <button className="bot-link" onClick={() => void run("unwatch", () => act("botUnwatchTask", { todoId: t.todoId, botId: bot?.id }))}>取消监视</button>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
               <ul className="bot-chat-list">
                 {chats.map((chat) => (
                   <li key={chat.id}>
@@ -2341,7 +2368,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
               {railTurns.map((t) => (
                 <button
                   key={t.id}
-                  className={`ds-turn-mark ${t.id === activeTurnId ? "on" : ""}`}
+                  className={`ds-turn-mark ${t.id === activeTurnId ? "on" : ""}${busy && t === railTurns[railTurns.length - 1] ? " running" : ""}`}
                   onClick={() => jumpToTurn(t.id)}
                   onMouseEnter={(event) => showPeek(t.id, event.currentTarget)}
                   onFocus={(event) => showPeek(t.id, event.currentTarget)}
@@ -2408,7 +2435,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
             <button className={chatView === "trajectory" ? "on" : ""} onClick={() => setChatView("trajectory")}>轨迹</button>
           </div>
           {chatView === "trajectory" ? (
-            <BotTrajectoryView turns={turns} state={state} onJump={(id) => { setChatView("chat"); setTimeout(() => jumpToTurn(id), 30); }} />
+            <TrajectoryView records={trajectoryRecords(turns, state)} focusTurnId={trajectoryTurn} onJump={(id) => { setChatView("chat"); setTimeout(() => jumpToTurn(id), 30); }} />
           ) : (
           <>
           <div
@@ -2564,12 +2591,12 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
               }
 
               const turn = row.turn;
-              const secs = turn.cost?.ms ? Math.max(1, Math.round(turn.cost.ms / 1000)) : null;
+              // 只传决策词；摘要与耗时由 BotTrace 按结构化步骤拼（不再写死「，用时 N 秒」）
               const headLabel = turn.decision === "reported" ? "已汇报"
                 : turn.decision === "asked" ? "已提问"
                   : turn.decision === "interrupted" ? "已中断"
                     : "已完成";
-              const turnHeadText = secs === null ? headLabel : `${headLabel}，用时 ${secs}秒`;
+              const turnHeadText = headLabel;
               const bubble = (
                 <>
                   <BotTrace turn={turn} state={state} label={turnHeadText} />
@@ -2621,6 +2648,10 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                   )}
                   <div className="ds-actions">
                     <button className="ds-action" title="复制这条回复" aria-label="复制这条回复" onClick={() => void window.harness.clipboardWrite(turn.reply || "")}><CopyIcon size={15} /></button>
+                    {/* 轨迹入口放在这一轮的动作里：不是只能从页签进，且进来就定位到这一轮 */}
+                    <button className="ds-action" title="看这一轮的轨迹" aria-label="看这一轮的轨迹" onClick={() => { setTrajectoryTurn(turn.id); setChatView("trajectory"); }}>
+                      <ListIcon size={15} />
+                    </button>
                     {turn.input && (
                       <button className="ds-action" title="重试这一轮（复用原话）" aria-label="重试这一轮" disabled={Boolean(busy)} onClick={() => void retryTurn(turn.id)}><RefreshIcon size={15} /></button>
                     )}
@@ -2702,7 +2733,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                 <div className="ds-assistant-body">
                   {streaming.text
                     ? <>{streaming.text}<span className="ds-caret" /></>
-                    : <span className="ds-thinking">{streaming.phase === "tool" ? `${toolLabel(streaming.tool)}…` : "正在想…"}</span>}
+                    : <span className="ds-thinking">{streaming.phase === "tool" ? toolLabel(streaming.tool) : "正在想…"}</span>}
                 </div>
               </div>
             )}
@@ -2891,23 +2922,11 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
             document.body,
           )}
 
-          <div className="bot-foot">
-            <span>
-              {isGroup
-                ? "群聊：每条发言按「谁回」投递；没开口的成员也会留一条沉默记录。"
-                : bot?.capability === "work"
-                  ? `能执行：点「开跑」会用 ${(snapshot.agents || []).find((a) => a.id === bot?.executorAgentId)?.name || "未绑定的 Agent"} 起一次 run，跑完回流一条汇报。`
-                  : bot?.capability === "dispatch"
-                    ? "可起任务：只建 todo，不起 run；跑不跑由你在桌面决定。"
-                    : "只读：不会建任务、不会起 run；要在 Chat 里派活。"}
-            </span>
-            <button className="btn tiny" onClick={onOpenMemory}>打开记忆</button>
-          </div>
           </>
           )}
             </>
           ) : chatView === "trajectory" ? (
-            <BotTrajectoryView turns={[]} state={state} onJump={() => {}} />
+            <TrajectoryView records={[]} onJump={() => {}} />
           ) : (
             <div className="bot-chat-choose"><span>从右侧选一条消息开始</span></div>
           )}
@@ -2923,7 +2942,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                   <span className={`bot-avatar ${m.avatarClass || "a"}`}>{m.avatar || m.name.slice(0, 1)}</span>
                   <span className="bot-item-main">
                     <b>{m.name}</b>
-                    <span>{m.role === "supervisor" ? "主管" : "员工"} · {CAP_LABEL[m.capability || "read"]}</span>
+                    <span>{m.team ? `${m.team} · ` : ""}{m.role === "supervisor" ? "主管" : "员工"} · {CAP_LABEL[m.capability || "read"]}</span>
                   </span>
                   <button className="link tiny" onClick={() => setReplyMode({ kind: "bot", botId: m.id })}>只它回</button>
                 </div>

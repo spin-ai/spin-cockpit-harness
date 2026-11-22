@@ -865,6 +865,48 @@ export function createMemory({ dir }) {
         dropped: ctx.dropped || 0,
       };
     },
+    /**
+     * 单个 bot 视角的 MEMORY.md：共享 + 自己的条目 / 观察。
+     * 只读镜像，DB 仍是事实源；给「打开 MEMORY.md」用，不参与注入。
+     */
+    botMarkdown({ owner = "", maxChars = 60000 } = {}) {
+      const own = String(owner || "");
+      const ownSql = own ? " AND (COALESCE(owner,'')='' OR owner=?)" : "";
+      const entries = rows(
+        `SELECT * FROM entries WHERE status='active' AND invalid_at IS NULL AND layer!='L1'${ownSql} ORDER BY layer, updated_at DESC`,
+        own ? [own] : [],
+      ).map(entryRow);
+      const notes = rows(
+        `SELECT * FROM notes WHERE status IN ('verified','new') AND (expires_at IS NULL OR expires_at > ?)${ownSql} ORDER BY updated_at DESC`,
+        own ? [Date.now(), own] : [Date.now()],
+      ).map(noteRow);
+      const lines = [
+        "# MEMORY.md",
+        "",
+        `> 由记忆库生成的只读镜像（${own || "全局"}）；DB 才是事实源，手改不会自动回写。`,
+        "",
+      ];
+      const layerNames = { L4: "结论", L3: "项目", L2: "事实" };
+      for (const layer of ["L4", "L3", "L2"]) {
+        const list = entries.filter((e) => e.layer === layer);
+        if (!list.length) continue;
+        lines.push(`## ${layer} · ${layerNames[layer]}`);
+        for (const e of list) {
+          lines.push(`- ${e.title}${e.body ? `：${String(e.body).replace(/\s+/g, " ").slice(0, 240)}` : ""}`);
+        }
+        lines.push("");
+      }
+      if (notes.length) {
+        lines.push("## 未验证观察");
+        for (const n of notes) {
+          lines.push(`- ${n.status === "verified" ? "" : "未验证 · "}${String(n.body || "").replace(/\s+/g, " ").slice(0, 240)}`);
+        }
+        lines.push("");
+      }
+      const text = lines.join("\n").trimEnd() + "\n";
+      return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+    },
+
     /** 导出全部记忆（Markdown），用于备份 / 迁移；失效条目单独列出以保留溯源 */
     exportMarkdown() {
       const lines = [`# 记忆导出 ${new Date().toISOString()}`, ""];

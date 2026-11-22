@@ -5,7 +5,7 @@ import { STATUS, activeRun, agentOf, duration, lastRun } from "../ui";
 import { Splitter, useStoredSize } from "./Splitter";
 import {
   ChevronDownIcon, ChevronRightIcon, EllipsisIcon, FolderPlusIcon,
-  PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon, PlusIcon, SlidersIcon,
+  PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon, PlusIcon, SearchIcon, SlidersIcon, XIcon,
 } from "./Icons";
 import { ListContextMenu } from "./ListContextMenu";
 import { RowMenu } from "./RowMenu";
@@ -116,14 +116,6 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
     };
   }, [projectViewMenu]);
 
-  const visibleProjects = state.projects
-    .filter((p) => !projectView.hideNoTask || (projectCounts[p.id] ?? 0) > 0)
-    .slice()
-    .sort((a, b) => {
-      if (projectView.sort === "name") return a.name.localeCompare(b.name);
-      if (projectView.sort === "recent") return (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0) || a.name.localeCompare(b.name);
-      return 0; // manual：沿用 state.projects 的顺序，点谁都不动
-    });
   const [projectMenu, setProjectMenu] = useState<{ at: { x: number; y: number }; projectId: string } | null>(null);
   const menuProject = projectMenu ? state.projects.find((p) => p.id === projectMenu.projectId) ?? null : null;
   /** 交给谁：优先主管档机器人，其次第一个可用的；纯只读档也能"聊"，只是不能起任务 */
@@ -135,6 +127,18 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
   }, [state.bots]);
 
   const [query, setQuery] = useState("");
+  /** 一个搜索框同时管「项目」和「任务」（DESIGN-SYSTEM §5 一行 chrome） */
+  const searching = query.trim().length > 0;
+  const needle = query.trim().toLowerCase();
+  const visibleProjects = state.projects
+    // 搜索时不理会「隐藏没有任务的项目」：搜到了就得显示，否则像搜不到
+    .filter((p) => searching ? (p.name.toLowerCase().includes(needle) || p.path.toLowerCase().includes(needle)) : (!projectView.hideNoTask || (projectCounts[p.id] ?? 0) > 0))
+    .slice()
+    .sort((a, b) => {
+      if (projectView.sort === "name") return a.name.localeCompare(b.name);
+      if (projectView.sort === "recent") return (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0) || a.name.localeCompare(b.name);
+      return 0; // manual：沿用 state.projects 的顺序，点谁都不动
+    });
   const [editing, setEditing] = useState<{ id: string; title: string; desc: string; acceptance: string; priority: string; due: string; tags: string } | null>(null);
   const [creating, setCreating] = useState(false);
   const [captureText, setCaptureText] = useState("");
@@ -291,10 +295,20 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
   return (
     <aside className={`todo-pane mode-${mode}${tasksFolded ? " tasks-folded" : ""}${maximized ? " pane-max-target" : ""}`} tabIndex={0} aria-label="TODO 列表">
       <div className="task-tools">
+        {/* 左栏只有一个搜索框：同时过滤下面两个列表（项目 / 任务） */}
+        <div className="pane-search">
+          <SearchIcon size={12} className="search-ico" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") setQuery(""); }}
+            placeholder="搜索项目 / 任务…"
+            aria-label="搜索项目与任务"
+          />
+          {searching && <button className="icon-btn" title="清除搜索" aria-label="清除搜索" onClick={() => setQuery("")}><XIcon size={11} /></button>}
+        </div>
         <div className="task-search-row">
-          <span className="task-section-title" title="任务列表">任务</span>
-          <input className="task-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索" />
-          {/* 状态筛选收成下拉：和搜索/范围同一行（一个区域只有一行 chrome） */}
+          {/* 状态筛选收成下拉：和范围 / 图标动作同一行（一个区域只有一行 chrome） */}
           <select className="task-filter-select" value={filter} title="按状态筛选" onChange={(e) => setFilter(e.target.value as Filter)}>
             {([["all", "全部"], ["needs", "待处理"], ["active", "进行中"], ["review", "待确认"], ["confirmed", "已完成"]] as [Filter, string][]).map(([id, label]) => (
               <option key={id} value={id}>{label}</option>
@@ -305,6 +319,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
               {allProjects ? "全部项目" : "本项目"}
             </button>
           )}
+          <span className="spacer" />
           <div className="pane-actions">
             <button className="pane-add" title="收集想法 / 新建任务（一行一条，⌘⇧N）" aria-label="新建任务" onClick={() => { setLayout("list"); setTasksFolded(false); setCreating(true); window.setTimeout(() => createRef.current?.focus(), 0); }}><PlusIcon size={13} /></button>
             {onToggleMaximize && (
@@ -337,7 +352,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
           </div>
         </div>
       </div>
-      {!tasksFolded && (
+      {(!tasksFolded || searching) && (
       <div className="todo-scroll">
         {layout === "board" && (
           <div className="todo-board">
@@ -385,7 +400,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
             </div>
           </div>
         )}
-        {layout === "list" && GROUPS.map((g) => {
+        {layout === "list" && !(searching && visible.length === 0) && GROUPS.map((g) => {
           const items = itemsFor(g);
           const isCollapsed = collapsed[g.id] ?? (items.length === 0 || g.id === "done");
           return (
@@ -633,7 +648,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
       )}
 
       
-      <section className={`project-panel ${projectCollapsed ? "collapsed" : ""}`} style={projectCollapsed || tasksFolded ? undefined : { height: projectH }}>
+      <section className={`project-panel ${projectCollapsed && !searching ? "collapsed" : ""}`} style={projectCollapsed || tasksFolded ? undefined : { height: projectH }}>
         <div className="project-panel-head">
           <span className="project-panel-title">项目</span>
           <span className="spacer" />
@@ -664,7 +679,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
             <ChevronDownIcon size={13} className={projectCollapsed ? "" : "rot-180"} />
           </button>
         </div>
-        {!projectCollapsed && <div className="project-panel-list">
+        {(!projectCollapsed || searching) && <div className="project-panel-list">
           {visibleProjects.map((p) => {
             const isCurrent = p.id === state.activeProjectId;
             return (
@@ -705,6 +720,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
             );
           })}
           {state.projects.length === 0 && <div className="inline-empty">还没有项目</div>}
+          {state.projects.length > 0 && visibleProjects.length === 0 && <div className="inline-empty">没有匹配的项目</div>}
         </div>}
         <ListContextMenu
           at={projectMenu?.at ?? null}

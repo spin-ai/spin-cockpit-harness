@@ -181,6 +181,9 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask }
                         <span className="tag mono">@{p.alias}</span>
                         {isActive && <span className="tag ok">当前</span>}
                         <span className={`tag project-status ${p.status}`}>{PROJECT_STATUS[p.status] || p.status}</span>
+                        {(state.bots || []).filter((b) => b.projectId === p.id).map((b) => (
+                          <span className="tag" key={b.id}>{b.name} 接手</span>
+                        ))}
                       </div>
                       <div className="project-card-path mono tiny muted ellipsis" title={p.path}>{p.path}</div>
                     </div>
@@ -336,6 +339,27 @@ export function Hosts({ state, act, notify, now, embedded = false }: { state: St
       <button className="btn tiny-btn" disabled={isProbing} onClick={() => void probe(h.id)}>{isProbing ? "探测中…" : "重新探测"}</button>
       {h.kind !== "local" && <button className="btn tiny-btn" onClick={() => openEdit(h)}>编辑</button>}
       {h.kind !== "local" && <button className="btn tiny-btn danger" onClick={() => void remove(h.id, h.name)}>移除</button>}
+      <RowMenu title="更多主机操作">
+        <label className="row-menu-label">交给机器人
+          <select
+            className="project-status-select"
+            value={(state.bots || []).find((b) => b.hostId === h.id)?.id || ""}
+            onChange={(e) => {
+              const botId = e.target.value;
+              const current = (state.bots || []).find((b) => b.hostId === h.id);
+              if (!botId) {
+                if (current) void act("botSave", { id: current.id, hostId: "" }).then(() => notify(`${current.name} 已解除主机绑定`));
+                return;
+              }
+              const bot = (state.bots || []).find((b) => b.id === botId);
+              void act("botSave", { id: botId, hostId: h.id }).then(() => notify(`${bot?.name || "机器人"} 默认主机：${h.name}`));
+            }}
+          >
+            <option value="">不绑定</option>
+            {(state.bots || []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </label>
+      </RowMenu>
     </>
   );
 
@@ -446,6 +470,7 @@ export function Hosts({ state, act, notify, now, embedded = false }: { state: St
                   <div><span>延迟</span><b>{h.latencyMs == null ? "—" : `${h.latencyMs}ms`}</b></div>
                   <div><span>探测</span><b>{h.lastProbe ? `${timeAgo(h.lastProbe, now)} 前` : "未探测"}</b></div>
                   <div><span>Agent</span><b>{agents.length}</b></div>
+                  <div><span>机器人</span><b>{(state.bots || []).filter((b) => b.hostId === h.id).map((b) => b.name).join("、") || "—"}</b></div>
                 </div>
               </div>
 

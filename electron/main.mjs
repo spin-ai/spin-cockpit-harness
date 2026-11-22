@@ -9,16 +9,19 @@ import pty from "node-pty";
 import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 import { fileURLToPath } from "node:url";
-import { formatToolContent, toolOutputText } from "./tool-format.mjs";
+import { formatToolContent, normalizeToolStatus, toolFamily, toolOutputText } from "./tool-format.mjs";
 import { openDb, DEFAULT_SETTINGS } from "./db.mjs";
 import { safeStorage } from "electron";
 import { AcpClient, dshPathEnv } from "./acp.mjs";
 import { createKnowledge } from "./knowledge/index.mjs";
 import { CHAT_MODEL_CATALOG, chat as arkChat, chatStream as arkChatStream, resolveArkKey as resolveArkKeyFor } from "./knowledge/ark.mjs";
 import { BOT_INJECT_CHARS, createBots } from "./bot/index.mjs";
-import { notifyDecision } from "./bot/notify.mjs";
+import { notifyAllowed, notifyDecision } from "./bot/notify.mjs";
 import { TIDY_MAX_ARCHIVE, planTidy } from "./bot/tidy.mjs";
 import { botTemplate, templateSummaries } from "./bot/templates.mjs";
+import { eventRowsFromGh, parseGhJson } from "./bot/github.mjs";
+import { newWebhookToken, webhookEvent } from "./bot/webhook.mjs";
+import { skillSummaries } from "./bot/skills.mjs";
 import { describeRoutine, nextRunAt, normalizeRoutine } from "./bot/routine.mjs";
 import { BOT_TOOL_META } from "./bot/tools.mjs";
 import { clipChars, grepWorkspace, listWorkspace, readWorkspaceFile } from "./bot/workspace.mjs";
@@ -32,7 +35,7 @@ import { createMemory, parseDreamItems } from "./memory/index.mjs";
 import { createPersona } from "./persona/index.mjs";
 import { computeFeatures, computeMeasures, analyzePersonWithLLM, analysisCacheHash, evidenceMatches, looksLikeStat } from "./persona/model.mjs";
 import { createImGateway, formatImCard, formatApprovalCard } from "./im/gateway.mjs";
-import { prepareWorktree, removeWorktree, repoRoot, listWorktrees, pruneWorktrees, WORKTREE_ROOT, WORKTREE_ROOTS, underWorktreeRoot } from "./worktree.mjs";
+import { prepareWorktree, removeWorktree, removeStaleWorktrees, repoRoot, listWorktrees, pruneWorktrees, WORKTREE_ROOT, WORKTREE_ROOTS, underWorktreeRoot } from "./worktree.mjs";
 import { pickElement, cancelPick, detachPreview } from "./preview.mjs";
 import { openTunnel, closeTunnel, closeAllTunnels, toRemoteUrl, onTunnelClosed } from "./preview-tunnel.mjs";
 import { formatContext, detectDevUrl } from "./ui-context.mjs";
@@ -1484,6 +1487,7 @@ function handleUpdate(run, todo, handle, u) {
     const prev = (existing ? handle.toolMeta.get(key) : null) || {};
     const title = u.title || prev.title || u.kind || "tool";
     const status = u.status || prev.status || "";
+    const kind = u.kind || prev.kind || "";
     // 参数只在首次 tool_call 的 rawInput 里出现；update 时沿用，避免被清空。
     const hint = (u.rawInput ? toolArgHint(u.rawInput) : "") || prev.hint || "";
     const description = u.rawInput?.description || prev.description || "";
@@ -1491,10 +1495,20 @@ function handleUpdate(run, todo, handle, u) {
     const output = toolOutputText(u.content) || prev.output || "";
     // 首行必须是「干了什么」：Bash · 完成 · ls -1（旧版首行只有 bash · completed）
     const content = formatToolContent({ title, status, hint, description, output });
-    handle.toolMeta.set(key, { title, status, hint, description, output });
+    // 结构化字段：前端按它选卡片，不再拿工具名跑正则猜家族
+    const family = toolFamily({ kind, title, input: prev.input || "" });
+    const familyStable = family === "other" && prev.family ? prev.family : family;
+    const statusNorm = normalizeToolStatus(status, { failed: status === "failed" });
+    const startedAt = prev.startedAt || Date.now();
+    const finished = ["done", "failed", "denied", "stopped"].includes(statusNorm);
+    const durationMs = finished ? Math.max(0, Date.now() - startedAt) : undefined;
+    const parentToolId = u.parentToolCallId || u.parentId || prev.parentToolId || null;
+    handle.toolMeta.set(key, { title, status, kind, hint, description, output, family: familyStable, startedAt });
     // 轨迹要保留结构化字段：原始参数 / 完整输出（首行摘要会丢 JSON 结构）
     const toolRecord = {
-      title, status, hint, description,
+      title, status, hint, description, kind,
+      family: familyStable, statusKind: statusNorm, durationMs, parentToolId,
+      agentId: run.agentId || null, botId: todo?.botId || null,
       input: u.rawInput ? JSON.stringify(u.rawInput).slice(0, 6000) : prev.input || "",
       output: output.slice(0, 6000),
     };
@@ -3085,6 +3099,19 @@ const sendGroupMessage = (groupId, message) => {
  * 记忆整理计划：只取数，不落库。按 bot 的 owner 视角算「注入了多少」，
  * 否则会拿别的 bot 的私有条目把占用算高。
  */
+/** 生成单个 bot 的 MEMORY.md（只读镜像）；返回路径，调用方决定是否打开 */
+function botMemoryFile(botId = "") {
+  const id = String(botId || "");
+  const bot = (store.state.bots || []).find((b) => b.id === id);
+  if (!bot) throw new Error("bot 不存在");
+  const text = memory().botMarkdown({ owner: `bot:${id}` });
+  const dir = path.join(app.getPath("userData"), "bots", id);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "MEMORY.md");
+  fs.writeFileSync(file, text, "utf8");
+  return { path: file, text };
+}
+
 function botMemoryTidyPlan(botId = "") {
   const id = String(botId || "");
   if (!bots().list().some((b) => b.id === id)) throw new Error("bot 不存在");
@@ -3131,7 +3158,11 @@ async function botReadTool(name, args = {}, ctx = {}) {
 
 async function botReadToolNow(name, args = {}, ctx = {}) {
   const st = store.state;
-  const projectId = st.activeProjectId || null;
+  // bot 绑了默认项目就用它；没绑才回退当前项目。workspace_* / git_* 的根都按这个走。
+  const boundProject = ctx?.bot?.projectId ? st.projects.find((p) => p.id === ctx.bot.projectId) : null;
+  const project = boundProject || st.projects.find((p) => p.id === st.activeProjectId) || st.projects[0] || null;
+  const projectId = project?.id || null;
+  const root = project?.path || activeProjectPath();
   switch (name) {
     case "memory_search": {
       const query = String(args.query || "").trim();
@@ -3170,6 +3201,36 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
         }));
       return { total: st.todos.length, rows };
     }
+    case "run_start": {
+      const bot = ctx?.bot;
+      if (!bot) return { error: "缺少 bot 上下文" };
+      if (bot.capability !== "work") return { error: "只有 work 档能自己起 run" };
+      if (!bot.policy?.standing?.enabled) return { error: "这个 bot 没打开「无人值守」：先到 设置 → 规则 打开" };
+      if (!bot.projectId) return { error: "无人值守要求先绑定默认项目（设置 → 能力）" };
+      if (!bot.executorAgentId) return { error: "无人值守要求先绑定执行体" };
+      const ref = String(args.todo || "").trim();
+      const todo = st.todos.find((t) => t.id === ref || t.key === ref || t.key === ref.replace(/^#/, ""));
+      if (!todo) return { error: `找不到任务 ${ref || "（空）"}` };
+      if (todo.projectId !== bot.projectId) return { error: "这条任务不在 bot 绑定的项目里" };
+      if (todo.status !== "todo" && todo.status !== "failed") return { error: `任务当前是 ${todo.status}，不能起` };
+      const active = ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"];
+      if (st.runs.some((r) => r.todoId === todo.id && active.includes(r.status))) return { error: "这条任务已经在跑" };
+      const hourAgo = Date.now() - 3600_000;
+      const watched = new Set((st.botTurns || []).filter((t) => t.botId === bot.id && t.todoId).map((t) => t.todoId));
+      const used = (st.runs || []).filter((r) => watched.has(r.todoId) && (r.startedAt || r.createdAt || 0) > hourAgo).length;
+      const limit = Math.max(1, Math.min(20, Number(bot.policy?.standing?.maxRunsPerHour) || 1));
+      if (used >= limit) return { error: `本小时已替它起 ${used}/${limit} 次，先停下来问人` };
+      try { bots().watch({ botId: bot.id, todoId: todo.id, title: todo.title }); } catch { /* 监视失败不挡启动 */ }
+      const before = new Set(st.runs.map((r) => r.id));
+      try {
+        actions.run({ id: todo.id, agentId: bot.executorAgentId });
+      } catch (err) {
+        return { error: String(err?.message || err) };
+      }
+      const runId = st.runs.find((r) => r.todoId === todo.id && !before.has(r.id))?.id || null;
+      broadcast();
+      return { ok: true, runId, todoId: todo.id, key: todo.key };
+    }
     case "task_create": {
       const bot = ctx?.bot;
       if (!bot || !["work", "dispatch"].includes(bot.capability || "")) {
@@ -3186,7 +3247,9 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
         || handleOf(a) === ref);
       if (!agent) return { error: `找不到 worker：${args.agent || "（空）"}；可用：${st.agents.filter((a) => (a.role || "worker") !== "supervisor").map((a) => a.alias || a.name).join(" / ")}` };
       if ((agent.role || "worker") === "supervisor") return { error: `${agent.name} 是主管，不能接子任务` };
-      const project = st.projects.find((p) => p.id === st.activeProjectId) || st.projects[0] || null;
+      if (bot.hostId && agent.hostId && agent.hostId !== bot.hostId) {
+        return { error: `这个 bot 绑定在主机 ${st.hosts.find((h) => h.id === bot.hostId)?.name || bot.hostId}，${agent.name} 在另一台主机上` };
+      }
       const cwd = project?.path || agent.cwd || workspaceRoot;
       const existed = st.todos.find((t) => t.status === "todo" && t.title === title && t.agentId === agent.id && t.botId === bot.id);
       if (existed) {
@@ -3207,7 +3270,7 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
         store.persist(); broadcast();
         return { ok: true, existed: true, key: existed.key, todoId: existed.id, agent: agent.alias || agent.name, started: Boolean(runId), runId };
       }
-      const todo = actions.createTodo({ title, desc: brief, agentId: agent.id, cwd, priority: "P1", botId: bot.id });
+      const todo = actions.createTodo({ title, desc: brief, agentId: agent.id, cwd, priority: "P1", botId: bot.id, projectId: project?.id || null });
       if (Array.isArray(args.acceptance) && args.acceptance.length) {
         todo.acceptance = args.acceptance.map((x) => String(x).trim()).filter(Boolean).slice(0, 5);
       }
@@ -3252,26 +3315,26 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
     }
     case "workspace_list":
       return listWorkspace({
-        root: activeProjectPath(),
+        root,
         rel: String(args.path || ""),
         depth: Number(args.depth) || 1,
       });
     case "workspace_read":
       return readWorkspaceFile({
-        root: activeProjectPath(),
+        root,
         rel: String(args.path || ""),
         offset: Number(args.offset) || 0,
         limit: Number(args.limit) || 200,
       });
     case "workspace_grep":
       return grepWorkspace({
-        root: activeProjectPath(),
+        root,
         query: String(args.query || ""),
         path: String(args.path || ""),
         limit: Number(args.limit) || 40,
       });
     case "git_status": {
-      const res = await gitRun(activeProjectPath(), ["status", "--porcelain=v1", "-b"], { timeout: 10000 });
+      const res = await gitRun(root, ["status", "--porcelain=v1", "-b"], { timeout: 10000 });
       if (!res.ok) return { error: res.error || "git 执行失败" };
       const clipped = clipChars(res.stdout, 10000);
       return { text: clipped.text, truncated: clipped.truncated };
@@ -3280,7 +3343,7 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
       const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 30);
       const argv = ["log", "--oneline", "-n", String(limit)];
       if (args.path) argv.push("--", String(args.path));
-      const res = await gitRun(activeProjectPath(), argv, { timeout: 10000 });
+      const res = await gitRun(root, argv, { timeout: 10000 });
       if (!res.ok) return { error: res.error || "git 执行失败" };
       const clipped = clipChars(res.stdout, 10000);
       return { text: clipped.text, truncated: clipped.truncated };
@@ -3290,7 +3353,7 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
       if (args.staged === true) argv.push("--cached");
       if (args.stat !== false) argv.push("--stat");
       if (args.path) argv.push("--", String(args.path));
-      const res = await gitRun(activeProjectPath(), argv, { timeout: 15000 });
+      const res = await gitRun(root, argv, { timeout: 15000 });
       if (!res.ok) return { error: res.error || "git 执行失败" };
       const clipped = clipChars(res.stdout, 12000);
       return { text: clipped.text || "（没有未提交改动）", truncated: clipped.truncated };
@@ -3312,6 +3375,7 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
           sourceRef: `bot:${bot.id}:${ctx?.turnId || "turn"}`,
           owner: `bot:${bot.id}`,
         });
+        try { botMemoryFile(bot.id); } catch { /* 镜像失败不影响写入 */ }
         return { ok: true, id: note.id, deduped: Boolean(note.deduped), scope: `bot:${bot.id}` };
       } catch (err) {
         return { error: String(err?.message || err) };
@@ -3334,6 +3398,7 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
       }
       if (!target) return { error: "只删你自己的记忆：先 memory_search 拿到 id" };
       memory().noteRemove({ id: target.id });
+      try { botMemoryFile(bot.id); } catch { /* 镜像失败不影响删除 */ }
       return { ok: true, id: target.id, body: String(target.body || "").slice(0, 120) };
     }
     case "handoff_to_bot": {
@@ -3359,6 +3424,35 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
           reason: String(args.reason || "").trim().slice(0, 160),
         },
       };
+    }
+    case "plan_set": {
+      const bot = ctx?.bot;
+      if (!bot) return { error: "缺少 bot 上下文" };
+      const goal = String(args.goal || "").trim().slice(0, 200);
+      const steps = (Array.isArray(args.steps) ? args.steps : []).map((x) => String(x || "").trim().slice(0, 160)).filter(Boolean).slice(0, 8);
+      if (!goal) return { error: "goal 不能为空" };
+      if (!steps.length) return { error: "steps 至少一步" };
+      const target = (store.state.bots || []).find((b) => b.id === bot.id);
+      if (!target) return { error: "bot 不存在" };
+      target.plan = { goal, steps: steps.map((text) => ({ text, status: "todo" })), updatedAt: Date.now() };
+      store.persist();
+      broadcast();
+      return { ok: true, plan: target.plan };
+    }
+    case "plan_update": {
+      const bot = ctx?.bot;
+      if (!bot) return { error: "缺少 bot 上下文" };
+      const target = (store.state.bots || []).find((b) => b.id === bot.id);
+      if (!target?.plan?.steps?.length) return { error: "还没有计划：先 plan_set" };
+      const index = Number(args.index);
+      const status = ["todo", "doing", "done", "blocked"].includes(args.status) ? args.status : "";
+      if (!Number.isInteger(index) || index < 0 || index >= target.plan.steps.length) return { error: "index 越界" };
+      if (!status) return { error: "status 要 todo / doing / done / blocked" };
+      target.plan.steps[index].status = status;
+      target.plan.updatedAt = Date.now();
+      store.persist();
+      broadcast();
+      return { ok: true, plan: target.plan };
     }
     case "routine_propose": {
       const bot = ctx?.bot;
@@ -3450,20 +3544,147 @@ function bots() {
 /** 已弹过的通知时间（只存在内存里：重启后重新计，通知不是审计数据） */
 const botNotifyLog = [];
 let botUnread = 0;
+let githubPollTimer = null;
+let githubPollBusy = false;
+let webhookServer = null;
+let webhookPort = 0;
+
+/** Webhook 入站：只监听 127.0.0.1，按 bot token 路由；外部服务 POST 一条就够 */
+function startWebhookServer() {
+  if (webhookServer) return;
+  const server = http.createServer((req, res) => {
+    const send = (code, body) => {
+      res.writeHead(code, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify(body));
+    };
+    let url;
+    try { url = new URL(req.url || "/", "http://127.0.0.1"); } catch { return send(400, { ok: false, error: "bad url" }); }
+    const match = url.pathname.match(/^\/hook\/([a-f0-9]{24})$/);
+    if (!match) return send(404, { ok: false, error: "not found" });
+    if (req.method !== "POST") return send(405, { ok: false, error: "POST only" });
+    const token = match[1];
+    const bot = (store.state.bots || []).find((b) => b.policy?.webhook?.enabled && b.policy?.webhook?.token === token);
+    if (!bot) return send(401, { ok: false, error: "unknown token" });
+    let size = 0;
+    let tooLarge = false;
+    const chunks = [];
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > 64 * 1024) { tooLarge = true; req.destroy(); return; }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (tooLarge) return send(413, { ok: false, error: "body too large" });
+      let payload = {};
+      try { payload = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"); } catch { return send(400, { ok: false, error: "bad json" }); }
+      const event = webhookEvent({ botId: bot.id, payload });
+      const exists = (store.state.botEvents || []).some((e) => e.botId === bot.id && e.key === event.key);
+      if (!exists) {
+        store.state.botEvents.push(event);
+        store.state.botEvents = (store.state.botEvents || []).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 500);
+        store.persist();
+        broadcast();
+      }
+      send(200, { ok: true, duplicate: exists, eventId: event.id });
+    });
+  });
+  server.on("error", (err) => {
+    webhookServer = null;
+    webhookPort = 0;
+    console.warn(`[bot] webhook server failed: ${String(err?.message || err)}`);
+  });
+  // 固定端口：外部服务配一次就不会因为重启而失效；被占用时 UI 会显示未运行。
+  server.listen(18787, "127.0.0.1", () => {
+    webhookPort = server.address()?.port || 18787;
+    console.log(`[bot] webhook listening on 127.0.0.1:${webhookPort}`);
+  });
+  server.unref?.();
+  webhookServer = server;
+}
+
+/**
+ * GitHub 事件轮询（v1）：只用本机 `gh`，只读 PR / CI。
+ * 没装 / 没登录 / 没绑定项目都静默跳过，不虚构事件。
+ */
+async function pollGithubEvents() {
+  if (githubPollBusy) return;
+  githubPollBusy = true;
+  try {
+    const bots = (store.state.bots || []).filter((b) => b.policy?.github?.enabled && b.projectId);
+    for (const bot of bots) {
+      const project = (store.state.projects || []).find((p) => p.id === bot.projectId);
+      if (!project?.path || !fs.existsSync(project.path)) continue;
+      const env = { ...dshPathEnv(), GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" };
+      let prs = [];
+      let runs = [];
+      try {
+        const { stdout } = await execFileAsync("gh", ["pr", "list", "--search", "review-requested:@me", "--json", "number,title,url", "--limit", "20"], { cwd: project.path, env, timeout: 20000, maxBuffer: 2 * 1024 * 1024 });
+        prs = parseGhJson(stdout);
+      } catch { /* 没 gh / 未登录 / 不是仓库：跳过 */ }
+      try {
+        const { stdout } = await execFileAsync("gh", ["run", "list", "--status", "failure", "--limit", "10", "--json", "databaseId,displayTitle,workflowName,url,conclusion"], { cwd: project.path, env, timeout: 20000, maxBuffer: 2 * 1024 * 1024 });
+        runs = parseGhJson(stdout);
+      } catch { /* 同上 */ }
+      const rows = eventRowsFromGh({ botId: bot.id, prs, runs });
+      const existing = new Set((store.state.botEvents || []).filter((e) => e.botId === bot.id).map((e) => e.key));
+      let added = false;
+      for (const row of rows) {
+        if (existing.has(row.key)) continue;
+        store.state.botEvents.push(row);
+        added = true;
+      }
+      if (added) {
+        store.state.botEvents = (store.state.botEvents || []).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 500);
+        store.persist();
+        broadcast();
+      }
+    }
+  } catch (err) {
+    console.warn(`[bot] github poll failed: ${String(err?.message || err)}`);
+  } finally {
+    githubPollBusy = false;
+  }
+}
+
+function startGithubPoll() {
+  if (githubPollTimer) return;
+  setTimeout(() => void pollGithubEvents(), 15_000).unref?.();
+  githubPollTimer = setInterval(() => void pollGithubEvents(), 5 * 60_000);
+  githubPollTimer.unref?.();
+}
+
+/** 一个 bot 回合要不要弹通知：先看它自己的开关，再走统一的时长 / 频次 / 未读节流 */
+function notifyBotTurn(turn, kind) {
+  if (!turn) return;
+  const bot = (store.state.bots || []).find((b) => b.id === turn.botId);
+  if (!notifyAllowed(bot?.policy, kind || turn.trigger?.kind || "")) return;
+  const verdict = notifyDecision({
+    reply: turn.reply, kind: turn.trigger?.kind || kind, now: Date.now(),
+    sentAt: botNotifyLog, mutedUntil: bot?.mutedUntil || 0, unread: botUnread,
+  });
+  if (!verdict.send) { console.log(`[bot] 不弹通知：${verdict.reason}`); return; }
+  botNotifyLog.push(Date.now());
+  botUnread += 1;
+  if (win && !win.isDestroyed()) win.webContents.send("harness:bot-message", { botId: turn.botId, text: verdict.text, turnId: turn.id, kind });
+}
+
 function startBotTick() {
   if (botTimer) return;
   botTimer = setInterval(() => {
     bots().tick().then((out) => {
       for (const turn of out || []) {
         if (turn.decision === "asked") {
+          const askBot = bots().list().find((b) => b.id === turn.botId);
+          if (!notifyAllowed(askBot?.policy, "asked")) continue;
           botUnread += 1;
           if (win && !win.isDestroyed()) win.webContents.send("harness:bot-message", { botId: turn.botId, text: turn.reply, turnId: turn.id, kind: "asked" });
           continue;
         }
         if (turn.decision !== "answered") continue;
-        botUnread += 1;
         // 通知是"打扰"，要有量化规则：180 字上限 / 每小时最多 3 条 / 未读太多就不叠加
         const bot = bots().list().find((b) => b.id === turn.botId);
+        if (!notifyAllowed(bot?.policy, "answered")) continue;
+        botUnread += 1;
         const verdict = notifyDecision({
           reply: turn.reply, kind: turn.trigger?.kind, now: Date.now(),
           sentAt: botNotifyLog, mutedUntil: bot?.mutedUntil || 0, unread: botUnread,
@@ -4413,6 +4634,7 @@ const actions = {
   },
   botSave: async (patch = {}) => bots().save(patch || {}),
   botTemplates: async () => templateSummaries(),
+  botSkills: async () => skillSummaries(),
   /** 从模板新建：人格 / 职责 / 能力深拷贝；预置日程默认停用，等人打开 */
   botCreateFromTemplate: async ({ templateId } = {}) => {
     const tpl = botTemplate(templateId);
@@ -4420,6 +4642,7 @@ const actions = {
     const bot = bots().save({
       name: tpl.name, avatar: tpl.avatar, avatarClass: tpl.avatarClass,
       role: tpl.role, capability: tpl.capability, persona: tpl.persona, policy: tpl.policy,
+      skills: tpl.skills || [],
     });
     let routine = null;
     if (tpl.routine) routine = bots().saveRoutine({ botId: bot.id, ...tpl.routine, enabled: false });
@@ -4435,6 +4658,32 @@ const actions = {
     return { ok: true, ...res };
   },
   /** 记忆整理：只归档（可恢复），不删除；apply 只接受当前计划里的 id */
+  botWebhookInfo: async () => ({ running: Boolean(webhookServer), port: webhookPort }),
+  botWebhookEnable: async ({ botId, enabled } = {}) => {
+    const bot = (store.state.bots || []).find((b) => b.id === String(botId || ""));
+    if (!bot) throw new Error("bot 不存在");
+    const prev = bot.policy?.webhook || {};
+    const token = prev.token || newWebhookToken();
+    bot.policy = { ...(bot.policy || {}), webhook: { ...prev, enabled: Boolean(enabled), token } };
+    store.persist();
+    broadcast();
+    return {
+      ok: true,
+      enabled: Boolean(enabled),
+      token,
+      port: webhookPort,
+      url: enabled && webhookPort ? `http://127.0.0.1:${webhookPort}/hook/${token}` : "",
+    };
+  },
+  botMemoryFile: async ({ botId } = {}) => {
+    const res = botMemoryFile(String(botId || ""));
+    return { ok: true, path: res.path };
+  },
+  botMemoryOpenFile: async ({ botId } = {}) => {
+    const res = botMemoryFile(String(botId || ""));
+    const error = await shell.openPath(res.path);
+    return { ok: !error, path: res.path, error };
+  },
   botMemoryTidyPlan: async ({ botId } = {}) => botMemoryTidyPlan(String(botId || "")),
   botMemoryTidyApply: async ({ botId, ids } = {}) => {
     const plan = botMemoryTidyPlan(String(botId || ""));
@@ -4445,6 +4694,7 @@ const actions = {
       .slice(0, TIDY_MAX_ARCHIVE);
     if (!chosen.length) return { ok: false, error: "没有可归档的条目（计划可能已过期，刷新再看）" };
     for (const id of chosen) memory().entryArchive({ id });
+    try { botMemoryFile(String(botId || "")); } catch { /* 镜像失败不影响归档 */ }
     broadcast();
     return {
       ok: true,
@@ -5698,9 +5948,9 @@ const actions = {
     }
     store.addEvent("todo.created", `todo.created count=3 source=template`);
   },
-  createTodo: ({ title, desc = "", agentId = null, cwd = "", priority = "P2", botId = null }) => {
+  createTodo: ({ title, desc = "", agentId = null, cwd = "", priority = "P2", botId = null, projectId = null }) => {
     if (!title) throw new Error("title required");
-    const project = activeProject();
+    const project = projectId ? (store.state.projects.find((p) => p.id === projectId) || activeProject()) : activeProject();
     const id = store.nextId("t");
     const todo = {
       id, key: `#${store.state.seq}`, title, desc, acceptance: [], status: "todo", agentId,
@@ -6663,7 +6913,25 @@ const actions = {
     const label = option?.name || (allowIt ? "允许" : "拒绝");
     store.addEvent("run.approval", `run.approval ${approval.title} ${label} ok=${ok}`);
     const approvalTodo = store.state.todos.find((t) => t.id === approval.todoId);
-    store.addMessage(approvalTodo ? threadForTodo(approvalTodo).id : null, approval.runId, "system", "system", `审批：${label} · ${approval.title}`);
+    // 审批关掉之后要能在会话里回看：命令原文 / 谁批的 / 批了什么
+    store.addMessage(
+      approvalTodo ? threadForTodo(approvalTodo).id : null,
+      approval.runId,
+      "system",
+      "approval",
+      `审批：${label} · ${approval.title}`,
+      {
+        meta: {
+          title: approval.title || "审批",
+          description: approval.description || "",
+          decision: label,
+          allow: allowIt,
+          optionId: optionId || null,
+          agentId: run?.agentId || null,
+          botId: approvalTodo?.botId || null,
+        },
+      },
+    );
   },
   cleanupWorktree: ({ runId }) => {
     const run = store.state.runs.find((r) => r.id === runId);
@@ -8012,6 +8280,8 @@ app.whenReady().then(async () => {
   // 机器人现在是工作区左栏的一段（没有独立页面），启动时就要落种子，不能等打开 Bot 页才创建
   try { bots(); } catch (err) { console.warn(`[bot] seed failed: ${String(err?.message || err)}`); }
   try { startBotTick(); } catch (err) { console.warn(`[bot] tick start failed: ${String(err?.message || err)}`); }
+  try { startGithubPoll(); } catch (err) { console.warn(`[bot] github poll start failed: ${String(err?.message || err)}`); }
+  try { startWebhookServer(); } catch (err) { console.warn(`[bot] webhook start failed: ${String(err?.message || err)}`); }
   // 启动后清一次旧 worktree（默认保留 7 天，0 = 不清），避免目录无限堆
   setTimeout(() => {
     try {
@@ -8030,6 +8300,11 @@ app.whenReady().then(async () => {
   }, 8000);
   // 空闲整理：没有 run 在跑、且人一段时间没操作时跑一轮 Dream（配置在记忆页，0 = 只手动）
   dreamIdleTimer = setInterval(() => { void dreamIdleTick(); }, DREAM_IDLE_TICK_MS);
+  // 排队的 run 不能等用户再点一下才跑：启动后补一次调度，并开一个轻量兜底定时器
+  setTimeout(() => {
+    startQueueTick();
+    try { tick(); } catch (err) { console.warn("[queue] boot tick failed:", String(err?.message || err)); }
+  }, 1500);
   broadcast();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
@@ -8047,6 +8322,7 @@ app.on("before-quit", (event) => {
     return;
   }
   try { clearInterval(dreamIdleTimer); } catch { /* ignore */ }
+  try { clearInterval(queueTimer); } catch { /* ignore */ }
   for (const id of [...recordings.keys()]) stopRecording(id, "quit");
   try { closeAllTunnels(); } catch { /* ignore */ }
   try { globalShortcut.unregisterAll(); } catch { /* ignore */ }

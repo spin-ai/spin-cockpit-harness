@@ -159,6 +159,8 @@ try {
     routineProposal: { name: "早报", kind: "daily", prompt: "汇总" },
     handoff: { to: "b2", toName: "小B", task: "查部署" } });
   rt.state.botRevisions.push({ id: "rev-rt", botId: "bot-rt", at: 1700000000000, by: "owner", data: { name: "旧名字", persona: { mission: "旧职责" } } });
+  rt.state.botEvents.push({ id: "ev-rt", botId: "bot-rt", source: "github", key: "pr:1", title: "PR #1", url: "https://x", at: 1700000000000, seen: false });
+  rt.state.bots.push({ id: "bot-rt", name: "技能 bot", avatar: "", avatarClass: "a", persona: {}, capability: "work", role: "worker", executorAgentId: null, model: "", effort: "", skills: ["status-brief", "pr-review"], projectId: "p1", hostId: "h1", team: "产品组", plan: { goal: "修登录", steps: [{ text: "看日志", status: "doing" }] }, channels: ["local"], policy: {}, budget: {}, status: "active", mutedUntil: 0, createdAt: 1, updatedAt: 2 });
   rt.persist(); rt.flush(); rt.close();
   const rt2 = await openDb(dir);
   const turn = (rt2.state.botTurns || []).find((t) => t.id === "bt-rt");
@@ -172,6 +174,15 @@ try {
   assert.deepEqual(turn?.context, { chars: 1234, memory: 600, digest: true }, "bot_turns.context 要能往返");
   assert.equal(turn?.routineProposal?.name, "早报", "bot_turns.routine_proposal 要能往返");
   assert.equal(turn?.handoff?.to, "b2", "bot_turns.handoff 要能往返");
+  const bot = (rt2.state.bots || []).find((b) => b.id === "bot-rt");
+  assert.deepEqual(bot?.skills, ["status-brief", "pr-review"], "bots.skills 要能往返");
+  assert.equal(bot?.projectId, "p1", "bots.project_id 要能往返");
+  assert.equal(bot?.hostId, "h1", "bots.host_id 要能往返");
+  assert.equal(bot?.team, "产品组", "bots.team 要能往返");
+  assert.equal(bot?.plan?.goal, "修登录", "bots.plan 要能往返");
+  const ev = (rt2.state.botEvents || []).find((e) => e.id === "ev-rt");
+  assert.equal(ev?.key, "pr:1", "bot_events 要能往返");
+  assert.equal(ev?.seen, false);
   const rev = (rt2.state.botRevisions || []).find((r) => r.id === "rev-rt");
   assert.equal(rev?.data?.name, "旧名字", "bot_revisions 要能往返（人格历史）");
   assert.equal(th?.kind, "bot", "threads.kind 不能与 bot_id 写反");

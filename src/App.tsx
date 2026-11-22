@@ -18,6 +18,7 @@ import { Settings, type SettingsSection } from "./components/Settings";
 import { Guide } from "./components/Guide";
 import { Notes } from "./components/Notes";
 import { Zhulong } from "./components/Zhulong";
+import { PluginMarket } from "./components/PluginMarket";
 import { BotConsole } from "./components/Bot";
 import { Bots } from "./components/Bots";
 import { Memory } from "./components/Memory";
@@ -26,7 +27,7 @@ import { SceneWorkspace } from "./components/SceneWorkspace";
 import { requestTerminalAdopt, requestTerminalAt } from "./terminal-events";
 import { THEMES, isDarkTheme, resolveTheme } from "./themes";
 
-type View = "workspace" | "terminal" | "scene" | "projects" | "bots" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "bot";
+type View = "workspace" | "terminal" | "scene" | "projects" | "bots" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "plugins" | "bot";
 type PaneId = "todo" | "terminal" | "files";
 const COLLAPSED_PANE_W = 34;
 
@@ -51,7 +52,7 @@ export default function App() {
   /** 从机器人页点「打开会话」进来时要落到哪个 bot */
   const [activeBotId, setActiveBotId] = useState<string | null>(null);
   /** 工作区右侧的机器人配置抽屉：当前在看哪个 bot */
-  const [botDrawerId, setBotDrawerId] = useState<string | null>(null);
+
   /** 预览里拾取的元素上下文：随下一次派活发出去 */
   const [pendingContext, setPendingContext] = useState<ElementContext | null>(null);
   /** 对话面聚焦哪一次运行（点运行记录 / 从终端「在对话里继续」进来时设它） */
@@ -398,7 +399,7 @@ export default function App() {
     const onView = (e: Event) => {
       const detail = (e as CustomEvent<string | { view?: string; page?: string; sceneId?: string }>).detail;
       const next = typeof detail === "string" ? detail : detail?.view;
-      if (!next || !["workspace", "terminal", "scene", "projects", "bots", "stats", "hosts", "settings", "guide", "notes", "knowledge", "memory", "persona", "zhulong", "bot"].includes(next)) return;
+      if (!next || !["workspace", "terminal", "scene", "projects", "bots", "stats", "hosts", "settings", "guide", "notes", "knowledge", "memory", "persona", "zhulong", "plugins", "bot"].includes(next)) return;
       if (next === "guide" && typeof detail === "object" && detail?.page) setGuidePage(detail.page);
       if (next === "scene") setSceneFocusId(typeof detail === "object" && detail?.sceneId ? detail.sceneId : null);
       // 统计 / 主机已收进设置：保留旧入口，落到设置对应分区
@@ -472,7 +473,6 @@ export default function App() {
 
   // 离开机器人会话时，右侧配置一起收起（换回普通任务 / 别的页面不占着位置）
   useEffect(() => {
-    if (thread && thread.kind !== "bot") setBotDrawerId(null);
   }, [thread]);
 
   const openThreadFromPalette = useCallback(async (threadId: string) => {
@@ -504,6 +504,7 @@ export default function App() {
       { id: "view-memory", label: "记忆（四层 / Dream）", group: "导航", run: () => setView("memory") },
       { id: "view-persona", label: "人物（建模 / 决策辅助）", group: "导航", run: () => setView("persona") },
       { id: "view-bots", label: "机器人库（配置：人设 / 执行体 / 日程）", group: "导航", run: () => setView("bots") },
+      { id: "view-plugins", label: "插件市场（本机插件 / 已注册视图）", group: "导航", run: () => setView("plugins") },
       { id: "quick-capture", label: "快速记录到知识库", hint: "⌘⇧K", group: "任务", run: () => void act("openQuickCapture") },
       { id: "new-thread", label: "新建会话", hint: "⌘N", group: "任务", run: () => void newThread() },
       { id: "new-task", label: "新建任务", hint: "⌘⇧N", group: "任务", run: () => dispatchInWorkspace(() => new Event("harness:new-task")) },
@@ -676,7 +677,7 @@ export default function App() {
     <LangProvider lang={state.settings?.uiLanguage === "en" ? "en" : "zh"}>
     <div className="app">
       <div className={`main pane-focus-${focusedPane ?? "none"}${maximized ? " pane-max" : ""}`} style={{ gridTemplateColumns: gridCols }} onPointerDownCapture={markFocusedPane} onFocusCapture={markFocusedPane}>
-        <Rail view={view} notesEnabled={notesEnabled} zhulongAvailable={zhulongAvailable} badges={railBadges} onChange={(v) => { if (v === "settings") setSettingsSection(undefined); setView(v); }} />
+        <Rail view={view} notesEnabled={notesEnabled} badges={railBadges} onChange={(v) => { if (v === "settings") setSettingsSection(undefined); setView(v); }} />
         {/* 工作区始终挂载、只切显隐：切到项目 / 设置再回来时，终端 pty、标签、滚动位置都不能丢 */}
         {/* 网格（TODO / 终端 / 文件）只在终端模式显示；BOT 模式是下面那张独立页面 */}
         {scoped && (
@@ -743,21 +744,6 @@ export default function App() {
               />
             )}
           </>
-          {botDrawerId && (
-            <div className="bot-drawer" role="dialog" aria-label="机器人配置">
-              <BotConsole
-                key={botDrawerId}
-                act={act}
-                notify={notify}
-                state={state}
-                initialBotId={botDrawerId}
-                settingsOnly
-                onClose={() => setBotDrawerId(null)}
-                onOpenMemory={() => { setBotDrawerId(null); setView("memory"); }}
-                onOpenThread={openSession}
-              />
-            </div>
-          )}
           </div>
         )}
         {view === "workspace" && (
@@ -767,8 +753,9 @@ export default function App() {
               notify={notify}
               state={state}
               initialBotId={inspectorBotId}
-              onOpenMemory={() => setView("memory")}
               onOpenThread={openSession}
+              onOpenTodo={(id) => void openTodoFromPalette(id)}
+              onBackToBots={() => setView("bots")}
             />
           </div>
         )}
@@ -803,8 +790,9 @@ export default function App() {
         {view === "memory" && <div className="wide"><Memory act={act} /></div>}
         {view === "persona" && <div className="wide"><Persona act={act} /></div>}
         {view === "bots" && <div className="wide"><Bots state={state} act={act} notify={notify} now={now} onOpenBot={(id) => { setActiveBotId(id); setView("bot"); }} /></div>}
-        {view === "bot" && <div className="wide bot-workspace"><BotConsole act={act} notify={notify} state={state} initialBotId={activeBotId} onBackToBots={() => setView("bots")} onOpenMemory={() => setView("memory")} onOpenThread={(id) => void openThreadFromPalette(id)} /></div>}
-        {view === "zhulong" && <div className="wide"><Zhulong state={state} act={act} notify={notify} onOpenSettings={() => window.dispatchEvent(new CustomEvent("harness:open-settings", { detail: { section: "plugins" } }))} /></div>}
+        {view === "bot" && <div className="wide bot-workspace"><BotConsole act={act} notify={notify} state={state} initialBotId={activeBotId} onBackToBots={() => setView("bots")} onOpenThread={(id) => void openThreadFromPalette(id)} onOpenTodo={(id) => void openTodoFromPalette(id)} /></div>}
+        {view === "plugins" && <div className="wide"><PluginMarket state={state} onOpenView={(target) => setView(target)} onOpenSettings={() => window.dispatchEvent(new CustomEvent("harness:open-settings", { detail: { section: "plugins" } }))} /></div>}
+        {view === "zhulong" && <div className="wide"><Zhulong state={state} act={act} notify={notify} onBack={() => setView("plugins")} onOpenSettings={() => window.dispatchEvent(new CustomEvent("harness:open-settings", { detail: { section: "plugins" } }))} /></div>}
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />

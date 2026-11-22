@@ -72,7 +72,7 @@
 | **头像**：人格卡里选 emoji（不存图片），带底色档位 | `Bot.tsx` §persona |
 | **会话正文**：agent 回复走 `RichText`（与 Chat 窗口同一套 Markdown / 代码卡 / 列表），用户消息保留纯文本气泡；视觉规范见 `ARCH-chat-ui` | `RichText` / `src/components/TaskChat.tsx` |
 | **回合可恢复（bot 侧）**：被动回复先落一条 `decision: "streaming"`，增量每 800ms 节流刷新；成功后同一条改成 `replied`，取消 / 报错则删掉；**应用被杀**留下的 `streaming` 在下次 `ensureSeed()` 收成 `interrupted` 并保留半截正文 | `reply()` / `ensureSeed()` / Bot 页「被打断」行 |
-| **只读工具（function calling）**：`read` 档也下发只读工具（记忆 / 资料 / 任务 / 运行 / 工作区 / git / run_log）**+ 只写自己的记忆**；`dispatch` / `work` 再加 `task_create`。工具最多 8 轮、单轮默认 2048 token、工具轮温度 0.3；同一工具同参数 3 次或总调用 24 次强制停，停因落 `bot_turns.stop_reason`。模型自己编一个没注册的工具会被回一条 tool 错误让它改口，不会执行；网关不支持 tools 时自动退回纯对话。用过的工具留痕在 `bot_turns.tools` | `electron/bot/tools.mjs` / `chatStreamWithTools()` / `botReadTool()` |
+| **只读工具（function calling）**：`read` 档也下发只读工具（记忆 / 资料 / 任务 / 运行 / 工作区 / git / run_log）**+ 只写自己的记忆**；`dispatch` / `work` 再加 `task_create`；`work` 且打开无人值守时再加 `run_start`。工具最多 8 轮、单轮默认 2048 token、工具轮温度 0.3；同一工具同参数 3 次或总调用 24 次强制停，停因落 `bot_turns.stop_reason`。模型自己编一个没注册的工具会被回一条 tool 错误让它改口，不会执行；网关不支持 tools 时自动退回纯对话。用过的工具留痕在 `bot_turns.tools` | `electron/bot/tools.mjs` / `chatStreamWithTools()` / `botReadTool()` |
 | **观察面（2026-11-22）**：`workspace_list` / `workspace_read` / `workspace_grep` / `git_status` / `git_log` / `git_diff` / `run_log` 七个只读工具；路径锁在项目根内（含 realpath 防符号链接逃逸），拒绝 `.env` / 密钥 / 二进制 / 超大文件，搜索跳过 `.git`、`node_modules`、`dist` 等 | `electron/bot/workspace.mjs` / `botReadTool()` |
 | **上下文编译器（2026-11-22）**：`compileContext()` 分区拼人格 / 记忆 / 同僚目录 / 规则，回报每区占用；记忆预算 2400 → 8000 字符；本轮回合按 query 相关度上浮；超过 24 条消息把最近 10 条之外压成摘要（`threads.digest`，纯函数、不额外调模型）；当前时间与当前项目也写进 system（算“20 分钟后”不用猜） | `compileContext()` / `historyDigest()` / `memory.inject({ query })` |
 | **自己的记忆能写（2026-11-22）**：`memory_write` / `memory_forget` 只写 `owner=bot:<id>`，走 `noteAdd`（待确认观察）而不是直接 L4；密钥/令牌命中直接拒写；删除只能删自己的 | `botReadTool()` 的 `memory_write` / `memory_forget` |
@@ -83,6 +83,16 @@
 | **群聊交接（2026-11-22）**：`handoff_to_bot` 只在群聊可用；主进程写一条 `author=system` 的「A → B：任务」行，并且只跟一跳唤醒目标（本轮已经回过的不重复叫）；交接记在 `bot_turns.handoff` | `electron/bot/tools.mjs` / `botGroupSend` / `Bot.tsx` / `electron/db.mjs` |
 | **模板与思考档（2026-11-22）**：4 个内置模板（早报 / 发布守护 / 答疑 / 运行观察），新建面板选一个，深拷贝人格 / 职责 / 能力，预置日程默认停用；`effort` = quick / 标准 / deep（4 / 8 / 12 轮，工具轮温度 0.4 / 0.3 / 0.2） | `electron/bot/templates.mjs` / `Bots.tsx` / `effortPolicy()` |
 | **版本 diff 与并发（2026-11-22）**：`botRevisionDiff` 只列有变化的字段；`botSave` 带 `expectedUpdatedAt`，旧页保存会冲突而不是覆盖；恢复仍生成新版本 | `electron/bot/index.mjs` / `botRevisionDiff` / `Bot.tsx` |
+| **机器人设置分类（2026-11-22）**：控制台右栏「设置」= 5 个 tab：身份（人格 + 职责 + 历史）/ 能力（档位 + 执行体 + 模型 + 思考档 + 工具 + 技能 + 通道）/ 记忆 / 自动化 / 规则（谁能找它 + 频控 + 静音 + 通知）。**「工作」从设置移出**：待处理、分到的任务、监视任务放到会话列顶部；任务是任务面板的事，不是配置。独立「档案」页已删除 | `src/components/Bot.tsx` |
+| **技能包（2026-11-22）**：5 个内置技能（状态简报 / 代码审查 / 发布检查 / 事故记录 / 记忆纪律）；`bots.skills` 存 id，档案页可开关；技能正文进 system prompt，硬上限 2400 字符；模板可预置技能 | `electron/bot/skills.mjs` / `compileContext()` / `Bot.tsx` |
+| **项目/主机绑定（2026-11-22）**：`bots.project_id` / `bots.host_id`；能力 tab 选默认项目 / 主机，项目页与主机页的行菜单也能「交给机器人」。`workspace_*` / `git_*` / `task_create` 用绑定项目，executor 只能选绑主机上的 Agent | `electron/db.mjs` / `botReadTool()` / `Views.tsx` / `Bot.tsx` |
+| **MEMORY.md（2026-11-22）**：每个 bot 生成 `userData/bots/<id>/MEMORY.md`（共享 + 自己的 L4/L3/L2 + 观察）；**只读镜像，DB 仍是事实源**，手改不回写；记忆写入/删除/归档后自动刷新 | `memory.botMarkdown()` / `botMemoryFile()` / Bot 页「MEMORY.md」 |
+| **计划与可续（2026-11-22）**：`plan_set` / `plan_update` 把目标与步骤写进 `bots.plan`；重开应用还在，下一轮进 system prompt；这是计划级续跑，不是 turn checkpoint | `electron/bot/tools.mjs` / `compileContext()` / 会话列「计划」 |
+| **无人值守（2026-11-22）**：`policy.standing` 默认关；work 档 + 绑定项目 + 每小时上限才允许 `run_start` 启动**已建好**的任务；越界/超限/在跑都拒绝 | `botReadTool()` 的 `run_start` / Bot 页「规则」 |
+| **Webhook 入站（2026-11-22）**：本机 `127.0.0.1` 随机端口监听；每个 bot 一个 token，`POST /hook/<token>` 收 `{title,text,url,id}`；写 `bot_events` 去重，bot 说过一次即 seen | `electron/bot/webhook.mjs` / `startWebhookServer()` / Bot 页「Webhook 入站」 |
+| **GitHub 事件（2026-11-22）**：`policy.github.enabled` 打开后每 5 分钟用本机 `gh` 只读拉「等你 review 的 PR」与「失败 CI」；去重键 + seen + 12h TTL；没装/没登录静默跳过 | `electron/bot/github.mjs` / `pollGithubEvents()` / `bot_events` |
+| **组织（2026-11-22）**：`bots.team` 自由文本；身份 tab 可改，卡片显示团队标签，群聊名册带团队；Bots 可按团队排序。不做权限体系 | `electron/db.mjs` / `Bot.tsx` / `Bots.tsx` |
+| **per-bot 通知开关（2026-11-22）**：`policy.notify` 四个开关（主动开口 / 需要你决定 / 任务完成 / 未能完成）；run 完成与失败也会按开关弹通知，仍受 180 字 / 每小时 3 条 / 未读节流约束 | `electron/bot/notify.mjs` / `startBotTick()` / run 完成与失败路径 / `Bot.tsx` |
 | **职责卡（persona.duty）**：目标 / 范围 / 交付物 / 不做什么 / 汇报口径，与 `mission`、`role` 一起进 system prompt —— 只写人设不写职责，PM 和 DE-A 在模型眼里是同一个人 | `buildSystemPrompt()` / Bot 页「职责卡」 |
 | **记忆写入按 bot 落 owner**：bot 起的 run（`todo.botId`）经 MCP 写记忆时默认 `owner=bot:<id>`，读侧 `inject({ owner })` 只看「共享 + 自己」；人手开的 run 仍写共享层 | `startWikiMcpServer()` 的 `ownerOf()` |
 
@@ -145,6 +155,8 @@ type Bot = {
 | `mention` | 本地 Chat @bot、IM 群里被 @ | ✅（被动兜底，必须有） |
 | `todo.changed` | 任务进入 `waiting_input`、被标记失败 | ✅ |
 | `run.failed` | 一次运行失败（2 小时内、同任务不重复） | ✅ |
+| `github.*` | 等你 review 的 PR / 失败 CI（本机 `gh` 轮询，去重 + TTL） | ✅（默认关，需 `policy.github` + 绑定项目） |
+| `webhook` | 外部服务 POST 一条 `{title,text,url}` | ✅（默认关，本机 127.0.0.1 + bot token） |
 | `run.finished` | 一次 run 结束且结论里有待确认项 | ◐（bot 自己起的 run 会 `report()`；任意 run 不进候选） |
 | `memory.due` | L2 条目到期、Dream 生成候选 | ❌（Dream 是独立复核流程，不进 bot tick） |
 | `schedule` | 每天 9:00 说一句「今天有三条待确认」 | ✅（60s tick + daily / every / once / watch 四类判定；每条带 prompt） |
@@ -219,13 +231,13 @@ type BotTurn = {
 |---|---|---|
 | 记忆 | `memory_search` / `memory_write` / `memory_forget` | `entrySearch` / `noteAdd` / `noteRemove`（只到 `owner=bot:<id>`） |
 | 资料 | `knowledge_search` | `knowledge().search` |
-| 任务 / 运行 | `todo_list` / `run_status` / `run_log` | `state.todos` / `state.runs` / run 的 result + messages |
+| 任务 / 运行 | `todo_list` / `run_status` / `run_log` / `plan_set` / `plan_update` | `state.todos` / `state.runs` / run 的 result + messages / `bots.plan` |
 | 工作区 | `workspace_list` / `workspace_read` / `workspace_grep` | `electron/bot/workspace.mjs`（路径 jail、拒绝凭据/二进制） |
 | git | `git_status` / `git_log` / `git_diff` | `gitRun`（只读） |
 | 日程 | `routine_propose`（只出草稿） | 人点「建日程」才写 `routines` |
-| 写世界 | `task_create`（仅 dispatch / work） | `createTodo`；起 run 仍需人点 |
+| 写世界 | `task_create`（dispatch / work）；`run_start`（仅 work + 无人值守） | `createTodo`；`run_start` 只启动已建好、属于绑定项目的任务 |
 
-边界：工具表里**没有**任意命令 / 改文件 / 改设置。写世界只有 `task_create`（建 todo）；记忆只写自己的；模型硬编一个未注册工具时回 tool 错误而不执行。
+边界：工具表里**没有**任意命令 / 改文件 / 改设置。写世界只有 `task_create`（建 todo）和受 `standing` 约束的 `run_start`；记忆只写自己的；模型硬编一个未注册工具时回 tool 错误而不执行。
 
 `dispatch` 档位的硬约束：
 - 起任务前先回一句「我理解的是 X，要现在开吗」——**一句话确认**，不直接跑；
@@ -330,7 +342,7 @@ CREATE TABLE bot_turns(id TEXT PRIMARY KEY, bot_id TEXT, channel TEXT,
 
 - **work 档位能起 run，但仍需一次人工点击**：「开跑」按钮就是那次授权；模型不能自己触发 run。
 - **执行回流是摘要不是改稿**：run 结束后只回一条 200 字内的汇报，不重写 agent 的产出。
-- **bot 对话不写世界**：改文件 / 跑任意命令 / 改设置全部不在工具表里；它只能写**自己的**记忆（`owner=bot:<id>`）和建 todo。要动世界仍得人到 Chat 派活。
+- **bot 对话不直接改世界**：改文件 / 跑任意命令 / 改设置全部不在工具表里；它只能写**自己的**记忆、建 todo，或在「无人值守」开启时启动已建好的 run。
 - **工具调用留痕**：`bot_turns.tools` 记 `{ name, args, argsRaw, result, ms, ok }`，`trace` 记每次模型请求与工具调用；为控制表大小，单条结果按工具元数据截断（默认 6–12KB）。
 - **飞书（P2）**：bot 只出本地回合流；群里 @ 触发依赖 `ARCH-im-gateway.md` §3 的长连接。
 - **多 bot 并发抢占**：tick 按 bot 顺序串行跑，没有「同一事件两个 bot 都想说」的去重与协商。

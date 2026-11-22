@@ -16,7 +16,7 @@
 | 项 | 说明 |
 |---|---|
 | 快照日期 | 2026-11-22 |
-| 本项目 | `src/components/Bot.tsx`（2368 行，含左栏 / 右栏 / 轨迹 / 群聊）+ `src/styles.css` 的 `.ds-*` / `.bot-*` |
+| 本项目 | `src/components/Bot.tsx`（2026-11-22 复核：2938 行，含左栏 / 右栏 / 轨迹 / 群聊）+ `src/styles.css` 的 `.ds-*` / `.bot-*` |
 | DeepSeek Harness | `deepseek-harness @ 39163dd3`（2026-11-13，`packages/client/ui-chat`）；本地只读副本在 `~/Documents/GitWorksapce/deepseek-harness` |
 | Orca | `stablyai/orca @ 8e0c267e`（2026-11-20，`src/renderer/src/components/native-chat`），副本 `third-part/orca/` |
 | 规模对照 | 我们：1 个聊天组件文件；dsh：`ui-chat/src` 105 文件 / 16848 行（其中 `chat/` 33 个 tsx / 3829 行）；Orca：`native-chat` 317 个非测试 tsx / 94529 行 |
@@ -151,3 +151,11 @@
 **没能测的**：滚动帧率（窗口是后台启动的，`requestAnimationFrame` 被节流，测出来的 worst frame 不可信）；真实流式期的 DOM 写入频率（需要真跑一次模型调用）。要测这两个，得把窗口切到前台或给 preview 注入一段假流。
 
 证据落在本机临时工程 `/tmp/ca-chat`（`core_journal_read` 可读），不随仓库分发。
+
+
+---
+
+## 2026-11-22 复核补充
+
+- 本轮把机器人设置收成 5 个 tab（身份 / 能力 / 记忆 / 自动化 / 规则），并把「工作」放回会话列顶部；同时删掉了会话底部的能力说明与「打开记忆」footer。**这些是配置与外壳变化，不改变本文对聊天窗口的结论。**
+- `Bot.tsx` 行号已随设置重排漂移；本文的 `文件:行` 锚点按函数 / 组件名找，不按旧行号找。

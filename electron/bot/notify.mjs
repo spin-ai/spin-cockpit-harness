@@ -13,6 +13,19 @@ export const NOTIFY_MAX_CHARS = 180;
 export const NOTIFY_MAX_PER_HOUR = 3;
 export const NOTIFY_UNREAD_SUPPRESS = 5;
 
+/** 每个 bot 自己的通知开关；缺省全开（旧 bot 没有这个字段也按全开算） */
+export const DEFAULT_NOTIFY = { proactive: true, needPermission: true, taskDone: true, failed: true };
+
+/** 这个类别要不要通知：只读 policy，不碰节流（节流仍在 notifyDecision） */
+export function notifyAllowed(policy, kind = "") {
+  const n = { ...DEFAULT_NOTIFY, ...(policy?.notify || {}) };
+  if (kind === "asked" || kind === "escalated") return n.needPermission !== false;
+  if (kind === "answered") return n.proactive !== false;
+  if (kind === "reported" || kind === "run.finished") return n.taskDone !== false;
+  if (kind === "run.failed" || kind === "blocked" || kind === "interrupted" || kind === "failed") return n.failed !== false;
+  return true;
+}
+
 /**
  * @param {object} input
  * @param {string} input.reply       这一轮要说的话

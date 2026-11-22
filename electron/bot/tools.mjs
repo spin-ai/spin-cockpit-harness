@@ -91,6 +91,14 @@ export const BOT_SELF_TOOLS = [
     task: str("要它接什么，一句话"),
     reason: str("为什么交给它（可选）"),
   }, ["to", "task"]),
+  fn("plan_set", "把当前任务拆成一个可续的计划（目标 + 步骤）。重开应用后它还在，下一步从这里接着做。", {
+    goal: str("这次要完成什么，一句话"),
+    steps: { type: "array", items: { type: "string" }, description: "3–8 步，按顺序" },
+  }, ["goal", "steps"]),
+  fn("plan_update", "把计划里的某一步标成 doing / done / blocked。只改状态，不改步骤文字。", {
+    index: int("第几步，从 0 开始"),
+    status: str("doing / done / blocked"),
+  }, ["index", "status"]),
   fn("routine_propose", "提议一条日程（到点提醒 / 汇报 / 变化才跑）。这只是提议：用户点「建日程」后才生效，不要声称已经建好。", {
     name: str("短名字，例如「早报」"),
     instruction: str("到点要你做什么，写清楚；例如：汇总今天的待确认任务和失败运行，先结论再风险"),
@@ -106,6 +114,9 @@ export const BOT_SELF_TOOLS = [
 
 /** 会改变世界的工具：只有 dispatch / work 档下发，而且起 run 仍要人点 */
 export const BOT_WRITE_TOOLS = [
+  fn("run_start", "启动一条**已经建好**的任务（仅 work 档）。只有 bot 打开了「无人值守」且任务属于它绑定的项目时才允许；每小时有上限。", {
+    todo: str("任务编号或 id"),
+  }, ["todo"]),
   fn("task_create", "创建一个任务并指派给某个 worker（只建 todo；默认不起 run）。用于把一句话目标拆成可验收的子任务。", {
     title: str("任务标题，短且可验收"),
     brief: str("背景 / 做到什么算完成"),
@@ -134,8 +145,11 @@ export const BOT_TOOL_META = Object.freeze({
   memory_write: { risk: "self", timeoutMs: 3000, maxResultChars: 2000 },
   memory_forget: { risk: "self", timeoutMs: 3000, maxResultChars: 2000 },
   handoff_to_bot: { risk: "self", timeoutMs: 3000, maxResultChars: 2000 },
+  plan_set: { risk: "self", timeoutMs: 3000, maxResultChars: 4000 },
+  plan_update: { risk: "self", timeoutMs: 3000, maxResultChars: 2000 },
   routine_propose: { risk: "self", timeoutMs: 3000, maxResultChars: 4000 },
   task_create: { risk: "write", timeoutMs: 10000, maxResultChars: 4000, requiresCapability: ["work", "dispatch"] },
+  run_start: { risk: "write", timeoutMs: 10000, maxResultChars: 2000, requiresCapability: ["work"] },
 });
 
 export const BOT_READ_TOOL_NAMES = BOT_READ_TOOLS.map((t) => t.function.name);
@@ -146,7 +160,10 @@ export const BOT_TOOL_NAMES = [...BOT_READ_TOOL_NAMES, ...BOT_SELF_TOOL_NAMES, .
 /** 这一档位实际下发的工具表（read 也能看工作区，只是不能建任务） */
 export function botToolsFor(capability) {
   const tools = [...BOT_READ_TOOLS, ...BOT_SELF_TOOLS];
-  if (capability === "dispatch" || capability === "work") tools.push(...BOT_WRITE_TOOLS);
+  for (const t of BOT_WRITE_TOOLS) {
+    const need = BOT_TOOL_META[t.function.name]?.requiresCapability;
+    if (!need || need.includes(capability)) tools.push(t);
+  }
   return tools;
 }
 

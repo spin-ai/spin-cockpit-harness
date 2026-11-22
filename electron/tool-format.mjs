@@ -22,6 +22,54 @@ export function toolStatusText(status) {
   return STATUS_TEXT[String(status).toLowerCase()] || String(status);
 }
 
+/**
+ * ACP `kind` 到展示家族的映射。`kind` 比 `title` 可信：title 常被模型改写成中文或
+ * 直接写成 kind；`kind` 是协议规定的那几个值。
+ */
+const KIND_FAMILY = {
+  read: "read",
+  edit: "edit",
+  delete: "edit",
+  move: "edit",
+  search: "search",
+  execute: "run",
+  think: "think",
+  fetch: "net",
+};
+
+/** 没有 kind 时按工具名兜底（旧消息 / bot 只读工具 / 第三方 ACP 实现） */
+const FAMILY_RULES = [
+  ["plan", /^(todo_write|todowrite|write_todos|update_plan|todolist|plan)\b/i],
+  ["read", /(^|[_\-\s])(read|view|cat|open_file|file_read|read_file)([_\-\s]|$)/i],
+  ["edit", /(edit|write|patch|replace|apply|create_file|str_replace|mkdir)/i],
+  ["run", /(bash|shell|terminal|exec|command|run|spawn|kill)/i],
+  ["search", /(search|grep|glob|find|query|rg\b)/i],
+  ["net", /(web|fetch|http|url|browse|curl|request)/i],
+];
+
+/** 工具家族：read / edit / run / search / net / mcp / plan / think / other */
+export function toolFamily({ kind = "", title = "", input = "" } = {}) {
+  const name = String(title || "");
+  // MCP 工具在 ACP 里叫 mcp__<server>__<tool>；rawInput 只有 JSON 时也认一次
+  if (/mcp__[a-z0-9_-]+__[a-z0-9_-]+/i.test(name) || /mcp__[a-z0-9_-]+__[a-z0-9_-]+/i.test(String(input || "").slice(0, 200))) return "mcp";
+  const byKind = KIND_FAMILY[String(kind || "").toLowerCase()];
+  if (byKind) return byKind;
+  const text = `${name} ${kind}`;
+  for (const [family, re] of FAMILY_RULES) if (re.test(text)) return family;
+  return "other";
+}
+
+/** 归一化工具状态：running / waiting / done / failed / denied / stopped */
+export function normalizeToolStatus(status, { rejected = false, failed = false } = {}) {
+  if (rejected) return "denied";
+  const s = String(status || "").toLowerCase();
+  if (failed || s === "failed" || s === "error") return "failed";
+  if (s === "completed" || s === "done" || s === "success") return "done";
+  if (s === "cancelled" || s === "canceled" || s === "aborted") return "stopped";
+  if (s === "awaiting_approval" || s === "waiting_input" || s === "blocked") return "waiting";
+  return "running";
+}
+
 /** 把 ACP content（数组或单个 part）里的文本拼出来；只保留前 max 个字符 */
 export function toolOutputText(content, max = 1200) {
   if (!content) return "";

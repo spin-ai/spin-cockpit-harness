@@ -3,12 +3,13 @@ import { useT } from "../i18n";
 /**
  * rail：只放「对象」和「库」，不放入口性的容器（原型 owner-workspaces.html）。
  *
- *   机器人 · 工作台 │ 场景 │ 记忆 · 知识 · 人物 │ 视觉
+ *   机器人 · 工作台 │ 场景 │ 记忆 · 知识 · 人物 │ 插件市场
  *
  * 项目 / 机器人 是两个 机器人 / 工作台 页面里的左栏列表（不占 rail），
  * Git 在工作台的右栏「文件 / 会话 / Git」里。
+ * 插件自己的视图（视觉解析…）不单独占 rail：它们是「插件市场」里的条目。
  */
-type View = "workspace" | "terminal" | "scene" | "projects" | "bots" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "bot";
+type View = "workspace" | "terminal" | "scene" | "projects" | "bots" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "plugins" | "bot";
 
 const icon = (name: string) => {
   const common = { width: 19, height: 19, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
@@ -19,11 +20,12 @@ const icon = (name: string) => {
   if (name === "note") return <svg {...common}><path d="M5 4h9l5 5v11H5z" /><path d="M14 4v5h5M8 13h8M8 17h5" /></svg>;
   if (name === "persona") return <svg {...common}><circle cx="12" cy="8" r="3.4" /><path d="M5 20a7 7 0 0 1 14 0" /></svg>;
   if (name === "scan") return <svg {...common}><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16" /><path d="M8 12h8M12 8v8" /></svg>;
+  if (name === "plugins") return <svg {...common}><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z" /><path d="M12 3v18M4 7.5l8 4.5 8-4.5" /></svg>;
   if (name === "guide") return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="M9.5 9a2.5 2.5 0 1 1 3.4 2.3c-.7.3-.9.9-.9 1.7M12 17h.01" /></svg>;
   return <svg {...common}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>;
 };
 
-export function Rail({ view, onChange, notesEnabled = false, zhulongAvailable = false, badges = {} }: { view: View; onChange: (v: View) => void; notesEnabled?: boolean; zhulongAvailable?: boolean; badges?: Partial<Record<View, number>> }) {
+export function Rail({ view, onChange, notesEnabled = false, badges = {} }: { view: View; onChange: (v: View) => void; notesEnabled?: boolean; badges?: Partial<Record<View, number>> }) {
   const t = useT();
   const items: { id: View; label: string }[] = [
     { id: "workspace", label: t("nav.workspace") },
@@ -35,10 +37,11 @@ export function Rail({ view, onChange, notesEnabled = false, zhulongAvailable = 
     ...(notesEnabled ? [{ id: "notes" as View, label: t("nav.knowledge") }] : []),
     { id: "persona", label: t("nav.people") },
   ];
-  const after: { id: View; label: string }[] = zhulongAvailable ? [{ id: "zhulong" as View, label: t("nav.visual") }] : [];
+  // 插件视图不再各自占 rail：统一进「插件市场」（视觉解析是其中最上面的一张）
+  const after: { id: View; label: string; title?: string }[] = [{ id: "plugins" as View, label: t("nav.plugins"), title: t("page.plugins") }];
 
-  const renderItem = (it: { id: View; label: string }) => (
-    <button key={it.id} className={`rail-btn ${view === it.id ? "on" : ""}`} onClick={() => onChange(it.id)} title={badges[it.id] ? `${it.label} · ${badges[it.id]} 项` : it.label}>
+  const renderItem = (it: { id: View; label: string; title?: string }) => (
+    <button key={it.id} className={`rail-btn ${view === it.id ? "on" : ""}`} onClick={() => onChange(it.id)} title={badges[it.id] ? `${it.title || it.label} · ${badges[it.id]} 项` : (it.title || it.label)}>
       {icon(it.id === "workspace" ? "bot" : it.id === "notes" ? "note" : it.id === "zhulong" ? "scan" : it.id)}
       <span>{it.label}</span>
       {badges[it.id] ? <em className={`rail-badge ${it.id === "workspace" ? "run" : ""}`}>{badges[it.id]! > 99 ? "99+" : badges[it.id]}</em> : null}

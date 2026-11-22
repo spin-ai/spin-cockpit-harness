@@ -1,11 +1,15 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Delegation, ElementContext, Message, MissionPlanRecord, Run, State, Thread, Todo } from "../types";
 import { RUN_STATUS, STATUS, agentOf, duration, lastRun, missingKeyInfo, timeAgo } from "../ui";
-import { ChevronDownIcon, CopyCheckIcon, CopyIcon, FileTextIcon, LinkIcon, PanelExpandIcon, PanelRestoreIcon, PencilIcon, RefreshIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, WrenchIcon } from "./Icons";
+import { CheckSquareIcon, ChevronDownIcon, CopyCheckIcon, CopyIcon, FileTextIcon, PanelExpandIcon, PanelRestoreIcon, PencilIcon, RefreshIcon, SendIcon, SparkleIcon, WrenchIcon } from "./Icons";
 import { requestTerminalAdopt } from "../terminal-events";
 import { RowMenu } from "./RowMenu";
 import { templateOf } from "../office/templates";
 import { XIcon } from "./Icons";
+import { FAMILY_LABEL, FAMILY_UNIT, FAMILY_VERB, STATUS_LABEL, familyOf, formatDuration, isFileLike, objectOf, runsOfFamily, statusOf, summarizeFamilies, turnStatusOf, type ToolFamily, type ToolStatus } from "../tool-family";
+import { requestFilePreview } from "../terminal-events";
+import { ToolFamilyIcon } from "./ToolFamilyIcon";
+import { TrajectoryView, type TrajectoryRecord } from "./TrajectoryView";
 
 /** 只读工具的人话名（和 electron/bot/tools.mjs 一一对应） */
 const BOT_TOOL_LABEL: Record<string, string> = {
@@ -131,22 +135,66 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   const userInputHistory = useMemo(() => msgs.filter((m) => m.role === "user").map((m) => m.content), [msgs]);
   // 运行中的「正在处理」需要细节：第几步、刚做了什么、跑了多久
   const liveSteps = useMemo(() => {
-    type LiveStep = { id: string; kind: string; text: string; detail: string; at: number };
+    type LiveStep = { id: string; kind: string; text: string; detail: string; at: number; family: ToolFamily; status: ToolStatus };
     if (!active) return { total: 0, all: [] as LiveStep[], recent: [] as LiveStep[] };
     const steps: LiveStep[] = state.messages
-      .filter((m) => m.runId === active.id && (m.kind === "tool" || m.kind === "thought"))
+      .filter((m) => m.runId === active.id && (m.kind === "tool" || m.kind === "thought" || m.kind === "approval"))
       .sort((a, b) => a.createdAt - b.createdAt)
       .map((m) => {
-        if (m.kind === "thought") return { id: m.id, kind: m.kind, text: firstLine(m.content), detail: "", at: m.createdAt };
+        if (m.kind === "approval") {
+          return { id: m.id, kind: m.kind, text: `审批 · ${m.meta?.decision || "已处理"}`, detail: m.meta?.title || "", at: m.createdAt, family: "plan" as ToolFamily, status: "done" as ToolStatus };
+        }
+        if (m.kind === "thought") return { id: m.id, kind: m.kind, text: firstLine(m.content), detail: "", at: m.createdAt, family: "think" as ToolFamily, status: "done" as ToolStatus };
         const { head, rest } = normalizeToolContent(m.content);
-        return { id: m.id, kind: m.kind, text: head, detail: firstLine(rest), at: m.createdAt };
+        return { id: m.id, kind: m.kind, text: head, detail: firstLine(rest), at: m.createdAt, family: familyOf(m.meta, { content: head }), status: statusOf(m.meta) };
       })
       .filter((step) => step.text);
     return { total: steps.length, all: [...steps].reverse(), recent: steps.slice(-6).reverse() };
   }, [active, state.messages]);
 
+  // 任务会话的轨迹：按 run 分段（一段 run = 一"轮"），记录 user / 模型 / 思考 / 工具
+  const trajectory = useMemo<TrajectoryRecord[]>(() => {
+    const out: TrajectoryRecord[] = [];
+    const order: string[] = [];
+    for (const m of msgs) {
+      const id = m.runId || "thread";
+      if (!order.includes(id)) order.push(id);
+    }
+    order.forEach((runId, index) => {
+      const turn = index + 1;
+      for (const m of msgs.filter((x) => (x.runId || "thread") === runId)) {
+        const base = { turn, turnId: runId, at: m.createdAt, ms: 1 };
+        if (m.kind === "thought") out.push({ ...base, id: m.id, kind: "thought", title: "思考", text: String(m.content || "").trim() });
+        else if (m.role === "user") out.push({ ...base, id: m.id, kind: "user", title: "用户", text: String(m.content || "").trim() });
+        else if (m.kind === "tool") {
+          const meta = m.meta;
+          const head = normalizeToolContent(m.content).head;
+          out.push({
+            ...base, id: m.id, kind: "tool",
+            title: meta?.title || head,
+            args: meta?.input || head,
+            result: meta?.output || "",
+            ms: meta?.durationMs || 1,
+          });
+        } else if (m.kind === "approval") out.push({ ...base, id: m.id, kind: "context", title: `审批 · ${m.meta?.decision || ""}`, text: m.meta?.title || "" });
+        else if (m.role === "agent" || m.role === "system") out.push({ ...base, id: m.id, kind: "assistant", title: "助手", text: String(m.content || "").trim() });
+      }
+    });
+    return out;
+  }, [msgs]);
+
+  const jumpToRun = useCallback((runId: string) => {
+    setChatTab("chat");
+    window.setTimeout(() => {
+      const el = document.querySelector(`[data-run-id="${runId}"]`);
+      el?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 40);
+  }, []);
+
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  /** 中栏：对话 / 轨迹（和 BOT 会话同一套轨迹视图，任务会话按 run 分段） */
+  const [chatTab, setChatTab] = useState<"chat" | "trajectory">("chat");
   const [showTool, setShowTool] = useState(() => {
     try { return localStorage.getItem("cmh.chat.showTool") !== "0"; } catch { return true; }
   });
@@ -632,6 +680,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     | { kind: "run"; key: string; runId: string }
     | { kind: "msg"; key: string; msg: Message }
     | { kind: "tools"; key: string; msgs: Message[] }
+    | { kind: "approval"; key: string; msg: Message }
     | { kind: "thought"; key: string; msg: Message };
   const chatItems = useMemo(() => {
     const items: ChatItem[] = [];
@@ -652,6 +701,8 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
       if (hidden) continue;
       // 思考过程单独成块：默认就露一行，不用先展开工具组才看得到
       if (m.kind === "thought") { flush(); items.push({ kind: "thought", key: `thought-${m.id}`, msg: m }); continue; }
+      // 审批在流里留痕：模态关掉后还能回看批了什么
+      if (m.kind === "approval") { flush(); items.push({ kind: "approval", key: `approval-${m.id}`, msg: m }); continue; }
       if (m.role === "tool") group.push(m);
       else { flush(); items.push({ kind: "msg", key: m.id, msg: m }); }
     }
@@ -813,6 +864,10 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
         </div>
       ) : (
         <>
+          <div className="ds-chat-tabs" role="tablist" aria-label="会话视图">
+            <button role="tab" aria-selected={chatTab === "chat"} className={chatTab === "chat" ? "on" : ""} onClick={() => setChatTab("chat")}>对话</button>
+            <button role="tab" aria-selected={chatTab === "trajectory"} className={chatTab === "trajectory" ? "on" : ""} onClick={() => setChatTab("trajectory")}>轨迹</button>
+          </div>
           <div className="thread-bar">
             <div className="thread-title-row">
               <span className={`thread-dot ${botThread ? "running" : todo ? STATUS[todo.status].cls : "todo"}`} />
@@ -874,7 +929,12 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
             </div>
           )}
 
-          {(() => {
+          {chatTab === "trajectory" && (
+            <div className="ds-trajectory-host">
+              <TrajectoryView records={trajectory} onJump={jumpToRun} unit="段" />
+            </div>
+          )}
+          {chatTab === "chat" && (() => {
             // 「看起来是空的」有三种：真没聊过 / 只有系统事件 / 全被「隐藏工具与思考」收起来了。
             // 第三种最坑：会话有 100 多步工具调用，界面上却只剩两条分隔线。
             const talk = msgs.some((m) => (m.role === "user" || m.role === "agent") && m.kind !== "thought" && String(m.content || "").trim());
@@ -916,6 +976,9 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                 if (item.kind === "run") return <RunDivider key={item.key} state={state} runId={item.runId} now={now} />;
                 if (item.kind === "thought") {
                   return <ThoughtBlock key={item.key} message={item.msg} now={now} />;
+                }
+                if (item.kind === "approval") {
+                  return <ApprovalRow key={item.key} message={item.msg} now={now} />;
                 }
                 if (item.kind === "tools") {
                   return (
@@ -964,7 +1027,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                     <div className="ds-assistant">
                       <div className="ds-assistant-body">
                         {botStream ? <RichText text={botStream} /> : <span className="ds-shimmer">正在回复…</span>}
-                        {botTool && <span className="ds-stream-note">正在查 · {BOT_TOOL_LABEL[botTool] || botTool}</span>}
+                        {botTool && <span className="ds-stream-note">正在{familyLabelOfTool(botTool)} · {BOT_TOOL_LABEL[botTool] || botTool}</span>}
                       </div>
                     </div>
                   )}
@@ -986,16 +1049,16 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                     <>
                       {runnableAgents.length > 0 && (
                         <div className="chat-suggestions">
-                          <button className="chat-suggestion" onClick={() => updateText("帮我实现 ")}>
+                          <button className="chat-suggestion" title="描述目标，Agent 直接开工" onClick={() => updateText("帮我实现 ")}>
                             <b>实现功能</b><span>描述目标，Agent 直接开工</span>
                           </button>
-                          <button className="chat-suggestion" onClick={() => updateText("审查这段改动：")}>
+                          <button className="chat-suggestion" title="看 diff、找风险、给修改建议" onClick={() => updateText("审查这段改动：")}>
                             <b>审查改动</b><span>看 diff、找风险、给修改建议</span>
                           </button>
-                          <button className="chat-suggestion" onClick={() => updateText("运行测试并修复失败：")}>
+                          <button className="chat-suggestion" title="跑起来，失败项逐个修" onClick={() => updateText("运行测试并修复失败：")}>
                             <b>运行测试</b><span>跑起来，失败项逐个修</span>
                           </button>
-                          <button className="chat-suggestion" onClick={() => updateText("先帮我理一下这个任务：")}>
+                          <button className="chat-suggestion" title="拆目标、验收和涉及模块" onClick={() => updateText("先帮我理一下这个任务：")}>
                             <b>先理清楚</b><span>拆目标、验收和涉及模块</span>
                           </button>
                         </div>
@@ -1146,22 +1209,6 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                 ) : (
                   <span className="composer-none">未检测到 Agent</span>
                 )}
-                <select
-                  className="composer-select add-agent"
-                  value=""
-                  title="添加 Agent（dsh 走 ACP，其他 CLI 走终端）"
-                  onChange={async (e) => {
-                    const cli = e.target.value;
-                    if (!cli) return;
-                    const created = await act("createAgent", { cli, projectId });
-                    if (created?.id) await act("setThreadAgent", { threadId: thread.id, agentId: created.id });
-                  }}
-                >
-                  <option value="">＋ Agent</option>
-                  {(state.executors || []).filter((x) => x.available).map((x) => (
-                    <option key={x.id} value={x.id}>{x.id} · {x.implemented ? "ACP" : "终端"}</option>
-                  ))}
-                </select>
                 {state.agents.length > 0 && workerRunnable.length === 0 && dshAvailable && (
                   <button className="composer-link" onClick={() => void useDshAgent()} title="创建 worker Agent 并用于当前会话">＋ dsh</button>
                 )}
@@ -1178,10 +1225,6 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                   <option value="">全局</option>
                   {state.projects.map((p) => <option key={p.id} value={p.id}>项目 · {p.name}</option>)}
                 </select>
-                </>
-                )}
-              </div>
-              <div className="composer-actions">
                 {showModelPicker && !botThread && (
                   <>
                     <select
@@ -1204,17 +1247,34 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                     </select>
                   </>
                 )}
-                {!todo && !botThread && !pureChat && (
-                  <button className={`chat-toggle ${chatOnly ? "on" : ""}`} title="不创建可见任务，只和 Agent 对话；可随时转为任务" onClick={() => { setChatOnly((v) => !v); setProposal(null); }}>只聊</button>
+                </>
                 )}
+              </div>
+              <div className="composer-actions">
                 {!botThread && (
                   <RowMenu title="更多发送选项">
+                    <label className="row-menu-label">添加 Agent
+                      <select
+                        value=""
+                        onChange={async (e) => {
+                          const cli = e.target.value;
+                          if (!cli) return;
+                          const created = await act("createAgent", { cli, projectId });
+                          if (created?.id) await act("setThreadAgent", { threadId: thread.id, agentId: created.id });
+                        }}
+                      >
+                        <option value="">选择 CLI…</option>
+                        {(state.executors || []).filter((x) => x.available).map((x) => (
+                          <option key={x.id} value={x.id}>{x.id} · {x.implemented ? "ACP" : "终端"}</option>
+                        ))}
+                      </select>
+                    </label>
+                    {!todo && !pureChat && (
+                      <button onClick={() => { setChatOnly((v) => !v); setProposal(null); }}>{chatOnly ? "取消只聊（会建任务）" : "只聊（不建任务）"}</button>
+                    )}
                     {!todo && <button onClick={() => setPreviewAllocation((v) => !v)}>{previewAllocation ? "取消预览分派" : "发送前预览分派"}</button>}
                     <button onClick={() => setShowTool((v) => !v)}>{showTool ? "隐藏工具与思考" : "显示工具与思考"}</button>
                   </RowMenu>
-                )}
-                {!botThread && (
-                  <span className="tiny muted" aria-hidden>{sendLabel}</span>
                 )}
                 <button
                   className={`ds-send mode-${baseMode}`}
@@ -1470,6 +1530,28 @@ function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry, canR
 }
 
 /** 思考过程：DeepSeek 式折叠行 —— 24px 一行，展开后正文缩进 */
+/** 机器人只读工具的名字 → 「正在查 / 正在想」里的动作词 */
+function familyLabelOfTool(name: string): string {
+  const family = familyOf(null, { title: name });
+  return family === "read" ? "读" : family === "search" ? "查" : family === "run" ? "跑" : family === "edit" ? "改" : "查";
+}
+
+/** 审批行：模态关掉之后还能在会话里回看批了什么 */
+function ApprovalRow({ message, now }: { message: Message; now: number }) {
+  const meta = message.meta || {};
+  const allowed = meta.allow !== false;
+  const decision = meta.decision || (allowed ? "允许" : "拒绝");
+  return (
+    <div className={`ds-approval ${allowed ? "ok" : "deny"}`} role="note">
+      <span className="ds-row-icon" aria-hidden>{allowed ? <CheckSquareIcon size={14} /> : <XIcon size={14} />}</span>
+      <span className="ds-approval-title">审批 · {decision}</span>
+      {meta.title && <><span className="ds-sep" aria-hidden /><span className="ds-approval-what">{meta.title}</span></>}
+      {meta.description && <span className="ds-approval-cmd mono" title={meta.description}>{firstLine(meta.description)}</span>}
+      <span className="ds-tool-time">{timeAgo(message.createdAt, coarseNow(now))}</span>
+    </div>
+  );
+}
+
 function ThoughtBlock({ message, now }: { message: Message; now: number }) {
   const [open, setOpen] = useState(false);
   const text = message.content.trim();
@@ -1495,80 +1577,112 @@ function ThoughtBlock({ message, now }: { message: Message; now: number }) {
 }
 
 /** 连续的工具 / 思考步骤收成「已处理」一行，展开是一行一步 */
+/** 一行摘要 + 步骤常驻（ZCode 的做法：过程是日志，不是要展开的盒子） */
 function ToolGroup({ messages, now, copiedId, onCopy, onRetry }: {
   messages: Message[]; now: number; copiedId: string | null;
   onCopy: (m: Message) => void; onRetry: (m: Message) => void;
 }) {
-  const [open, setOpen] = useState(messages.length <= 2);
-  const thought = messages.some((m) => m.kind === "thought");
+  const [showAll, setShowAll] = useState(false);
   const first = messages[0];
   const last = messages[messages.length - 1];
   const secs = Math.max(1, Math.round((last.createdAt - first.createdAt) / 1000));
-  const label = `${thought ? "已思考" : "已完成"}，用时 ${secs}秒`;
+  const steps = messages.map((m) => ({
+    family: familyOf(m.meta, { title: m.meta?.title, content: normalizeToolContent(m.content).head }),
+    status: statusOf(m.meta),
+  }));
+  const summary = summarizeFamilies(steps.map((s) => s.family));
+  const state = turnStatusOf(steps.map((s) => s.status));
+  const prefix = state === "failed" ? "失败" : state === "stopped" ? "已停止" : state === "denied" ? "被拒" : state === "running" ? "执行中" : "已完成";
+  const visible = showAll || messages.length <= 20 ? messages : messages.slice(messages.length - 20);
+  const hidden = messages.length - visible.length;
   return (
-    <div className={`ds-process ${open ? "open" : ""}`}>
-      <button className="ds-process-head" onClick={() => setOpen((v) => !v)} aria-expanded={open} title={open ? "收起过程" : "展开过程"}>
-        <span className="ds-process-label">{label}</span>
-        <ChevronDownIcon size={14} className={`ds-process-chev ${open ? "rot-180" : ""}`} />
-      </button>
-      {open && (
-        <div className="ds-process-body">
-          {messages.map((m) => (
-            <ToolRow
-              key={m.id}
-              message={m}
-              now={now}
-              copied={copiedId === m.id}
-              onCopy={() => onCopy(m)}
-              onRetry={() => onRetry(m)}
-            />
-          ))}
-        </div>
+    <div className={`ds-steps k-${state}`}>
+      <div className="ds-steps-head">
+        <span className="ds-steps-label">{prefix}</span>
+        {summary && <><span className="ds-sep" aria-hidden /><span className="ds-steps-summary">{summary}</span></>}
+        <span className="ds-steps-time mono">{secs}s</span>
+      </div>
+      {hidden > 0 && (
+        <button className="ds-steps-more" onClick={() => setShowAll(true)}>显示更早 {hidden} 步</button>
       )}
+      {runsOfFamily(visible, (m) => familyOf(m.meta, { title: m.meta?.title, content: normalizeToolContent(m.content).head })).map((run) => (
+        run.items.length < 3 ? (
+          <ToolRow
+            key={run.items[0].id}
+            message={run.items[0]}
+            now={now}
+            copied={copiedId === run.items[0].id}
+            onCopy={() => onCopy(run.items[0])}
+            onRetry={() => onRetry(run.items[0])}
+          />
+        ) : (
+          <StepRun
+            key={`run-${run.items[0].id}`}
+            family={run.family}
+            messages={run.items}
+            now={now}
+            copiedId={copiedId}
+            onCopy={onCopy}
+            onRetry={onRetry}
+          />
+        )
+      ))}
     </div>
   );
 }
 
-function toolGlyph(label: string, kind: string) {
-  const t = `${label} ${kind}`.toLowerCase();
-  if (/bash|shell|terminal|run|exec|command/.test(t)) return <TerminalIcon size={14} />;
-  if (/read|cat|open|file|view/.test(t)) return <FileTextIcon size={14} />;
-  if (/edit|write|patch|replace|apply|create/.test(t)) return <PencilIcon size={14} />;
-  if (/search|grep|glob|find|query/.test(t)) return <SearchIcon size={14} />;
-  if (/web|fetch|http|url|browse/.test(t)) return <LinkIcon size={14} />;
-  return <WrenchIcon size={14} />;
-}
-
-function splitToolHead(head: string) {
-  const parts = head.split(" · ");
-  if (parts.length > 1) return { title: parts[0], summary: parts.slice(1).join(" · ") };
-  const split = head.match(/^([A-Za-z_][\w.-]*)\s+(.+)$/);
-  if (split) return { title: prettifyToolName(split[1]), summary: split[2] };
-  return { title: head, summary: "" };
+/** 连续同族步骤（≥3 条）：一行「已执行 6 条命令」，展开才逐条看 */
+function StepRun({ family, messages, now, copiedId, onCopy, onRetry }: {
+  family: ToolFamily; messages: Message[]; now: number; copiedId: string | null;
+  onCopy: (m: Message) => void; onRetry: (m: Message) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const failed = messages.some((m) => statusOf(m.meta) === "failed") || messages.some((m) => statusOf(m.meta) === "denied");
+  return (
+    <div className={`ds-step-run k-${failed ? "failed" : "done"}`}>
+      <button className="ds-tool-main ds-step-run-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <span className="ds-row-icon" aria-hidden><ToolFamilyIcon family={family} /></span>
+        <span className="ds-tool-title">{FAMILY_VERB[family]}</span>
+        <span className="ds-tool-summary">{messages.length} {FAMILY_UNIT[family] || "步"}</span>
+        {failed && <span className="ds-tool-status failed">有失败</span>}
+        <ChevronDownIcon size={14} className={`ds-tool-chev ${open ? "rot-180" : ""}`} />
+      </button>
+      {open && messages.map((m) => (
+        <ToolRow key={m.id} message={m} now={now} copied={copiedId === m.id} onCopy={() => onCopy(m)} onRetry={() => onRetry(m)} />
+      ))}
+    </div>
+  );
 }
 
 function ToolRow({ message: m, now, copied, onCopy, onRetry }: {
   message: Message; now: number; copied: boolean; onCopy: () => void; onRetry: () => void;
 }) {
-  const [expanded, setExpanded] = useState(m.kind === "error" || m.delivery === "failed");
+  const [expanded, setExpanded] = useState(m.kind === "error" || m.delivery === "failed" || statusOf(m.meta) === "failed");
   const { head, rest } = normalizeToolContent(m.content);
-  const long = Boolean(rest) || head.length > 96;
-  const shownHead = head.length > 96 ? `${head.slice(0, 96)}…` : head;
-  const { title, summary } = splitToolHead(shownHead);
+  const family = familyOf(m.meta, { title: m.meta?.title, content: head });
+  const state = statusOf(m.meta);
+  const object = objectOf(m.meta, family, splitToolHead(head).summary || head);
+  const fileLike = (family === "read" || family === "edit") && isFileLike(object);
+  const long = Boolean(rest) || Boolean(m.meta?.output) || head.length > 120;
+  const ms = formatDuration(m.meta?.durationMs);
   const toggle = () => { if (long) setExpanded((v) => !v); };
   return (
     <>
-      <div className={`ds-tool-row ${m.kind}`}>
-        <span className="ds-row-icon" aria-hidden>{toolGlyph(title, m.kind)}</span>
+      <div className={`ds-tool-row ${m.kind} k-${state}${m.meta?.parentToolId ? " child" : ""}`} data-family={family}>
+        <span className="ds-row-icon" aria-hidden><ToolFamilyIcon family={family} /></span>
         <button
           className="ds-tool-main"
           onClick={toggle}
           disabled={!long}
-          title={long ? (expanded ? "收起输出" : "查看命令 / 输出") : head}
+          title={long ? (expanded ? "收起输出" : "查看命令 / 输出") : object}
           aria-expanded={long ? expanded : undefined}
         >
-          <span className="ds-tool-title">{title || "工具"}</span>
-          {summary && <><span className="ds-sep" aria-hidden /><span className="ds-tool-summary">{summary}</span></>}
+          <span className="ds-tool-title">{FAMILY_VERB[family]}</span>
+          {object && (fileLike
+            ? <FileChip path={object} onOpen={(target) => requestFilePreview({ rel: target, name: target.split("/").pop() })} />
+            : <span className="ds-tool-summary">{object}</span>)}
+          {state !== "done" && <span className={`ds-tool-status ${state}`}>{STATUS_LABEL[state]}</span>}
+          {ms && <span className="ds-tool-ms mono">{ms}</span>}
           {long && <ChevronDownIcon size={14} className={`ds-tool-chev ${expanded ? "rot-180" : ""}`} />}
         </button>
         <span className="ds-tool-time">{timeAgo(m.createdAt, coarseNow(now))}</span>
@@ -1576,10 +1690,31 @@ function ToolRow({ message: m, now, copied, onCopy, onRetry }: {
           {copied ? <CopyCheckIcon size={14} /> : <CopyIcon size={14} />}
         </button>
       </div>
-      {long && expanded && <pre className="ds-tool-body">{rest || m.content}</pre>}
+      {long && expanded && <pre className="ds-tool-body">{rest || m.meta?.output || m.content}</pre>}
       {m.delivery === "failed" && <button className="ds-delivery failed" onClick={onRetry}>投递失败 · 重发</button>}
     </>
   );
+}
+
+/** 文件 chip：点击在预览面板打开 */
+function FileChip({ path, onOpen }: { path: string; onOpen: (target: string) => void }) {
+  const name = path.split("/").filter(Boolean).pop() || path;
+  const short = name.length > 28 ? `${name.slice(0, 26)}…` : name;
+  return (
+    <span className="ds-file-chip" title={path}>
+      <FileTextIcon size={12} />
+      <button className="ds-file-chip-name" onClick={(e) => { e.stopPropagation(); onOpen(path); }}>{short}</button>
+    </span>
+  );
+}
+
+/** 工具首行 → 标题 + 参数摘要（旧数据没有 meta 时用） */
+function splitToolHead(head: string) {
+  const parts = head.split(" · ");
+  if (parts.length > 1) return { title: parts[0], summary: parts.slice(1).join(" · ") };
+  const split = head.match(/^([A-Za-z_][\w.-]*)\s+(.+)$/);
+  if (split) return { title: prettifyToolName(split[1]), summary: split[2] };
+  return { title: head, summary: "" };
 }
 
 /** ACP 的英文状态 → 中文；老消息里的 `bash · completed` 在渲染时归一化 */
@@ -1857,7 +1992,7 @@ const LIVE_STATUS: Record<string, string> = {
 };
 
 /** 运行中的实时进展：状态 + 已用时 + 步数 + 最近动作，可展开看最近几步。 */
-type LiveStep = { id: string; kind: string; text: string; detail: string; at: number };
+type LiveStep = { id: string; kind: string; text: string; detail: string; at: number; family: ToolFamily; status: ToolStatus };
 
 function LiveStatus({ run, steps, now }: {
   run: State["runs"][number];
@@ -1883,12 +2018,16 @@ function LiveStatus({ run, steps, now }: {
   const label = LIVE_STATUS[run.status] ?? RUN_STATUS[run.status] ?? run.status;
   const latest = steps.recent[0];
   const waiting = run.status !== "running";
+  // 「正在做什么」用最近一步的家族说，而不是只说「正在深入处理」
+  const doing = latest?.kind === "thought" ? "正在想"
+    : latest?.kind === "approval" ? "等你审批"
+      : latest ? `正在${FAMILY_LABEL[latest.family] || "处理"}` : "";
   return (
     <>
       <div className={`ds-running ${waiting ? "waiting" : ""}`} aria-live="polite" ref={boxRef}>
         <span className="ds-running-icon" aria-hidden><SparkleIcon size={14} /></span>
         <span className="ds-running-text">
-          <span className="ds-shimmer">{waiting ? label : "正在深入处理"} · 已用 {duration(run, tick)}</span>
+          <span className="ds-shimmer">{waiting ? label : `${doing || "正在深入处理"}`} · 已用 {duration(run, tick)}</span>
           {steps.total > 0 && <span className="ds-running-steps"> · {steps.total} 步</span>}
         </span>
         {steps.recent.length > 0 && (
@@ -1928,7 +2067,7 @@ function RunDivider({ state, runId, now }: { state: State; runId: string; now: n
   const run = state.runs.find((r) => r.id === runId);
   const status = run?.status ?? "";
   return (
-    <div className={`ds-divider ${status}`}>
+    <div className={`ds-divider ${status}`} data-run-id={runId}>
       <span className="ds-divider-line" aria-hidden />
       <span className="ds-divider-text">
         {RUN_STATUS[status] ?? status ?? "未知"}

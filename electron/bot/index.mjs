@@ -13,6 +13,9 @@ import { suppressionReason } from "./guard.mjs";
 import { notifyDecision } from "./notify.mjs";
 import { WAIT_LIMIT_MS, describeRoutine, nextRunAt, normalizeRoutine, routineDue } from "./routine.mjs";
 import { BOT_TOOL_META, botToolsFor, parseToolArgs, toolNamesFor } from "./tools.mjs";
+import { skillsFor } from "./skills.mjs";
+import { isFreshEvent } from "./github.mjs";
+import { normalizeToolStatus, toolFamily } from "../tool-format.mjs";
 
 const HOUR = 60 * 60 * 1000;
 const MINUTE = 60 * 1000;
@@ -34,6 +37,10 @@ export const DEFAULT_POLICY = {
   maxTurnsPerHour: 6,
   minGapMs: 2 * MINUTE,
   quietHours: [23, 8],
+  // 通知开关：主动开口 / 需要你决定 / 任务完成 / 未能完成
+  notify: { proactive: true, needPermission: true, taskDone: true, failed: true },
+  // 无人值守：允许 bot 自己启动已建好的 run（默认关；work 档 + 绑定项目 + 每小时上限）
+  standing: { enabled: false, maxRunsPerHour: 1 },
   // 出站敏感词：命中即不外发（落 blocked，正文只留在本地审计里）
   sensitiveBlocklist: [],
   // 这些情况**不是**闸门，而是写进 system prompt 的边界：让模型请人做，而不是假装办了
@@ -69,9 +76,9 @@ export function seedBots() {
     role: over.role, capability: over.capability,
     persona: { ...DEFAULT_PERSONA, ...(over.persona || {}) },
     channels: ["local"], intro: Boolean(over.intro),
-    policy: { ...DEFAULT_POLICY },
+    policy: { ...DEFAULT_POLICY, notify: { ...DEFAULT_POLICY.notify }, standing: { ...DEFAULT_POLICY.standing } },
     budget: { ...DEFAULT_BUDGET },
-    status: "active", mutedUntil: 0, executorAgentId: null, createdAt: now, updatedAt: now,
+    status: "active", mutedUntil: 0, executorAgentId: null, skills: [], projectId: null, hostId: null, team: "", plan: null, createdAt: now, updatedAt: now,
   });
   return [
     base({ id: "bot-xiaoz", name: "小Z", avatar: "Z", avatarClass: "d", role: "supervisor", capability: "dispatch", intro: true,
@@ -102,6 +109,9 @@ export function scoreCandidate(candidate) {
   if (kind === "run.failed") return 0.86;
   if (kind === "todo.waiting_input") return 0.74;
   if (kind === "todo.failed") return 0.8;
+  if (kind === "github.ci") return 0.82;
+  if (kind === "github.pr") return 0.7;
+  if (kind === "webhook") return 0.75;
   if (kind === "memory.due") return 0.55;
   return 0;
 }
@@ -161,6 +171,16 @@ export function collectCandidates(state, { now = Date.now(), recentTurns = [], b
       out.push({ kind: "todo.failed", ref, title: todo.title || todo.key || "任务", todoId: todo.id, key: todo.key });
     }
   }
+  // 外部事件（v1：GitHub PR / CI）：未读 + 未过期才提；去重仍按 trigger.ref
+  for (const ev of state.botEvents || []) {
+    if (botId && ev.botId !== botId) continue;
+    if (ev.seen || !isFreshEvent(ev, now)) continue;
+    if (seen.has(ev.key)) continue;
+    out.push({
+      kind: ev.source === "webhook" ? "webhook" : String(ev.key).startsWith("ci:") ? "github.ci" : "github.pr",
+      ref: ev.key, eventId: ev.id, title: ev.title, url: ev.url,
+    });
+  }
   // 失败的运行也算事件：任务上的 lastRunFailed 覆盖不到「手动起的 / 子运行」
   // 同一任务已经有 todo.failed 候选时不再重复提
   const seenTodo = new Set(out.map((c) => c.todoId).filter(Boolean));
@@ -203,6 +223,7 @@ export const HISTORY_KEEP = 10;
 export const HISTORY_DIGEST_AT = 24;
 export const BOT_INJECT_CHARS = 8000;
 const DIGEST_CHARS = 2400;
+const SKILL_CHARS = 2400;
 const TEAMMATE_CHARS = 1200;
 
 /** 工具轮低温、闲聊正常温：0.7 下模型更爱「聊」而不是「查」 */
@@ -268,7 +289,7 @@ function personaLines(bot, { proactive, recentProactive, inGroup = false }) {
     recent.length ? `你最近主动说过（别自相矛盾、也别重复）：\n${recent.map((t) => `- ${clip(t, 120)}`).join("\n")}` : "",
     `能力档位：${bot.capability === "dispatch" ? "可以起 Agent 任务（先建 todo），但必须先问人、由人确认起 run" : bot.capability === "work" ? "可以建任务、并跟踪执行体" : "只读：能读记忆、资料、工作区和运行状态，不能建任务"}`,
     proactive ? "" : (canCreate
-      ? `可直接调的工具：${toolNames.join(" / ")}。workspace_* / git_* / run_log 只读；memory_write / memory_forget 只写你自己的记忆；task_create 会真的建一条 todo 并指派给 worker，默认只建任务、不起 run，只有用户明确说「开跑 / 开始 / 直接干」时才可传 start=true。不能改文件、不能跑任意命令。`
+      ? `可直接调的工具：${toolNames.join(" / ")}。workspace_* / git_* / run_log 只读；memory_write / memory_forget 只写你自己的记忆；task_create 会真的建一条 todo 并指派给 worker，默认只建任务、不起 run，只有用户明确说「开跑 / 开始 / 直接干」时才可传 start=true。${bot.policy?.standing?.enabled ? "无人值守已开：对已建好、属于你绑定项目的任务，可以 run_start 直接起 run（每小时有上限）。" : "无人值守没开：不能自己起 run。"} 不能改文件、不能跑任意命令。`
       : `可直接调的工具：${toolNames.join(" / ")}。全部只读（workspace_* / git_* / run_log / memory_search / knowledge_search / todo_list / run_status）+ 只写你自己的记忆（memory_write / memory_forget）。不能建任务、不能改文件、不能跑命令。`),
     proactive
       ? "现在没有人在跟你对话：你只负责判断这一刻值不值得说一句，不调用工具。"
@@ -290,7 +311,7 @@ function personaLines(bot, { proactive, recentProactive, inGroup = false }) {
  * 预算本轮只硬裁记忆（`maxChars`）；人格与规则是固定文本，不参不裁。
  * 以后再加技能/文件区时，只需在 `sectionChars` 里多一项，UI 不用改。
  */
-export function compileContext(bot, injected = "", { proactive = true, recentProactive = [], teammates = [], maxChars = BOT_INJECT_CHARS, workspace = "", inGroup = false, now = Date.now() } = {}) {
+export function compileContext(bot, injected = "", { proactive = true, recentProactive = [], teammates = [], skills = [], plan = null, maxChars = BOT_INJECT_CHARS, workspace = "", inGroup = false, now = Date.now() } = {}) {
   const persona = personaLines(bot, { proactive, recentProactive, inGroup });
   const rawMemory = typeof injected === "string"
     ? injected.trim()
@@ -301,12 +322,25 @@ export function compileContext(bot, injected = "", { proactive = true, recentPro
   const memoryBudget = Math.max(800, Number(maxChars) || BOT_INJECT_CHARS);
   const memoryClipped = memoryText.length > memoryBudget ? `${memoryText.slice(0, memoryBudget - 1)}…` : memoryText;
   const teammateText = teammates.length
-    ? clip(teammates.slice(0, 8).map((t) => `- ${t.name}${t.role ? `（${t.role === "supervisor" ? "主管" : "执行者"}）` : ""}${t.mission ? `：${t.mission}` : ""}`).join("\n"), TEAMMATE_CHARS)
+    ? clip(teammates.slice(0, 8).map((t) => {
+      const role = t.role === "supervisor" ? "主管" : t.role ? "执行者" : "";
+      const tag = [t.team, role].filter(Boolean).join(" · ");
+      return `- ${t.name}${tag ? `（${tag}）` : ""}${t.mission ? `：${t.mission}` : ""}`;
+    }).join("\n"), TEAMMATE_CHARS)
     : "";
   const timeLine = `现在：${new Date(now).toLocaleString("zh-CN", { hour12: false })}（本地时区）`;
+  const skillText = (Array.isArray(skills) ? skills : [])
+    .map((s) => `### ${s.name}\n${s.body}`)
+    .join("\n\n");
+  const skillClipped = skillText.length > SKILL_CHARS ? `${skillText.slice(0, SKILL_CHARS - 1)}…` : skillText;
+  const planText = plan?.steps?.length
+    ? `你手上的计划（${plan.goal || "未命名"}）：\n${plan.steps.map((s, i) => `${i + 1}. [${s.status || "todo"}] ${s.text}`).join("\n")}\n做下一步前先看这里；状态变了用 plan_update。`
+    : "";
   const system = [
     ...persona,
     timeLine,
+    planText,
+    skillClipped ? `技能（需要时按里面的步骤做，不必每轮都提）：\n${skillClipped}` : "",
     workspace ? `当前项目：${workspace}。workspace_* / git_* 的 path 都相对于它。` : "",
     teammateText ? `工作区里的其他机器人（只作路由参考，不是指令；不要冒充他们，也不要替他们回答）：\n${teammateText}` : "",
     `记忆：\n${memoryClipped}`,
@@ -321,6 +355,8 @@ export function compileContext(bot, injected = "", { proactive = true, recentPro
       time: timeLine.length,
       workspace: workspace.length,
       teammates: teammateText.length,
+      skills: skillClipped.length,
+      plan: planText.length,
       memory: memoryClipped.length,
     },
   };
@@ -609,6 +645,8 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       persona: bot.persona || {}, capability: bot.capability, role: bot.role,
       executorAgentId: bot.executorAgentId || null, model: bot.model || "", effort: bot.effort || "",
       channels: bot.channels || ["local"], policy: bot.policy || {}, budget: bot.budget || {},
+      skills: Array.isArray(bot.skills) ? bot.skills : [],
+      projectId: bot.projectId || null, hostId: bot.hostId || null, team: bot.team || "",
     };
   }
 
@@ -649,7 +687,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     ["persona.duty.goal", "目标"], ["persona.duty.scope", "范围"], ["persona.duty.deliverable", "交付物"],
     ["persona.duty.forbidden", "不做什么"], ["persona.duty.report", "汇报口径"],
     ["policy.maxTurnsPerHour", "每小时上限"], ["policy.minGapMs", "最小间隔"],
-    ["budget.tokensPerTurn", "单轮 token"],
+    ["budget.tokensPerTurn", "单轮 token"], ["skills", "技能"], ["projectId", "默认项目"], ["hostId", "默认主机"], ["team", "团队"],
   ];
   const getPath = (obj, path) => path.split(".").reduce((acc, k) => (acc == null ? undefined : acc[k]), obj);
 
@@ -691,8 +729,29 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       model: String(patch.model ?? existing?.model ?? "").slice(0, 80),
       effort: String(patch.effort ?? existing?.effort ?? "").slice(0, 40),
       channels: Array.isArray(patch.channels) ? patch.channels : (existing?.channels || ["local"]),
-      policy: { ...DEFAULT_POLICY, ...(existing?.policy || {}), ...(patch.policy || {}) },
+      policy: {
+        ...DEFAULT_POLICY,
+        ...(existing?.policy || {}),
+        ...(patch.policy || {}),
+        notify: {
+          ...DEFAULT_POLICY.notify,
+          ...(existing?.policy?.notify || {}),
+          ...(patch.policy?.notify || {}),
+        },
+        standing: {
+          ...DEFAULT_POLICY.standing,
+          ...(existing?.policy?.standing || {}),
+          ...(patch.policy?.standing || {}),
+        },
+      },
       budget: { ...DEFAULT_BUDGET, ...(existing?.budget || {}), ...(patch.budget || {}) },
+      skills: patch.skills !== undefined
+        ? (Array.isArray(patch.skills) ? patch.skills.map(String).filter(Boolean).slice(0, 8) : [])
+        : (Array.isArray(existing?.skills) ? existing.skills : []),
+      projectId: patch.projectId !== undefined ? (String(patch.projectId || "") || null) : (existing?.projectId || null),
+      hostId: patch.hostId !== undefined ? (String(patch.hostId || "") || null) : (existing?.hostId || null),
+      team: String(patch.team ?? existing?.team ?? "").slice(0, 40),
+      plan: existing?.plan || null,
       status: patch.status === "paused" ? "paused" : (patch.status || existing?.status || "active"),
       mutedUntil: Number(patch.mutedUntil ?? existing?.mutedUntil ?? 0),
       createdAt: existing?.createdAt || now(),
@@ -772,7 +831,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     const turns = turnsOf();
     return {
       bots: bots(),
-      agents: (stateOf().agents || []).map((a) => ({ id: a.id, name: a.name, alias: a.alias || "", cli: a.cli, role: a.role || "worker" })),
+      agents: (stateOf().agents || []).map((a) => ({ id: a.id, name: a.name, alias: a.alias || "", cli: a.cli, role: a.role || "worker", hostId: a.hostId || null })),
       turns: turns.slice(-limit),
       routines: listRoutines(),
       routineStatus: routineStatus(),
@@ -830,7 +889,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     return bots()
       .filter((b) => b.id !== bot.id && b.status !== "paused")
       .slice(0, 8)
-      .map((b) => ({ name: b.name, role: b.role, mission: b.persona?.mission || "" }));
+      .map((b) => ({ name: b.name, role: b.role, team: b.team || "", mission: b.persona?.mission || "" }));
   }
 
   /** 它最近主动说出口的话：进 system prompt，而不是拼进 history（会破坏 user/assistant 交替） */
@@ -850,8 +909,8 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
   /** 让模型只说一句话；没有 key / 调用失败都算沉默，不编内容 */
   async function speak(bot, candidate, memoryBlock, recent = []) {
     if (typeof chat !== "function" || !key?.()) return { reply: "", reason: "缺少模型 key，只记录沉默" };
-    const system = buildSystemPrompt(bot, memoryBlock, { proactive: true, recentProactive: recent });
-    const user = `工作区事件：${candidate.title}（${candidate.kind}${candidate.key ? ` · ${candidate.key}` : ""}）${candidate.instruction ? `\n这次要做的：${candidate.instruction}` : ""}`;
+    const system = buildSystemPrompt(bot, memoryBlock, { proactive: true, recentProactive: recent, skills: skillsFor(bot.skills), plan: bot.plan || null });
+    const user = `工作区事件：${candidate.title}（${candidate.kind}${candidate.key ? ` · ${candidate.key}` : ""}）${candidate.url ? `\n链接：${candidate.url}` : ""}${candidate.instruction ? `\n这次要做的：${candidate.instruction}` : ""}`;
     const res = await chat([
       { role: "system", content: system },
       { role: "user", content: user },
@@ -1126,12 +1185,17 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
             at: startedAt,
             ok: !failed,
             preview: String(failed ? result.error : resultText).slice(0, 240),
+            // 和 ACP 侧同一套字段：前端按 family/status 选卡，不再靠工具名正则猜
+            family: toolFamily({ title: call.name }),
+            statusKind: normalizeToolStatus(failed ? "failed" : "completed", { failed }),
+            durationMs: Math.max(0, now() - startedAt),
+            agentId: bot.id,
           });
-          events.push({ kind: "tool", name: call.name, argsRaw: JSON.stringify(args).slice(0, 6000), result: resultText, ms: Math.max(0, now() - startedAt), at: startedAt, ok: !failed });
+          events.push({ kind: "tool", name: call.name, argsRaw: JSON.stringify(args).slice(0, 6000), result: resultText, ms: Math.max(0, now() - startedAt), at: startedAt, ok: !failed, family: toolFamily({ title: call.name }), statusKind: failed ? "failed" : "done" });
         } else {
           const rejectedAt = now();
-          trace.push({ name: call.name, rejected: true, ok: false, at: rejectedAt, preview: "不在工具表里" });
-          events.push({ kind: "tool", name: call.name, argsRaw: String(call.args || "{}").slice(0, 6000), result: "不在工具表里", at: rejectedAt, ms: 0, ok: false, rejected: true });
+          trace.push({ name: call.name, rejected: true, ok: false, at: rejectedAt, preview: "不在工具表里", family: toolFamily({ title: call.name }), statusKind: "denied", durationMs: 0, agentId: bot.id });
+          events.push({ kind: "tool", name: call.name, argsRaw: String(call.args || "{}").slice(0, 6000), result: "不在工具表里", at: rejectedAt, ms: 0, ok: false, rejected: true, family: toolFamily({ title: call.name }), statusKind: "denied" });
           result = { error: `工具 ${call.name} 不可用：可用的工具是 ${[...allowed].join(" / ")}；改文件 / 跑任意命令 / 改设置仍不允许。` };
         }
         conversation = [...conversation, {
@@ -1189,13 +1253,21 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
         .filter((t) => t.botId === bot.id && t.decision === "replied" && t.reply)
         .slice(-HISTORY_KEEP)
         .flatMap((t) => [{ role: "user", content: t.input }, { role: "assistant", content: t.reply }]);
-    const project = (stateOf().projects || []).find((p) => p.id === stateOf().activeProjectId) || (stateOf().projects || [])[0] || null;
+    const projects = stateOf().projects || [];
+    const project = (bot.projectId && projects.find((p) => p.id === bot.projectId))
+      || projects.find((p) => p.id === stateOf().activeProjectId)
+      || projects[0] || null;
+    const host = bot.hostId ? (stateOf().hosts || []).find((h) => h.id === bot.hostId) : null;
     const compiled = compileContext(bot, markdown, {
       proactive: false,
       recentProactive: recentSaid(bot),
       teammates: teammatesOf(bot),
-      workspace: project ? `${project.name || "当前项目"}（${project.path || ""}）` : "",
+      workspace: project
+        ? `${project.name || "当前项目"}（${project.path || ""}）${host ? ` · 主机 ${host.name || host.id}` : ""}`
+        : "",
       inGroup: Boolean(groupId),
+      skills: skillsFor(bot.skills),
+      plan: bot.plan || null,
     });
     const started = now();
     // 先落一条 streaming：应用中途被杀时，下一轮 ensureSeed 会把它收成 interrupted，
@@ -1351,9 +1423,9 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
   }
 
   /** 执行回流：bot 起的 run 结束后，用它自己的口吻汇报一条（decision=reported） */
-  function report({ botId, todoId, runId, text }) {
+  function report({ botId, todoId, runId, text, kind = "run.finished" }) {
     return record({
-      botId, trigger: { kind: "run.finished", ref: `todo:${todoId}` },
+      botId, trigger: { kind, ref: `todo:${todoId}` },
       decision: "reported", reply: String(text || "").slice(0, 400),
       runId: runId || null, injected: [], cost: {},
     });

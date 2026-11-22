@@ -11,7 +11,7 @@ import { ListIcon, TableIcon } from "./Icons";
 type Act = (type: string, payload?: unknown) => Promise<any>;
 type Layout = "cards" | "list";
 type Filter = "all" | "bound" | "unbound" | "quiet";
-type Sort = "recent" | "name" | "turns";
+type Sort = "recent" | "name" | "turns" | "team";
 type Template = {
   id: string; name: string; avatar?: string; avatarClass?: string; line: string; capability?: string;
   routine?: { kind: string; name?: string; atHour?: number; everyMs?: number } | null;
@@ -111,6 +111,7 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
     })
     .sort((a, b) => {
       if (sort === "name") return a.bot.name.localeCompare(b.bot.name, "zh-Hans-CN");
+      if (sort === "team") return (a.bot.team || "未分组").localeCompare(b.bot.team || "未分组", "zh-Hans-CN") || a.bot.name.localeCompare(b.bot.name, "zh-Hans-CN");
       if (sort === "turns") return b.turnsThisHour - a.turnsThisHour || (b.last?.createdAt ?? 0) - (a.last?.createdAt ?? 0);
       return (b.last?.createdAt ?? 0) - (a.last?.createdAt ?? 0) || a.bot.name.localeCompare(b.bot.name, "zh-Hans-CN");
     });
@@ -188,17 +189,23 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
     </>
   );
 
-  const meta = (e: (typeof enriched)[number]) => (
-    <div className="bot-card-meta">
-      <span className="tiny muted ellipsis" title={e.bot.persona?.mission || "还没写职责"}>
-        {e.bot.persona?.mission || "还没写职责"}
-      </span>
-      <span className="tiny faint">
-        执行体 {e.executor ? (e.executor.alias || e.executor.name) : "未绑定"}
-        {e.mine.length ? ` · ${e.mine.length} 条日程` : ""}
-      </span>
-    </div>
-  );
+  const meta = (e: (typeof enriched)[number]) => {
+    const project = (state.projects || []).find((p) => p.id === e.bot.projectId);
+    const host = (state.hosts || []).find((h) => h.id === e.bot.hostId);
+    return (
+      <div className="bot-card-meta">
+        <span className="tiny muted ellipsis" title={e.bot.persona?.mission || "还没写职责"}>
+          {e.bot.persona?.mission || "还没写职责"}
+        </span>
+        <span className="tiny faint">
+          执行体 {e.executor ? (e.executor.alias || e.executor.name) : "未绑定"}
+          {project ? ` · 项目 ${project.name}` : ""}
+          {host ? ` · 主机 ${host.name}` : ""}
+          {e.mine.length ? ` · ${e.mine.length} 条日程` : ""}
+        </span>
+      </div>
+    );
+  };
 
   return (
     <div className="page bots-page">
@@ -270,6 +277,7 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
               <option value="recent">最近开口</option>
               <option value="name">名称</option>
               <option value="turns">本小时开口</option>
+              <option value="team">团队</option>
             </select>
             <input
               className="project-search"
@@ -298,6 +306,7 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
                     <div className="row gap6 wrap">
                       <b className="ellipsis">{e.bot.name}</b>
                       <span className="tag">{CAP_LABEL[e.bot.capability || "read"] || "只读"}</span>
+                      {e.bot.team && <span className="tag">{e.bot.team}</span>}
                       <span className={`tag bot-state ${e.stateClass}`}>{e.state}</span>
                     </div>
                     {meta(e)}
@@ -331,6 +340,7 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
                     <div className="row gap6 wrap">
                       <b className="ellipsis">{e.bot.name}</b>
                       <span className="tag">{CAP_LABEL[e.bot.capability || "read"] || "只读"}</span>
+                      {e.bot.team && <span className="tag">{e.bot.team}</span>}
                       <span className={`tag bot-state ${e.stateClass}`}>{e.state}</span>
                     </div>
                     {meta(e)}
