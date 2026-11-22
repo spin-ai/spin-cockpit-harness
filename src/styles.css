@@ -3938,7 +3938,9 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
 .bot-workspace .bot-side{min-height:0;overflow:auto}
 .bot-workspace .bot-aside{min-height:0;overflow:auto}
 .bot-workspace .bot-main{min-height:0}
-.bot-workspace .bot-stream{flex:1;min-height:0;overflow:auto;padding-right:4px}
+.bot-workspace .bot-stream{flex:1;min-height:0;overflow:auto}
+/* 回合细线在右侧 16px 处：正文给这条线留出 56px 的沟，避免文字压到标记 */
+.bot-main .bot-stream{padding-right:56px}
 .bot-workspace .bot-composer{flex:none}
 .bot-page .page-header-sub{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .bots-page .page-header-sub{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -4283,7 +4285,8 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
 .chat-pane .chat-scroll > :first-child{margin-top:0}
 .bot-main .bot-stream{
   background:var(--surface);
-  padding:24px 32px 12px;
+  /* 右 48px：给右侧 16px 处的回合细线留沟，正文不压标记 */
+  padding:24px 48px 12px 32px;
   gap:0;
 }
 .bot-main .bot-stream > *{
@@ -4797,7 +4800,7 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
 .ds-io-row>span{font-size:11px;color:var(--faint);letter-spacing:.02em}
 .ds-io-row>pre{margin:0;font:12px/15px var(--mono);white-space:pre-wrap;max-height:220px;overflow:auto;color:var(--fg-2)}
 /* 回合轨：跟参考设计一致——右侧贴边只有短细线，不写序号；当前轮更长更深 */
-.ds-turn-rail{position:absolute;right:4px;top:88px;bottom:150px;display:flex;flex-direction:column;align-items:flex-end;gap:0;overflow:auto;scrollbar-width:none;z-index:var(--z-pane)}
+.ds-turn-rail{position:absolute;right:16px;top:88px;bottom:150px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;overflow:auto;scrollbar-width:none;z-index:var(--z-pane)}
 .ds-turn-rail::-webkit-scrollbar{display:none}
 .ds-turn-mark{width:20px;height:10px;flex:none;display:grid;place-items:center;border:0;padding:0;background:transparent;cursor:pointer}
 .ds-turn-mark::before{content:"";display:block;width:12px;height:2px;border-radius:var(--radius-sm);background:var(--border-strong);transition:width .12s ease,background .12s ease}

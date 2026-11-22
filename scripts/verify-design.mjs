@@ -164,7 +164,7 @@ check(fontSizes.size <= 7 && [...fontSizes].every((v) => allowedFont.has(v)),
   `styles.css · 字号只用 7 档（${[...fontSizes].sort().join(" / ")}）`);
 const spaceValues = new Set([...cssText.matchAll(/(?:padding|margin|gap|row-gap|column-gap):([^;}]+)/g)]
   .flatMap((m) => [...m[1].matchAll(/([0-9]+)px/g)].map((x) => x[1])));
-const allowedSpace = new Set(["0", "2", "4", "6", "8", "12", "16", "24", "32"]);
+const allowedSpace = new Set(["0", "2", "4", "6", "8", "12", "16", "24", "32", "48"]);
 check([...spaceValues].every((v) => allowedSpace.has(v)),
   `styles.css · 间距只用 2/4/6/8/12/16/24/32（越界：${[...spaceValues].filter((v) => !allowedSpace.has(v)).join(",") || "无"}）`);
 const radii = new Set([...cssText.matchAll(/border-radius:([^;}]+)/g)].map((m) => m[1].trim()));

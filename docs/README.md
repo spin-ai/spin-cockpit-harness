@@ -127,6 +127,7 @@
 | [`articles/ARTICLE-zhihu-super-agent.md`](articles/ARTICLE-zhihu-super-agent.md) | 叙事 | 记录 | 对外文章：Super Agent |
 | [`articles/ARTICLE-zhihu-llm-wiki.md`](articles/ARTICLE-zhihu-llm-wiki.md) | 叙事 | 记录 | 对外文章：LLM Wiki 与记忆 |
 | [`articles/ARTICLE-zhihu-scenarios.md`](articles/ARTICLE-zhihu-scenarios.md) | 叙事 | 记录 | 对外文章：多智能体工作台的场景 |
+| [`articles/ARTICLE-zhihu-bot.md`](articles/ARTICLE-zhihu-bot.md) | 叙事 | 记录 | 对外文章：人格 Bot（Grok Bot / Orca / Rakazo 对照） |
 | [`plan-round1.md`](plan-round1.md) | 架构 | 提案 | 第 1 轮计划：五件关键技术的波形与验收（只定计划与口径，不写业务代码） |
 | [`prototype/README.md`](prototype/README.md) | 架构 | 记录 | 交互原型说明（静态 HTML，不是实现） |
 

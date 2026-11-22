@@ -1,5 +1,4 @@
-# Cockpit Harness v0.2.0-alpha.1 — Liftoff
-
+# Cockpit Harness v0.3.0 — Liftoff
 首个公开 Alpha。Cockpit Harness 是一个多 Agent 编排工作台：**Chat 分派任务 → project 下开 Terminal → Agent 执行 → 看板看状态 → 确认后进 TODO LIST**。
 
 > ⚠️ Alpha：数据库结构、IPC 与 UI 仍可能调整。升级前请备份本地数据。
@@ -8,9 +7,9 @@
 
 在下方 Assets 中选择对应平台：
 
-- **macOS（Apple Silicon / arm64）**：`Cockpit.Harness-0.2.0-alpha.1-arm64.dmg`
-- **Windows（x64）**：`Cockpit.Harness.Setup.0.2.0-alpha.1.exe`
-- **Linux（x86_64）**：`Cockpit.Harness-0.2.0-alpha.1.AppImage`
+- **macOS（Apple Silicon / arm64）**：`Cockpit.Harness-0.3.0-arm64.dmg`
+- **Windows（x64）**：`Cockpit.Harness.Setup.0.3.0.exe`
+- **Linux（x86_64）**：`Cockpit.Harness-0.3.0.AppImage`
 
 安装前请确认平台；`SHA256SUMS.txt` 可用于校验。
 
@@ -23,8 +22,8 @@
 - **Windows**：未签名，SmartScreen 可能提示；选择「更多信息 → 仍要运行」。
 - **Linux**：
   ```sh
-  chmod +x "Cockpit.Harness-0.2.0-alpha.1.AppImage"
-  ./Cockpit.Harness-0.2.0-alpha.1.AppImage
+  chmod +x "Cockpit.Harness-0.3.0.AppImage"
+  ./Cockpit.Harness-0.3.0.AppImage
   ```
 
 ## 这版包含
