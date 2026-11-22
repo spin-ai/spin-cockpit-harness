@@ -604,11 +604,6 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   }, [initialBotId]);
 
   useEffect(() => { stickRef.current = true; setOpenThreadId(null); setRailTab("messages"); setChatQuery(""); setChatHits([]); }, [botId]);
-  useEffect(() => {
-    const el = streamRef.current;
-    if (!el || !stickRef.current) return;
-    el.scrollTop = el.scrollHeight;
-  }, [turnCount, streamText, groupStreamText, botId, openThreadId]);
 
   const load = useCallback(async () => {
     try {
@@ -660,6 +655,12 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   );
   /** 自己那句：后端回声一到就用真的那条，别和乐观气泡同时出现 */
   const awaitingOwnerEcho = Boolean(pendingOwner) && !groupMessages.some((m) => m.author === "owner" && m.text === pendingOwner);
+  // 贴底：回合流自己滚（整页填充时），群聊的回声 / 流式 / 跑完都不掉队
+  useEffect(() => {
+    const el = streamRef.current;
+    if (!el || !stickRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [turnCount, streamText, groupStreamText, groupMessages.length, busy, botId, openThreadId]);
   const bot = useMemo(() => (isGroup ? null : snapshot?.bots.find((b) => b.id === botId) ?? snapshot?.bots[0] ?? null), [snapshot, botId, isGroup]);
   const members = snapshot?.bots ?? [];
   const botOf = useCallback((id?: string) => members.find((b) => b.id === id) ?? null, [members]);

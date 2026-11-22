@@ -128,17 +128,19 @@ const MOCK = String.raw`
       else if (type === "botChat") result = { ok: true, result: turns[0] };
       else if (type === "botGroupSend") {
         // 模拟群聊：先落自己的话，再逐个成员流式回（和主进程 botGroupSend 一样）
+        const text = (head) => head + "\n\n" + "这是一段用来把回合流撑出滚动的正文，验证新内容进来时窗口会不会跟着往下走。\n".repeat(12);
         const say = (botId, delta) => window.__delta?.({ botId, groupId: payload.id, name: botId === "b1" ? "PM · 项目经理" : "DE-A · 前端", delta });
-        const owner = { id: "gm-owner", groupId: payload.id, seq: 0, author: "owner", botId: null, botName: "", text: payload.text, decision: "answered", createdAt: Date.now(), meta: null };
+        const uniq = Date.now();
         // 每次广播都换一个新对象（和主进程 IPC 一样），否则 React 按引用比较不会重渲染
         const put = (msg) => { state.botGroupMessages = [...state.botGroupMessages, msg]; emit({ ...state }); };
+        const owner = { id: "gm-owner-" + uniq, groupId: payload.id, seq: state.botGroupMessages.length, author: "owner", botId: null, botName: "", text: payload.text, decision: "answered", createdAt: Date.now(), meta: null };
         // 回声故意晚 80ms：模拟 IPC 往返，好在同一个用例里看到「乐观气泡 → 真消息」两态
         setTimeout(() => put(owner), 80);
         await new Promise((r) => setTimeout(r, 220));
-        say("b1", "先说一半");
+        say("b1", text("先说一半。"));
         await new Promise((r) => setTimeout(r, 400));
         say("b1", "，说完了。");
-        put({ id: "gm-b1", groupId: payload.id, seq: 1, author: "bot", botId: "b1", botName: "PM · 项目经理", text: "先说一半，说完了。", decision: "replied", createdAt: Date.now(), meta: null });
+        put({ id: "gm-b1-" + uniq, groupId: payload.id, seq: state.botGroupMessages.length, author: "bot", botId: "b1", botName: "PM · 项目经理", text: text("先说一半，说完了。"), decision: "replied", createdAt: Date.now(), meta: null });
         result = { messages: [] };
       }
       return { ok: true, result };
@@ -476,6 +478,48 @@ check("群聊：流式块上能「停止」", await ev(`!!document.querySelector
 await shot(path.join(OUT, "bot-group-stream.png"));
 await sleep(700);
 check("群聊：跑完后落库、临时态收干净", (await text(".bot-stream")).includes("先说一半，说完了。") && await ev(`!document.querySelector(".ds-pending") && !document.querySelector(".ds-streaming")`), JSON.stringify((await text(".bot-stream")).slice(-160)));
+
+
+// 窗口跟随：回合流自己滚（整页填充），新内容进来时贴底；两条入口都要一样
+const streamMetrics = () => ev(`(() => {
+  const el = document.querySelector(".bot-stream");
+  if (!el) return null;
+  return { overflow: getComputedStyle(el).overflowY, selfScrolls: el.clientHeight < el.scrollHeight, gap: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight) };
+})()`);
+const followAfterSend = async (label) => {
+  await run(`
+    const el = document.querySelector(".bot-stream");
+    el.scrollTop = 0;
+    el.dispatchEvent(new Event("scroll", { bubbles: true }));
+    const box = document.querySelector(".ds-composer textarea");
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+    setter.call(box, "再问一句，看窗口跟不跟");
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 80));
+    document.querySelector(".ds-send").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    return true;`);
+  await sleep(180);
+  const m = await streamMetrics();
+  check(`窗口跟随（${label}）：发出去就贴底`, m && m.gap <= 8, JSON.stringify(m));
+  await sleep(900);
+  const m2 = await streamMetrics();
+  check(`窗口跟随（${label}）：流式长出来也贴底`, m2 && m2.gap <= 8, JSON.stringify(m2));
+};
+check("回合流是独立滚动容器（不是整页滚）", (await streamMetrics())?.overflow === "auto");
+await followAfterSend("BOT 工作台");
+const wsMetrics = await streamMetrics();
+check("BOT 工作台：内容超长时回合流自己滚", wsMetrics && wsMetrics.selfScrolls, JSON.stringify(wsMetrics));
+
+// 另一条入口：从机器人列表 / 派单进来的是 view "bot"，外壳必须同样整页填充
+await run(`window.dispatchEvent(new CustomEvent("harness:view", { detail: "bot" })); await new Promise((r) => setTimeout(r, 500)); return true;`);
+check("view=bot 也用整页填充外壳（否则整页滚，跟不上）", await ev(`!!document.querySelector(".wide.bot-workspace .bot-stream")`));
+await run(`
+  const item = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("项目群"));
+  if (item) { item.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 300)); }
+  return true;`);
+const botMetrics = await streamMetrics();
+check("view=bot：回合流自己滚", botMetrics && botMetrics.overflow === "auto" && botMetrics.selfScrolls, JSON.stringify(botMetrics));
+await followAfterSend("view=bot");
 
 check("没有控制台报错", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 
