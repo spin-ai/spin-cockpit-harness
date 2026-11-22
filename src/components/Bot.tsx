@@ -659,11 +659,11 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
       const dt = Math.max(8, Math.min(64, now - revealLastRef.current));
       revealLastRef.current = now;
       const st = revealRef.current;
-      const budget = Math.max(1, Math.round(dt * 0.15)); // ~150 字/秒
+      const budget = Math.max(1, Math.round(dt * 0.06)); // ~60 字/秒，短回复约 0.8s 长出来
       let more = false;
       if (st.one.shown < st.one.target.length) {
         const left = st.one.target.length - st.one.shown;
-        const take = left > 500 ? left : Math.max(budget, Math.ceil(left / 18));
+        const take = left > 600 ? left : Math.max(budget, Math.ceil(left / 60));
         st.one.shown = Math.min(st.one.target.length, st.one.shown + take);
         setStreaming((prev) => (prev ? { ...prev, text: st.one.target.slice(0, st.one.shown), phase: "streaming" } : prev));
         more = st.one.shown < st.one.target.length;
@@ -673,7 +673,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
         for (const [botId, item] of st.group) {
           if (item.shown >= item.target.length) continue;
           const left = item.target.length - item.shown;
-          const take = left > 500 ? left : Math.max(budget, Math.ceil(left / 18));
+          const take = left > 600 ? left : Math.max(budget, Math.ceil(left / 60));
           item.shown = Math.min(item.target.length, item.shown + take);
           texts.set(botId, item.target.slice(0, item.shown));
           if (item.shown < item.target.length) more = true;
