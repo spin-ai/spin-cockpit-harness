@@ -487,7 +487,7 @@ export async function openDb(dir, { onTranscript } = {}) {
     console.log(`[${type}] ${text}`);
   };
   // 消息的宿主是 thread；todoId 由 thread 派生（保留用于按项目过滤 / 旧数据兼容）
-  const addMessage = (threadId, runId, role, kind, content, extra = {}) => {
+  const addMessage = (threadId, runId, role, kind, content, extra = {}, opts = {}) => {
     const thread = state.threads.find((t) => t.id === threadId);
     const msg = {
       id: nextId("m"), threadId, todoId: thread?.todoId ?? null, runId,
@@ -495,7 +495,8 @@ export async function openDb(dir, { onTranscript } = {}) {
     };
     state.messages.push(msg);
     if (thread) thread.updatedAt = Date.now();
-    persist();
+    // 流式 / 批量写回时由调用方最后统一 persist，别每条消息都整库重写
+    if (!opts.defer) persist();
     indexTranscript({ kind: "message", refId: msg.id, at: msg.createdAt, text: content, threadId, runId });
     return msg;
   };
@@ -512,6 +513,28 @@ export async function openDb(dir, { onTranscript } = {}) {
     return m;
   };
 
+  /**
+   * 流式回合只写自己这一行：整库 DELETE+INSERT 会卡住主进程，delta 就会一顿一顿。
+   * 崩溃时下一次启动仍能从 bot_turns 里捞到半截回复。
+   */
+  const saveBotTurn = (row) => {
+    if (!row?.id) return;
+    run(
+      "INSERT OR REPLACE INTO bot_turns (id,bot_id,channel,trigger,input,injected,reply,decision,reason,run_id,cost,created_at,todo_id,proposal,tools,thread_id,trace) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [row.id, row.botId, row.channel || "local", JSON.stringify(row.trigger || {}), row.input || "", JSON.stringify(row.injected || []),
+        row.reply || "", row.decision || "silent", row.reason || "", row.runId || null, JSON.stringify(row.cost || {}),
+        row.createdAt || Date.now(), row.todoId || null, row.proposal ? JSON.stringify(row.proposal) : null, JSON.stringify(row.tools || []), row.threadId || null, JSON.stringify(row.trace || [])],
+    );
+  };
+  /** 群聊一条消息落库：同理，只写一行，避免每回完一个成员就整库重写 */
+  const saveGroupMessage = (m) => {
+    if (!m?.id) return;
+    run(
+      "INSERT OR REPLACE INTO bot_group_messages (id,group_id,seq,author,bot_id,bot_name,text,decision,created_at,meta) VALUES (?,?,?,?,?,?,?,?,?,?)",
+      [m.id, m.groupId, m.seq || 0, m.author || "owner", m.botId || null, m.botName || "", m.text || "", m.decision || "answered", m.createdAt || Date.now(), m.meta ? JSON.stringify(m.meta) : null],
+    );
+  };
+
   if (migrated) persist();
-  return { db, state, persist, flush, close, nextId, addEvent, addMessage, updateMessage, file };
+  return { db, state, persist, flush, close, nextId, addEvent, addMessage, updateMessage, saveBotTurn, saveGroupMessage, file };
 }

@@ -437,8 +437,10 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     const bot = bots().find((b) => b.id === row.botId);
     if (!bot) return;
     const thread = ensureBotThread(bot, { threadId: row.threadId || "" });
-    if (row.decision === "replied" && row.input) store.addMessage(thread.id, null, "user", "text", row.input);
-    if (row.reply) store.addMessage(thread.id, null, "agent", "text", row.reply);
+    // 两条一起写、由调用方最后统一 persist：mirror 在每条回复结束时都会跑，
+    // 这里再各触发一次整库重写，对话越长越卡。
+    if (row.decision === "replied" && row.input) store.addMessage(thread.id, null, "user", "text", row.input, {}, { defer: true });
+    if (row.reply) store.addMessage(thread.id, null, "agent", "text", row.reply, {}, { defer: true });
     row.mirrored = true;
     row.threadId = thread.id;
   }
@@ -937,8 +939,14 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     const onDeltaTracked = (delta) => {
       acc += String(delta || "");
       onDelta?.(delta);
-      // 每 800ms 才落一次盘：流式增量每秒几十个，逐条写会把这个库写热
-      if (now() - lastFlush > 800) { pending.reply = acc.slice(0, 4000); store.persist(); lastFlush = now(); }
+      // 每 800ms 落一次：只写当前这一行 bot_turn，不再整库重写；
+      // 整库写会占住主进程，IPC 里的 delta 只能排队，界面就会一顿一顿。
+      if (now() - lastFlush > 800) {
+        pending.reply = acc.slice(0, 4000);
+        if (typeof store.saveBotTurn === "function") store.saveBotTurn(pending);
+        else store.persist();
+        lastFlush = now();
+      }
     };
     let res;
     try {
@@ -948,7 +956,17 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
         { role: "user", content: clean },
       ], bot, onDeltaTracked, signal, onTool);
     } catch (err) {
-      // 取消 / 报错：这条回合不该留在账上（半截流式内容只在真崩溃时才有意义）
+      // 取消：把已经吐出来的半截留下，标成 interrupted（界面上是「被打断」+ 半截）
+      if (signal?.aborted) {
+        pending.reply = acc.slice(0, 4000);
+        pending.decision = "interrupted";
+        pending.reason = pending.reply ? "你中途叫停了" : "还没有吐字就被叫停";
+        pending.cost = { ...(pending.cost || {}), ms: now() - started };
+        if (typeof store.saveBotTurn === "function") store.saveBotTurn(pending);
+        else store.persist();
+        throw err;
+      }
+      // 报错：这条回合不该留在账上（半截流式内容只在真崩溃时才有意义）
       stateOf().botTurns = turnsOf().filter((t) => t.id !== pending.id);
       store.persist();
       throw err;

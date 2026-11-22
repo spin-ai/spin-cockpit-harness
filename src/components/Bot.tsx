@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { EmptyState } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
@@ -9,7 +9,7 @@ import { useT } from "../i18n";
 import { RichText } from "./TaskChat";
 import { assignmentsForBot } from "../selectors/assignments";
 import { requestTerminalAdopt } from "../terminal-events";
-import type { State } from "../types";
+import type { BotGroupMessage, State } from "../types";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
@@ -506,6 +506,11 @@ type Snapshot = {
 };
 
 const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "汇报", watching: "监视中", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工" };
+/** 只读工具 → 人话；流式期间显示「正在查任务」比空窗好 */
+const TOOL_LABEL: Record<string, string> = {
+  memory_search: "查记忆", knowledge_search: "查资料", todo_list: "查任务", run_status: "查运行",
+};
+const toolLabel = (tool?: string) => TOOL_LABEL[tool || ""] || "用工具";
 const GLYPH: Record<string, string> = { asked: "?", streaming: "…", interrupted: "⏸", silent: "·", blocked: "✕", escalated: "↗" };
 const CAP_LABEL: Record<string, string> = { read: "只读", dispatch: "可起任务", work: "能执行" };
 /** 群聊：一条真实记录（成员 + replyMode + 消息序列），对齐 ORCA 的 BotGroup */
@@ -524,6 +529,35 @@ const hm = (ts: number) => {
   const same = new Date().toDateString() === d.toDateString();
   return `${same ? "" : `${d.getMonth() + 1}/${d.getDate()} `}${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
+
+/**
+ * 群聊单条消息：memo 住。流式时只更新末尾的流式块，历史消息不参与 reconcile；
+ * 微调 props（senderName / state）只在全量 snapshot 到达时变一次。
+ */
+const GroupMessageRow = memo(function GroupMessageRow({ m, senderName, state }: { m: BotGroupMessage; senderName?: string; state?: State | null }) {
+  if (m.author === "owner") {
+    return (
+      <div className="ds-user">
+        <div className="ds-bubble">{m.text}</div>
+        <div className="ds-actions ds-actions-user"><span className="ds-time">{hm(m.createdAt)}</span></div>
+      </div>
+    );
+  }
+  const spoke = ["answered", "replied", "reported", "asked"].includes(m.decision);
+  return (
+    <div className="ds-assistant">
+      <div className="ds-bot-attr">
+        <b>{m.botName || senderName}</b>
+        <span className="ds-time">{hm(m.createdAt)}</span>
+        <span className={`ds-tag ${spoke ? "ai" : ""}`}>{DECISION_LABEL[m.decision] || (spoke ? "回复" : "沉默")}</span>
+      </div>
+      {spoke
+        ? <div className="ds-assistant-body"><RichText text={m.text} /></div>
+        : <div className="ds-system-note">{m.text || "没有开口"}<span> · 沉默也留痕</span></div>}
+      <TraceDetails runId={m.meta?.runId} botName={m.botName} state={state} />
+    </div>
+  );
+});
 
 /**
  * 人格 bot 控制台（P0）
@@ -577,6 +611,8 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   const [chatQuery, setChatQuery] = useState("");
   const [chatHits, setChatHits] = useState<{ threadId: string; snippet: string }[]>([]);
   /** 行内重命名会话（Electron 不实现 window.prompt） */
+  /** 转录窗口：一次只画最近 N 个块（200 轮也不会堆出几千个节点） */
+  const [renderBlocks, setRenderBlocks] = useState(40);
   const [renamingChat, setRenamingChat] = useState<{ id: string; title: string } | null>(null);
   /** 会话行展开：这条会话起过的执行（ORCA 的 worker 树） */
   const [expandedChat, setExpandedChat] = useState<string | null>(null);
@@ -591,12 +627,23 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   const [routineDraft, setRoutineDraft] = useState<{
     kind: "daily" | "every" | "watch"; name: string; atHour: number; minutes: number; path: string;
   } | null>(null);
-  const [streaming, setStreaming] = useState<{ botId: string; text: string } | null>(null);
+  const [streaming, setStreaming] = useState<{ botId: string; text: string; phase: "thinking" | "tool" | "streaming"; tool?: string } | null>(null);
   /** 群聊：每个成员一条流式块（主进程逐个回，不能只存一条） */
   const [groupStream, setGroupStream] = useState<{ botId: string; name: string; text: string }[]>([]);
+  /** 群聊：还没吐字但已经在想的成员（thinking / tool） */
+  const [groupPhases, setGroupPhases] = useState<Record<string, { name: string; phase: "thinking" | "tool"; tool?: string }>>({});
+  /** 群聊：主进程增量下发的消息；全量 snapshot 还没到的时候先拼在本地 */
+  const [groupLive, setGroupLive] = useState<BotGroupMessage[]>([]);
   /** 群聊：自己刚发出去的那句先就地显示，不等后端返回 */
   const [pendingOwner, setPendingOwner] = useState<string | null>(null);
+  /** 1:1：自己刚发出去的那句先就地显示；回合落库后让位 */
+  const [pendingUser, setPendingUser] = useState<string | null>(null);
   const groupIdRef = useRef("");
+  /** 输入法：composition 期间的回车只上屏（Candidate 里按 Enter 不该发送） */
+  const composingRef = useRef(false);
+  /** delta 先按帧攒着，一帧最多一次 setState */
+  const deltaBufRef = useRef(new Map<string, { groupId?: string; name?: string; text: string }>());
+  const deltaRafRef = useRef(0);
   /** 回合流自己滚：贴底时跟着新内容走，用户主动往上翻就不抢 */
   const streamRef = useRef<HTMLDivElement | null>(null);
   const stickRef = useRef(true);
@@ -611,7 +658,11 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     if (initialBotId) setBotId(initialBotId);
   }, [initialBotId]);
 
-  useEffect(() => { stickRef.current = true; setOpenThreadId(null); setRailTab("messages"); setChatQuery(""); setChatHits([]); }, [botId]);
+  useEffect(() => {
+    stickRef.current = true;
+    setOpenThreadId(null); setRailTab("messages"); setChatQuery(""); setChatHits([]);
+    setGroupLive([]); setGroupPhases({}); setPendingUser(null); setRenderBlocks(40);
+  }, [botId]);
 
   const load = useCallback(async () => {
     try {
@@ -629,27 +680,107 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
 
   useEffect(() => { void load(); }, [load]);
 
-  // 流式增量：主进程推 delta，这里只做追加；结束时用 botChat / botGroupSend 的返回值落库并刷新
+  // 流式增量：主进程已经按 ~16ms 合并过；渲染层再按帧合并，一帧最多一次 setState。
+  // 之前每个 token 都 setGroupStream，整个 BotConsole（整段历史）会跟着 reconcile，长会话必卡。
   useEffect(() => {
+    const flush = () => {
+      deltaRafRef.current = 0;
+      const entries = [...deltaBufRef.current.entries()];
+      deltaBufRef.current.clear();
+      if (!entries.length) return;
+      const groupEntries = entries.filter(([, v]) => v.groupId);
+      if (groupEntries.length) {
+        setGroupStream((prev) => {
+          const next = prev.map((s) => ({ ...s }));
+          for (const [botId, v] of groupEntries) {
+            if (v.groupId !== groupIdRef.current) continue;
+            const idx = next.findIndex((s) => s.botId === botId);
+            if (idx < 0) next.push({ botId, name: v.name || "", text: v.text });
+            else next[idx] = { ...next[idx], text: next[idx].text + v.text };
+          }
+          return next;
+        });
+      }
+      const single = entries.find(([, v]) => !v.groupId);
+      if (single) {
+        const [botId, v] = single;
+        setStreaming((prev) => (prev && prev.botId === botId
+          ? { ...prev, text: prev.text + v.text, phase: "streaming" }
+          : { botId, text: v.text, phase: "streaming" }));
+      }
+    };
     const off = window.harness.onBotDelta((payload) => {
       if (!payload?.delta) return;
-      if (payload.groupId) {
-        // 群聊：按 botId 分块追加，正在说话的人和已说过的人各占一块
-        if (payload.groupId !== groupIdRef.current) return;
-        setGroupStream((prev) => {
-          const idx = prev.findIndex((s) => s.botId === payload.botId);
-          if (idx < 0) return [...prev, { botId: payload.botId, name: payload.name || "", text: payload.delta }];
-          const next = [...prev];
-          next[idx] = { ...next[idx], text: next[idx].text + payload.delta };
+      if (payload.groupId && payload.groupId !== groupIdRef.current) return;
+      const item = deltaBufRef.current.get(payload.botId)
+        || { groupId: payload.groupId, name: payload.name, text: "" };
+      item.groupId = payload.groupId;
+      item.name = payload.name;
+      item.text += payload.delta;
+      deltaBufRef.current.set(payload.botId, item);
+      if (!deltaRafRef.current) deltaRafRef.current = requestAnimationFrame(flush);
+    });
+    return () => {
+      off();
+      if (deltaRafRef.current) cancelAnimationFrame(deltaRafRef.current);
+    };
+  }, []);
+
+  // 相位 / 工具 / 群消息：让「发出去之后」立刻有可见状态，而不是等首 token。
+  useEffect(() => {
+    const offPhase = window.harness.onBotPhase?.((p) => {
+      if (!p) return;
+      if (p.groupId) {
+        if (p.groupId !== groupIdRef.current) return;
+        setGroupPhases((prev) => {
+          const next = { ...prev };
+          if (p.phase === "done") delete next[p.botId];
+          else next[p.botId] = {
+            name: p.name || prev[p.botId]?.name || "",
+            phase: p.phase === "tool" ? "tool" : "thinking",
+            tool: p.tool,
+          };
           return next;
         });
         return;
       }
-      setStreaming((prev) => (prev && prev.botId === payload.botId
-        ? { botId: payload.botId, text: prev.text + payload.delta }
-        : { botId: payload.botId, text: payload.delta }));
+      setStreaming((prev) => {
+        // 1:1 的收尾交给 send()：它在 load() 之后才清 streaming，避免「流式块消失、
+        // 回合还没上屏」的空窗。群聊没有这个问题，done 直接删相位。
+        if (p.phase === "done") return prev;
+        const phase = p.phase === "tool" ? "tool" : "thinking";
+        if (prev && prev.botId === p.botId) return { ...prev, phase, tool: p.tool ?? prev.tool };
+        return { botId: p.botId, text: "", phase, tool: p.tool };
+      });
     });
-    return off;
+    const offTool = window.harness.onBotTool?.((p) => {
+      if (!p) return;
+      if (p.groupId) {
+        if (p.groupId !== groupIdRef.current) return;
+        setGroupPhases((prev) => {
+          if (p.phase === "done") {
+            if (!prev[p.botId]) return prev;
+            return { ...prev, [p.botId]: { ...prev[p.botId], phase: "thinking", tool: undefined } };
+          }
+          return { ...prev, [p.botId]: { name: p.botName || prev[p.botId]?.name || "", phase: "tool", tool: p.name } };
+        });
+        return;
+      }
+      setStreaming((prev) => (prev && prev.botId === p.botId
+        ? { ...prev, phase: p.phase === "start" ? "tool" : "thinking", tool: p.phase === "start" ? p.name : undefined }
+        : prev));
+    });
+    const offMessage = window.harness.onBotGroupMessage?.((p) => {
+      if (!p?.message || p.groupId !== groupIdRef.current) return;
+      setGroupLive((prev) => (prev.some((m) => m.id === p.message.id) ? prev : [...prev, p.message]));
+      setGroupPhases((prev) => {
+        if (!prev[p.message.botId || ""]) return prev;
+        const next = { ...prev };
+        delete next[p.message.botId || ""];
+        return next;
+      });
+    });
+    return () => { offPhase?.(); offTool?.(); offMessage?.(); };
   }, []);
 
   const groups = state?.botGroups ?? [];
@@ -669,18 +800,22 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
   const isGroup = Boolean(group);
   // 主进程推的 delta 在 effect 里订阅（只订一次），所以当前群用 ref 带进去
   useEffect(() => { groupIdRef.current = group?.id || ""; }, [group?.id]);
-  const groupMessages = useMemo(
-    () => (state?.botGroupMessages ?? []).filter((m) => m.groupId === group?.id).sort((a, b) => a.seq - b.seq),
-    [state?.botGroupMessages, group?.id],
-  );
+  const groupMessages = useMemo(() => {
+    const base = (state?.botGroupMessages ?? []).filter((m) => m.groupId === group?.id);
+    const seen = new Set(base.map((m) => m.id));
+    return [...base, ...groupLive.filter((m) => m.groupId === group?.id && !seen.has(m.id))].sort((a, b) => a.seq - b.seq);
+  }, [state?.botGroupMessages, group?.id, groupLive]);
   /** 自己那句：后端回声一到就用真的那条，别和乐观气泡同时出现 */
   const awaitingOwnerEcho = Boolean(pendingOwner) && !groupMessages.some((m) => m.author === "owner" && m.text === pendingOwner);
-  // 贴底：回合流自己滚（整页填充时），群聊的回声 / 流式 / 跑完都不掉队
+  const groupPhaseCount = Object.keys(groupPhases).length;
+  // 贴底：回合流自己滚（整页填充时），群聊的回声 / 流式 / 跑完都不掉队。
+  // scrollTop 写入放进 rAF，避免每帧同步 layout。
   useEffect(() => {
     const el = streamRef.current;
     if (!el || !stickRef.current) return;
-    el.scrollTop = el.scrollHeight;
-  }, [turnCount, streamText, groupStreamText, groupMessages.length, busy, botId, openThreadId]);
+    const raf = requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    return () => cancelAnimationFrame(raf);
+  }, [turnCount, streamText, groupStreamText, groupMessages.length, busy, botId, openThreadId, pendingUser, pendingOwner, groupPhaseCount, streaming?.phase]);
   const bot = useMemo(() => (isGroup ? null : snapshot?.bots.find((b) => b.id === botId) ?? snapshot?.bots[0] ?? null), [snapshot, botId, isGroup]);
   const members = snapshot?.bots ?? [];
   const botOf = useCallback((id?: string) => members.find((b) => b.id === id) ?? null, [members]);
@@ -693,6 +828,8 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     if (!openThreadId) return mine;
     return mine.filter((t) => (t.threadId ?? defaultThreadId) === openThreadId);
   }, [snapshot, bot?.id, isGroup, openThreadId, defaultThreadId]);
+  /** 1:1 同理：回合落库后让位给真正的用户消息 */
+  const awaitingUserEcho = Boolean(pendingUser) && !turns.some((t) => t.input === pendingUser);
   /** 把回合切成「IM 行」：日期分隔 / 连续的沉默合并成一行 / 同一人连说合并头像 */
   const rows = useMemo(() => {
     type Row =
@@ -733,6 +870,11 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     () => rows.filter((r) => r.kind === "msg").map((r, i) => ({ id: r.turn.id, index: i + 1, turn: r.turn })),
     [rows],
   );
+  /** 窗口化：只渲染最后 renderBlocks 个块，上面留一个「加载更早的回合」 */
+  const hiddenRows = Math.max(0, rows.length - renderBlocks);
+  const visibleRows = hiddenRows ? rows.slice(hiddenRows) : rows;
+  const hiddenGroup = Math.max(0, groupMessages.length - renderBlocks);
+  const visibleGroup = hiddenGroup ? groupMessages.slice(hiddenGroup) : groupMessages;
   /** 悬停 / 聚焦回合轨的细线：就地预览这一轮说了什么（不占常驻位） */
   const [peek, setPeek] = useState<{ id: string; top: number } | null>(null);
   const showPeek = (id: string, el: HTMLElement) => {
@@ -803,6 +945,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
       // 自己的话和「正在回」的占位立刻出来：群里每个成员都要想一会儿，不能整段空白
       setPendingOwner(text);
       setGroupStream([]);
+      setGroupPhases({});
       stickRef.current = true;
       setBusy("group");
       try {
@@ -816,6 +959,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
         setBusy("");
         setPendingOwner(null);
         setGroupStream([]);
+        setGroupPhases({});
       }
       return;
     }
@@ -828,17 +972,23 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     setDraft("");
     setAttachments([]);
     setError("");
-    setStreaming({ botId: sendTo, text: "" });
+    // 自己的话立刻上屏；bot 回合结束、落库后由 awaitingUserEcho 自动让位
+    setPendingUser(text);
+    setStreaming({ botId: sendTo, text: "", phase: "thinking" });
+    stickRef.current = true;
     try {
       const res = await window.harness.action("botChat", { botId: sendTo, text: withFiles, threadId: openThreadId ?? undefined }) as { ok?: boolean; result?: unknown; error?: string } | null;
       if (!res?.ok) throw new Error(String(res?.error || "没有返回结果"));
       await load();
     } catch (err) {
       const message = String((err as Error)?.message || err);
-      if (/abort/i.test(message)) notify("已取消这次回复");
+      // 取消不是失败：回合已经落成「被打断」，刷新一下就能看到半截
+      if (/abort/i.test(message)) { notify("已取消这次回复"); await load(); }
       else { setError(message); setDraft(text); }
+      setPendingUser(null);
     } finally {
       setStreaming(null);
+      setPendingUser(null);
     }
   };
 
@@ -893,7 +1043,16 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     if (thread && onOpenThread) onOpenThread(thread.id);
     else notify("这条执行还没有会话：去任务面板看");
   };
-  const openChat = (id: string) => { setOpenThreadId(id); setRailTab("messages"); setChatView("chat"); setChatQuery(""); setChatHits([]); };
+  const openChat = (id: string) => { setOpenThreadId(id); setRailTab("messages"); setChatView("chat"); setChatQuery(""); setChatHits([]); setRenderBlocks(40); };
+
+  /** 加载更早的回合：内容挂到顶上，用 scrollHeight 差值保持当前阅读位置 */
+  const loadEarlier = () => {
+    const el = streamRef.current;
+    const keep = el ? el.scrollHeight - el.scrollTop : 0;
+    stickRef.current = false;
+    setRenderBlocks((n) => n + 40);
+    requestAnimationFrame(() => { if (el) el.scrollTop = el.scrollHeight - keep; });
+  };
 
   // 搜索走会话内的消息（标题 + 正文），防抖 220ms，避免每敲一个字就翻库
   useEffect(() => {
@@ -1102,8 +1261,10 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
 
   const cancel = async () => {
     try {
-      if (isGroup && groupStream.length) {
-        await Promise.all(groupStream.map((s) => act("botCancel", { botId: s.botId })));
+      if (isGroup && (groupStream.length || busy === "group")) {
+        // 还没吐字时 groupStream 是空的，但仍可能有成员在跑：按成员逐个 abort
+        const ids = groupStream.length ? groupStream.map((s) => s.botId) : groupMembers.map((m) => m.id);
+        await Promise.all(ids.map((id) => act("botCancel", { botId: id })));
         notify("已取消这次回复");
         return;
       }
@@ -1915,31 +2076,19 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                 />
               </div>
             )}
-            {isGroup && groupMessages.map((m) => {
-              if (m.author === "owner") {
-                return (
-                  <div className="ds-user" key={m.id}>
-                    <div className="ds-bubble">{m.text}</div>
-                    <div className="ds-actions ds-actions-user"><span className="ds-time">{hm(m.createdAt)}</span></div>
-                  </div>
-                );
-              }
-              const sender = botOf(m.botId ?? undefined);
-              const spoke = ["answered", "replied", "reported", "asked"].includes(m.decision);
-              return (
-                <div className="ds-assistant" key={m.id}>
-                  <div className="ds-bot-attr">
-                    <b>{m.botName || sender?.name}</b>
-                    <span className="ds-time">{hm(m.createdAt)}</span>
-                    <span className={`ds-tag ${spoke ? "ai" : ""}`}>{DECISION_LABEL[m.decision] || (spoke ? "回复" : "沉默")}</span>
-                  </div>
-                  {spoke
-                    ? <div className="ds-assistant-body"><RichText text={m.text} /></div>
-                    : <div className="ds-system-note">{m.text || "没有开口"}<span> · 沉默也留痕</span></div>}
-                  <TraceDetails runId={m.meta?.runId} botName={m.botName} state={state} />
-                </div>
-              );
-            })}
+            {isGroup && hiddenGroup > 0 && (
+              <button className="ds-load-earlier" onClick={loadEarlier}>
+                加载更早的 {Math.min(40, hiddenGroup)} 条
+              </button>
+            )}
+            {isGroup && visibleGroup.map((m) => (
+              <GroupMessageRow
+                key={m.id}
+                m={m}
+                senderName={botOf(m.botId ?? undefined)?.name}
+                state={state}
+              />
+            ))}
             {/* 群聊：自己刚发的那句 + 每个正在回的成员一块（逐字长出来） */}
             {isGroup && awaitingOwnerEcho && (
               <div className="ds-user ds-pending">
@@ -1957,13 +2106,27 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                 <div className="ds-assistant-body">{s.text || "\u00a0"}<span className="ds-caret" /></div>
               </div>
             ))}
-            {isGroup && awaitingOwnerEcho && !groupStream.length && (
+            {/* 群聊：还没吐字但已经在想的成员；每人一行，不再用「等成员回…」一个大空窗 */}
+            {isGroup && Object.entries(groupPhases)
+              .filter(([botId]) => !groupStream.some((s) => s.botId === botId))
+              .map(([botId, p]) => (
+                <div className="ds-typing" key={`gp-${botId}`} aria-live="polite">
+                  <span className="ds-caret" />
+                  <span>{p.name || botOf(botId)?.name || "成员"} · {p.phase === "tool" ? toolLabel(p.tool) : "正在想…"}</span>
+                </div>
+              ))}
+            {isGroup && busy === "group" && !groupStream.length && !groupPhaseCount && (
               <div className="ds-typing" aria-live="polite">
                 <span className="ds-caret" />
                 <span>等成员回…</span>
               </div>
             )}
-            {!isGroup && rows.map((row) => {
+            {!isGroup && hiddenRows > 0 && (
+              <button className="ds-load-earlier" onClick={loadEarlier}>
+                加载更早的 {Math.min(40, hiddenRows)} 个回合
+              </button>
+            )}
+            {!isGroup && visibleRows.map((row) => {
               if (row.kind === "day") {
                 return (
                   <div className="ds-divider" key={row.key}>
@@ -2104,17 +2267,27 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                 </div>
               );
             })}
-          </div>
-          {streaming && (botOf(streaming.botId) || bot) && (isGroup || streaming.botId === bot?.id) && (
-            <div className="ds-assistant ds-streaming" aria-live="polite">
-              <div className="ds-bot-attr">
-                <b>{(botOf(streaming.botId) || bot)?.name}</b>
-                <span className="ds-tag">回你</span>
-                <button className="ds-action-text" onClick={() => void act("botCancel", { botId: streaming.botId })}>停止</button>
+            {!isGroup && awaitingUserEcho && (
+              <div className="ds-user ds-pending">
+                <div className="ds-bubble">{pendingUser}</div>
+                <div className="ds-actions ds-actions-user"><span className="ds-time">发送中…</span></div>
               </div>
-              <div className="ds-assistant-body">{streaming.text || "\u00a0"}<span className="ds-caret" /></div>
-            </div>
-          )}
+            )}
+            {!isGroup && streaming && (botOf(streaming.botId) || bot) && (
+              <div className="ds-assistant ds-streaming" aria-live="polite">
+                <div className="ds-bot-attr">
+                  <b>{(botOf(streaming.botId) || bot)?.name}</b>
+                  <span className="ds-tag">回你</span>
+                  <button className="ds-action-text" onClick={() => void act("botCancel", { botId: streaming.botId })}>停止</button>
+                </div>
+                <div className="ds-assistant-body">
+                  {streaming.text
+                    ? <>{streaming.text}<span className="ds-caret" /></>
+                    : <span className="ds-thinking">{streaming.phase === "tool" ? `${toolLabel(streaming.tool)}…` : "正在想…"}</span>}
+                </div>
+              </div>
+            )}
+          </div>
 
           {(() => {
             const asks = (snapshot.asks || []).filter((a) => a.botId === bot?.id);
@@ -2221,7 +2394,11 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                 el.style.height = "auto";
                 el.style.height = `${Math.min(120, el.scrollHeight)}px`;
               }}
+              onCompositionStart={() => { composingRef.current = true; }}
+              onCompositionEnd={() => { composingRef.current = false; }}
               onKeyDown={(event) => {
+                // 中文输入法：候选态的回车只上屏（Chromium 会同时给 keyCode 229 与 isComposing）
+                if (composingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
                 if (event.key !== "Enter" || event.shiftKey) return;
                 const mod = event.metaKey || event.ctrlKey;
                 const enterToSend = state?.settings?.enterToSend ?? true;
@@ -2254,7 +2431,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
                     <ChevronDownIcon size={11} />
                   </button>
                 )}
-                {streaming || groupStream.length
+                {streaming || groupStream.length || (isGroup && busy === "group")
                   ? <button className="ds-action-text" onClick={() => void cancel()}>停止</button>
                   : <button className="ds-send" disabled={!draft.trim() && !attachments.length} onClick={() => void send()} title="发送" aria-label="发送"><SendIcon size={16} /></button>}
               </div>

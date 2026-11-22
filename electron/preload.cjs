@@ -125,6 +125,16 @@ contextBridge.exposeInMainWorld("harness", {
     ipcRenderer.on("harness:bot-tool", handler);
     return () => ipcRenderer.removeListener("harness:bot-tool", handler);
   },
+  onBotPhase: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("harness:bot-phase", handler);
+    return () => ipcRenderer.removeListener("harness:bot-phase", handler);
+  },
+  onBotGroupMessage: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("harness:bot-group-message", handler);
+    return () => ipcRenderer.removeListener("harness:bot-group-message", handler);
+  },
   onBotMessage: (cb) => {
     const handler = (_event, payload) => cb(payload);
     ipcRenderer.on("harness:bot-message", handler);

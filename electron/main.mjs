@@ -2903,13 +2903,48 @@ function botWatchProbe(watch) {
 let botStore = null;
 let botTimer = null;
 const botAborts = new Map();
-/** 流式增量 / 工具事件：group 里带 groupId + name，前端才知道是哪条群消息在长 */
+/**
+ * 流式增量 / 工具事件：group 里带 groupId + name，前端才知道是哪条群消息在长。
+ *
+ * delta 按 ~16ms 合并一次再发 IPC：模型每秒几十个 token，逐个 send 会让渲染层
+ * 每 token 整页 reconcile 一次，主进程也会被 IPC 打满。流结束时 flushDelta 立刻补发。
+ */
+const botDeltaQueues = new Map();
+const BOT_DELTA_FRAME_MS = 16;
+const deltaKey = (base) => `${base?.groupId || ""}\u0000${base?.botId || ""}`;
+const flushDelta = (base) => {
+  const key = deltaKey(base);
+  const item = botDeltaQueues.get(key);
+  if (!item) return;
+  if (item.timer) clearTimeout(item.timer);
+  botDeltaQueues.delete(key);
+  if (!item.text) return;
+  if (win && !win.isDestroyed()) win.webContents.send("harness:bot-delta", { ...item.base, delta: item.text });
+};
 const sendDelta = (base, delta) => {
   if (!delta) return;
-  if (win && !win.isDestroyed()) win.webContents.send("harness:bot-delta", { ...base, delta });
+  const key = deltaKey(base);
+  let item = botDeltaQueues.get(key);
+  if (!item) { item = { base, text: "", timer: null }; botDeltaQueues.set(key, item); }
+  item.base = base;
+  item.text += delta;
+  if (item.timer) return;
+  item.timer = setTimeout(() => {
+    item.timer = null;
+    flushDelta(base);
+  }, BOT_DELTA_FRAME_MS);
 };
 const sendTool = (base, tool) => {
-  if (win && !win.isDestroyed()) win.webContents.send("harness:bot-tool", { ...base, ...tool });
+  // tool.name 是工具名；bot 自己的名字放 botName，避免把两者混成一个字段
+  if (win && !win.isDestroyed()) win.webContents.send("harness:bot-tool", { ...base, botName: base.name, name: tool.name, phase: tool.phase });
+};
+/** 状态相位：thinking / tool / done；前端据此显示「正在想 / 正在查」而不是空窗 */
+const sendPhase = (base, phase, extra = {}) => {
+  if (win && !win.isDestroyed()) win.webContents.send("harness:bot-phase", { ...base, phase, ...extra });
+};
+/** 群聊单条消息增量下发：不再为了一个新气泡把整个 snapshot 重发一遍 */
+const sendGroupMessage = (groupId, message) => {
+  if (win && !win.isDestroyed()) win.webContents.send("harness:bot-group-message", { groupId, message });
 };
 
 /**
@@ -3986,26 +4021,47 @@ const actions = {
     // 先把「你说的这句」落盘 + 广播：群里多个 bot 可能各想十几秒，不能等全跑完才出现
     store.persist(); broadcast();
     const out = [];
-    for (const bot of targets) {
+    /** 一个成员：开跑前先发 thinking，回完只落这一行 + 增量下发，不整包广播 */
+    const respond = async (bot) => {
+      const base = { botId: bot.id, groupId: gid, name: bot.name };
       // 每个成员各自一个 abort：客户端「停止」能掐正在说话的那一个
       const controller = new AbortController();
       botAborts.set(bot.id, controller);
+      sendPhase(base, "thinking");
       try {
         const turn = await bots().reply(bot, value, {
           signal: controller.signal,
-          onDelta: (delta) => sendDelta({ botId: bot.id, groupId: gid, name: bot.name }, delta),
-          onTool: (tool) => sendTool({ botId: bot.id, groupId: gid, name: bot.name }, tool),
+          onDelta: (delta) => sendDelta(base, delta),
+          onTool: (tool) => sendTool(base, tool),
         });
-        out.push(push("bot", bot, turn?.reply || "", turn?.decision || "answered", {
+        flushDelta(base);
+        const msg = push("bot", bot, turn?.reply || "", turn?.decision || "answered", {
           turnId: turn?.id || null, runId: turn?.runId || null, cost: turn?.cost || null,
-        }));
+        });
+        store.saveGroupMessage?.(msg);
+        sendGroupMessage(gid, msg);
+        out.push(msg);
       } catch (err) {
-        if (controller.signal.aborted) out.push(push("bot", bot, "已停止这次回复", "interrupted"));
-        else out.push(push("bot", bot, `（没回：${String(err?.message || err)}）`, "blocked"));
+        flushDelta(base);
+        const msg = controller.signal.aborted
+          ? push("bot", bot, "已停止这次回复", "interrupted")
+          : push("bot", bot, `（没回：${String(err?.message || err)}）`, "blocked");
+        store.saveGroupMessage?.(msg);
+        sendGroupMessage(gid, msg);
+        out.push(msg);
       } finally {
         botAborts.delete(bot.id);
+        sendPhase(base, "done");
       }
-      store.persist(); broadcast();
+    };
+    // 主管先开口（分配 / 拆解），其余成员并行：4 个人串行会把总时长拉成四倍。
+    // 每个成员仍然用自己的 thread / 记忆 / abort，并发只影响“谁先说”，不改上下文隔离。
+    const lead = targets.find((b) => b.role === "supervisor");
+    if (lead) await respond(lead);
+    const rest = targets.filter((b) => b.id !== lead?.id);
+    const PARALLEL = 3;
+    for (let i = 0; i < rest.length; i += PARALLEL) {
+      await Promise.all(rest.slice(i, i + PARALLEL).map(respond));
     }
     store.persist(); broadcast();
     return { messages: out };
@@ -4015,15 +4071,19 @@ const actions = {
     if (!bot) throw new Error("bot 不存在");
     const controller = new AbortController();
     botAborts.set(bot.id, controller);
+    const base = { botId: bot.id, name: bot.name };
+    sendPhase(base, "thinking");
     try {
       return await bots().reply(bot, text, {
         threadId: String(threadId || ""),
         signal: controller.signal,
-        onDelta: (delta) => sendDelta({ botId: bot.id }, delta),
-        onTool: (tool) => sendTool({ botId: bot.id }, tool),
+        onDelta: (delta) => sendDelta(base, delta),
+        onTool: (tool) => sendTool(base, tool),
       });
     } finally {
+      flushDelta(base);
       botAborts.delete(bot.id);
+      sendPhase(base, "done");
     }
   },
   /** 会话列表（ORCA 的 Chats）：一个 bot 可以有多个话题，默认会话是主动开口的落点 */
