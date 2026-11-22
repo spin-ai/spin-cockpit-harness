@@ -7383,6 +7383,10 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
     createdAt: Date.now(),
     endedAt: null,
   });
+  // 记录写完之后再广播：之前是在 run 创建后立刻广播，此时 terminals 记录还不存在，
+  // 渲染层的 state.terminals 就永远缺少这条新终端（「后台与最近」因此永不出现）。
+  // 纯 shell 没有 run，也只能靠这一次广播。
+  broadcast();
   term.onData((data) => {
     info.recent = stripAnsi((info.recent + data).slice(-8000));
     if (info.attached) send(data);

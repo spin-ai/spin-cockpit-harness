@@ -337,6 +337,8 @@ P0 不做大规模 Todo 状态机重写，但收敛写入边界：
 | **M3 · 转为任务**：`promoteThreadToTodo` 建真实 Todo 并把该 thread 的全部无主 run 原样挂上去（不重跑、不改 runId）；旧隐藏 Todo 的 `promoteChat` 保留兼容 | `electron/main.mjs` / `TaskChat` |
 | **M3 · composer 动作文案**：发送键旁常显「派活 / 纠偏 / 发送并运行 / 发送 / 只聊」；纯聊天线索（`thread.chatOnly`）「只聊」开关不再显示 | `TaskChat` |
 | **M3 · IM 授权闸**：IM 普通消息只建任务（agentId 空，不自动开跑）；整句「开跑 / run」才指派执行体；重复开跑有幂等提示 | `electron/main.mjs` IM handler |
+| **修复：终端记录广播顺序**：`terminal:create` 曾在写入 terminals 记录前就 `broadcast()`，渲染层 `state.terminals` 永远缺这条新终端 → 「后台与最近」永不出现；现在记录写完后广播（纯 shell 也靠这一次） | `electron/main.mjs` |
+| **M0 契约测试**：`npm run test:e2e -- --suite=execution` 真实 Electron + 隔离 userData，26 项覆盖 I1–I10（探索 Run / 手动终端不造 Run / detach 不杀进程 / 纯聊天无隐藏 Todo / 转任务保留 runId） | `scripts/e2e/suites/execution.mjs` |
 | 条件式「后台与最近」菜单：当前项目无视图的终端分「仍在运行 / 最近结束」，恢复同一 terminalId；`>0` 才出现，无计数 | `TerminalPanel` term-strip |
 | 「起 Agent」改「打开 Agent 终端（探索，可后关联任务）」，不再 toast「未绑任务」 | `TerminalPanel.launchAgent` |
 | 重启后 running 终端记录标 `detached`（pty 已随应用退出，不伪装续活）；attach missing 时明确提示 | `seed()` / `TermTab.attach` |
@@ -346,10 +348,10 @@ P0 不做大规模 Todo 状态机重写，但收敛写入边界：
 未做（后续）：
 
 - `⌘⇧T` 恢复最近关闭标签的快捷键（菜单已覆盖找回路径）。
-- M0 契约测试：main 进程 actions 未抽成可导入模块，动作级 fixture 测试待重构后补；现有保障 = typecheck + 全量 tests + 手工验收。
 - M2 其余：`run.project_id` 落库与 Carrier 读模型（写路径仍用 `runtime + terminalId` 快照；threadId 已落库）。
-- M3 其余：Bot / 插件入口的授权闸未逐个过（复用 `dispatchTodo` 待抽）；Chat 纯聊天运行中无独立 shimmer 指示（可从进展区看）。
+- M3 其余：Chat 纯聊天运行中无独立 shimmer 指示（可从进展区看）。
 - M4：Tab 按对象恢复 / 最近记录展示上限；任务详情「受管运行 / 关联终端」两块展示。
+- e2e 契约用例里纯聊天段依赖本机 dsh；无可用 ACP Agent 时该段 SKIP（其余 22 项仍跑）。
 
 ## 9. 测试与验收
 

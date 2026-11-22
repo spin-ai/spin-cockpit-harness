@@ -20,7 +20,7 @@ import { freePort, installHelpers, launchApp, repoRoot, screenshot, tempDataDir 
 import { TESTS } from "./suites/requirements.mjs";
 
 /** 旧式套件：自己 attach 到已运行实例，由本 runner 负责起窗口。 */
-const LEGACY_SUITES = ["smoke", "git", "notes", "preview", "md-rich"];
+const LEGACY_SUITES = ["smoke", "git", "notes", "preview", "md-rich", "execution"];
 
 const root = repoRoot();
 const args = process.argv.slice(2);
