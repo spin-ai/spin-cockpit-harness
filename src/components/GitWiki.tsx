@@ -3,6 +3,7 @@ import { renderMarkdown, slugifyHeading } from "../markdown";
 import { WIKI_GROUPS, WIKI_PAGES, wikiPage } from "../wiki/pages";
 import { WIKI_DEMOS } from "../wiki/demos";
 import { WikiFlowDemo } from "./WikiFlowDemo";
+import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "./Icons";
 
 type Heading = { id: string; text: string; level: number };
 
@@ -247,8 +248,8 @@ export function GitWiki({ branch, head, pageId, onNavigate, sourceLabel }: {
           {WIKI_DEMOS[page.id] && <WikiFlowDemo {...WIKI_DEMOS[page.id]} />}
           <article className="md-render git-wiki-markdown" dangerouslySetInnerHTML={{ __html: html }} />
           <footer className="git-wiki-pager">
-            {prev ? <button className="git-wiki-pager-btn" onClick={() => open(prev.id)}><span>← 上一篇</span><b>{prev.title}</b></button> : <span />}
-            {next ? <button className="git-wiki-pager-btn next" onClick={() => open(next.id)}><span>下一篇 →</span><b>{next.title}</b></button> : <span />}
+            {prev ? <button className="git-wiki-pager-btn" onClick={() => open(prev.id)}><span><ChevronLeftIcon size={12} /> 上一篇</span><b>{prev.title}</b></button> : <span />}
+            {next ? <button className="git-wiki-pager-btn next" onClick={() => open(next.id)}><span>下一篇 <ChevronRightIcon size={12} /></span><b>{next.title}</b></button> : <span />}
           </footer>
         </div>
       </main>
@@ -274,12 +275,12 @@ export function GitWiki({ branch, head, pageId, onNavigate, sourceLabel }: {
 
       {lightbox && (
         <div className="wiki-lightbox" role="dialog" aria-modal="true" onClick={() => setLightbox(null)}>
-          <button className="wiki-lightbox-close" onClick={() => setLightbox(null)}>×</button>
+          <button className="wiki-lightbox-close" title="关闭" aria-label="关闭图片" onClick={() => setLightbox(null)}><XIcon size={14} /></button>
           <button
             className="wiki-lightbox-nav prev"
             disabled={lightbox.images.length < 2}
             onClick={(event) => { event.stopPropagation(); setLightbox({ ...lightbox, index: (lightbox.index - 1 + lightbox.images.length) % lightbox.images.length }); }}
-          >←</button>
+          ><ChevronLeftIcon size={16} /></button>
           <figure onClick={(event) => event.stopPropagation()}>
             <img src={lightbox.images[lightbox.index]?.src} alt={lightbox.images[lightbox.index]?.alt} />
             <figcaption>
@@ -291,7 +292,7 @@ export function GitWiki({ branch, head, pageId, onNavigate, sourceLabel }: {
             className="wiki-lightbox-nav next"
             disabled={lightbox.images.length < 2}
             onClick={(event) => { event.stopPropagation(); setLightbox({ ...lightbox, index: (lightbox.index + 1) % lightbox.images.length }); }}
-          >→</button>
+          ><ChevronRightIcon size={16} /></button>
         </div>
       )}
     </div>

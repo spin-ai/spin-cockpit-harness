@@ -41,7 +41,7 @@
 ## 3. 三条阅读路径
 
 **A. 第一天就上手（30 分钟）**
-[`../README.md`](../README.md) 界面五列 → [`DESIGN-SYSTEM.md`](DESIGN-SYSTEM.md) 改 UI 前必读 → [`WADE.md`](WADE.md) 开发流程 → [`arch/ARCH-multi-agent-workspace.md`](arch/ARCH-multi-agent-workspace.md) 4+1 视图（**先看这张总图，其余 ARCH 都是它的一个格子的放大**）→ [`arch/ARCH-key-tech.md`](arch/ARCH-key-tech.md) 五件关键技术（判断「这件事难在哪、做到什么算做到」）。
+[`../README.md`](../README.md) 界面五列 → [`DESIGN-SYSTEM.md`](DESIGN-SYSTEM.md) 改 UI 前必读 → [`WADE.md`](WADE.md) 开发流程 → [`arch/ARCH-multi-agent-workspace.md`](arch/ARCH-multi-agent-workspace.md) 4+1 视图（**先看这张总图，其余 ARCH 都是它的一个格子的放大**）→ [`arch/ARCH-key-tech.md`](arch/ARCH-key-tech.md) 五件关键技术（判断「这件事难在哪、做到什么算做到」）→ [`arch/ARCH-concepts.md`](arch/ARCH-concepts.md) 八个核心概念的定义与关系。
 
 **B. 改一个模块（按依赖顺序读，不要跳）**
 
@@ -89,6 +89,7 @@
 | [`arch/ARCH-key-tech.md`](arch/ARCH-key-tech.md) | 架构 | 部分落地 | **五件关键技术**：解析 / 编排 / 整理 / 记忆 / 画像的边界、现状、判据、风险与一句话应对 |
 | [`arch/ARCH-tech-landscape.md`](arch/ARCH-tech-landscape.md) | 架构 | 记录 | 五件关键技术的开源 / 闭源实现对照、可复用度、许可证红线 |
 | [`arch/ARCH-benchmark-landscape.md`](arch/ARCH-benchmark-landscape.md) | 架构 | 记录 | 五件关键技术的公开基准盘点：哪些真有数据集、哪些只有分类法、20–50 条本地闸门可抄什么 |
+| [`arch/ARCH-concepts.md`](arch/ARCH-concepts.md) | 架构 | 已落地 | **八个核心概念**：Chat / Super Agent / Bot / Terminal / Knowledge / Memory / Persona / Scene 的定义与关系 |
 | [`arch/ARCH-multi-agent-workspace.md`](arch/ARCH-multi-agent-workspace.md) | 架构 | 部分落地 | **总图**：4+1 视图（宿主 / 执行 / 存储 / 远程） |
 | [`arch/ARCH-super-agent.md`](arch/ARCH-super-agent.md) | 架构 | 部分落地 | Mission / Delegation / MCP / 迁移 |
 | [`arch/ARCH-chat-thread.md`](arch/ARCH-chat-thread.md) | 架构 | 已落地 | thread 模型与 send 状态机 |

@@ -51,7 +51,7 @@ export const WIKI_DEMOS: Record<string, WikiDemo> = {
       { key: "state", label: "读状态", title: "只读现有 State", detail: "agents / runs / todos / approvals / terminals / delegations；不新建表，也不伪造任务。", tone: "idle" },
       { key: "model", label: "投影", title: "State → OfficeModel", detail: "纯函数算出区域、姿态、tone 与走位；没有数据的位置保持空闲。", tone: "idle" },
       { key: "zone", label: "分区", title: "按优先级落位", detail: "审批 / 等待输入 > 失败 > 待验收 > 主管 > 运行中 > 排队 > 空闲。", tone: "review" },
-      { key: "stage", label: "舞台", title: "三套模板共用一份模型", detail: "办公室 2.5D 是默认；作战室与航母是 three.js 3D，按需加载。", tone: "running" },
+      { key: "stage", label: "舞台", title: "三套模板共用一份模型", detail: "办公室 2.5D 是默认；发射指挥与航母是 three.js 3D，按需加载。", tone: "running" },
       { key: "inspect", label: "点开", title: "Inspector 才提供操作", detail: "状态 → 区域 → 姿态 → 动效；打开任务 / 会话 / 终端、停止、重试、审批。", tone: "steer" },
       { key: "motion", label: "动效", title: "克制 / 完整 / 关闭", detail: "走位时长、姿态幅度、打字速度存 config.prefs.motion，reduced-motion 同样生效。", tone: "done" },
     ],

@@ -18,9 +18,9 @@ export const SCENE_TEMPLATES: {
   },
   {
     id: "warroom",
-    label: "作战室",
-    parts: "长桌 · 主屏 · 发布闸门 · 复盘墙",
-    desc: "发布窗口的值班阵容：主屏看板、回滚席、对外同步，都在同一张长桌上。",
+    label: "发射指挥",
+    parts: "发射大屏 · GO/NO-GO · 工位实时画面",
+    desc: "航天发射指挥大厅：大屏是发射工位的实时画面与 GO/NO-GO，席位照真实运行状态就位。",
   },
   {
     id: "carrier",

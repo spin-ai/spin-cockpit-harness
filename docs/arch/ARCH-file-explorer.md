@@ -24,7 +24,7 @@
 | 在 Finder 中显示 | 行右键 / 预览头部按钮 |
 | 在终端中打开 | 目录右键；会打开一个新的终端标签（`harness:open-terminal-at`） |
 | 复制路径 / 相对路径 | 行右键 |
-| 预览操作 | 预览头部：渲染/源码切换、刷新、Finder 显示、复制相对路径、关闭；切回标签时自动重读文件 |
+| 预览操作 | 预览头部：渲染/源码切换（html / md）、刷新、Finder 显示、复制相对路径、关闭；切回标签时自动重读文件；文本/代码文件直接出编辑器，改完出现「保存」按钮（⌘S） |
 | 格式支持 | HTML / Markdown / 图片 / 音视频 / PDF / 文本；二进制与超大文件给原因而不是乱码，见 2.5 |
 
 ## 2. Markdown / HTML 渲染
@@ -38,7 +38,7 @@
 
 ## 2.5 格式矩阵（谁能预览、怎么预览）
 
-类型口径只有一份：`electron/file-kinds.mjs`（`IMAGE_EXT` / `VIDEO_EXT` / `AUDIO_EXT` / `PREVIEW_NATIVE_EXT`），渲染层的对应清单位于 `src/components/FileVisual.tsx`，两边由 `npm run verify:preview-format` 校验一致。
+类型口径只有一份：`electron/file-kinds.mjs`（`IMAGE_EXT` / `VIDEO_EXT` / `AUDIO_EXT` / `PREVIEW_NATIVE_EXT`），渲染层的对应清单位于 `src/components/FileVisual.tsx`，两边由 `npm test -- preview-format` 校验一致。
 
 | 格式 | 预览方式 | 说明 |
 |---|---|---|
@@ -46,11 +46,12 @@
 | `.md` `.markdown` | `marked` + DOMPurify → 富文本 / 源码 / 目录 | 可编辑并写回 |
 | 图片 `.png/.jpg/.jpeg/.webp/.gif/.svg/.ico/.bmp/.avif/.tif/.tiff` | webview 原生渲染 | 不读正文，不再受 2MB 文本上限影响 |
 | 音视频 `.mp4/.m4v/.webm/.ogv/.mov` · `.mp3/.wav/.m4a/.aac/.ogg/.oga/.flac` | webview 原生播放器 | Chromium 能解的容器；mkv / avi 走系统播放器 |
-| `.pdf` | webview + Chromium 内置 PDF 阅读器 | Electron webview 默认 `navigator.pdfViewerEnabled === true`，不需要放开 `plugins` |
+| `.pdf` | **自带阅读器**：`files:pageImage` 让主进程用 pdfjs + skia 把第 N 页渲成 PNG，渲染层只做排版（翻页 / 页码 / 缩放 100–300% / ←→ 翻页） | 主进程渲图链路与资料库「看原页」同一条（`electron/knowledge/pageimage.mjs`），按 `路径@mtime@页@scale` 缓存最近 24 张；不依赖 Chromium 的 PDF 插件，暗色下也不会闪一块白 |
 | `.docx` | `files:previewDoc` → mammoth → HTML | 渲染层再过一次 DOMPurify；图片按 data URI 内嵌 |
 | `.xlsx/.xlsm/.xls/.ods` | `files:previewDoc` → SheetJS → 表格 | 自建表格（不用 `sheet_to_html`）：最多 12 sheet × 400 行 × 60 列，超出标「已截断」 |
 | `.pptx/.pptm/.doc/.odt/.odp/.odg/.rtf/.epub` | 装了 LibreOffice：`soffice --convert-to pdf` → 内置 PDF 阅读器（**版式还原**，按 `路径+mtime+size` 缓存到 `userData/doc-preview/`）；没装：officeparser 抽文本 | 转换失败自动回落文字，不报错卡住 |
-| 普通文本 / 代码 / `.csv` / `.log` | `<pre>` 等宽展示 | 严格 UTF-8 → BOM UTF-16 → GB18030 兜底；非 UTF-8 会在顶部提示「按 GB18030 解码（保存会写成 UTF-8）」 |
+| 普通文本 / 代码 / `.csv` / `.log` | **CodeMirror 6 代码编辑器**（行号 / 折叠 / 括号匹配 / 自动缩进 / 查找 / 多光标），可直接编辑并 ⌘S 写回 | 语言按扩展名挑：js/ts/jsx/tsx/json（`lang-javascript`）、html/vue/svelte（`lang-html`）、css/scss/less（`lang-css`）、md（`lang-markdown`），其余走 `@codemirror/legacy-modes`（py / go / rs / c / cpp / java / cs / swift / rb / lua / sh / sql / yaml / toml / dockerfile / proto / diff …）；认不出来当纯文本，仍可编辑。配色只用 `--fg/--muted/--purple/--green/--amber/--brand/--indigo`，亮暗自动跟随 |
+| 非 UTF-8 文本 | 同上，顶部提示「按 GB18030 解码（保存会写成 UTF-8）」 | 严格 UTF-8 → BOM UTF-16 → GB18030 兜底 |
 | 二进制（`.docx/.xlsx/.zip/.woff/.db/.wasm` …） | 不给内容，只给原因 | NUL 字节 / 控制字符占比判定；提示用「在 Finder 中显示」交给系统应用 |
 | >2MB 的文本 | 不预览，提示原因 | 避免一次把 2MB 塞进 DOM |
 

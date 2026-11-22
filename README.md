@@ -64,7 +64,7 @@ npm run docs:build          # → dist-pages/（GitHub Pages）
 - **项目**：在 TODO LIST 下方的常驻项目区，本地目录即项目；支持添加 / 切换 / 管理 / 在 Finder 中显示，任务、终端、文件树跟随当前项目
 - **Chat**：单一输入路径。会话（thread）永远存在：说一句话即派活，运行中发消息即纠偏（带投递回执），已确认任务的消息仅记录；**未派活的对话是全局的**（切项目不消失），composer 里用 `◎ 全局 / 项目 · xxx` 选择这次对话的作用域；**模型可按会话选择**（选项来自 dsh ACP `session/new` 的 configOptions，下一次运行生效）；草稿会话发送 = 派活并创建任务
 - **Super Agent / Mission**：在 Chat 里选择 `✦ 主管` 或点「＋ 主管」创建 supervisor；一句话先出计划（Mission Plan Card，可退回修改），人工批准后自动创建 child Todo + Delegation + worker run；worker 在独立 worktree 执行，Mission 面板汇总子任务、可取消/恢复/确认；supervisor 通过受控 MCP 工具读写 Mission，不直接改代码（见 [docs/arch/ARCH-super-agent.md](docs/arch/ARCH-super-agent.md)）
-- **Terminal**：任务绑定项目的真实 pty（node-pty + xterm），可多标签、可直接输入；**资源管理器里的文件也在终端区按标签预览**；多标签切换（⌃Tab / ⌘⇧[ ] / ⌘⇧1…9）、**终端窗格任意拆分**（⌘D 右拆 / ⇧⌘D 下拆，递归嵌套 + 拖拽分隔条 + ⌘⌥方向键切焦点）、标签重命名与中键关闭、⌘F 查找、右键菜单（复制 / 粘贴 / 清屏 / 重启）、⌘+/- 字号缩放、链接点击打开、进程退出后可重启；挂载前的输出会回放，不会丢 banner；**预览默认复用同一个标签**：打开 HTML/文本文件就切成文件模式（渲染 / 源码），点地址栏「URL」或终端识别到的 `打开预览 :PORT` 就切成地址模式；需要并排时点「＋ 预览」显式新建，最多 3 个，后台 webview 不卸载
+- **Terminal**：任务绑定项目的真实 pty（node-pty + xterm），可多标签、可直接输入；**资源管理器里的文件也在终端区按标签预览**；多标签切换（⌃Tab / ⌘⇧[ ] / ⌘⇧1…9）、**终端窗格任意拆分**（⌘D 右拆 / ⇧⌘D 下拆，递归嵌套 + 拖拽分隔条 + ⌘⌥方向键切焦点）、标签重命名与中键关闭、⌘F 查找、右键菜单（复制 / 粘贴 / 清屏 / 重启）、⌘+/- 字号缩放、链接点击打开、进程退出后可重启；挂载前的输出会回放，不会丢 banner；**预览默认复用同一个标签**：打开 HTML/文本文件就切成文件模式（渲染 / 源码），点地址栏「URL」或终端识别到的 `打开预览 :PORT` 就切成地址模式；需要并排时点工具栏「＋ 新建 → 新建预览页」显式新建，最多 6 个，后台 webview 不卸载
 - **UI 上下文**：预览页里点中元素 → Chat 输入框出现元素 chip（selector / 源文件 / 截图）→ 随消息注入当前会话（运行中即 steer）
 - **插件**：Settings → 插件可安装 `.cockpit-plugin` / 目录、启停；**Notes 是内置 first-party 插件**，无需额外安装，原生 Source / Page / Citation / Review、Memory 顶层索引 / 注入、CodeMirror 编辑、多 tab、可拖拽左右分屏、搜索、Graph、任务 / Chat 联动；也支持打开本地 Markdown 目录，直接编辑写回或导入为 Source（见 [docs/arch/ARCH-plugins.md](docs/arch/ARCH-plugins.md)、[docs/arch/PLUGIN-notes.md](docs/arch/PLUGIN-notes.md)）
 - **右侧栏**：三块
@@ -149,7 +149,7 @@ Chat 的“Agent”是执行目标，按 CLI 自动选择执行方式：
 ```sh
 npm run bundle:dsh        # 当前平台；首次会下载对应 wheel
 npm run smoke:dsh         # --version + ACP initialize + session/new
-npm run verify:mission    # Mission schema + MCP bridge + supervisor profile
+npm test -- mission    # Mission schema + MCP bridge + supervisor profile
 npm run verify:plugins    # 插件 manifest / 入口语法
 npm run dist              # 当前平台原生包（mac dmg / win nsis / linux AppImage）
 ```

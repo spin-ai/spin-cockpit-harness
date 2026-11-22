@@ -135,17 +135,26 @@ export function parseSseDelta(payload) {
  * 流式对话：给 bot 的被动回复用。
  * Ark 的 plan 网关是 OpenAI 兼容的 SSE；如果不是 event-stream（网关降级），
  * 就退回一次性 JSON，仍然按同一份 onDelta 协议吐一次全文。
+ *
+ * `tools` 是 OpenAI 同构的 function calling：模型可能在流里吐 tool_calls，
+ * 这里只负责**把调用拼完整**（id / name / arguments 分片到达），执行与循环在调用方。
  */
-export async function chatStream(messages, { key, model = MODELS.fast, temperature = 0.6, maxTokens = 700, signal, onDelta } = {}) {
+export async function chatStream(messages, { key, model = MODELS.fast, temperature = 0.6, maxTokens = 700, signal, onDelta, tools = null } = {}) {
   if (!key) { const err = new Error("缺少 Ark API key"); err.code = "no-key"; throw err; }
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 120000);
   if (signal) signal.addEventListener("abort", () => ac.abort(), { once: true });
+  const withTools = Array.isArray(tools) && tools.length > 0;
+  const startedAt = Date.now();
   try {
     const res = await fetch(`${ARK_BASE}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "text/event-stream" },
-      body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens, stream: true }),
+      body: JSON.stringify({
+        model, messages, temperature, max_tokens: maxTokens, stream: true,
+        stream_options: { include_usage: true },
+        ...(withTools ? { tools, tool_choice: "auto" } : {}),
+      }),
       signal: ac.signal,
     });
     if (!res.ok) {
@@ -157,12 +166,17 @@ export async function chatStream(messages, { key, model = MODELS.fast, temperatu
     const type = String(res.headers.get("content-type") || "");
     if (!type.includes("event-stream")) {
       const json = await res.json().catch(() => ({}));
-      const text = String(json?.choices?.[0]?.message?.content || "");
+      const message = json?.choices?.[0]?.message || {};
+      const text = String(message.content || "");
       if (text) onDelta?.(text);
-      return { text, usage: json?.usage || {}, model };
+      return { text, toolCalls: normalizeToolCalls(message.tool_calls), usage: json?.usage || {}, ttft: text ? Date.now() - startedAt : undefined, model };
     }
     let text = "";
     let buffer = "";
+    let finishReason = "";
+    let usage = {};
+    let firstTokenAt = 0;
+    const calls = [];
     const decoder = new TextDecoder();
     for await (const chunk of res.body) {
       buffer += decoder.decode(chunk, { stream: true });
@@ -171,14 +185,35 @@ export async function chatStream(messages, { key, model = MODELS.fast, temperatu
         const line = buffer.slice(0, idx).trim();
         buffer = buffer.slice(idx + 1);
         if (!line.startsWith("data:")) continue;
-        const delta = parseSseDelta(line.slice(5));
-        if (delta) { text += delta; onDelta?.(delta); }
+        const raw = line.slice(5).trim();
+        if (!raw || raw === "[DONE]") continue;
+        let payload;
+        try { payload = JSON.parse(raw); } catch { continue; }
+        const choice = payload?.choices?.[0] || {};
+        if (choice.finish_reason) finishReason = String(choice.finish_reason);
+        if (payload?.usage) usage = payload.usage;
+        const delta = choice.delta || {};
+        if (delta.content) { if (!firstTokenAt) firstTokenAt = Date.now(); text += delta.content; onDelta?.(delta.content); }
+        // tool_calls 分片到达：按 index 拼 id / name / arguments
+        for (const part of delta.tool_calls || []) {
+          const slot = calls[part.index ?? 0] || (calls[part.index ?? 0] = { id: "", name: "", args: "" });
+          if (part.id) slot.id = part.id;
+          if (part.function?.name) slot.name += part.function.name;
+          if (part.function?.arguments) { if (!firstTokenAt) firstTokenAt = Date.now(); slot.args += part.function.arguments; }
+        }
       }
     }
-    return { text, usage: {}, model };
+    return { text, toolCalls: calls.filter((c) => c && c.name), usage, ttft: firstTokenAt ? firstTokenAt - startedAt : undefined, model, finishReason };
   } finally {
     clearTimeout(timer);
   }
+}
+
+function normalizeToolCalls(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((tc) => ({ id: String(tc?.id || ""), name: String(tc?.function?.name || ""), args: String(tc?.function?.arguments || "{}") }))
+    .filter((tc) => tc.name);
 }
 
 /** 建索引前的自检：key 是否可用于 embedding。 */

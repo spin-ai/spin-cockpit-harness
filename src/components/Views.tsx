@@ -4,6 +4,10 @@ import { ERROR_CLASS, fmtMs, missingKeyInfo, p50, pct, timeAgo, tokens } from ".
 import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
 import { RowMenu } from "./RowMenu";
+import { Overview } from "./Overview";
+import { useT } from "../i18n";
+import { Segmented } from "./Tabs";
+import { ListIcon, TableIcon } from "./Icons";
 import { SceneConfigModal } from "./SceneConfigModal";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
@@ -97,35 +101,41 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask }
     )
   );
 
+  const t = useT();
   return (
     <div className="page project-page">
       <PageHeader
-        title="项目"
+        title={t("page.projects")}
         subtitle={`${state.projects.length} 个项目 · 本地目录即项目；任务、终端和文件树跟随当前项目`}
         actions={<div className="row gap8">
-          <div className="view-switch" role="group" aria-label="项目视图">
-            <button className={layout === "cards" ? "on" : ""} onClick={() => setLayout("cards")} title="卡片视图">▦ 卡片</button>
-            <button className={layout === "list" ? "on" : ""} onClick={() => setLayout("list")} title="列表视图">☰ 列表</button>
-          </div>
-          <button className="btn primary" onClick={onAdd}>＋ 添加项目</button>
+          <Segmented
+            ariaLabel={t("page.projects")}
+            value={layout}
+            onChange={(id) => setLayout(id as "cards" | "list")}
+            items={[
+              { id: "cards", label: (<><TableIcon size={12} /> {t("action.cards")}</>), title: "卡片视图" },
+              { id: "list", label: (<><ListIcon size={12} /> {t("action.list")}</>), title: "列表视图" },
+            ]}
+          />
+          <button className="btn primary" onClick={onAdd}>＋ {t("action.addProject")}</button>
         </div>}
       />
 
-      <div className="project-overview">
-        <div className="project-overview-item"><b>{state.projects.length}</b><span>项目</span></div>
-        <div className="project-overview-item"><b>{totalOpen}</b><span>未完成</span></div>
-        <div className={`project-overview-item ${running ? "run" : ""}`}><b>{running}</b><span>运行中</span></div>
-        <div className="project-overview-item"><b>{totalConfirmed}</b><span>已确认</span></div>
-        <div className="project-overview-item active-name"><span>当前项目</span><b>{active?.name || "—"}</b></div>
-      </div>
+      <Overview items={[
+        { label: "项目", value: state.projects.length },
+        { label: "未完成", value: totalOpen },
+        { label: "运行中", value: running, tone: running ? "run" : undefined },
+        { label: "已确认", value: totalConfirmed },
+        { label: "当前项目", value: active?.name || "—", active: true },
+      ]} />
 
-      <section className="panel project-list-panel">
-        <div className="project-list-head">
+      <section className="panel list-panel">
+        <div className="list-head">
           <div className="row gap8">
             <b>工作区项目</b>
             <span className="tiny faint">{filtered.length}/{state.projects.length}{filter !== "all" ? ` · ${filterLabel}` : ""}</span>
           </div>
-          <div className="project-list-tools">
+          <div className="list-tools">
             <select className="project-filter" aria-label="筛选项目" value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
               <option value="all">全部项目</option>
               <option value="running">运行中</option>
@@ -192,14 +202,14 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask }
             })}
           </div>
           ) : (
-            <div className="project-list-rows">
+            <div className="list-rows">
               {filtered.map((entry) => {
                 const { p, todos, isActive, open, confirmed, busy } = entry;
                 return (
-                  <div className={`project-list-item ${isActive ? "on" : ""}`} key={p.id}>
-                    <div className="project-list-main">
+                  <div className={`list-item ${isActive ? "on" : ""}`} key={p.id}>
+                    <div className="list-main">
                       <div className={`project-mark ${p.color}`}>{p.name.trim().slice(0, 1).toUpperCase() || "P"}</div>
-                      <div className="project-list-title">
+                      <div className="list-title">
                         <div className="row gap6 wrap">
                           {editing === p.id ? (
                             <input
@@ -217,13 +227,13 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask }
                         <div className="project-card-path mono tiny muted ellipsis" title={p.path}>{p.path}</div>
                       </div>
                     </div>
-                    <div className="project-list-stats">
+                    <div className="list-stats">
                       <span><b>{todos.length}</b>任务</span>
                       <span><b>{open}</b>未完成</span>
                       <span className={busy ? "run" : ""}><b>{busy}</b>运行中</span>
                       <span><b>{confirmed}</b>已确认</span>
                     </div>
-                    <span className="project-list-time tiny faint">最近打开 {timeAgo(p.lastOpenedAt, now)} 前</span>
+                    <span className="list-time tiny faint">最近打开 {timeAgo(p.lastOpenedAt, now)} 前</span>
                     <div className="project-actions">{actionsFor(p, isActive)}</div>
                   </div>
                 );
@@ -252,6 +262,7 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask }
 const HOST_STATUS: Record<string, string> = { online: "在线", offline: "离线", probing: "检测中" };
 
 export function Hosts({ state, act, notify, now, embedded = false }: { state: State; act: Act; notify: (m: string) => void; now: number; embedded?: boolean }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [probing, setProbing] = useState<Record<string, boolean>>({});
   const [probingAll, setProbingAll] = useState(false);
@@ -330,12 +341,17 @@ export function Hosts({ state, act, notify, now, embedded = false }: { state: St
 
   const toolbar = (
     <div className="row gap8">
-      <div className="view-switch" role="group" aria-label="主机视图">
-        <button className={layout === "cards" ? "on" : ""} onClick={() => setLayout("cards")} title="卡片视图">▦ 卡片</button>
-        <button className={layout === "list" ? "on" : ""} onClick={() => setLayout("list")} title="列表视图">☰ 列表</button>
-      </div>
-      <button className="btn" disabled={probingAll} onClick={() => void probeAll()}>{probingAll ? "探测中…" : "全部探测"}</button>
-      <button className="btn primary" onClick={() => (open ? setOpen(false) : openAdd())}>＋ 添加主机</button>
+      <Segmented
+        ariaLabel="Hosts"
+        value={layout}
+        onChange={(id) => setLayout(id as "cards" | "list")}
+        items={[
+          { id: "cards", label: (<><TableIcon size={12} /> {t("action.cards")}</>), title: "卡片视图" },
+          { id: "list", label: (<><ListIcon size={12} /> {t("action.list")}</>), title: "列表视图" },
+        ]}
+      />
+      <button className="btn" disabled={probingAll} onClick={() => void probeAll()}>{probingAll ? "探测中…" : t("action.probeAll")}</button>
+      <button className="btn primary" onClick={() => (open ? setOpen(false) : openAdd())}>＋ {t("action.addHost")}</button>
     </div>
   );
 
@@ -345,18 +361,18 @@ export function Hosts({ state, act, notify, now, embedded = false }: { state: St
         <div className="settings-embed-bar">{toolbar}</div>
       ) : (
         <PageHeader
-          title="主机"
+          title={t("page.hosts")}
           subtitle={`${online}/${state.hosts.length} 在线 · Agent 的运行位置；本机与 SSH 共用一套并发 / 审批 / 探测`}
           actions={toolbar}
         />
       )}
 
-      <div className="project-overview host-overview-bar">
-        <div className="project-overview-item"><b>{online}/{state.hosts.length}</b><span>在线主机</span></div>
-        <div className="project-overview-item"><b>{state.agents.length}</b><span>Agent</span></div>
-        <div className={`project-overview-item ${activeRuns ? "run" : ""}`}><b>{activeRuns}</b><span>运行中</span></div>
-        <div className="project-overview-item"><b>{(state.cliCapabilities || []).length}</b><span>可用 CLI</span></div>
-      </div>
+      <Overview className="host-overview-bar" items={[
+        { label: "在线主机", value: `${online}/${state.hosts.length}` },
+        { label: "Agent", value: state.agents.length },
+        { label: "运行中", value: activeRuns, tone: activeRuns ? "run" : undefined },
+        { label: "可用 CLI", value: (state.cliCapabilities || []).length },
+      ]} />
 
       {open && (
         <section className="panel host-form">
@@ -559,6 +575,7 @@ function quarterLabel(now = Date.now()) {
 }
 
 export function Stats({ state, onOpen, embedded = false }: { state: State; onOpen: (todoId: string) => void; embedded?: boolean }) {
+  const t = useT();
   const [range, setRange] = useState("7d");
   const [scope, setScope] = useState("all");
   const [errFilter, setErrFilter] = useState<string | null>(null);
@@ -684,7 +701,7 @@ export function Stats({ state, onOpen, embedded = false }: { state: State; onOpe
           <button key={r.id} className={`seg-btn ${range === r.id ? "on" : ""}`} onClick={() => setRange(r.id)}>{r.label}</button>
         ))}
       </div>
-      <button className="btn tiny-btn" onClick={exportCsv}>导出 CSV</button>
+      <button className="btn tiny-btn" onClick={exportCsv}>{t("action.exportCsv")}</button>
     </div>
   );
 
@@ -694,7 +711,7 @@ export function Stats({ state, onOpen, embedded = false }: { state: State; onOpe
         <div className="settings-embed-bar">{toolbar}</div>
       ) : (
         <PageHeader
-          title="统计"
+          title={t("page.stats")}
           subtitle={`${scope === "all" ? "全部项目" : state.projects.find((p) => p.id === scope)?.name || "项目"}${isQuarter ? ` · ${quarterLabel()}` : ""} · ${runs.length} 次运行 / ${completed} 成功 / ${failed} 失败`}
           actions={toolbar}
         />

@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Agent, Message, Run, State, Thread, Todo } from "../types";
 import { agentOf, timeAgo } from "../ui";
 import {
-  BotIcon, ChevronDownIcon, ChevronRightIcon, CollapseIcon, EyeIcon, EyeOffIcon,
+  BotIcon, ChevronDownIcon, ChevronRightIcon,
   FileIcon, FilePlusIcon, FilesIcon, GitIcon, FolderIcon,
-  FolderOpenIcon, FolderPlusIcon, HistoryIcon, InfoIcon, PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon, RefreshIcon,
+  FolderOpenIcon, FolderPlusIcon, HistoryIcon, InfoIcon, PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon,
   SearchIcon, UserIcon, WrenchIcon, XIcon,
 } from "./Icons";
+import { RowMenu } from "./RowMenu";
 import { FileVisual } from "./FileVisual";
 import { GitPanel } from "./GitPanel";
 import { requestFilePreview, requestTerminalAt } from "../terminal-events";
@@ -83,6 +84,11 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
   baseRef.current = base;
 
   const [tab, setTab] = useState<Tab>("explorer");
+  useEffect(() => {
+    const onOpen = () => setTab("sessions");
+    window.addEventListener("harness:open-session-tab", onOpen);
+    return () => window.removeEventListener("harness:open-session-tab", onOpen);
+  }, []);
   // 资源管理器的 git 装饰（改/新/已暂存着色，ignore 的文件淡色斜体）
   const [gitMap, setGitMap] = useState<Record<string, GitFile>>({});
   const [gitIgnored, setGitIgnored] = useState<string[]>([]);
@@ -463,7 +469,9 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
                 ) : (
                   <span className="ellipsis">{entry.name}</span>
                 )}
-                {tone?.label && <span className={`tree-git ${tone.cls}`} title="git 状态">{tone.label}</span>}
+                {tone?.label === "•"
+                  ? <span className={`tree-git-dot ${tone.cls}`} title="目录下有改动" aria-label="目录下有改动" />
+                  : tone?.label ? <span className={`tree-git ${tone.cls}`} title="git 状态">{tone.label}</span> : null}
               </div>
               {entry.dir && open && renderDir(entry.path, depth + 1)}
             </div>
@@ -582,7 +590,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
           aria-label="资源管理器"
           onClick={() => setTab("explorer")}
         >
-          <FilesIcon size={16} />
+          <FilesIcon size={15} />
         </button>
         <button
           className={`icon-tab ${tab === "git" ? "on" : ""}`}
@@ -590,37 +598,38 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
           aria-label="Git"
           onClick={() => setTab("git")}
         >
-          <GitIcon size={16} />
+          <GitIcon size={15} />
         </button>
         <button
           className={`icon-tab ${tab === "sessions" ? "on" : ""}`}
-          title={`会话历史（${state.threads.length}）`}
-          aria-label={`会话历史（${state.threads.length}）`}
+          title="会话历史"
+          aria-label="会话历史"
           onClick={() => setTab("sessions")}
         >
-          <HistoryIcon size={16} />
-          {state.threads.length > 0 && <span className="tab-count">{state.threads.length}</span>}
+          <HistoryIcon size={15} />
         </button>
-        {onToggleMaximize && (
-          <button
-            className="icon-tab tab-collapse"
-            title={maximized ? "还原（Esc）" : "最大化"}
-            aria-label={maximized ? "还原资源管理器" : "最大化资源管理器"}
-            onClick={onToggleMaximize}
-          >
-            {maximized ? <PanelRestoreIcon size={15} /> : <PanelExpandIcon size={15} />}
-          </button>
-        )}
-        {onCollapse && (
-          <button
-            className="icon-tab tab-collapse"
-            title="收起右侧栏"
-            aria-label="收起右侧栏"
-            onClick={onCollapse}
-          >
-            <PanelCollapseIcon size={15} />
-          </button>
-        )}
+        <div className="tab-trail">
+          {onToggleMaximize && (
+            <button
+              className="icon-tab tab-collapse"
+              title={maximized ? "还原（Esc）" : "最大化"}
+              aria-label={maximized ? "还原资源管理器" : "最大化资源管理器"}
+              onClick={onToggleMaximize}
+            >
+              {maximized ? <PanelRestoreIcon size={15} /> : <PanelExpandIcon size={13} />}
+            </button>
+          )}
+          {onCollapse && (
+            <button
+              className="icon-tab tab-collapse"
+              title="收起右侧栏"
+              aria-label="收起右侧栏"
+              onClick={onCollapse}
+            >
+              <PanelCollapseIcon size={13} />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="right-panel-body">
@@ -639,19 +648,19 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
                 <button className="icon-btn" title={`新建文件夹${activeDir ? `到 ${activeDir}` : "到项目根目录"}`} aria-label="新建文件夹" onClick={() => startCreate(activeDir, "folder")}>
                   <FolderPlusIcon size={13} />
                 </button>
-                <button className="icon-btn" title={showHidden ? "隐藏点文件" : "显示点文件"} aria-label={showHidden ? "隐藏点文件" : "显示点文件"} onClick={() => setShowHidden((v) => !v)}>
-                  {showHidden ? <EyeIcon size={13} /> : <EyeOffIcon size={13} />}
-                </button>
-                <button className="icon-btn" title="全部折叠" aria-label="全部折叠" onClick={collapseAll}><CollapseIcon size={13} /></button>
-                <button className="icon-btn" title="刷新" aria-label="刷新" onClick={() => void refresh()}>
-                  <RefreshIcon size={13} className={refreshing ? "spinning" : ""} />
-                </button>
+                <RowMenu title="文件操作">
+                  <button onClick={() => setShowHidden((v) => !v)}>{showHidden ? "隐藏点文件" : "显示点文件"}</button>
+                  <button onClick={collapseAll}>全部折叠</button>
+                  <button onClick={() => void refresh()}>{refreshing ? "刷新中…" : "刷新"}</button>
+                </RowMenu>
               </div>
             </div>
             <div className="explorer-search">
-              <SearchIcon size={12} className="search-ico" />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="筛选文件…" />
-              {query && <button className="icon-btn" title="清除" aria-label="清除" onClick={() => setQuery("")}><XIcon size={11} /></button>}
+              <div className="explorer-search-field">
+                <SearchIcon size={12} className="search-ico" />
+                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="筛选文件…" />
+                {query && <button className="icon-btn" title="清除" aria-label="清除" onClick={() => setQuery("")}><XIcon size={11} /></button>}
+              </div>
             </div>
             {error && <div className="preview-error tree-error">{error}</div>}
             <div
@@ -675,13 +684,14 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
               <div className="explorer-title">
                 <BotIcon size={13} className="root-ico" />
                 <span>智能体会话</span>
-                <span className="muted tiny">{sessions.length}</span>
               </div>
             </div>
             <div className="explorer-search">
-              <SearchIcon size={12} className="search-ico" />
-              <input value={sessionQuery} onChange={(e) => setSessionQuery(e.target.value)} placeholder="搜索…" />
-              {sessionQuery && <button className="icon-btn" title="清除" aria-label="清除" onClick={() => setSessionQuery("")}><XIcon size={11} /></button>}
+              <div className="explorer-search-field">
+                <SearchIcon size={12} className="search-ico" />
+                <input value={sessionQuery} onChange={(e) => setSessionQuery(e.target.value)} placeholder="搜索…" />
+                {sessionQuery && <button className="icon-btn" title="清除" aria-label="清除" onClick={() => setSessionQuery("")}><XIcon size={11} /></button>}
+              </div>
             </div>
             <div className="session-list">
               {sessionGroups.map((group) => (
@@ -706,6 +716,15 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
                         <div className="session-top">
                           <span className="session-title ellipsis">{s.title}</span>
                           <span className={`sh-status ${s.status.cls}`}>{s.status.label}</span>
+                          <button
+                            className="icon-btn session-expand"
+                            title={open ? "收起详情" : "查看详情"}
+                            aria-label={open ? "收起会话详情" : "查看会话详情"}
+                            aria-expanded={open}
+                            onClick={(e) => { e.stopPropagation(); toggleSession(s.thread.id); }}
+                          >
+                            <ChevronDownIcon size={12} className={open ? "rot-180" : ""} />
+                          </button>
                         </div>
                         <div className="session-meta">
                           {s.agent && <><BotIcon size={11} className={`agent-ico ${s.agent.color}`} /><span className="ellipsis">{s.agent.name}</span></>}
@@ -719,16 +738,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
                             <span className="ellipsis">{previewText.slice(0, 140)}</span>
                           </div>
                         )}
-                        <div className="session-foot">
-                          <button
-                            className="link row gap4"
-                            onClick={(e) => { e.stopPropagation(); toggleSession(s.thread.id); }}
-                          >
-                            <ChevronDownIcon size={11} className={open ? "rot-180" : ""} />
-                            {open ? "收起" : "详情"}
-                          </button>
-                          {!s.thread.todoId && <span className="tiny faint">还没有派活</span>}
-                        </div>
+
                         {open && (
                           <div className="session-detail">
                             {s.messages.slice(-5).map((m) => (
@@ -748,7 +758,7 @@ export function FilePanel({ state, root, now, onSelectThread, onCollapse, notify
                   })}
                 </section>
               ))}
-              {sessions.length === 0 && <div className="pane-empty">{sessionQuery ? "没有匹配的会话" : "还没有会话"}</div>}
+              {sessions.length === 0 && <div className="inline-empty">{sessionQuery ? "没有匹配的会话" : "还没有会话"}</div>}
             </div>
           </>
         )}

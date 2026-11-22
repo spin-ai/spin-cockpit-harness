@@ -1,104 +1,110 @@
-> 层：架构 · 状态：已落地 · 核对：2026-11-14 · 覆盖：Chat 视觉结构与 composer
+> 层：架构 · 状态：已落地 · 核对：2026-11-22 · 覆盖：Chat 窗口视觉结构（transcript + composer），BOT / CHAT 共用
 
 # Chat UI（会话界面）
 
-> 参考：同类产品的扁平 transcript、步骤折叠、native chat 排版与卡片式 composer 交互。
-> 本文记录 harness Chat 的视觉结构与取舍；会话数据模型见 [`ARCH-chat-thread.md`](ARCH-chat-thread.md)。
+> 唯一参考：**deepseek-harness 的浏览器 Chat**（`packages/client/ui-chat`、`ui-conversation`、`ui-primitives`）。
+> 本仓库的 Chat 窗口不再自创一套：用户气泡、agent 扁平正文、过程折叠、运行行、composer 全部照搬它的结构 / 字号 / 间距 / 圆角。
+> 会话数据模型见 [`ARCH-chat-thread.md`](ARCH-chat-thread.md)，机器人链路见 [`ARCH-bot.md`](ARCH-bot.md)。
 
 ---
 
-## 1. 参考实践
+## 1. 照搬对照（DeepSeek → 本项目）
 
-| 参考 | 关键点 | 我们的取舍 |
+| DeepSeek 结构 | 本项目类名 | 取值 |
 |---|---|---|
-| 参考实践 A | **扁平 transcript**：agent 消息就是正文，不用气泡包起来；用户消息是一条右对齐的浅色块 | 采用。去掉每行边框/卡片，agent 正文 13px/1.68，用户消息右对齐 tint 气泡 |
-| 参考实践 A | **步骤折叠**：连续的工具调用收成「N steps」，默认折叠，点开看细节 | 采用。连续 `tool` / `thought` 合并成 `tool-group`，默认 ≤2 步展开、>2 步折叠 |
-| 参考实践 A | **composer 卡片**：一个大圆角输入卡，底部放 agent / 附件 / 发送；发送是紧凑按钮 | 采用。agent/project/工具收进 composer footer，发送按钮显示动作（派活/纠偏/发送） |
-| 参考实践 B | 固定字号阶梯（14 / 12 / 11 / 10 / code 12），二级文字用 faint；行 hover 用低对比背景；focus ring 用 inset | 采用 CSS 变量：正文跟随 `--chat-font-size`，meta 10.5px，工具行 10px，hover 用 `--surface-hover` |
-| 参考实践 B | transcript 行不包卡片，状态/动作行弱化；工具输出是代码字体 | 采用。工具行 `mono` 单行摘要 + 展开原文 |
+| 用户消息右对齐气泡（`UserMessageBubble`） | `.ds-user` / `.ds-bubble` | 最大 82% / 560px，`radius 20`，padding 10/16，14/22，浅蓝 `#edf3fe`（暗色 `#2c2c2e`） |
+| Agent 正文（`AssistantMarkdown`） | `.ds-assistant` / `.ds-assistant-body` | 扁平、无气泡、14/24，块间距 16 |
+| 消息动作（`MessageIconActions`） | `.ds-actions` / `.ds-action` | 28px 图标行，15px 图标，hover 才出底色 |
+| Turn 头（`TurnProcessNodeView`） | `.ds-turn-head` / `.ds-process-head` | 33px 行 + 下方 `.5px` hairline；chevron 14；标题 13 |
+| 思考行（`ReasoningRow`） | `.ds-reason` | 24px 一行：图标 + 「已深度思考」+ 摘要；正文缩进 22px |
+| 工具行（`ToolRow` + `DisclosureRow`） | `.ds-tool-row` | 24px 一步一行：16px 图标位 / 14px glyph + 标题 + 2px 圆点 + 摘要；hover 露 chevron / 复制 |
+| 运行中（`RunningStatus`） | `.ds-running` | 蓝色 shimmer 一行：图标 + 「正在深入处理 · 已用 12s」；展开看步骤 |
+| 历史 / 状态分割线 | `.ds-system` / `.ds-divider` | 两侧 hairline + 居中说明 |
+| Composer（`InputBar`） | `.ds-composer` | `radius 28`、soft elevation、14/24 输入；工具栏 28px；发送 34px 圆形蓝底箭头 |
+| 内容列 | `.chat-pane .chat-scroll > *` / `.bot-main .bot-stream > *` | `max-width 748`（DeepSeek 默认列宽）居中；scroller 满宽、正文不撑满 |
+
+颜色只落在两处：运行 / 发送用 DeepSeek 蓝（`#416ee6`，暗色 `#7aaaff`），用户气泡用 `#edf3fe` / `#2c2c2e`。
+其余全部走现有 token（`--fg` / `--muted` / `--faint` / `--border` / `--surface` / `--page-canvas`）。
 
 ## 2. 结构
 
 ```
-.chat-pane
-├─ .pane-head                       CHAT · ＋新任务 · 收起
-├─ .thread-bar                      标题行（状态点 / key / 标题 / 状态 pill）
-│                                   元信息行（项目 / Agent / 运行时长 / 停止）
-├─ .chat-body-wrap
-│  ├─ .chat-scroll
-│  │  ├─ .run-divider               run 边界（有 runId 时）
-│  │  ├─ .msg.user / .msg.agent     扁平消息 + 头像 + meta
-│  │  ├─ .msg.is-system             居中系统行
-│  │  ├─ .tool-group                连续工具/思考的折叠组
-│  │  └─ .chat-typing               运行中且停留在底部时的三点动画
-│  └─ .chat-jump                    回到底部 / N 条新消息
-└─ .composer-shell
-   ├─ .mention-pop                  @ 选择器（在输入卡内）
-   ├─ .composer-ctx                 预览元素 chip
-   ├─ .composer-warn                Agent 仅终端可用 / 主机离线
-   ├─ textarea
-   └─ .composer-foot
-      ├─ .composer-chips            @Agent / ◎作用域（全局或项目）
-      └─ .composer-actions          工具开关 · Enter 提示 · 发送
+.chat-pane / .bot-main                 ← 共用同一套 .ds-* 语言
+├─ transcript（.chat-scroll / .bot-stream）
+│  ├─ .ds-divider                      日期 / run 边界
+│  ├─ .ds-user + .ds-bubble            右对齐用户消息
+│  ├─ .ds-assistant                    扁平 agent 正文
+│  │  ├─ .ds-assistant-body            Markdown（代码卡 10px 圆角）
+│  │  └─ .ds-actions                   复制 / 重新生成 / 时间
+│  ├─ .ds-reason                       思考摘要（点开全文）
+│  ├─ .ds-process                      工具 / 步骤折叠（33px + hairline）
+│  │  └─ .ds-tool-row                  一步一行；展开 .ds-tool-body
+│  ├─ .ds-running                      运行中 shimmer（展开步骤）
+│  └─ .ds-system                       系统说明 / 继承分割线
+└─ .ds-composer                        28px 卡片
+   ├─ textarea.ds-composer-input       14/24，最多 200px 高
+   └─ .ds-composer-bar
+      ├─ .ds-composer-tools            ＋ 附件 / Agent / 作用域 / 工具开关
+      └─ .ds-composer-trailing         模型 / 34px 圆形发送
 ```
 
 ## 3. 关键细节
 
 ### 3.1 用户消息
 
-- 右对齐、最大宽度 88%（窄面板 92%），背景 `--brand-soft`、边框 `--brand-line`、圆角 11px。
-- meta 显示「你 · 3m」，复制按钮仅 agent 消息显示。
-- 不显示头像，避免窄列里右侧再挤一个方块。
+- 右对齐、无头像、无 meta 行；时间与复制 / 编辑放在气泡下方的 `.ds-actions`。
+- 气泡 `white-space: pre-wrap`；代码块用同一套轻量 Markdown。
+- 编辑态是同一位置的 20px 圆角文本域 + 「保存并发送 / 取消」。
 
 ### 3.2 Agent 消息
 
-- 左侧 22px 圆角头像（首字母），正文扁平、无边框；代码块/行内 code 沿用原有轻量 Markdown 渲染。
-- meta：Agent 名 · 相对时间 · 投递回执（投递中 / 已注入 / 失败重发）· hover 复制。
-- system 行居中、无边框。
+- 每条回复上方先有一行 **Turn 头**：`已完成，用时 1秒` / `已汇报，用时 1秒`，下方 `.5px` hairline；有工具时这一行就是过程折叠的开关。
+- 不包气泡、不加头像、不再逐条写 sender 名；正文 14/24，最大宽度跟随内容列。
+- 动作行在正文下方 8px：复制、重新生成（最后一条且未确认时）、引用 / 分支、时间。
+- 失败 / 缺密钥卡片仍是独立块，不塞进正文。
 
-### 3.3 工具步骤
+### 3.3 过程与工具
 
-- 连续 `role=tool` 或 `kind=thought` 的消息合并为一个组。
-- 折叠头：`工具调用` + 数量 pill + 最后一步摘要；展开后每步：
-  - 第一行（Read / Edit / Bash…）用等宽字体；
-  - 多余行默认不渲染，点「展开」显示完整输出；
-  - hover 显示复制。
-- `设置 → 工具` 关闭时整组不渲染（和旧行为一致）。
+- 连续 `tool` / `thought` 收成 `.ds-process`；默认 ≤2 步展开、>2 步折叠；头部只写「已完成，用时 X秒」+ chevron，不重复步数 / 成功数。
+- 工具行按工具名自动选 glyph（bash / read / edit / search / web / 通用扳手），一步一行，不画卡片。
+- 输出展开是 10px 圆角的 code 卡（最多 240px 高，独立滚动）。
+- 思考块不再用紫色左边框，改为 DeepSeek 的一行摘要 + 缩进正文。
 
-### 3.4 作用域
+### 3.4 运行与 composer
 
-- 未派活的会话默认 `projectId = null` → **全局对话**，在任意项目下都可见，切项目不会消失。
-- composer footer 的 `◎ 全局 / 项目 · xxx` 决定下一次派活落在哪个项目；`全局` 时按所选 Agent 的 `projectId` 兜底，没有则用当前项目。
-- 修改作用域只更新会话目标，不会切换整个工作区项目；任务一旦派活，作用域锁定（任务本身必须属于某个项目）。
-- 旧版本的未派活会话在首次启动时一次性迁移为全局（`meta.chatScopeMigrated`），避免升级后 Chat 仍跟着项目走。
+- 运行中只有一行蓝色 shimmer；项目 / Agent / 步数细节收进右侧 chevron。
+- Composer 是 DeepSeek 的 28px 卡片：上方输入、下方两栏；发送是 34px 圆形箭头（disabled = 0.4）。
+- 作用域 / Agent / 模型保留为无边框 chip select；不再显示 Enter 提示文案。
+- 发送按钮的颜色语义（派活 / 纠偏 / 只聊）只通过 `title` / `aria-label` 体现，圆形仍是蓝色。
 
-### 3.5 Composer
+### 3.5 窄面板
 
-- 输入卡与 transcript 用 `--page-canvas` 分隔；卡片 `--surface` + 1px 边框，focus-within 变 brand 并加 2px 外圈。
-- footer 左侧 `@ Agent` / `◎ 作用域` 两个紧凑 select（无边框，hover 才浮出背景）；第二行 `模型` 选择（ACP catalog，按会话保存，下一次运行生效）+「工具」开关 + 发送。
-- Agent 头部 meta 同时显示当前模型名，切换后立即更新。
-- 发送按钮按语义变色并显示动作：`派活` / `纠偏` / `发送并运行` / `发送` / `不可派活`（disabled）。
-- 窄面板通过 **container query**（`.chat-pane` 为容器，≤360px）隐藏 Enter 提示、压缩 select、把发送行收到第二行，避免 287px 默认宽度下换行凌乱。
-- 没有 Agent 时显示「未检测到 Agent · 用 dsh」一个按钮（创建 dsh Agent 并绑定当前会话），不再同时出现空 select 和 `＋dsh`。
-- Chat 的旧入口（新建会话、@ 选择器、元素 chip、运行中停止、草稿按会话保存）保持不变。
+- 内容列 `748` 是上限，面板不足时自动收窄；composer 比正文列宽 32px（左右各 16 的顺手边距）。
+- `.ds-composer-bar` 允许换行：先收工具栏，再换 trailing（模型 + 发送）到第二行。
+- 用户气泡最大 82% / 560px，不会在 280px 面板里撑破。
 
-## 4. 验证
+## 4. 代码位置
 
-- `npx tsc --noEmit` / `npm run build`
-- 实机（Electron + CDP）：
-  - 长 transcript 滚动时消息不被 flex 压扁（`.chat-scroll > *{flex:none}`）；
-  - 连续 4 个工具消息折叠成 1 行，展开后 4 行、高度 31 → 130；
-  - 用户气泡、system 行无遗留边框（旧 `.msg.system` 虚线已覆盖）；
-  - composer 在 287px 宽下 footer 收成两行，发送按钮不再被 `.chat` 全局样式拉满；
-  - 深浅色主题各截一张对照。
+| 内容 | 位置 |
+|---|---|
+| Chat 窗口（项目 / 任务会话） | `src/components/TaskChat.tsx`（`ChatMessage` / `ThoughtBlock` / `ToolGroup` / `ToolRow` / `LiveStatus` / composer） |
+| 机器人的会话面（BOT 页） | `src/components/Bot.tsx`（`bot-stream` / `bot-composer`） |
+| 共用视觉 | `src/styles.css` 末尾「Chat 窗口：照搬 deepseek-harness」一节（`.ds-*`） |
+| 圆角 token | `src/design-system.css` 的 `--radius-chat-bubble` / `--radius-chat-composer` |
+| 渲染层截图 | `npm run preview:bot` → `.preview/bot-chat.png` / `bot-chat-dark.png` |
 
-## 5. 明确未做
+## 5. 验证
+
+- `npm run typecheck` / `npm run build` / `npm run verify:design`
+- `npm run preview:bot`：亮暗两张截图；断言消息正文（代码块 / 列表）、动作（引用 / 分支）、附件、分支 IPC 都在。
+- 重点看：内容列是否居中、用户气泡是否右对齐、工具行是否 24px 一步一行、composer 是否 28px 且发送为圆形、暗色是否同构。
+
+## 6. 明确未做
 
 | 能力 | 说明 |
 |---|---|
-| 完整 Markdown（表格 / 任务列表 / 图片） | 仍是轻量渲染；表格类输出会以文本展示 |
-| 附件 / 图片粘贴 / 拖拽上传 | 未做（与元素拾取是两条路径） |
-| 消息虚拟化 | 长会话仍一次性渲染；消息特别多时需要 |
-| 消息编辑 / 重新生成 / 分支 | 目前只有复制、失败重发、停止 |
-| 会话内搜索 | 未做；先用 ⌘K 命令面板或 TODO 搜索 |
-| 原生流式 token 逐字动画 | 消息按 run 落库，靠"正在处理"提示 |
+| token 级流式动画 | 消息按 run 落库，靠「正在深入处理」提示 |
+| 消息虚拟化 | 长会话仍一次性渲染 |
+| 附件图片 / 拖拽上传 | 只有文本文件附件（BOT 页最多 3 个） |
+| 会话内搜索 | 未做；用 ⌘K 或左侧 Chats 搜索 |
+| Turn 折叠的动画差分 | 只保留基础 100–160ms 过渡，不做 DeepSeek 的布局动画编排 |

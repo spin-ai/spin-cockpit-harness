@@ -114,7 +114,7 @@ run 结束 ──▶ imNotifyRun() ──▶ 三段式卡片回同一个 chatId
 
 - **出站**：配置了 app 凭据就走开放接口（`oc_` → `chat_id`，`ou_` → `open_id`）；失败退回 webhook，不静默丢消息
 - **入站**：本地 HTTP 收到 `schema=2.0` / `url_verification` 时先 ack（3 秒内不回会重推），再异步处理；校验 `header.token`（配了 `imFeishuVerificationToken` 才校验）、`event_id` 去重、allowlist（`chatId` 或 `openId` 命中才处理），陌生人只留日志
-- **验收**：`npm run verify:feishu`（8 项）覆盖 token 缓存/过期刷新、发送体与 Bearer、事件规范化、坏 JSON、幂等
+- **验收**：`npm test -- feishu`（8 项）覆盖 token 缓存/过期刷新、发送体与 Bearer、事件规范化、坏 JSON、幂等
 
 ### 2.6.1 长连接（2026-11-17 已落地）
 

@@ -69,7 +69,7 @@ export function CommandPalette({ open, onClose, commands }: { open: boolean; onC
               </Fragment>
             );
           })}
-          {list.length === 0 && <div className="pane-empty">没有匹配的命令</div>}
+          {list.length === 0 && <div className="inline-empty">没有匹配的命令</div>}
         </div>
       </div>
     </div>

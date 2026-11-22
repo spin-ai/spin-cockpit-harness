@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ElementContext, State } from "./types";
+import type { State } from "./types";
 import { Rail } from "./components/Rail";
 import { TaskPane } from "./components/TaskPane";
-import { TaskChat } from "./components/TaskChat";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { FilePanel } from "./components/FilePanel";
 import { GitView } from "./components/GitView";
@@ -10,8 +9,9 @@ import { Projects } from "./components/Views";
 import { ApprovalModal } from "./components/ApprovalModal";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { Splitter, useStoredSize } from "./components/Splitter";
+import { LangProvider } from "./i18n";
 import { CollapsedPane } from "./components/CollapsedPane";
-import { ChatIcon, FilesIcon, ListIcon, TerminalIcon } from "./components/Icons";
+import { FilesIcon, ListIcon, TerminalIcon, XIcon } from "./components/Icons";
 import { Settings, type SettingsSection } from "./components/Settings";
 import { Guide } from "./components/Guide";
 import { Notes } from "./components/Notes";
@@ -24,7 +24,7 @@ import { SceneWorkspace } from "./components/SceneWorkspace";
 import { requestTerminalAdopt, requestTerminalAt } from "./terminal-events";
 import { THEMES, isDarkTheme, resolveTheme } from "./themes";
 
-type View = "workspace" | "scene" | "projects" | "bots" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "bot";
+type View = "workspace" | "terminal" | "scene" | "projects" | "bots" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "bot";
 type PaneId = "todo" | "chat" | "terminal" | "files";
 const COLLAPSED_PANE_W = 34;
 
@@ -38,17 +38,19 @@ export default function App() {
   // 错误单独堆在右下角，永不自动消失，可复制全文，直到手动关掉。
   const [errors, setErrors] = useState<{ id: number; action: string; text: string; at: number }[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [pendingContext, setPendingContext] = useState<ElementContext | null>(null);
   const [notesOpenReq, setNotesOpenReq] = useState<{ path: string; n: number } | null>(null);
   const [guidePage, setGuidePage] = useState("home");
+  /** 跳场景时指定要打开哪个场景（Chat → 航母一键入口）；空 = 回到该项目上次看的场景 */
+  const [sceneFocusId, setSceneFocusId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [botUnread, setBotUnread] = useState(0);
   /** 打开设置时落到哪个分区（主机 / 统计已经从 rail 收进设置） */
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
   /** 从机器人页点「打开会话」进来时要落到哪个 bot */
   const [activeBotId, setActiveBotId] = useState<string | null>(null);
+  /** 工作区右侧的机器人配置抽屉：当前在看哪个 bot */
+  const [botDrawerId, setBotDrawerId] = useState<string | null>(null);
   const [todoW, setTodoW] = useStoredSize("cmh.layout.todoW", 220, 180, 520);
-  const [chatW, setChatW] = useStoredSize("cmh.layout.chatW", 300, 220, 700);
   const [filesW, setFilesW] = useStoredSize("cmh.layout.filesW", 280, 180, 640);
   const [focusedPane, setFocusedPane] = useState<PaneId | null>(null);
   // 窗口变窄（或整窗放大）时，固定宽度的侧栏要跟着收，否则工作区会横向溢出
@@ -140,30 +142,33 @@ export default function App() {
     return () => window.removeEventListener("harness:open-settings", onOpen);
   }, []);
 
-  // 「问清楚」/ 统计失败下钻都要落到 Chat：面板被收起时先展开，否则草稿写进不存在的输入框
+  /** 打开一条会话：终端模式的左栏「派活 / 纠偏」就作用在这个 thread 上 */
+  const openSession = useCallback((threadId?: string | null) => {
+    if (threadId) setThreadId(threadId);
+    setView("terminal");
+  }, []);
+
+  // 「问清楚」/ 点任务 / 插件草稿都落到会话：面板收着就先展开 dock
   useEffect(() => {
-    const onFocusChat = () => setCollapsed((current) => (current.chat ? { ...current, chat: false } : current));
+    const onFocusChat = () => setView("terminal");
     window.addEventListener("harness:focus-chat", onFocusChat);
     return () => window.removeEventListener("harness:focus-chat", onFocusChat);
   }, []);
 
   // 拖拽时按窗口宽度限制，避免把中间/右侧面板挤出可视区。
   const resizeTodo = useCallback((d: number) => {
-    setTodoW((w) => Math.min(w + d, Math.max(180, window.innerWidth - 378 - chatW - filesW)));
-  }, [setTodoW, chatW, filesW]);
-  const resizeChat = useCallback((d: number) => {
-    setChatW((w) => Math.min(w + d, Math.max(220, window.innerWidth - 378 - todoW - filesW)));
-  }, [setChatW, todoW, filesW]);
+    setTodoW((w) => Math.min(w + d, Math.max(180, window.innerWidth - 378 - filesW)));
+  }, [setTodoW, filesW]);
   const resizeFiles = useCallback((d: number) => {
-    setFilesW((w) => Math.min(w - d, Math.max(180, window.innerWidth - 378 - todoW - chatW)));
-  }, [setFilesW, todoW, chatW]);
+    setFilesW((w) => Math.min(w - d, Math.max(180, window.innerWidth - 378 - todoW)));
+  }, [setFilesW, todoW]);
 
   useEffect(() => {
     window.harness.getState().then((s) => {
       setState(s);
       setThreadId((prev) => prev ?? s.threads.find((t) => !t.todoId && t.kind !== "bot")?.id ?? s.threads[0]?.id ?? null);
       const dv = String(s.settings?.defaultView || "");
-      if (dv === "workspace" || dv === "projects" || dv === "settings") setView(dv);
+      if (dv === "workspace" || dv === "terminal" || dv === "projects" || dv === "settings") setView(dv);
       // 老库的 defaultView 可能还是 stats / hosts：落到设置里对应的分区
       else if (dv === "stats" || dv === "hosts") { setView("settings"); setSettingsSection(dv); }
     });
@@ -226,8 +231,8 @@ export default function App() {
   useEffect(() => {
     const onDraft = (detail: { text?: string }) => {
       if (!detail?.text) return;
-      setView("workspace");
-      window.setTimeout(() => window.dispatchEvent(new CustomEvent("harness:chat-draft", { detail })), 100);
+      setView("terminal");
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent("harness:chat-draft", { detail })), 120);
     };
     const onNotify = (detail: { message?: string }) => {
       if (detail?.message) notify(detail.message);
@@ -297,6 +302,14 @@ export default function App() {
     const host = state.hosts.find((h) => h.id === (running?.hostId || latest?.hostId || agent?.hostId));
     return host && host.kind === "ssh" ? { id: host.id, name: host.name || host.addr, root: workdir } : null;
   }, [state, thread, selected, workdir]);
+  /** runbar：当前选中的任务上「正在跑的那个 run」，没有就取最后一个 */
+  const runbarRun = useMemo(() => {
+    if (!selected) return null;
+    const rs = state?.runs.filter((r) => r.todoId === selected.id) ?? [];
+    return [...rs].reverse().find((r) => ["queued", "running", "waiting_input"].includes(r.status)) ?? rs[rs.length - 1] ?? null;
+  }, [state?.runs, selected]);
+  /** BOT 模式右列检查器的对象：正在看的 BOT 会话，否则第一个 BOT */
+  const inspectorBotId = (thread?.kind === "bot" ? thread.botId : null) ?? state?.bots?.[0]?.id ?? null;
   const projectCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const t of state?.todos ?? []) if (t.projectId && t.kind !== "chat") counts[t.projectId] = (counts[t.projectId] ?? 0) + 1;
@@ -312,7 +325,9 @@ export default function App() {
       await act("switchProject", { id: todo.projectId });
     }
     const t = state?.threads.find((x) => x.todoId === todoId);
-    if (t) { setThreadId(t.id); setView("workspace"); }
+    if (t) setThreadId(t.id);
+    // 留在当前页：BOT 页看回合流，终端页看终端；不做隐式跳转，也不强制展开 dock
+    setView((v) => (v === "terminal" || v === "workspace" ? v : "terminal"));
   }, [state, act]);
 
   useEffect(() => {
@@ -322,8 +337,9 @@ export default function App() {
       if (threads.some((t) => t.id === prev)) return prev;
       return threads.find((t) => !t.todoId && t.kind !== "bot")?.id ?? threads[0]?.id ?? null;
     });
+    // 也要跟 threads 走：清空任务后当前 threadId 会指向已删的会话，得回落到草稿会话
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state?.activeProjectId]);
+  }, [state?.activeProjectId, state?.threads]);
 
   // 主进程自动起的终端 Agent（普通多 Agent / Mission child）：接管成终端标签
   useEffect(() => window.harness.onTerminalAdopt((p) => {
@@ -340,7 +356,7 @@ export default function App() {
   }, [notesEnabled, notify]);
 
   useEffect(() => {
-    if (view === "bot") setBotUnread(0);
+    if (view === "bot" || view === "workspace") setBotUnread(0);
   }, [view]);
 
   useEffect(() => {
@@ -359,10 +375,11 @@ export default function App() {
 
   useEffect(() => {
     const onView = (e: Event) => {
-      const detail = (e as CustomEvent<string | { view?: string; page?: string }>).detail;
+      const detail = (e as CustomEvent<string | { view?: string; page?: string; sceneId?: string }>).detail;
       const next = typeof detail === "string" ? detail : detail?.view;
-      if (!next || !["workspace", "scene", "projects", "bots", "stats", "hosts", "settings", "guide", "notes", "knowledge", "memory", "persona", "zhulong", "bot"].includes(next)) return;
+      if (!next || !["workspace", "terminal", "scene", "projects", "bots", "stats", "hosts", "settings", "guide", "notes", "knowledge", "memory", "persona", "zhulong", "bot"].includes(next)) return;
       if (next === "guide" && typeof detail === "object" && detail?.page) setGuidePage(detail.page);
+      if (next === "scene") setSceneFocusId(typeof detail === "object" && detail?.sceneId ? detail.sceneId : null);
       // 统计 / 主机已收进设置：保留旧入口，落到设置对应分区
       if (next === "stats" || next === "hosts") { setSettingsSection(next); setView("settings"); return; }
       setView(next as View);
@@ -373,35 +390,35 @@ export default function App() {
 
   useEffect(() => {
     // 切会话时丢掉未发送的元素上下文，避免把 A 任务的元素发给 B
-    setPendingContext(null);
   }, [threadId]);
 
   const addProject = useCallback(async () => {
     const dir = await window.harness.pickProjectFolder();
     if (!dir) return;
     const p = await act("addProject", { path: dir }) as { name?: string } | null;
-    if (p?.name) { notify(`已添加项目：${p.name}`); setView("workspace"); }
+    if (p?.name) { notify(`已添加项目：${p.name}`); setView("terminal"); }
   }, [act, notify]);
 
   const switchProject = useCallback(async (id: string) => {
     await act("switchProject", { id });
-    setView("workspace");
+    // 项目是终端模式的对象；在 BOT 页切项目时不要把人踢走
+    setView((v) => (v === "workspace" ? v : "terminal"));
   }, [act]);
 
   const newTaskInProject = useCallback(async (id: string) => {
     if (id !== state?.activeProjectId) await switchProject(id);
-    else setView("workspace");
+    setView("terminal");
     window.setTimeout(() => window.dispatchEvent(new CustomEvent("harness:new-task")), 120);
   }, [state?.activeProjectId, switchProject]);
 
   const newThread = useCallback(async () => {
     // 新对话默认全局；需要项目作用域时在 Chat 的「作用域」里选
     const t = await act("newThread", {}) as { id?: string } | null;
-    if (t?.id) { setThreadId(t.id); setView("workspace"); }
-  }, [act]);
+    if (t?.id) openSession(t.id);
+  }, [act, openSession]);
 
   const dispatchInWorkspace = useCallback((makeEvent: () => Event) => {
-    setView("workspace");
+    setView("terminal");
     // 等 workspace / TaskPane / TerminalPanel 挂载后再派发，避免跨页面命令静默空操作
     window.setTimeout(() => window.dispatchEvent(makeEvent()), 90);
   }, []);
@@ -414,7 +431,7 @@ export default function App() {
     }
     const thread = state?.threads.find((t) => t.todoId === todoId);
     if (thread) setThreadId(thread.id);
-    setView("workspace");
+    setView((v) => (v === "terminal" || v === "workspace" ? v : "terminal"));
   }, [state, act]);
 
   /** 点机器人 = 打开它那条会话（同一个 Chat）；管理仍进机器人控制台 */
@@ -422,11 +439,19 @@ export default function App() {
     setBotUnread(0);
     try {
       const res = (await act("botThread", { botId })) as { threadId?: string } | null;
-      if (res?.threadId) { setThreadId(res.threadId); setView("workspace"); }
+      if (res?.threadId) {
+        setThreadId(res.threadId);
+        setView("workspace");
+      }
     } catch (err) {
       notify(String((err as Error)?.message || err));
     }
   }, [act, notify]);
+
+  // 离开机器人会话时，右侧配置一起收起（换回普通任务 / 别的页面不占着位置）
+  useEffect(() => {
+    if (thread && thread.kind !== "bot") setBotDrawerId(null);
+  }, [thread]);
 
   const openThreadFromPalette = useCallback(async (threadId: string) => {
     const thread = state?.threads.find((t) => t.id === threadId);
@@ -434,9 +459,8 @@ export default function App() {
     if (thread.projectId && thread.projectId !== state?.activeProjectId) {
       await act("switchProject", { id: thread.projectId });
     }
-    setThreadId(thread.id);
-    setView("workspace");
-  }, [state, act]);
+    openSession(thread.id);
+  }, [state, act, openSession]);
 
   /** 打开设置并落到某个分区；rail 直接点「设置」时不带分区（回到通用） */
   const openSettingsSection = useCallback((section: SettingsSection) => {
@@ -447,9 +471,10 @@ export default function App() {
   const commands: Command[] = useMemo(() => {
     if (!state) return [];
     const list: Command[] = [
-      { id: "view-workspace", label: "工作区", hint: "⌘1", group: "导航", run: () => setView("workspace") },
+      { id: "view-bot", label: "BOT：机器人工作台（回合流 + 人格 / 记忆）", group: "导航", run: () => setView("workspace") },
+      { id: "view-terminal", label: "终端：项目 / 终端 / 任务表", group: "导航", run: () => setView("terminal") },
       { id: "view-scene", label: "场景", group: "导航", run: () => setView("scene") },
-      { id: "view-projects", label: "项目", group: "导航", run: () => setView("projects") },
+      { id: "view-projects", label: "项目花名册（统计 / 场景 / 切换）", group: "导航", run: () => setView("projects") },
       { id: "view-stats", label: "统计", group: "导航", hint: "设置 → 统计", run: () => openSettingsSection("stats") },
       { id: "view-hosts", label: "主机", group: "导航", hint: "设置 → 主机", run: () => openSettingsSection("hosts") },
       { id: "view-git", label: "Git / 源码管理", group: "导航", run: () => setView("git") },
@@ -528,8 +553,8 @@ export default function App() {
 
   useEffect(() => {
     const runInWorkspace = (make: () => Event) => {
-      if (view === "workspace") { window.dispatchEvent(make()); return; }
-      setView("workspace");
+      if (view === "terminal") { window.dispatchEvent(make()); return; }
+      setView("terminal");
       window.setTimeout(() => window.dispatchEvent(make()), 90);
     };
     const onKey = (e: KeyboardEvent) => {
@@ -546,6 +571,11 @@ export default function App() {
       if (mod && e.key.toLowerCase() === "n") { e.preventDefault(); void newThread(); return; }
       if (mod && e.key.toLowerCase() === "e" && !inTerminal) { e.preventDefault(); runInWorkspace(() => new Event("harness:edit-todo")); return; }
       if (mod && e.key === ",") { e.preventDefault(); setView("settings"); return; }
+      if (mod && !e.shiftKey && e.key.toLowerCase() === "j" && view === "terminal") {
+        e.preventDefault();
+        document.querySelector<HTMLTextAreaElement>(".dispatch-input")?.focus();
+        return;
+      }
       if (mod && /^[1-9]$/.test(e.key)) {
         const p = state?.projects[Number(e.key) - 1];
         if (p) { e.preventDefault(); void switchProject(p.id); }
@@ -596,9 +626,13 @@ export default function App() {
   };
 
   // 终端默认吃掉剩余宽度；终端收起时，由仍展开的最右侧面板吃掉剩余宽度。
-  const flexPane: PaneId | null = !collapsed.terminal ? "terminal" : !collapsed.files ? "files" : !collapsed.chat ? "chat" : !collapsed.todo ? "todo" : null;
+  // BOT 模式主面 = 会话；终端模式主面 = 终端网格（原型 owner-workspaces.html）
+  const flexOrder: PaneId[] = ["terminal", "files", "todo"];
+  const flexPane: PaneId | null = flexOrder.find((id) => !collapsed[id]) ?? null;
   // 可用宽度 = 窗口 - 左栏 - 终端最小宽 - 分隔条；固定列按比例收缩，保底 140px
-  const fixedSum = (collapsed.todo ? 0 : todoW) + (collapsed.chat ? 0 : chatW) + (collapsed.files ? 0 : filesW);
+  // 固定列只算「不是主面」的那几列：主面吃 1fr，算进 fixedSum 会把别的列挤小
+  const fixedW = (id: PaneId, w: number) => (collapsed[id] || flexPane === id ? 0 : w);
+  const fixedSum = fixedW("todo", todoW) + fixedW("files", filesW);
   const usable = Math.max(420, viewportW - 64 - 300 - 18);
   const shrink = fixedSum > usable ? usable / fixedSum : 1;
   const shrunk = (w: number) => Math.max(140, Math.round(w * shrink));
@@ -606,26 +640,29 @@ export default function App() {
   const paneCol = (id: PaneId, width: number, min: number) =>
     collapsed[id] ? `${COLLAPSED_PANE_W}px` : flexPane === id ? `minmax(${min}px, 1fr)` : `${width}px`;
   const todoCol = paneCol("todo", shrunk(todoW), 140);
-  const chatCol = paneCol("chat", shrunk(chatW), 180);
   const terminalCol = collapsed.terminal ? `${COLLAPSED_PANE_W}px` : "minmax(240px, 1fr)";
   const filesCol = paneCol("files", shrunk(filesW), 140);
-  const sep1 = !collapsed.todo && !collapsed.chat ? "6px" : "0px";
-  const sep2 = !collapsed.chat && !collapsed.terminal ? "6px" : "0px";
+  // 终端模式没有 chat 列，sep1 变成 TODO 与终端之间的分隔条（否则左栏在终端模式没法拖宽）
+  const sep1 = !collapsed.todo && !collapsed.terminal ? "6px" : "0px";
   const sep3 = !collapsed.terminal && !collapsed.files ? "6px" : "0px";
-  const gridCols = `64px ${todoCol} ${sep1} ${chatCol} ${sep2} ${terminalCol} ${sep3} ${filesCol}`;
+  // 网格只有：TODO · 终端（主面）· 文件；Chat 在终端底部 dock 里
+  const gridCols = `64px ${todoCol} ${sep1} ${terminalCol} ${sep3} ${filesCol}`;
 
   return (
+    <LangProvider lang={state.settings?.uiLanguage === "en" ? "en" : "zh"}>
     <div className="app">
       <div className={`main pane-focus-${focusedPane ?? "none"}${maximized ? " pane-max" : ""}`} style={{ gridTemplateColumns: gridCols }} onPointerDownCapture={markFocusedPane} onFocusCapture={markFocusedPane}>
         <Rail view={view} notesEnabled={notesEnabled} zhulongAvailable={zhulongAvailable} badges={railBadges} onChange={(v) => { if (v === "settings") setSettingsSection(undefined); setView(v); }} />
         {/* 工作区始终挂载、只切显隐：切到项目 / 设置再回来时，终端 pty、标签、滚动位置都不能丢 */}
+        {/* 网格（TODO / 终端 / 文件）只在终端模式显示；BOT 模式是下面那张独立页面 */}
         {scoped && (
-          <div className="workspace-view" style={{ display: view === "workspace" ? "contents" : "none" }}>
+          <div className="workspace-view" style={{ display: view === "terminal" ? "contents" : "none" }}>
           <>
             {collapsed.todo ? (
               <CollapsedPane label="TODO" title="TODO 列表" icon={<ListIcon size={16} />} onExpand={() => togglePane("todo")} />
             ) : (
               <TaskPane
+                mode="terminal"
                 state={todoAll ? state : scoped}
                 selectedId={selected?.id ?? null}
                 now={now}
@@ -648,16 +685,21 @@ export default function App() {
               />
             )}
             {sep1 === "6px" ? <Splitter onDelta={resizeTodo} /> : <div className="splitter-off" />}
-            {collapsed.chat ? (
-              <CollapsedPane label="CHAT" title="Chat" icon={<ChatIcon size={16} />} onExpand={() => togglePane("chat")} />
-            ) : (
-              <TaskChat state={scoped} globalState={state} thread={thread} threads={scoped.threads} now={now} act={act} onSelect={selectTodo} onOpenGlobal={(id) => void openTodoFromPalette(id)} onNewThread={() => void newThread()} onOpenThread={(id) => { setThreadId(id); setView("workspace"); }} context={pendingContext} onClearContext={() => setPendingContext(null)} onCollapse={() => togglePane("chat")} enterToSend={state.settings?.enterToSend ?? true} confirmStop={state.settings?.confirmStop ?? false} maximized={maximized === "chat"} onToggleMaximize={() => toggleMaximize("chat")} />
-            )}
-            {sep2 === "6px" ? <Splitter onDelta={resizeChat} /> : <div className="splitter-off" />}
-            {/* 收起只隐藏不卸载：保住 pty / 标签 / 文件预览；展开后 ResizeObserver 会重新 fit */}
-            <div className={`terminal-slot${maximized === "terminal" ? " pane-max-target" : ""}`}>
+            <div className={`terminal-slot is-stacked${maximized === "terminal" ? " pane-max-target" : ""}`}>
+              {/* 没有选中任务时不显示这一条：空态的「没有选中任务 / 选中一行后会出现 run」是废话 */}
+              {!collapsed.terminal && selected && (
+                <div className="runbar">
+                  <span className="mono tiny muted">{runbarRun?.id || "—"}</span>
+                  <span className="rb-title ellipsis">{`${selected.key} ${selected.title}`}</span>
+                  <span className="spacer" />
+                  <span className="rb-note">同一份状态：</span>
+                  <button className="rb-chip" title="回到左栏那一行" onClick={() => setCollapsed((c) => ({ ...c, todo: false }))}>TODO 行</button>
+                  <button className="rb-chip link" title="在右栏「会话」里看这次对话" onClick={() => { setCollapsed((c) => (c.files ? { ...c, files: false } : c)); window.setTimeout(() => window.dispatchEvent(new Event("harness:open-session-tab")), 80); }}>会话</button>
+                  <span className="rb-chip on">终端标签</span>
+                </div>
+              )}
               <div className="terminal-slot-main" style={{ display: collapsed.terminal ? "none" : "flex" }}>
-                <TerminalPanel state={state} todo={selected} act={act} onOpenThread={(id) => { setThreadId(id); setView("workspace"); }} onOpenProject={() => void addProject()} onPickedContext={setPendingContext} previewRoot={workdir} previewHost={previewHost} onCollapse={() => togglePane("terminal")} terminalFontSize={state.settings?.terminalFontSize} terminalScrollback={state.settings?.terminalScrollback} previewHomeUrl={state.settings?.previewHomeUrl} maximized={maximized === "terminal"} onToggleMaximize={() => toggleMaximize("terminal")} />
+                <TerminalPanel state={state} todo={selected} act={act} onOpenThread={openSession} onPickedContext={() => { /* 派活入口已去掉：拾取的元素请在对话里直接描述 */ }} previewRoot={workdir} previewHost={previewHost} onCollapse={() => togglePane("terminal")} terminalFontSize={state.settings?.terminalFontSize} terminalScrollback={state.settings?.terminalScrollback} previewHomeUrl={state.settings?.previewHomeUrl} maximized={maximized === "terminal"} onToggleMaximize={() => toggleMaximize("terminal")} />
               </div>
               {collapsed.terminal && (
                 <CollapsedPane label="TERM" title="终端" icon={<TerminalIcon size={16} />} onExpand={() => togglePane("terminal")} />
@@ -672,13 +714,40 @@ export default function App() {
                 root={workdir}
                 now={now}
                 notify={notify}
-                onSelectThread={(id) => { setThreadId(id); setView("workspace"); }}
+                onSelectThread={openSession}
                 onCollapse={() => togglePane("files")}
                 maximized={maximized === "files"}
                 onToggleMaximize={() => toggleMaximize("files")}
               />
             )}
           </>
+          {botDrawerId && (
+            <div className="bot-drawer" role="dialog" aria-label="机器人配置">
+              <BotConsole
+                key={botDrawerId}
+                act={act}
+                notify={notify}
+                state={state}
+                initialBotId={botDrawerId}
+                settingsOnly
+                onClose={() => setBotDrawerId(null)}
+                onOpenMemory={() => { setBotDrawerId(null); setView("memory"); }}
+                onOpenThread={openSession}
+              />
+            </div>
+          )}
+          </div>
+        )}
+        {view === "workspace" && (
+          <div className="wide bot-workspace">
+            <BotConsole
+              act={act}
+              notify={notify}
+              state={state}
+              initialBotId={inspectorBotId}
+              onOpenMemory={() => setView("memory")}
+              onOpenThread={openSession}
+            />
           </div>
         )}
         {view === "scene" && (
@@ -689,9 +758,9 @@ export default function App() {
               act={act}
               notify={notify}
               onOpenTask={(id) => void openTodoFromPalette(id)}
-              onOpenThread={(id) => { setThreadId(id); setView("workspace"); }}
+              onOpenThread={openSession}
               onOpenTerminal={(cwd, terminalId) => {
-                setView("workspace");
+                setView("terminal");
                 window.setTimeout(() => {
                   if (terminalId) requestTerminalAdopt({ terminalId, cwd, title: "Agent 终端" });
                   else requestTerminalAt(cwd);
@@ -699,6 +768,7 @@ export default function App() {
               }}
               onNewThread={() => void newThread()}
               onOpenProjects={() => setView("projects")}
+              initialSelectedId={sceneFocusId}
             />
           </div>
         )}
@@ -730,7 +800,7 @@ export default function App() {
                   onClick={() => void navigator.clipboard?.writeText(e.action ? `${e.action}: ${e.text}` : e.text)}
                   title="复制完整报错，便于贴出来定位"
                 >复制</button>
-                <button className="errcard-btn" onClick={() => setErrors((prev) => prev.filter((x) => x.id !== e.id))} aria-label="关闭这条报错">×</button>
+                <button className="errcard-btn" title="关闭这条报错" aria-label="关闭这条报错" onClick={() => setErrors((prev) => prev.filter((x) => x.id !== e.id))}><XIcon size={12} /></button>
               </div>
               <pre className="errcard-body">{e.text}</pre>
             </div>
@@ -742,5 +812,6 @@ export default function App() {
       )}
       {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
     </div>
+    </LangProvider>
   );
 }

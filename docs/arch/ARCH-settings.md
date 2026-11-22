@@ -112,7 +112,7 @@
 | 预览 | `previewIgnoreCertErrors` | `false` | 预览会话 `setCertificateVerifyProc`：自签名 https dev server 下一次加载生效 |
 | 预览 | `previewPermissionSites` | `""` | 站点权限 JSON（`{ origin: ["media", …] }`）；由预览页「允许并刷新」或设置页撤销写入 |
 | 预览 | `previewAgentControl` | `true` | 是否给 run 挂 `cockpit_browser` MCP（`browser_*` 工具操作预览页） |
-| 数据 | — | — | 打开数据目录、导出 `.db`、重置设置 |
+| 数据 | — | — | 打开数据目录、导出 `.db`、清空任务、重置设置 |
 
 ## 3. 持久化
 
@@ -134,6 +134,8 @@ CREATE TABLE settings (k TEXT PRIMARY KEY, v TEXT);   -- 单行：('app', JSON)
 | `resetSettings()` | 恢复 `DEFAULT_SETTINGS` |
 | `openDataDir()` | `shell.openPath(userData)` |
 | `exportData()` | `flush()` 后复制 `harness.db` 到用户选择的位置 |
+| `taskClearPreview()` | 只算「清空任务」会删多少（todos / runs / 线程 / 消息 / 计划 / delegation / 产物 / 终端绑定）；不改库 |
+| `clearTasks({ confirm })` | **破坏性**，必须 `confirm:"CLEAR"`。顺序：先 `stop()` 所有在跑的 run → `flush()` → 整库备份成 `harness.db.bak-clear-<时间戳>`（备份失败即中止）→ 清内存态 + `persist()`。保留项目 / Agent / 机器人 / 设置 / 记忆 / 知识库 / 场景；`bot_turns` 只把 `todoId` 置空（回合审计保留）；`seq` 重置为 1 |
 
 `snapshot()` 额外下发 `settings`、`dbPath`、`userDataPath`、`appVersion`，因此设置页不需要额外 IPC。
 

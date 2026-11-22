@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { State } from "../types";
 import { renderMarkdown } from "../markdown";
 import { relTime } from "../ui";
-import { FileTextIcon, SearchIcon, SparkleIcon } from "./Icons";
+import { FileTextIcon, SearchIcon, SparkleIcon, XIcon, PlusIcon } from "./Icons";
+import { useT } from "../i18n";
 import { NotesEditor } from "./NotesEditor";
 import { Knowledge } from "./Knowledge";
 import { ListContextMenu } from "./ListContextMenu";
@@ -122,6 +123,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   /** 从「资料（知识库 → 文档）」入口进来时直接打开对应 tab */
   initialTab?: Tab;
 }) {
+  const t = useT();
   const plugin = (state.plugins || []).find((p) => p.id === PLUGIN_ID);
   const enabled = Boolean(plugin?.enabled);
   const [pages, setPages] = useState<PageSummary[]>([]);
@@ -810,17 +812,17 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   }, [filteredVaultFiles]);
 
   if (!enabled) {
-    return <div className="notes-page notes-disabled"><div className="notes-disabled-card"><b>知识库插件未启用</b><p>在「设置 → 插件」启用内置知识库。</p></div></div>;
+    return <div className="workbench notes-disabled"><div className="notes-disabled-card"><b>知识库插件未启用</b><p>在「设置 → 插件」启用内置知识库。</p></div></div>;
   }
 
   const tabsBar = (
     <div className="notes-wiki-tabs">
-      <button className={tab === "pages" ? "on" : ""} onClick={() => setTab("pages")}>页面</button>
-      <button className={tab === "sources" ? "on" : ""} onClick={() => setTab("sources")} title="页面引用的原始输入：粘贴文本 / URL / 本地 Markdown">来源</button>
-      <button className={tab === "docs" ? "on" : ""} onClick={() => setTab("docs")} title="导入的 PDF / Office / 网页，可检索并带页码出处">资料库</button>
-      <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>审核{reviews.length + suggestions.length + claimIssues.length ? `·${reviews.length + suggestions.length + claimIssues.length}` : ""}</button>
-      <button className={tab === "vault" ? "on" : ""} onClick={() => setTab("vault")}>本地</button>
-      <button className={tab === "trash" ? "on" : ""} onClick={() => setTab("trash")}>回收站</button>
+      <button className={tab === "pages" ? "on" : ""} onClick={() => setTab("pages")}>{t("tab.pages")}</button>
+      <button className={tab === "sources" ? "on" : ""} onClick={() => setTab("sources")} title="页面引用的原始输入：粘贴文本 / URL / 本地 Markdown">{t("tab.sources")}</button>
+      <button className={tab === "docs" ? "on" : ""} onClick={() => setTab("docs")} title="导入的 PDF / Office / 网页，可检索并带页码出处">{t("tab.library")}</button>
+      <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>{t("tab.review")}{reviews.length + suggestions.length + claimIssues.length ? `·${reviews.length + suggestions.length + claimIssues.length}` : ""}</button>
+      <button className={tab === "vault" ? "on" : ""} onClick={() => setTab("vault")}>{t("tab.local")}</button>
+      <button className={tab === "trash" ? "on" : ""} onClick={() => setTab("trash")}>{t("tab.trash")}</button>
     </div>
   );
 
@@ -833,9 +835,9 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
           {current.tabs.map((pageId) => {
             const d = docs[pageId];
             if (!d) return null;
-            return <button key={pageId} className={`notes-tab ${current.active === pageId ? "on" : ""}`} onClick={() => { setFocus(which); setPane(which, (p) => ({ ...p, active: pageId })); }} title={d.title}>{d.dirty && <span className="notes-tab-dirty" />}<span className="ellipsis">{d.title}</span><i onClick={(e) => { e.stopPropagation(); closeTab(which, pageId); }}>×</i></button>;
+            return <button key={pageId} className={`notes-tab ${current.active === pageId ? "on" : ""}`} onClick={() => { setFocus(which); setPane(which, (p) => ({ ...p, active: pageId })); }} title={d.title}>{d.dirty && <span className="notes-tab-dirty" />}<span className="ellipsis">{d.title}</span><i onClick={(e) => { e.stopPropagation(); closeTab(which, pageId); }} title="关闭标签" aria-label="关闭标签"><XIcon size={10} /></i></button>;
           })}
-          <button className="notes-tab-add" title="新建页面" onClick={() => void createPage()}>＋</button>
+          <button className="notes-tab-add" title="新建页面" aria-label="新建页面" onClick={() => void createPage()}><PlusIcon size={13} /></button>
         </div>
         {!doc ? (
           <div className="notes-hub">
@@ -844,7 +846,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
             <p className="notes-hub-sub">页面是整理后的知识；资料是原始输入；本地目录可以直接编辑 Markdown 并写回磁盘。</p>
             <div className="notes-hub-cards">
               <button className="notes-hub-card" onClick={() => void createPage()} disabled={busy}>
-                <span className="notes-hub-ico">＋</span>
+                <span className="notes-hub-ico"><PlusIcon size={14} /></span>
                 <b>新建页面</b>
                 <em>空白 Markdown，先写再整理</em>
               </button>
@@ -1214,7 +1216,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
   const restPages = filteredPages.filter((p) => !pins.includes(p.id));
 
   return (
-    <div className="notes-page">
+    <div className="workbench">
       {quickOpen && (
         <div className="modal-mask" role="dialog" aria-modal="true" aria-label="快速记录">
           <div className="modal quick-capture">
@@ -1241,10 +1243,9 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
         </div>
       )}
       {tab !== "docs" && <PageHeader
-        kicker="本地知识库"
-        title="知识库"
+        title={t("page.knowledge")}
         subtitle={(
-          <div className="notes-stats">
+          <div className="stat-strip">
             <span><b>{pages.length}</b> 页面</span>
             <span><b>{sources.length}</b> 来源</span>
             <span className={reviews.length + suggestions.length + claimIssues.length ? "warn" : ""}><b>{reviews.length + suggestions.length + claimIssues.length}</b> 待审核</span>
@@ -1253,14 +1254,14 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
         )}
         actions={(
           <>
-            <button className="btn primary" onClick={() => void createPage()} disabled={busy}>＋ 新建页面</button>
+            <button className="btn primary" onClick={() => void createPage()} disabled={busy}>＋ {t("action.newPage")}</button>
             <button
               className="btn"
               onClick={() => setSourceDraft({ title: "", content: "", url: "", mode: "text" })}
               disabled={busy}
               title="导入资料：粘贴文本 / Markdown、URL，或从磁盘选文件"
-            >导入资料</button>
-            <button className="btn" onClick={askInChat} title="到 Chat 里提问：带上「只基于知识库 + 页面引用」的要求；知识库页只做浏览与整理">在 Chat 中问</button>
+            >{t("action.importMaterials")}</button>
+            <button className="btn" onClick={askInChat} title="到 Chat 里提问：带上「只基于知识库 + 页面引用」的要求；知识库页只做浏览与整理">{t("action.askInChat")}</button>
             <RowMenu title="更多知识库操作" popClassName="notes-menu">
               <div className="row-menu-label">生成与整理</div>
               <button
@@ -1274,7 +1275,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               <div className="row-menu-label">本地目录</div>
               <button onClick={() => void pickLocalFolder()} disabled={busy}>{vault.path ? "更换本地目录…" : "打开本地目录…"}</button>
               <div className="row-menu-label">查看</div>
-              <button onClick={() => { graph ? setGraph(false) : void openGraph(); }}>{graph ? "关闭图谱" : "图谱"}</button>
+              {graph ? <button className="icon-btn" title="关闭图谱" aria-label="关闭图谱" onClick={() => setGraph(false)}><XIcon size={13} /></button> : <button onClick={() => void openGraph()}>图谱</button>}
               <button onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: "memory" }))}>打开记忆页…</button>
               <button onClick={toggleSplit}>{split ? "取消分屏" : "分屏"}</button>
               <div className="row-menu-label">导出</div>
@@ -1290,7 +1291,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       {(error || notice) && (
         <div className={`notes-banner ${error ? "error" : ""}`}>
           <span className="ellipsis">{error || notice}</span>
-          <button className="notes-banner-x" onClick={() => { setError(""); setNotice(""); }} aria-label="关闭提示">×</button>
+          <button className="notes-banner-x" title="关闭提示" aria-label="关闭提示" onClick={() => { setError(""); setNotice(""); }}><XIcon size={12} /></button>
         </div>
       )}
       <ListContextMenu
@@ -1321,13 +1322,13 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
           {tab === "pages" && <button className="btn tiny-btn" onClick={() => void reviewPicked("accept")} disabled={!picked.size}>接受</button>}
           {tab === "pages" && <button className="btn tiny-btn" onClick={() => void reviewPicked("reject")} disabled={!picked.size}>退回</button>}
           <button className="btn tiny-btn" onClick={() => void (tab === "sources" ? deletePickedSources() : deletePickedPages())} disabled={!picked.size}>删除</button>
-          <button className="icon-btn" title="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}>×</button>
+          <button className="icon-btn" title="退出多选" aria-label="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}><XIcon size={13} /></button>
         </div>
       )}
 
 
-      <div className={`notes-layout ${dense ? "list-compact" : ""}`} style={tab === "docs" ? { display: "none" } : undefined}>
-        <aside className="notes-sidebar">
+      <div className={`workbench-layout ${dense ? "list-compact" : ""}`} style={tab === "docs" ? { display: "none" } : undefined}>
+        <aside className="workbench-side">
           {tabsBar}
           {tab !== "docs" && <div className="notes-search-wrap">
             <SearchIcon size={12} className="notes-search-icon" />
@@ -1338,7 +1339,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setQuery(""); void search(""); } }}
               placeholder="搜索页面 / 来源 / 本地"
             />
-            {query && <button className="notes-search-clear" title="清除（Esc）" onClick={() => { setQuery(""); void search(""); }}>×</button>}
+            {query && <button className="notes-search-clear" title="清除（Esc）" aria-label="清除搜索" onClick={() => { setQuery(""); void search(""); }}><XIcon size={12} /></button>}
           </div>}
           {(searchStatus !== "all" || searchKind !== "all" || searchTime !== "all" || searchHits.length > 0) && (
             <div className="notes-search-filters">
@@ -1553,7 +1554,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
           {tab === "sources" && log.length > 0 && <div className="notes-log">{log.slice(0, 5).map((l) => <div key={l.id}>{l.text}</div>)}</div>}
         </aside>
 
-        <main className="notes-main">
+        <main className="workbench-main">
           {tab === "docs" ? (
             <div className="notes-docs"><Knowledge embedded act={act} onOpenPage={(id) => { setTab("pages"); void openPage(id); }} /></div>
           ) : graph ? <GraphView data={graphData} loading={graphLoading} onOpen={(id) => { setGraph(false); void openPage(id, "left"); }} /> : (
@@ -1565,10 +1566,10 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
           )}
         </main>
 
-        <aside className="notes-meta">
+        <aside className="workbench-meta">
           {activeDoc?.local ? (
             <>
-              <div className="notes-meta-block"><div className="notes-meta-title">本地文件</div><div className="notes-review-badge local">Markdown</div><p className="notes-meta-empty">{activeDoc.localPath}</p>{activeDoc.mtime && <p className="notes-meta-empty">修改于 {new Date(activeDoc.mtime).toLocaleString()}</p>}</div>
+              <div className="notes-meta-block"><div className="notes-meta-title">本地文件</div><div className="notes-review-badge local">Markdown</div><p className="inline-empty">{activeDoc.localPath}</p>{activeDoc.mtime && <p className="inline-empty">修改于 {new Date(activeDoc.mtime).toLocaleString()}</p>}</div>
               <div className="notes-meta-block">
                 <div className="notes-meta-title">操作</div>
                 {sources.some((s) => s.uri === activeDoc.localPath) ? (
@@ -1579,7 +1580,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
                 <button className="notes-link" onClick={() => void revealLocalFile(activeDoc)}><b>在 Finder 显示</b><span>打开文件所在位置</span></button>
                 <button className="notes-link" onClick={() => void refreshVault()}><b>刷新目录</b><span>重新扫描本地 Markdown</span></button>
               </div>
-              <div className="notes-meta-block"><div className="notes-meta-title">目录</div><p className="notes-meta-empty">{vault.path || activeDoc.localPath}</p><button className="notes-link" onClick={() => void pickLocalFolder()} disabled={busy}><b>更换目录</b></button></div>
+              <div className="notes-meta-block"><div className="notes-meta-title">目录</div><p className="inline-empty">{vault.path || activeDoc.localPath}</p><button className="notes-link" onClick={() => void pickLocalFolder()} disabled={busy}><b>更换目录</b></button></div>
             </>
           ) : activeDoc ? (
             <>
@@ -1599,7 +1600,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               </div>
               <div className="notes-meta-block">
                 <div className="notes-meta-title">人工结论 <em>{claims.length}</em></div>
-                {claims.length === 0 && <p className="notes-meta-empty">你改过的句子会自动记在这里；后续整理会逐条校验，冲突时不会静默改写页面。</p>}
+                {claims.length === 0 && <p className="inline-empty">你改过的句子会自动记在这里；后续整理会逐条校验，冲突时不会静默改写页面。</p>}
                 {claims.map((c) => (
                   <div key={c.id} className={`notes-claim ${c.status}`} title={c.quote}>
                     <span className={`notes-status-dot ${c.status === "active" ? "reviewed" : c.status === "conflict" ? "stale" : "draft"}`} />
@@ -1607,17 +1608,17 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
                     <button className="link tiny" title="解除这条锁定" onClick={() => void removeClaim(c.id)}>解除</button>
                   </div>
                 ))}
-                {claims.some((c) => c.status !== "active") && <p className="notes-meta-empty">标红的结论在最近一次整理里对不上：页面的自动整理已改成待审建议，确认后再写。</p>}
+                {claims.some((c) => c.status !== "active") && <p className="inline-empty">标红的结论在最近一次整理里对不上：页面的自动整理已改成待审建议，确认后再写。</p>}
               </div>
               <div className="notes-meta-block">
                 <div className="notes-meta-title">引用来源 <em>{activeDoc.citations.length}</em></div>
-                {activeDoc.citations.length === 0 && <p className="notes-meta-empty">还没有引用资料。用下面的选择器添加，或在正文里标注出处。</p>}
+                {activeDoc.citations.length === 0 && <p className="inline-empty">还没有引用资料。用下面的选择器添加，或在正文里标注出处。</p>}
                 {activeDoc.citations.map((c) => <button key={c.id} className="notes-link" onClick={() => c.sourceId && void openSource(c.sourceId)}><b>{c.source?.title || c.sourceId}</b>{c.quote && <span>{c.quote.slice(0, 80)}</span>}</button>)}
                 {sources.length > 0 && <select className="notes-cite-select" value="" onChange={(e) => { if (e.target.value) void addCitation(e.target.value); }}><option value="">＋ 引用 source</option>{sources.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}</select>}
               </div>
               <div className="notes-meta-block">
                 <div className="notes-meta-title">反向链接 <em>{activeDoc.backlinks?.length || 0}</em></div>
-                {(activeDoc.backlinks || []).length === 0 && <p className="notes-meta-empty">还没有页面链接到这里。在别的页面写 [[{activeDoc.title}]] 就会出现在这里。</p>}
+                {(activeDoc.backlinks || []).length === 0 && <p className="inline-empty">还没有页面链接到这里。在别的页面写 [[{activeDoc.title}]] 就会出现在这里。</p>}
                 {(activeDoc.backlinks || []).map((b) => <button key={b.id} className="notes-link" onClick={() => void openPage(b.id, focus)}><b>{b.title}</b><span>{statusLabel(b.status)}</span>{b.snippet && <em>{b.snippet}</em>}</button>)}
               </div>
               {unlinked.length > 0 && (
@@ -1628,7 +1629,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               )}
               <div className="notes-meta-block">
                 <div className="notes-meta-title">关联任务 <em>{linkedTodos.length}</em></div>
-                {linkedTodos.length === 0 && <p className="notes-meta-empty">还没有关联任务。页面右上角「⋯ → 创建任务」可以从这里派活。</p>}
+                {linkedTodos.length === 0 && <p className="inline-empty">还没有关联任务。页面右上角「⋯ → 创建任务」可以从这里派活。</p>}
                 {linkedTodos.map((l) => { const todo = state.todos.find((t) => t.id === l.todoId); return <button key={l.id} className="notes-link" disabled={!todo || !onOpenTodo} onClick={() => todo && onOpenTodo?.(todo.id)}><b>{todo?.title || l.title || l.todoId}</b><span>{todo?.key} {todo?.status}</span></button>; })}
               </div>
             </>
@@ -1638,7 +1639,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
               <div className="notes-meta-idle-row"><span className="notes-status-dot draft" /><div><b>引用来源</b><em>页面引用了哪些资料</em></div></div>
               <div className="notes-meta-idle-row"><span className="notes-status-dot reviewed" /><div><b>反向链接</b><em>哪些页面提到它</em></div></div>
               <div className="notes-meta-idle-row"><span className="notes-status-dot stale" /><div><b>关联任务</b><em>链到 TODO LIST 里的条目</em></div></div>
-              <p className="notes-meta-empty">打开一个页面后，这里会显示上面三项。</p>
+              <p className="inline-empty">打开一个页面后，这里会显示上面三项。</p>
             </div>
           )}
         </aside>
@@ -1647,7 +1648,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       {sourceDraft && (
         <div className="notes-source-modal">
           <div className="notes-source-card">
-            <div className="notes-source-head"><b>导入资料</b><button className="icon-btn" onClick={() => setSourceDraft(null)}>×</button></div>
+            <div className="notes-source-head"><b>导入资料</b><button className="icon-btn" title="关闭" aria-label="关闭导入资料" onClick={() => setSourceDraft(null)}><XIcon size={13} /></button></div>
             <div className="notes-source-mode three">
               <button className={sourceDraft.mode === "text" ? "on" : ""} onClick={() => setSourceDraft({ ...sourceDraft, mode: "text" })}>文本 / Markdown</button>
               <button className={sourceDraft.mode === "url" ? "on" : ""} onClick={() => setSourceDraft({ ...sourceDraft, mode: "url" })}>URL</button>
@@ -1691,7 +1692,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
                     : `${suggestionKindLabel(preview.sug.kind)}建议 · 置信度 ${confidenceLabel(preview.sug.confidence)}`}
                 </span>
               </div>
-              <button className="icon-btn" onClick={() => setPreview(null)}>×</button>
+              <button className="icon-btn" title="关闭" aria-label="关闭预览" onClick={() => setPreview(null)}><XIcon size={13} /></button>
             </div>
             {preview.lines.length > 0 ? (
               <div className="notes-diff" role="presentation">
@@ -1728,7 +1729,7 @@ export function Notes({ state, act, onOpenTodo, openRequest, initialTab }: {
       {sourceView && (
         <div className="notes-source-modal" onClick={() => setSourceView(null)}>
           <div className="notes-source-card" onClick={(e) => e.stopPropagation()}>
-            <div className="notes-source-head"><div><b>{sourceView.title}</b><span className="mono">{sourceView.kind} {sourceView.uri ? `· ${sourceView.uri}` : ""}</span></div><button className="icon-btn" onClick={() => setSourceView(null)}>×</button></div>
+            <div className="notes-source-head"><div><b>{sourceView.title}</b><span className="mono">{sourceView.kind} {sourceView.uri ? `· ${sourceView.uri}` : ""}</span></div><button className="icon-btn" title="关闭" aria-label="关闭来源" onClick={() => setSourceView(null)}><XIcon size={13} /></button></div>
             <div className="notes-source-read">{sourceView.content || "（source 内容未加载）"}</div>
             <div className="notes-source-actions"><button className="btn tiny-btn" onClick={() => sendSourceToChat(sourceView)}>发送到 Chat 整理</button></div>
           </div>

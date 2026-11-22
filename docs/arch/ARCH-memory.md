@@ -2,7 +2,7 @@
 
 # Arch · 记忆（四层 + 遗忘 + 索引 + Dream）
 
-> **状态（2026-11-15 复核，11-16 补 Dream 循环）：四层 + note（kind/置信度/存活期/去重闸门）+ 失效链 + 打分注入 + 注入台账 + L1 bigram 索引 + Dream 建议队列 + 提案 diff/版本闸门 + 证据链 + 输入指纹幂等 + 空闲触发 + `dream_runs` 台账已落地**（`electron/memory/index.mjs`、`electron/db.mjs` 的 `onTranscript` 钩子、`src/components/Memory.tsx`、MCP `memory_*`、`npm run memory:selftest` / `db:selftest`）；**未做**：注入归因升级（现在是标题片段匹配，只能分「从没被用过」）。本文是 [`REQ-modules-original.md`](../product/REQ-modules-original.md) 第 3 节「记忆」的实现设计。
+> **状态（2026-11-15 复核，11-16 补 Dream 循环）：四层 + note（kind/置信度/存活期/去重闸门）+ 失效链 + 打分注入 + 注入台账 + L1 bigram 索引 + Dream 建议队列 + 提案 diff/版本闸门 + 证据链 + 输入指纹幂等 + 空闲触发 + `dream_runs` 台账已落地**（`electron/memory/index.mjs`、`electron/db.mjs` 的 `onTranscript` 钩子、`src/components/Memory.tsx`、MCP `memory_*`、`npm test -- memory` / `db:selftest`）；**未做**：注入归因升级（现在是标题片段匹配，只能分「从没被用过」）。本文是 [`REQ-modules-original.md`](../product/REQ-modules-original.md) 第 3 节「记忆」的实现设计。
 > 框架来自 Anthropic《The components of agent memory》：**四层记忆 + 一个 Dream 循环**。叙事版见 [`ARTICLE-zhihu-llm-wiki.md`](../articles/ARTICLE-zhihu-llm-wiki.md)。
 > 关联：[`ARCH-knowledge.md`](ARCH-knowledge.md)（L3 的对象：资料与页面）、[`PLUGIN-notes.md`](PLUGIN-notes.md)、[`ARCH-chat-thread.md`](ARCH-chat-thread.md)。
 
@@ -378,8 +378,8 @@ fix（页面引用）→ build（资料无页面）→ fill（无依据）→ pr
 
 回归：
 
-- `npm run memory:selftest`（临时目录，不碰 userData）——断言四类遗忘不串味、L1 不进注入、小预算仍有 note、写入闸门、台账归因、索引对账、老库补列；
-- `npm run memory:preview`（vite + headless Chrome + mock `window.harness`，不启动 Electron、不抢焦点）——断言记忆页把「已失效 / 已过期 / 置顶 / 被裁原因 / 两笔预算」表达出来，并出亮色 + 暗色 + Dream 三张截图到 `.preview/`。
+- `npm test -- memory`（临时目录，不碰 userData）——断言四类遗忘不串味、L1 不进注入、小预算仍有 note、写入闸门、台账归因、索引对账、老库补列；
+- `npm run preview:memory`（vite + headless Chrome + mock `window.harness`，不启动 Electron、不抢焦点）——断言记忆页把「已失效 / 已过期 / 置顶 / 被裁原因 / 两笔预算」表达出来，并出亮色 + 暗色 + Dream 三张截图到 `.preview/`。
 
 评估方式：跑 20 个跨会话任务，对比「开 Dream / 关 Dream」下的返工次数。
 

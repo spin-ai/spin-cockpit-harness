@@ -30,7 +30,7 @@ node --check electron/mcp-bridge.mjs
 node --check electron/plugins/host.mjs
 node --check electron/plugins/runtime.mjs
 node --check plugins/notes/main.mjs
-npm run verify:mission
+npm test -- mission
 npm run verify:plugins
 ```
 

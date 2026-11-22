@@ -4,7 +4,7 @@
 
 > **状态：K0 已落地（2026-11）；K1 解析引擎注册/路由已落地（MinerU / PaddleOCR-VL / 自研 HTTP 引擎）；K1 其余与 K2–K5 待实施。** 本文是 [`REQ-modules-original.md`](../product/REQ-modules-original.md) 第 2 节「知识」的实现设计。
 > 已实现：`electron/knowledge/`（bigram + node:sqlite FTS5 + 向量 + RRF + 解析 + 摄入状态机 + Ark 客户端）、`scripts/knowledge-selftest.mjs`。
-> 自检：`npm run knowledge:selftest`（不联网） / `npm run knowledge:engines:selftest`（引擎注册、路由、MinerU/Paddle 协议，全 mock） / `npm run knowledge:selftest:ark`（含 embedding 与问答）。
+> 自检：`npm test -- knowledge-index`（不联网） / `npm test -- knowledge-engines`（引擎注册、路由、MinerU/Paddle 协议，全 mock） / `npm test -- knowledge-index -- --ark`（含 embedding 与问答）。
 > **分层与流动（四层记忆、Dream）见 [`ARCH-memory.md`](ARCH-memory.md)。** 本文只管 L3 里的**对象**：资料与页面本身。
 > 关联：[`ARCH-wiki-retrieval.md`](ARCH-wiki-retrieval.md)（检索评估与 SAG2 附录）、[`PLUGIN-notes.md`](PLUGIN-notes.md)（Notes 数据/API）、[`ARCH-plugins.md`](ARCH-plugins.md)。
 
@@ -273,10 +273,10 @@ wiki.curate（确定性，免费）
 实现：`plugins/notes/curate-structure.mjs`（纯函数，`apply` 字段就是分流的唯一判据）、
 插件 API `wiki.curate` / `wiki.suggestions` / `wiki.suggestion` / `wiki.suggestionResolve`、
 审核 UI「逐行 diff → 接受并写入 / 退回」。
-自检：`npm run wiki:curate:selftest`（计划层，含 reviewed 分诊、不丢行、漏引用 / 重复扫描、合并草稿）、
-`npm run wiki:plugin:selftest`（插件层：假 ctx 驱动真实 API，验「字节不变 / needs_rebase / 提议即产物 + revision / 引用只加不改正文 / 合并只产草稿 / 拒绝后不重复打扰」）。
+自检：`npm test -- wiki-curate`（计划层，含 reviewed 分诊、不丢行、漏引用 / 重复扫描、合并草稿）、
+`npm test -- wiki-plugin`（插件层：假 ctx 驱动真实 API，验「字节不变 / needs_rebase / 提议即产物 + revision / 引用只加不改正文 / 合并只产草稿 / 拒绝后不重复打扰」）。
 
-**判据**（`npm run wiki:curate:selftest` 第 [4] 组覆盖前三项）：
+**判据**（`npm test -- wiki-curate` 第 [4] 组覆盖前三项）：
 
 | 指标 | 门槛 |
 |---|---|
@@ -594,7 +594,7 @@ tabs   页面 · 来源 · 资料库 · 审核 · 本地 · 回收站
 - 发给模型的内容只有本次命中的 5–8 个片段，不发送整库。
 
 > **已定（A 案）**：资料侧云端向量可选且默认关，页面侧只做本地 FTS。`US-LLMWiki-06` 的「不上传整库」按「默认不开启、开启时明示会上传」执行，
-> 回归用例在 `npm run knowledge:selftest` 的 `[1.5] 出网边界`：默认模式下 fetch 调用数必须为 0。
+> 回归用例在 `npm test -- knowledge-index` 的 `[1.5] 出网边界`：默认模式下 fetch 调用数必须为 0。
 
 ---
 
@@ -628,7 +628,7 @@ tabs   页面 · 来源 · 资料库 · 审核 · 本地 · 回收站
 
 L1 解析矩阵、hash 去重、摄入状态机、`documents/chunks` 落库。
 
-**验收**：20 份混合格式导入成功；重复导入被拦；失败可 reparse；切换 `mineru` / `paddleocr_vl` / `auto` 后路由与 `documents.engine` 正确；`npm run knowledge:engines:selftest` 全绿。
+**验收**：20 份混合格式导入成功；重复导入被拦；失败可 reparse；切换 `mineru` / `paddleocr_vl` / `auto` 后路由与 `documents.engine` 正确；`npm test -- knowledge-engines` 全绿。
 
 ### K2 检索与引用（2 天）
 

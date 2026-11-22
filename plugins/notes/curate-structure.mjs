@@ -6,7 +6,7 @@
  *   2) 硬规则——**reviewed / stale 页面不允许被整理静默改写**。计划里用 `apply`
  *      明确标出「可以直接写」还是「只能变成待审建议」，由调用方据此分流。
  *
- *   node scripts/wiki-curate-selftest.mjs     # 见 [4] 结构整理
+ *   node tests/wiki-curate.test.mjs     # 见 [4] 结构整理
  */
 
 import { evaluateClaims, claimsBlockWrite } from "./claims.mjs";

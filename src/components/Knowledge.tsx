@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
 import { RowMenu } from "./RowMenu";
+import { XIcon } from "./Icons";
+import { useT } from "../i18n";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
@@ -89,6 +91,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
   /** 嵌进知识库时不再重复页头与外边距 */
   embedded?: boolean;
 }) {
+  const t = useT();
   const [docs, setDocs] = useState<Doc[]>([]);
   const docsRef = useRef<Doc[]>([]);
   const [hits, setHits] = useState<Hit[]>([]);
@@ -393,32 +396,31 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
   );
 
   const body = (
-    <div className={embedded ? "kv-embedded pr-page" : "notes-page kv-page pr-page"}>
+    <div className={embedded ? "kv-embedded pr-page" : "workbench kv-page pr-page"}>
       {embedded ? (
         /* 嵌进知识库时不再出现第二个页头：只保留一条与 tab 同高的工具条 */
         <div className="kv-embedded-bar">
-          <div className="notes-stats">
+          <div className="stat-strip">
             <span><b>{docs.length}</b> 份资料</span>
             <span><b>{counts.ready}</b> 已索引</span>
             {counts.attention > 0 && <span className="warn"><b>{counts.attention}</b> 需处理</span>}
           </div>
           <span className="spacer" />
-          <button className="btn tiny-btn primary" onClick={() => void ingest()} disabled={busy}>＋ 导入</button>
-          <button className="btn tiny-btn" onClick={() => setPasting(true)} disabled={busy}>粘贴文本</button>
+          <button className="btn tiny-btn primary" onClick={() => void ingest()} disabled={busy}>＋ {t("action.importMaterials")}</button>
+          <button className="btn tiny-btn" onClick={() => setPasting(true)} disabled={busy}>{t("action.pasteText")}</button>
           {moreMenu}
         </div>
       ) : (
         <PageHeader
-          kicker="MATERIALS"
-          title="资料"
-          subtitle={<div className="notes-stats">
+          title={t("page.materials")}
+          subtitle={<div className="stat-strip">
             <span><b>{docs.length}</b> 资料</span>
             <span><b>{counts.ready}</b> 已索引</span>
             <span><b>{engines.filter((e) => e.available).length}</b> 引擎可用</span>
           </div>}
           actions={<>
-            <button className="btn primary" onClick={() => void ingest()} disabled={busy}>＋ 导入资料</button>
-            <button className="btn" onClick={() => setPasting(true)} disabled={busy}>粘贴文本</button>
+            <button className="btn primary" onClick={() => void ingest()} disabled={busy}>＋ {t("action.importMaterials")}</button>
+            <button className="btn" onClick={() => setPasting(true)} disabled={busy}>{t("action.pasteText")}</button>
             {moreMenu}
           </>}
         />
@@ -426,7 +428,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
       {(error || notice) && (
         <div className={`notes-banner ${error ? "error" : ""}`}>
           <span className="ellipsis">{error || notice}</span>
-          <button className="notes-banner-x" onClick={() => { setError(""); setNotice(""); }}>×</button>
+          <button className="notes-banner-x" title="关闭提示" aria-label="关闭提示" onClick={() => { setError(""); setNotice(""); }}><XIcon size={12} /></button>
         </div>
       )}
       {pasting && (
@@ -488,10 +490,10 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
                   </RowMenu>
                 </div>
               ))}
-              {docs.length === 0 && <p className="notes-meta-empty">还没有资料。导入 PDF / Word / Markdown / 网页。</p>}
-              {docs.length > 0 && visibleDocs.length === 0 && <p className="notes-meta-empty">这个范围里没有资料。</p>}
+              {docs.length === 0 && <p className="inline-empty">还没有资料。导入 PDF / Word / Markdown / 网页。</p>}
+              {docs.length > 0 && visibleDocs.length === 0 && <p className="inline-empty">这个范围里没有资料。</p>}
             </div>
-            <p className="notes-meta-empty">只有勾选的资料参与检索与引用；未勾选的仍可单独打开后提问。</p>
+            <p className="inline-empty">只有勾选的资料参与检索与引用；未勾选的仍可单独打开后提问。</p>
           </div>
         </aside>
 
@@ -510,7 +512,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
               </div>
               <div className="pr-pages">
                 {preview.pages.slice(0, 80).map((pg) => (
-                  <div key={pg.page_no} id={`kv-page-${pg.page_no}`} className={`pr-page ${pg.warn ? "warn" : ""}`}>
+                  <div key={pg.page_no} id={`kv-page-${pg.page_no}`} className={`pr-pageblock ${pg.warn ? "warn" : ""}`}>
                     <div className="pr-ph">
                       <span>p{pg.page_no}{pg.heading ? ` · ${pg.heading}` : ""}</span>
                       <button className="link tiny" onClick={() => void openPageImage(preview.doc, pg.page_no)} disabled={shotBusy}>看原页</button>
@@ -596,7 +598,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
                       </button>
                     ))}
                   </div>
-                  <p className="notes-meta-empty">答案与命中只来自勾选的资料；取消勾选后重新提问即可收窄范围。</p>
+                  <p className="inline-empty">答案与命中只来自勾选的资料；取消勾选后重新提问即可收窄范围。</p>
                 </div>
               )}
 
@@ -631,26 +633,26 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
                   ? <button className="link tiny" onClick={() => selectCitation(c)}>打开页面</button>
                   : <button className="link tiny" onClick={() => { const d = docs.find((x) => x.id === c.doc_id); if (d) void openPageImage(d, c.page_no || 1); }}>看原页</button>}
               </div>
-            )) : <p className="notes-meta-empty">提问后这里显示本次回答引用的页 / 段。</p>}
+            )) : <p className="inline-empty">提问后这里显示本次回答引用的页 / 段。</p>}
           </div>
 
           <div className="pr-block">
             <div className="pr-block-head">解析与索引
               <button className="link tiny" onClick={() => setConfigOpen(true)}>配置</button>
             </div>
-            <p className="notes-meta-empty">
+            <p className="inline-empty">
               默认 {engineState?.defaultEngine || "auto"} · {engines.filter((e) => e.available).length}/{engines.length} 个引擎可用
             </p>
-            <p className="notes-meta-empty">
+            <p className="inline-empty">
               {embedding?.enabled ? `云端向量：${embedding.model}` : "本地关键词索引，正文不出网"}
             </p>
           </div>
 
           <div className="pr-block">
             <div className="pr-block-head">规则</div>
-            <p className="notes-meta-empty">资料只读；回答只引用候选片段并标到页 / 段。</p>
-            <p className="notes-meta-empty">删除资料会把引用它的页面标为过期。</p>
-            <p className="notes-meta-empty">引擎输出统一成 Markdown + 页码；换引擎只需重解析，不影响已发布页面。</p>
+            <p className="inline-empty">资料只读；回答只引用候选片段并标到页 / 段。</p>
+            <p className="inline-empty">删除资料会把引用它的页面标为过期。</p>
+            <p className="inline-empty">引擎输出统一成 Markdown + 页码；换引擎只需重解析，不影响已发布页面。</p>
           </div>
         </aside>
       </div>
@@ -660,7 +662,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
           <figure className="kv-shot">
             <figcaption>
               <span className="ellipsis">{shot.title} · p{shot.page}</span>
-              <button className="link tiny" onClick={() => setShot(null)}>关闭</button>
+              <button className="icon-btn" title="关闭" aria-label="关闭截图" onClick={() => setShot(null)}><XIcon size={13} /></button>
             </figcaption>
             <img src={shot.dataUrl} alt={`${shot.title} 第 ${shot.page} 页`} />
           </figure>
@@ -672,10 +674,10 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
           <div className="modal kv-config-modal" role="dialog" aria-modal="true" aria-label="解析与索引">
             <div className="pr-block-head">
               解析与索引
-              <button className="link tiny" onClick={() => setConfigOpen(false)}>关闭</button>
+              <button className="icon-btn" title="关闭" aria-label="关闭解析与索引" onClick={() => setConfigOpen(false)}><XIcon size={13} /></button>
             </div>
             <div className="kv-config-body">
-              <p className="notes-meta-empty">解析引擎决定文字与页码的抽取质量；索引模式决定正文是否出网。</p>
+              <p className="inline-empty">解析引擎决定文字与页码的抽取质量；索引模式决定正文是否出网。</p>
               <div className="kv-block">
                 <div className="notes-meta-title">解析引擎</div>
                 <select
@@ -730,7 +732,7 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
                   <div className="notes-meta-title">{selected.label}</div>
                   <p className="kv-engine-desc">{selected.description}</p>
                   {!selected.local && (
-                    <p className="notes-meta-empty">
+                    <p className="inline-empty">
                       远端引擎：导入时整份文件会上传到该服务解析（不是只发片段）。只对可公开的材料使用。
                     </p>
                   )}
@@ -806,16 +808,16 @@ export function Knowledge({ act, onOpenPage, embedded = false }: {
               <div className="notes-meta-title">索引模式</div>
                       {embedding?.enabled ? (
                         <>
-                          <p className="notes-meta-empty">
+                          <p className="inline-empty">
                             正文分块会发往 {embedding.model}（火山方舟）建向量索引；检索时查询串也会发一次。
                             在「设置 → 数据」可关闭。
                           </p>
                           {!embedding.hasKey && (
-                            <p className="notes-meta-empty">尚未配置 ARK_API_KEY：设置 → 执行 → 模型密钥 / 环境变量。</p>
+                            <p className="inline-empty">尚未配置 ARK_API_KEY：设置 → 执行 → 模型密钥 / 环境变量。</p>
                           )}
                         </>
                       ) : (
-                        <p className="notes-meta-empty">只做本地关键词索引，资料正文一个字节不出网。</p>
+                        <p className="inline-empty">只做本地关键词索引，资料正文一个字节不出网。</p>
                       )}
               </div>
             </div>

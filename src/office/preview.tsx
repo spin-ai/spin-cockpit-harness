@@ -2,6 +2,10 @@ import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { CoordinationTemplate, State } from "../types";
 import { SceneWorkspace } from "../components/SceneWorkspace";
+import { TerminalPanel } from "../components/TerminalPanel";
+import { PreviewSurface } from "../components/PreviewSurface";
+import { Settings } from "../components/Settings";
+import { Bots } from "../components/Bots";
 import { Rail } from "../components/Rail";
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
@@ -11,9 +15,13 @@ import "../design-system.css";
 /**
  * 文章截图 / 录屏用的隔离预览（dev-only，不进构建产物）。
  *
- *   ?template=office|warroom|carrier   切舞台（航母 / 作战室是 3D）
+ *   ?page=scene|settings|bots  哪一页（默认 scene：协作场景舞台）
+ *   ?section=hosts|stats|...    page=settings 时落到哪个设置分区
+ *   ?layout=list                page=bots 时用列表排布
+ *   ?template=office|warroom|carrier   切舞台（航母 / 发射指挥是 3D）
  *   ?theme=light|dark  ?hour=0-23      主题与光照
  *   ?tab=gallery|live|lights|execution  场景页 tab
+ *   ?page=terminal                     终端页（假的 pty 桩，只看 UI：快捷命令 / 右键菜单 / 拆分）
  *   ?select=<botId>|none  ?detail=1  ?mode=config
  *   ?mission=plan_review               主管去会议室（真实 missionState）
  *   ?script=1                          9 秒时间线：审批 → 放行 → 验收 → 派活 → 收工
@@ -129,8 +137,12 @@ const baseState: State = {
     { botId: "b-man", role: "worker", seat: 5 },
     // 没绑执行体的机器人也在阵容里：它上台，但只能等（不是消失）
     { botId: "b-draft", role: "worker", seat: null },
-  ], prefs: { reviewGate: true, escalate: true, inject: false, showLinks: true, showLabels: true, light: "auto", motion: { tier: "calm", walk: 900, amp: 100, typing: true } } }, createdAt: now, updatedAt: now }],
-  settings: { defaultView: "workspace", theme: "light", chatFontSize: 13, enterToSend: true, confirmStop: false, defaultAgentId: null, maxConcurrentRuns: 2, approvalPolicy: "ask", dshBinary: "", dshHome: "", dshEnv: "", model: "", effort: "", terminalFontSize: 12, terminalScrollback: 5000, shellPath: "", autoDetectDevServerUrl: true, previewHomeUrl: "", elementScreenshots: true, previewIgnoreCertErrors: false, previewPermissionSites: "", previewAgentControl: true, contextDetail: "compact", uiScale: 100 },
+  ], prefs: { reviewGate: true, escalate: true, inject: false, showLinks: true, showLabels: true, light: "auto", motion: { tier: "calm", walk: 900, amp: 100, typing: true }, view: "overview" } }, createdAt: now, updatedAt: now }],
+  routines: [
+    { id: "r1", botId: "b-nan", name: "早报", kind: "daily", enabled: true, atHour: 8, nextAt: now + 3_600_000 },
+    { id: "r2", botId: "b-golo", name: "盯 Mission", kind: "watch", enabled: true },
+  ],
+  settings: { defaultView: "workspace", uiLanguage: "zh", theme: "light", chatFontSize: 13, enterToSend: true, confirmStop: false, defaultAgentId: null, maxConcurrentRuns: 2, approvalPolicy: "ask", dshBinary: "", dshHome: "", dshEnv: "", model: "", effort: "", terminalFontSize: 12, terminalScrollback: 5000, shellPath: "", autoDetectDevServerUrl: true, previewHomeUrl: "", elementScreenshots: true, previewIgnoreCertErrors: false, previewPermissionSites: "", previewAgentControl: true, contextDetail: "compact", uiScale: 100 },
   cliCapabilities: [],
   runtimes: [],
 };
@@ -209,9 +221,164 @@ function useScriptedState() {
 
 const initialTab = (params.get("tab") as "gallery" | "live" | "lights" | "execution" | null) || "live";
 const initialSelectedId = params.get("select") === "none" ? null : (params.get("select") || "b-golo");
+type PreviewPage = "scene" | "settings" | "bots" | "terminal" | "file";
+const page: PreviewPage = params.get("page") === "settings" ? "settings" : params.get("page") === "bots" ? "bots" : params.get("page") === "terminal" ? "terminal" : params.get("page") === "file" ? "file" : "scene";
+const section = (params.get("section") || "hosts") as "general" | "appearance" | "execution" | "terminal" | "preview" | "im" | "hosts" | "stats" | "plugins" | "data" | "shortcuts" | "about";
+try { if (params.get("layout") === "list") localStorage.setItem("ymh.bots.layout", "list"); } catch { /* ignore */ }
+
+// 设置页要用到几个 harness 钩子；预览里只给空实现，不连主进程
+/* 终端页预览用的最小 harness 桩：pty 全部走假数据，只为看 UI */
+const fakeTerm = {
+  seq: 0,
+  createTerminal: async () => ({ id: `t${++fakeTerm.seq}`, cwd: "/tmp" }),
+  attachTerminal: async () => ({ data: "harness@local research % git status --short\r\n M src/app.tsx\r\n", exited: false }),
+  terminalInput: async () => {},
+  closeTerminal: async () => {},
+  terminalResize: async () => {},
+  onTerminalData: () => () => {},
+  onTerminalExit: () => () => {},
+  onTerminalUrl: () => () => {},
+  clipboardRead: async () => "",
+  clipboardWrite: async () => {},
+  openExternal: async () => true,
+};
+
+const SAMPLE_TS = `import { useEffect, useRef } from "react";
+
+/** 示例：预览里的代码编辑器（行号 / 折叠 / 括号匹配 / 高亮） */
+export function useDebounced<T>(value: T, ms = 200) {
+  const timer = useRef<number | null>(null);
+  const [last, setLast] = useState(value);
+
+  useEffect(() => {
+    if (timer.current) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setLast(value), ms);
+    return () => { if (timer.current) window.clearTimeout(timer.current); };
+  }, [value, ms]);
+
+  // 12.5px / tab=2 / 折叠 gutter 都在这里体现
+  const ratio = 42 / 7;
+  return { last, ratio, ok: true, note: "示例字符串" };
+}
+`;
+
+function fakePdfPage(page: number) {
+  const c = document.createElement("canvas");
+  c.width = 1190;
+  c.height = 1684;
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillStyle = "#111";
+  ctx.font = "700 46px ui-sans-serif, system-ui";
+  ctx.fillText(`测试文档 · 第 ${page} 页`, 96, 160);
+  ctx.fillStyle = "#9aa3ad";
+  ctx.font = "400 22px ui-monospace, monospace";
+  ctx.fillText("pdf.js → skia → PNG（主进程渲染，渲染层只排版）", 96, 206);
+  ctx.strokeStyle = "#e3e7ea";
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 26; i++) {
+    const y = 280 + i * 46;
+    ctx.beginPath();
+    ctx.moveTo(96, y);
+    ctx.lineTo(96 + (i % 3 === 0 ? 640 : 980), y);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#c9d2da";
+  ctx.fillRect(96, 1540, 300, 10);
+  return c.toDataURL("image/png");
+}
+
+const fakeFile = {
+  filesRead: async () => ({ text: SAMPLE_TS, ext: "ts", size: SAMPLE_TS.length }),
+  filesWrite: async () => ({ ok: true, size: 0 }),
+  filesPageImage: async (_rel: string, _root: string | undefined, page = 1) => ({
+    dataUrl: fakePdfPage(page), width: 1190, height: 1684, pages: 5, page, scale: 1.6,
+  }),
+  filesPreviewDoc: async () => ({ html: "" }),
+};
+
+/* 预览页只关心 UI：没显式实现的方法一律给个空桩（on* → 返回取消函数） */
+function stubHarness(base: Record<string, unknown>) {
+  return new Proxy(base, {
+    get(target, prop: string) {
+      if (prop in target) return target[prop];
+      if (prop.startsWith("on")) return () => () => {};
+      if (prop === "then") return undefined;
+      return async () => ({ ok: true });
+    },
+  });
+}
+
+(window as unknown as { harness: unknown }).harness = stubHarness({
+  ...fakeTerm,
+  ...fakeFile,
+  onImPaired: () => () => {},
+  previewPermissions: async () => [],
+  previewRevokePermission: async () => ({ ok: true }),
+  invoke: async () => ({ ok: true }),
+});
 
 function Preview() {
   const state = useScriptedState();
+  if (page === "file") {
+    const isPdf = params.get("ext") === "pdf";
+    const file = isPdf
+      ? { name: "spec.pdf", rel: "docs/spec.pdf", root: "/tmp/demo" }
+      : { name: "use-debounced.ts", rel: "src/use-debounced.ts", root: "/tmp/demo" };
+    return (
+      <div className="app" style={{ display: "grid", gridTemplateColumns: "64px minmax(0,1fr)", height: "100%" }}>
+        <Rail view="scene" onChange={() => undefined} />
+        <div className="main" style={{ display: "block", minWidth: 0 }}>
+          <div style={{ height: "100%", width: 900 }}>
+            <PreviewSurface mode="file" file={file} root={file.root} active />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (page === "terminal") {
+    return (
+      <div className="app" style={{ display: "grid", gridTemplateColumns: "64px minmax(0,1fr)", height: "100%" }}>
+        <Rail view="scene" onChange={() => undefined} />
+        <div className="main" style={{ display: "block", minWidth: 0 }}>
+          <div style={{ height: "100%", width: 860 }}>
+            <TerminalPanel
+              state={state}
+              todo={null}
+              onPickedContext={() => undefined}
+              act={async () => ({ ok: true })}
+              onToggleMaximize={() => undefined}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (page === "settings") {
+    return (
+      <div className="app" style={{ display: "grid", gridTemplateColumns: "64px minmax(0,1fr)", height: "100%" }}>
+        <Rail view="settings" onChange={() => undefined} />
+        <div className="main" style={{ display: "block", minWidth: 0 }}>
+          <div className="wide settings-wide">
+            <Settings state={state} act={async () => ({ ok: true })} notify={(message: string) => console.log(message)} now={now} onOpenTodo={() => undefined} initialSection={section} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (page === "bots") {
+    return (
+      <div className="app" style={{ display: "grid", gridTemplateColumns: "64px minmax(0,1fr)", height: "100%" }}>
+        <Rail view="bots" onChange={() => undefined} />
+        <div className="main" style={{ display: "block", minWidth: 0 }}>
+          <div className="wide">
+            <Bots state={state} act={async () => ({ ok: true })} notify={(message: string) => console.log(message)} now={now} onOpenBot={() => undefined} />
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="app" style={{ display: "grid", gridTemplateColumns: "64px minmax(0,1fr)", height: "100%" }}>
       <Rail view="scene" onChange={() => undefined} />

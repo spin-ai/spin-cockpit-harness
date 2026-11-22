@@ -1,8 +1,18 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Delegation, ElementContext, Message, MissionPlanRecord, State, Thread, Todo } from "../types";
 import { RUN_STATUS, STATUS, agentOf, duration, lastRun, missingKeyInfo, timeAgo } from "../ui";
-import { ChevronRightIcon, CopyCheckIcon, CopyIcon, PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon, PencilIcon, RefreshIcon, SendIcon, SparkleIcon } from "./Icons";
+import { ChevronDownIcon, CopyCheckIcon, CopyIcon, FileTextIcon, LinkIcon, PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon, PencilIcon, RefreshIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, WrenchIcon } from "./Icons";
 import { requestTerminalAdopt } from "../terminal-events";
+import { templateOf } from "../office/templates";
+import { XIcon } from "./Icons";
+
+/** 只读工具的人话名（和 electron/bot/tools.mjs 一一对应） */
+const BOT_TOOL_LABEL: Record<string, string> = {
+  memory_search: "记忆",
+  knowledge_search: "资料库",
+  todo_list: "任务清单",
+  run_status: "运行状态",
+};
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 type ModelOption = { value: string; name: string; group?: string };
@@ -18,7 +28,7 @@ const modelCatalogCache = new Map<string, ModelCatalog>();
  * - 已派活但没运行：发一句话 = 新起一次运行
  * 任务状态与操作按钮只在 TODO LIST 行内维护，这里不再重复。
  */
-export function TaskChat({ state, globalState, thread, now, act, onSelect, onNewThread, onOpenThread, onOpenGlobal, threads = [], context, onClearContext, onCollapse, enterToSend = true, confirmStop = false, maximized = false, onToggleMaximize }: {
+export function TaskChat({ state, globalState, thread, now, act, onSelect, onNewThread, onOpenThread, onOpenGlobal, threads = [], context, onClearContext, onCollapse, enterToSend = true, confirmStop = false, maximized = false, onToggleMaximize, onOpenBotSettings }: {
   state: State; globalState?: State; thread: Thread | null; now: number; act: Act; onSelect: (id: string) => void; onNewThread: () => void; onOpenThread?: (id: string) => void; onOpenGlobal?: (id: string) => void; threads?: Thread[];
   context: ElementContext | null; onClearContext: () => void;
   onCollapse?: () => void;
@@ -26,10 +36,13 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   onToggleMaximize?: () => void;
   enterToSend?: boolean;
   confirmStop?: boolean;
+  /** 机器人会话：在工作区右侧打开配置抽屉 */
+  onOpenBotSettings?: () => void;
 }) {
   const todo = thread?.todoId ? state.todos.find((t) => t.id === thread.todoId) ?? null : null;
   /** 机器人会话：走 botChat（它用自己的口吻回答），不走派活 / run */
   const botThread = thread?.kind === "bot" && thread.botId ? thread.botId : null;
+  const bot = botThread ? (state.bots ?? []).find((b) => b.id === botThread) ?? null : null;
   const mission = todo?.kind === "mission" ? todo : null;
   const missionPlans = mission ? (state.missionPlans ?? []).filter((p) => p.missionId === mission.id) : [];
   const latestPlan = [...missionPlans].sort((a, b) => b.revision - a.revision)[0] ?? null;
@@ -86,6 +99,44 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   const [modelCatalog, setModelCatalog] = useState<ModelCatalog>({ models: [], efforts: [] });
   const [modelLoading, setModelLoading] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  /** 机器人会话的流式回复：消息要等整轮结束才落库，不在这里拼就看不到“及时回复” */
+  const [botStream, setBotStream] = useState("");
+  const [botPending, setBotPending] = useState<string | null>(null);
+  const [botBusy, setBotBusy] = useState(false);
+  /** 它正在调哪个只读工具（查记忆 / 查任务），让"打字中"有具体内容 */
+  const [botTool, setBotTool] = useState<string | null>(null);
+  useEffect(() => {
+    setBotStream("");
+    setBotPending(null);
+    setBotBusy(false);
+    setBotTool(null);
+    if (!botThread) return;
+    const offDelta = window.harness.onBotDelta?.((payload) => {
+      if (payload.botId !== botThread) return;
+      setBotStream((prev) => prev + payload.delta);
+    });
+    const offTool = window.harness.onBotTool?.((payload) => {
+      if (payload.botId !== botThread) return;
+      setBotTool(payload.phase === "start" ? payload.name : null);
+    });
+    return () => { offDelta?.(); offTool?.(); };
+  }, [botThread]);
+  // Mission 面板占的高度按 mission 记：默认收起（有待审批计划时才展开），聊天区优先
+  const missionDockKey = mission ? `cmh.chat.missionDock.${mission.id}` : "";
+  const [missionOpen, setMissionOpen] = useState(false);
+  useEffect(() => {
+    if (!missionDockKey) { setMissionOpen(false); return; }
+    let saved: string | null = null;
+    try { saved = localStorage.getItem(missionDockKey); } catch { saved = null; }
+    setMissionOpen(saved === null ? latestPlan?.status === "draft" : saved === "1");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missionDockKey, latestPlan?.status]);
+  const toggleMission = () => {
+    setMissionOpen((open) => {
+      try { if (missionDockKey) localStorage.setItem(missionDockKey, open ? "0" : "1"); } catch { /* 忽略 */ }
+      return !open;
+    });
+  };
   const [progressOpen, setProgressOpen] = useState(false);
   const [progressScope, setProgressScope] = useState<"session" | "project" | "all">("all");
   const [previewAllocation, setPreviewAllocation] = useState(true);
@@ -269,6 +320,13 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     prevCount.current = msgs.length;
   }, [thread?.id, msgs.length, lastContent]);
 
+  // 流式回复也要跟着滚：否则每来一段都得自己手动拉到底部
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || !stickRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [botStream, botBusy]);
+
   // 输入框随内容自动长高
   useEffect(() => {
     const el = textRef.current;
@@ -324,15 +382,26 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     if (!value || sending || !thread) return;
     if (botThread) {
       setSending(true);
-      const res = await act("botChat", { botId: botThread, text: value });
-      setSending(false);
-      if (!res) { textRef.current?.focus(); return; } // 失败保留草稿
-      setText("");
-      drafts.current[thread.id] = "";
-      setInputHistoryIndex(null);
-      inputHistoryDraft.current = "";
-      stickRef.current = true;
-      atBottomRef.current = true;
+      setBotPending(value);
+      setBotStream("");
+      setBotTool(null);
+      setBotBusy(true);
+      try {
+        const res = await act("botChat", { botId: botThread, text: value, threadId: thread.id });
+        if (!res) { textRef.current?.focus(); return; } // 失败保留草稿
+        setText("");
+        drafts.current[thread.id] = "";
+        setInputHistoryIndex(null);
+        inputHistoryDraft.current = "";
+        stickRef.current = true;
+        atBottomRef.current = true;
+      } finally {
+        setSending(false);
+        setBotBusy(false);
+        setBotPending(null);
+        setBotStream("");
+        setBotTool(null);
+      }
       return;
     }
     if (!todo && !override && !chatOnly && previewAllocation) {
@@ -530,6 +599,30 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     return items;
   }, [msgs, showTool]);
 
+  /** 直接跳到该 Mission 的航母舞台；没有航母场景时按 Mission 角色建一个再跳 */
+  const openCarrier = async () => {
+    const projectId = todo?.projectId ?? state.activeProjectId ?? null;
+    const mark = (sceneId: string | null | undefined) => window.dispatchEvent(new CustomEvent("harness:view", { detail: { view: "scene", sceneId: sceneId || null } }));
+    const agentIds = new Set([mission?.agentId, ...delegations.map((d) => d.agentId)].filter(Boolean) as string[]);
+    const carriers = (state.coordinationScenes ?? []).filter((s) => (s.projectId || null) === (projectId || null) && templateOf(s.template) === "carrier");
+    // 同一个项目可能有好几个航母场景：优先选阵容就是这个 Mission 那几个 Agent 的那个
+    const existing = carriers.find((s) => (s.config?.cast ?? []).some((member) => member.agentId && agentIds.has(member.agentId))) ?? carriers[0];
+    if (existing) { mark(existing.id); return; }
+    const cast = mission
+      ? [
+          { agentId: mission.agentId, role: "lead" as const, seat: null },
+          ...delegations.map((d, index) => ({ agentId: d.agentId, role: "worker" as const, seat: index })),
+        ]
+      : [];
+    const created = await act("coordinationSceneSave", {
+      projectId,
+      name: `${(mission?.title || todo?.title || "任务").slice(0, 12)} · 弹射`,
+      template: "carrier",
+      config: { cast, prefs: {} },
+    });
+    mark(created?.id ?? null);
+  };
+
   const stop = () => {
     if (!active) return;
     if (confirmStop && !window.confirm("停止当前运行？")) return;
@@ -636,7 +729,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                   </button>
                   <span className="row gap4">
                     <button className="link tiny" onClick={() => openGlobalTerminal({ terminalId: term.id, cwd: term.cwd, title: term.title })}>打开</button>
-                    <button className="link tiny" onClick={() => void window.harness.closeTerminal(term.id)}>关闭</button>
+                    <button className="icon-btn" title="关闭终端" aria-label="关闭终端" onClick={() => void window.harness.closeTerminal(term.id)}><XIcon size={12} /></button>
                   </span>
                 </div>
               );
@@ -657,24 +750,30 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
       )}
 
       {!thread ? (
-        <div className="pane-empty">点「＋ 新任务」开始</div>
+        <div className="inline-empty">点「＋ 新任务」开始</div>
       ) : (
         <>
           <div className="thread-bar">
             <div className="thread-title-row">
-              <span className={`thread-dot ${todo ? STATUS[todo.status].cls : "todo"}`} />
-              <span className="thread-key mono">{todo?.key ?? "draft"}</span>
+              <span className={`thread-dot ${botThread ? "running" : todo ? STATUS[todo.status].cls : "todo"}`} />
+              <span className="thread-key mono">{botThread ? "机器人" : todo?.key ?? "draft"}</span>
               <span className="thread-title" title={todo?.title ?? thread.title}>{todo?.title ?? thread.title}</span>
               {todo && mission && <span className={`pill status ${missionPillClass(mission.missionState)}`}>{missionStateLabel(mission.missionState)}</span>}
               {todo && !mission && <span className={`pill status ${STATUS[todo.status].cls}`}>{todo.confirmed ? "已确认" : STATUS[todo.status].label}</span>}
             </div>
             <div className="thread-meta">
-              <span className={`thread-scope ${scopeProjectId ? "" : "global"}`} title={scopeProjectId ? "对话作用于该项目" : "全局对话：切换项目时不隐藏"}>
-                {scopeProjectId ? project?.name ?? "项目" : "全局"}
+              <span className={`thread-scope ${scopeProjectId ? "" : "global"}`} title={botThread ? "机器人自己的记忆与人格" : scopeProjectId ? "对话作用于该项目" : "全局对话：切换项目时不隐藏"}>
+                {botThread ? "机器人会话" : scopeProjectId ? project?.name ?? "项目" : "全局"}
               </span>
               {agent && <><span className="thread-meta-sep">/</span><span className="ellipsis" title={agent.name}>@{agent.alias || agent.name}</span></>}
               {thread.modelName && <><span className="thread-meta-sep">·</span><span className="ellipsis" title={thread.modelName}>{thread.modelName}</span></>}
               <span className="spacer" />
+              {botThread && onOpenBotSettings && (
+                <button className="link tiny" onClick={onOpenBotSettings} title="在右侧打开机器人配置">配置机器人</button>
+              )}
+              {mission && (
+                <button className="link tiny" onClick={() => void openCarrier()} title="在航母舞台上看这个 Mission 的弹射起飞">看弹射</button>
+              )}
               {todo?.kind === "chat" && (
                 <button className="link tiny" onClick={() => void promoteChat()} title="把这段聊天变成 TODO 任务">转为任务</button>
               )}
@@ -694,11 +793,14 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
               ) : last ? (
                 <span className="muted">上次 {RUN_STATUS[last.status] ?? last.status}</span>
               ) : null}
+              {botBusy && botThread && (
+                <button className="link composer-stop" onClick={() => void act("botCancel", { botId: botThread })}>停止</button>
+              )}
             </div>
           </div>
 
           {mission && (
-            <div className="mission-dock">
+            <div className={`mission-dock${missionOpen ? "" : " is-collapsed"}`}>
               <MissionOverview
                 mission={mission}
                 plan={latestPlan}
@@ -706,6 +808,8 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                 state={state}
                 act={act}
                 onOpenThread={onOpenThread}
+                open={missionOpen}
+                onToggle={toggleMission}
               />
             </div>
           )}
@@ -741,29 +845,52 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                   <ChatMessage
                     key={m.id}
                     message={m}
-                    agentName={roleLabel(m.role, agent?.name)}
+                    agentName={roleLabel(m.role, bot?.name || agent?.name)}
                     now={now}
                     copied={copiedId === m.id}
                     onCopy={() => void copy(m.id, m.content)}
                     onRetry={() => void act("retryMessage", { id: m.id })}
-                    canRegenerate={m.role === "agent" && m.id === lastAgentId && !active && !todo?.confirmed}
+                    canRegenerate={!botThread && m.role === "agent" && m.id === lastAgentId && !active && !todo?.confirmed}
                     onRegenerate={() => void regenerate()}
-                    onEdit={(text) => void act("editMessage", { id: m.id, text })}
+                    onEdit={botThread ? undefined : (text) => void act("editMessage", { id: m.id, text })}
                   />
                 );
               })}
               {active && ["running", "waiting_input", "waiting_plan", "waiting_children"].includes(active.status) && chatItems.length > 0 && (
                 <LiveStatus
                   run={active}
-                  agentName={agent?.name ?? "Agent"}
-                  projectName={state.projects.find((p) => p.id === todo?.projectId)?.name ?? ""}
                   steps={liveSteps}
                   now={now}
                 />
               )}
+              {/* 机器人会话：先用本地气泡把这一轮显出来，不等整轮跑完（真实消息落库后再由 state 接管） */}
+              {botThread && (botPending || botBusy) && (
+                <>
+                  {botPending && (
+                    <div className="ds-user">
+                      <div className="ds-bubble">{botPending}</div>
+                    </div>
+                  )}
+                  {botBusy && (
+                    <div className="ds-assistant">
+                      <div className="ds-assistant-body">
+                        {botStream ? <RichText text={botStream} /> : <span className="ds-shimmer">正在回复…</span>}
+                        {botTool && <span className="ds-stream-note">正在查 · {BOT_TOOL_LABEL[botTool] || botTool}</span>}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
               {msgs.length === 0 && (
                 <div className="chat-empty">
                   <div className="chat-empty-mark"><SparkleIcon size={15} /></div>
+                  {botThread ? (
+                    <>
+                      <b>还没有回合</b>
+                      <p>在右侧配置面板点「跑一次决策」：有值得说的事件它才会开口，沉默也会留记录。</p>
+                    </>
+                  ) : (
+                  <>
                   <b>{todo ? "还没有消息" : runnableAgents.length > 0 ? "说一句话开始" : dshAvailable ? "还没有可用的 Agent" : "未检测到 dsh"}</b>
                   <p>{todo ? "在下面补充信息、纠偏或追问。" : "直接描述要完成的事；@别名 指定 Agent，或从预览里拾取元素后发送。"}</p>
                   {!todo && (
@@ -786,6 +913,8 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                       )}
                       <button className="link chat-guide-link" onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: { view: "guide", page: "super-agent" } }))}>Super Agent 怎么用？</button>
                     </>
+                  )}
+                  </>
                   )}
                 </div>
               )}
@@ -826,7 +955,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
               </div>
             </div>
           )}
-          <div className="composer-shell">
+          <div className="ds-composer">
             {mentionOpen && (
               <div className="mention-pop">
                 {mentionItems.slice(0, 8).map((m, i) => (
@@ -869,6 +998,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
               </div>
             )}
             <textarea
+              className="ds-composer-input"
               ref={textRef}
               rows={1}
               value={text}
@@ -896,9 +1026,14 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
               }}
               placeholder={placeholder}
             />
-            <div className="composer-foot">
+            <div className="ds-composer-bar">
               <div className="composer-chips">
-                <span className="composer-label">@</span>
+                {botThread ? (
+                  <>
+                    <span className="ds-chip static" title="机器人会话：它用自己的记忆与人格回答">◆ 机器人</span>
+                  </>
+                ) : (
+                <>
                 {state.agents.length > 0 ? (
                   <select
                     className="composer-select"
@@ -944,8 +1079,6 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                 {!todo && dshAvailable && !state.agents.some((a) => a.role === "supervisor") && (
                   <button className="composer-link" onClick={() => void useSupervisor()} title="创建一个 Mission 主管">＋ 主管</button>
                 )}
-                <span className="thread-meta-sep">/</span>
-                <span className="composer-label" title="对话作用域">◎</span>
                 <select
                   className="composer-select"
                   value={scopeProjectId}
@@ -956,11 +1089,12 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                   <option value="">全局</option>
                   {state.projects.map((p) => <option key={p.id} value={p.id}>项目 · {p.name}</option>)}
                 </select>
+                </>
+                )}
               </div>
               <div className="composer-actions">
-                {showModelPicker && (
+                {showModelPicker && !botThread && (
                   <>
-                    <span className="composer-label model-label" title="模型">模型</span>
                     <select
                       className="composer-select model-select"
                       value={thread.model || ""}
@@ -981,28 +1115,27 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                     </select>
                   </>
                 )}
-                {!todo && (
+                {!todo && !botThread && (
                   <>
                     <button className={`chat-toggle ${chatOnly ? "on" : ""}`} title="不创建可见任务，只和 Agent 对话；可随时转为任务" onClick={() => { setChatOnly((v) => !v); setProposal(null); }}>只聊</button>
                     <button className={`chat-toggle ${previewAllocation && !chatOnly ? "on" : ""}`} title="发送前先看项目 / Agent / 执行方式建议" onClick={() => setPreviewAllocation((v) => !v)}>预览分配</button>
                   </>
                 )}
-                <button
+                {!botThread && <button
                   className={`chat-toggle ${showTool ? "on" : ""}`}
                   title={showTool ? "隐藏工具与思考" : "显示工具与思考"}
                   onClick={() => setShowTool((v) => !v)}
                 >
                   工具
-                </button>
-                <span className="composer-hint">{enterToSend ? "Enter 发送 · ⇧Enter 换行" : "⌘Enter 发送"}</span>
+                </button>}
                 <button
-                  className={`composer-submit mode-${baseMode}`}
+                  className={`ds-send mode-${baseMode}`}
                   disabled={!text.trim() || sending}
                   title={blockedReason ?? `${sendLabel} · ${enterToSend ? "Enter 发送 / Shift+Enter 换行" : "⌘Enter 发送"}`}
+                  aria-label={blockedReason ?? sendLabel}
                   onClick={() => void send()}
                 >
-                  {sending ? "发送中…" : sendLabel}
-                  <SendIcon size={12} />
+                  {sending ? <span className="ds-sending" aria-hidden /> : <SendIcon size={16} />}
                 </button>
               </div>
             </div>
@@ -1028,16 +1161,15 @@ function missionPillClass(value?: string | null) {
   return "running";
 }
 
-function MissionOverview({ mission, plan, delegations, state, act, onOpenThread }: {
+function MissionOverview({ mission, plan, delegations, state, act, onOpenThread, open, onToggle }: {
   mission: Todo; plan: MissionPlanRecord | null;
   delegations: Delegation[]; state: State;
   act: Act; onOpenThread?: (id: string) => void;
+  /** 面板正文（计划 / 子任务）默认收起，头部一行常驻，方便把高度还给聊天区 */
+  open: boolean; onToggle: () => void;
 }) {
   const draft = plan && plan.status === "draft" ? plan : null;
   const done = delegations.filter((d) => ["completed", "accepted"].includes(d.status));
-  /** 「退回修改」的原因输入（替代 Electron 里不存在的 window.prompt：之前点了没反应） */
-  const [rejectOpen, setRejectOpen] = useState(false);
-  const [rejectText, setRejectText] = useState("");
   return (
     <section className={`mission-panel mission-${mission.missionState || "planning"}`} aria-label="Mission">
       <div className="mission-head">
@@ -1055,32 +1187,19 @@ function MissionOverview({ mission, plan, delegations, state, act, onOpenThread 
         {mission.missionState !== "done" && mission.missionState !== "cancelled" && (
           <button className="link mission-danger" onClick={() => { if (window.confirm("取消整个 Mission？所有未完成子任务会一起停止。")) void act("cancelMission", { id: mission.id }); }}>取消 Mission</button>
         )}
+        <button className="pane-fold" onClick={onToggle} title={open ? "收起 Mission 详情" : "展开 Mission 详情"} aria-label={open ? "收起 Mission 详情" : "展开 Mission 详情"} aria-expanded={open}>
+          <ChevronDownIcon size={12} className={open ? "rot-180" : ""} />
+        </button>
       </div>
-      {draft && (
+      {open && draft && (
         <div className="mission-plan">
           <div className="mission-plan-head">
             <b>计划待审批</b>
             <span className="tiny muted">rev {draft.revision}</span>
             <span className="spacer" />
-            <button className="btn tiny-btn" onClick={() => setRejectOpen(true)}>退回修改</button>
-            <button className="btn tiny-btn primary" onClick={() => void act("approveMissionPlan", { id: mission.id })}>批准并分派</button>
+            <span className="tiny faint">批准在终端（可对着代码看依赖与 worktree）</span>
+            <button className="btn tiny-btn primary" onClick={() => window.dispatchEvent(new CustomEvent("harness:view", { detail: "terminal" }))}>去终端批准</button>
           </div>
-          {rejectOpen && (
-            <div className="mission-reject">
-              <input
-                autoFocus
-                placeholder="退回原因（可空）：写清楚要改什么，主管会带着它重排"
-                value={rejectText}
-                onChange={(e) => setRejectText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") { e.preventDefault(); void act("rejectMissionPlan", { id: mission.id, feedback: rejectText }); setRejectOpen(false); }
-                  else if (e.key === "Escape") { e.preventDefault(); setRejectOpen(false); }
-                }}
-              />
-              <button className="btn tiny-btn primary" onClick={() => { void act("rejectMissionPlan", { id: mission.id, feedback: rejectText }); setRejectOpen(false); }}>确认退回</button>
-              <button className="btn tiny-btn" onClick={() => setRejectOpen(false)}>取消</button>
-            </div>
-          )}
           {draft.plan.summary && <p className="mission-summary">{draft.plan.summary}</p>}
           <ol className="mission-steps">
             {draft.plan.steps.map((step) => (
@@ -1096,10 +1215,10 @@ function MissionOverview({ mission, plan, delegations, state, act, onOpenThread 
           {draft.plan.risks?.length ? <div className="mission-risks"><b>风险</b>{draft.plan.risks.map((r, i) => <span key={i}>{r}</span>)}</div> : null}
         </div>
       )}
-      {plan && plan.status === "approved" && !draft && (
+      {open && plan && plan.status === "approved" && !draft && (
         <div className="mission-approved-note">计划已批准 · {delegations.length} 个子任务</div>
       )}
-      {delegations.length > 0 && (
+      {open && delegations.length > 0 && (
         <div className="delegation-list">
           {delegations.map((d) => {
             const child = state.todos.find((t) => t.id === d.childTodoId);
@@ -1149,52 +1268,30 @@ function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry, canR
   const isUser = m.role === "user";
   const canEdit = isUser && Boolean(onEdit) && m.delivery !== "pending";
   const isSystem = m.role === "system" || m.kind === "system";
-  const initial = isUser ? "你" : (agentName || "A").trim().slice(0, 1).toUpperCase();
-  return (
-    <div className={`msg ${m.role} kind-${m.kind} ${isUser ? "from-user" : ""} ${isSystem ? "is-system" : ""}`}>
-      {!isUser && !isSystem && <div className={`msg-avatar ${m.role}`} aria-hidden>{initial}</div>}
-      <div className="msg-main">
-        {!isSystem && (
-          <div className="msg-meta">
-            <b>{agentName}</b>
-            <span className="msg-time">{timeAgo(m.createdAt, now)}</span>
-            {m.delivery === "pending" && <span className="delivery pending">投递中…</span>}
-            {m.delivery === "injected" && <span className="delivery injected">已注入</span>}
-            {m.delivery === "failed" && (
-              <button className="delivery failed" onClick={onRetry}>投递失败 · 重发</button>
-            )}
-          </div>
-        )}
-        {m.kind === "error" && missingKeyInfo(m.content) && (() => {
-          const info = missingKeyInfo(m.content)!;
-          const env = info.envVars[0];
-          return (
-            <div className="missing-key-card">
-              <div className="missing-key-head">未配置模型密钥{info.provider ? ` · ${info.provider}` : ""}</div>
-              <div className="missing-key-body">
-                执行器读不到 <code>{env}</code>。两种配法任选其一：
-                <ol>
-                  <li>在「设置 → 执行 → 模型密钥」里写 <code>{env}=sk-…</code>（只注入本机启动的 dsh，最省事）</li>
-                  <li>或在你启动 App 的终端里 <code>export {env}=sk-…</code>，然后重启 App</li>
-                </ol>
-              </div>
-              <div className="missing-key-actions">
-                <button className="btn tiny-btn primary" onClick={() => window.dispatchEvent(new CustomEvent("harness:open-settings", { detail: { section: "execution", focus: "dshEnv" } }))}>去设置里填</button>
-                <button className="btn tiny-btn" onClick={() => void window.harness.clipboardWrite(`export ${env}=`)}>复制 export 前缀</button>
-              </div>
-            </div>
-          );
-        })()}
+
+  if (isSystem) {
+    return (
+      <div className="ds-system">
+        <span className="ds-system-line" aria-hidden />
+        <span className="ds-system-text">{shown}</span>
+        <span className="ds-system-line" aria-hidden />
+      </div>
+    );
+  }
+
+  if (isUser) {
+    return (
+      <div className="ds-user">
         {m.context && (
-          <div className="msg-ctx" title={`${m.context.selector}${m.context.source?.file ? ` · ${m.context.source.file}` : ""}`}>
-            <span className="ctx-tag">元素</span>
+          <div className="ds-user-ctx" title={`${m.context.selector}${m.context.source?.file ? ` · ${m.context.source.file}` : ""}`}>
+            <span className="ds-tag">元素</span>
             <span className="mono ellipsis">{m.context.selector}</span>
           </div>
         )}
         {editing ? (
-          <div className="msg-edit">
+          <div className="ds-edit">
             <textarea
-              className="msg-edit-input"
+              className="ds-edit-input"
               value={draft}
               autoFocus
               rows={Math.min(10, Math.max(2, draft.split("\n").length))}
@@ -1208,89 +1305,126 @@ function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry, canR
                 }
               }}
             />
-            <div className="msg-edit-actions">
-              <span className="msg-edit-hint">⌘Enter 发送 · Esc 取消</span>
-              <button className="btn tiny-btn" onClick={() => { setDraft(m.content); setEditing(false); }}>取消</button>
-              <button className="btn tiny-btn primary" disabled={!draft.trim() || draft.trim() === m.content.trim()} onClick={() => { onEdit?.(draft.trim()); setEditing(false); }}>保存并发送</button>
+            <div className="ds-edit-actions">
+              <span className="ds-edit-hint">⌘Enter 发送 · Esc 取消</span>
+              <button className="ds-action-text" onClick={() => { setDraft(m.content); setEditing(false); }}>取消</button>
+              <button className="ds-action-text primary" disabled={!draft.trim() || draft.trim() === m.content.trim()} onClick={() => { onEdit?.(draft.trim()); setEditing(false); }}>保存并发送</button>
             </div>
           </div>
         ) : (
-          <div className="msg-body">
-            {m.role === "agent" || m.role === "user" ? <RichText text={shown} /> : shown}
-          </div>
+          <div className="ds-bubble"><RichText text={m.content} /></div>
         )}
-        {collapsible && (
-          <button className="msg-more link" onClick={() => setExpanded((v) => !v)}>{expanded ? "收起" : "展开全部"}</button>
-        )}
-        {isUser && canEdit && !editing && (
-          <div className="msg-actions">
-            <button className="msg-action" onClick={onCopy} title="复制这条消息">
-              {copied ? <CopyCheckIcon size={12} /> : <CopyIcon size={12} />}
-              {copied ? "已复制" : "复制"}
+        <div className="ds-actions ds-actions-user">
+          {m.delivery === "pending" && <span className="ds-delivery">投递中…</span>}
+          {m.delivery === "injected" && <span className="ds-delivery">已注入</span>}
+          {m.delivery === "failed" && <button className="ds-delivery failed" onClick={onRetry}>投递失败 · 重发</button>}
+          <span className="ds-time">{timeAgo(m.createdAt, now)}</span>
+          <button className="ds-action" title="复制这条消息" aria-label="复制这条消息" onClick={onCopy}>
+            {copied ? <CopyCheckIcon size={15} /> : <CopyIcon size={15} />}
+          </button>
+          {canEdit && !editing && (
+            <button className="ds-action" title="编辑后重发" aria-label="编辑后重发" onClick={() => { setDraft(m.content); setEditing(true); }}>
+              <PencilIcon size={15} />
             </button>
-            <button className="msg-action" onClick={() => { setDraft(m.content); setEditing(true); }} title="编辑后重发">
-              <PencilIcon size={12} /> 编辑
-            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`ds-assistant ${m.kind === "error" ? "is-error" : ""}`}>
+      {m.context && (
+        <div className="ds-user-ctx" title={`${m.context.selector}${m.context.source?.file ? ` · ${m.context.source.file}` : ""}`}>
+          <span className="ds-tag">元素</span>
+          <span className="mono ellipsis">{m.context.selector}</span>
+        </div>
+      )}
+      {m.kind === "error" && missingKeyInfo(m.content) && (() => {
+        const info = missingKeyInfo(m.content)!;
+        const env = info.envVars[0];
+        return (
+          <div className="missing-key-card">
+            <div className="missing-key-head">未配置模型密钥{info.provider ? ` · ${info.provider}` : ""}</div>
+            <div className="missing-key-body">
+              执行器读不到 <code>{env}</code>。两种配法任选其一：
+              <ol>
+                <li>在「设置 → 执行 → 模型密钥」里写 <code>{env}=sk-…</code>（只注入本机启动的 dsh，最省事）</li>
+                <li>或在你启动 App 的终端里 <code>export {env}=sk-…</code>，然后重启 App</li>
+              </ol>
+            </div>
+            <div className="missing-key-actions">
+              <button className="btn tiny primary" onClick={() => window.dispatchEvent(new CustomEvent("harness:open-settings", { detail: { section: "execution", focus: "dshEnv" } }))}>去设置里填</button>
+              <button className="btn tiny" onClick={() => void window.harness.clipboardWrite(`export ${env}=`)}>复制 export 前缀</button>
+            </div>
           </div>
+        );
+      })()}
+      <div className="ds-assistant-body"><RichText text={shown} /></div>
+      {collapsible && (
+        <button className="ds-more" aria-expanded={expanded} title={expanded ? "收起" : "展开全部"} aria-label={expanded ? "收起" : "展开全部"} onClick={() => setExpanded((v) => !v)}>
+          <ChevronDownIcon size={13} className={expanded ? "rot-180" : ""} />
+        </button>
+      )}
+      <div className="ds-actions">
+        <button className="ds-action" title="复制回答" aria-label="复制回答" onClick={onCopy}>
+          {copied ? <CopyCheckIcon size={15} /> : <CopyIcon size={15} />}
+        </button>
+        {canRegenerate && onRegenerate && (
+          <button className="ds-action" title="重新生成" aria-label="基于上一轮提问重新生成" onClick={onRegenerate}>
+            <RefreshIcon size={15} />
+          </button>
         )}
-        {!isUser && !isSystem && (
-          <div className="msg-actions">
-            <button className="msg-action" onClick={onCopy} title="复制回答">
-              {copied ? <CopyCheckIcon size={12} /> : <CopyIcon size={12} />}
-              {copied ? "已复制" : "复制"}
-            </button>
-            {canRegenerate && onRegenerate && (
-              <button className="msg-action" onClick={onRegenerate} title="基于上一轮提问重新生成">
-                <RefreshIcon size={12} /> 重新生成
-              </button>
-            )}
-          </div>
-        )}
+        <span className="ds-time">{agentName} · {timeAgo(m.createdAt, now)}</span>
       </div>
     </div>
   );
 }
 
-/** 连续的工具 / 思考步骤收成一行，点开看细节 */
-/** 思考过程：默认露前两行，点击展开全文 —— 不再藏进工具组里。 */
+/** 思考过程：DeepSeek 式折叠行 —— 24px 一行，展开后正文缩进 */
 function ThoughtBlock({ message, now }: { message: Message; now: number }) {
   const [open, setOpen] = useState(false);
   const text = message.content.trim();
   if (!text) return null;
-  const lines = text.split("\n").filter((line) => line.trim());
   const summary = firstLine(text);
   return (
-    <div className={`thought-block ${open ? "open" : ""}`}>
-      <button className="thought-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <span className="thought-label">思考过程</span>
-        {!open && summary && <span className="thought-summary ellipsis">{summary}</span>}
-        <span className="thought-time">{timeAgo(message.createdAt, coarseNow(now))}</span>
-        <span className="thought-toggle">{open ? "收起" : lines.length > 1 ? `展开 ${lines.length} 行` : "展开"}</span>
+    <div className={`ds-reason ${open ? "open" : ""}`}>
+      <button className="ds-reason-head" onClick={() => setOpen((v) => !v)} aria-expanded={open} title={open ? "收起思考" : "展开思考"}>
+        <span className="ds-row-icon"><SparkleIcon size={14} /></span>
+        <span className="ds-reason-title">已深度思考</span>
+        {!open && summary && (
+          <>
+            <span className="ds-sep" aria-hidden />
+            <span className="ds-reason-summary">{summary}</span>
+          </>
+        )}
+        <span className="ds-reason-time">{timeAgo(message.createdAt, coarseNow(now))}</span>
+        <ChevronDownIcon size={14} className={`ds-row-chev ${open ? "rot-180" : ""}`} />
       </button>
-      {open && <div className="thought-body">{text}</div>}
+      {open && <div className="ds-reason-body">{text}</div>}
     </div>
   );
 }
 
+/** 连续的工具 / 思考步骤收成「已处理」一行，展开是一行一步 */
 function ToolGroup({ messages, now, copiedId, onCopy, onRetry }: {
   messages: Message[]; now: number; copiedId: string | null;
   onCopy: (m: Message) => void; onRetry: (m: Message) => void;
 }) {
   const [open, setOpen] = useState(messages.length <= 2);
   const thought = messages.some((m) => m.kind === "thought");
-  const summary = messages.length === 1
-    ? firstLine(messages[0].content)
-    : `${messages.length} 步 · ${firstLine(messages[messages.length - 1].content)}`;
+  const first = messages[0];
+  const last = messages[messages.length - 1];
+  const secs = Math.max(1, Math.round((last.createdAt - first.createdAt) / 1000));
+  const label = `${thought ? "已思考" : "已完成"}，用时 ${secs}秒`;
   return (
-    <div className={`tool-group ${open ? "open" : ""}`}>
-      <button className="tool-group-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <ChevronRightIcon size={12} className="tool-group-caret" />
-        <span className="tool-group-label">{thought ? "思考与工具" : "工具调用"}</span>
-        <span className="tool-group-summary ellipsis">{summary}</span>
-        <span className="tool-group-count">{messages.length}</span>
+    <div className={`ds-process ${open ? "open" : ""}`}>
+      <button className="ds-process-head" onClick={() => setOpen((v) => !v)} aria-expanded={open} title={open ? "收起过程" : "展开过程"}>
+        <span className="ds-process-label">{label}</span>
+        <ChevronDownIcon size={14} className={`ds-process-chev ${open ? "rot-180" : ""}`} />
       </button>
       {open && (
-        <div className="tool-group-body">
+        <div className="ds-process-body">
           {messages.map((m) => (
             <ToolRow
               key={m.id}
@@ -1307,6 +1441,24 @@ function ToolGroup({ messages, now, copiedId, onCopy, onRetry }: {
   );
 }
 
+function toolGlyph(label: string, kind: string) {
+  const t = `${label} ${kind}`.toLowerCase();
+  if (/bash|shell|terminal|run|exec|command/.test(t)) return <TerminalIcon size={14} />;
+  if (/read|cat|open|file|view/.test(t)) return <FileTextIcon size={14} />;
+  if (/edit|write|patch|replace|apply|create/.test(t)) return <PencilIcon size={14} />;
+  if (/search|grep|glob|find|query/.test(t)) return <SearchIcon size={14} />;
+  if (/web|fetch|http|url|browse/.test(t)) return <LinkIcon size={14} />;
+  return <WrenchIcon size={14} />;
+}
+
+function splitToolHead(head: string) {
+  const parts = head.split(" · ");
+  if (parts.length > 1) return { title: parts[0], summary: parts.slice(1).join(" · ") };
+  const split = head.match(/^([A-Za-z_][\w.-]*)\s+(.+)$/);
+  if (split) return { title: prettifyToolName(split[1]), summary: split[2] };
+  return { title: head, summary: "" };
+}
+
 function ToolRow({ message: m, now, copied, onCopy, onRetry }: {
   message: Message; now: number; copied: boolean; onCopy: () => void; onRetry: () => void;
 }) {
@@ -1314,33 +1466,31 @@ function ToolRow({ message: m, now, copied, onCopy, onRetry }: {
   const { head, rest } = normalizeToolContent(m.content);
   const long = Boolean(rest) || head.length > 96;
   const shownHead = head.length > 96 ? `${head.slice(0, 96)}…` : head;
+  const { title, summary } = splitToolHead(shownHead);
   const toggle = () => { if (long) setExpanded((v) => !v); };
   return (
-    <div className={`tool-row ${m.kind} ${long ? "expandable" : ""}`}>
-      <span className="tool-row-dot" />
-      <div className="tool-row-main">
-        <div
-          className="tool-row-head"
-          role={long ? "button" : undefined}
-          tabIndex={long ? 0 : undefined}
-          title={long ? (expanded ? "收起输出" : "查看命令 / 输出") : head}
+    <>
+      <div className={`ds-tool-row ${m.kind}`}>
+        <span className="ds-row-icon" aria-hidden>{toolGlyph(title, m.kind)}</span>
+        <button
+          className="ds-tool-main"
           onClick={toggle}
-          onKeyDown={(e) => {
-            if (!long) return;
-            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
-          }}
+          disabled={!long}
+          title={long ? (expanded ? "收起输出" : "查看命令 / 输出") : head}
+          aria-expanded={long ? expanded : undefined}
         >
-          <span className="mono ellipsis" title={head}>{shownHead || "（空）"}</span>
-          {long && (
-            <span className="tool-row-toggle">{expanded ? "收起输出" : "查看输出"}</span>
-          )}
-          <span className="tool-row-time">{timeAgo(m.createdAt, coarseNow(now))}</span>
-        </div>
-        {long && expanded && <pre className="tool-row-rest">{rest || m.content}</pre>}
-        {m.delivery === "failed" && <button className="delivery failed" onClick={onRetry}>投递失败 · 重发</button>}
+          <span className="ds-tool-title">{title || "工具"}</span>
+          {summary && <><span className="ds-sep" aria-hidden /><span className="ds-tool-summary">{summary}</span></>}
+          {long && <ChevronDownIcon size={14} className={`ds-tool-chev ${expanded ? "rot-180" : ""}`} />}
+        </button>
+        <span className="ds-tool-time">{timeAgo(m.createdAt, coarseNow(now))}</span>
+        <button className="ds-action ds-tool-copy" title={copied ? "已复制" : "复制这一步"} aria-label={copied ? "已复制" : "复制这一步"} onClick={onCopy}>
+          {copied ? <CopyCheckIcon size={14} /> : <CopyIcon size={14} />}
+        </button>
       </div>
-      <button className="msg-copy tool-row-copy" onClick={onCopy}>{copied ? "已复制" : "复制"}</button>
-    </div>
+      {long && expanded && <pre className="ds-tool-body">{rest || m.content}</pre>}
+      {m.delivery === "failed" && <button className="ds-delivery failed" onClick={onRetry}>投递失败 · 重发</button>}
+    </>
   );
 }
 
@@ -1411,7 +1561,7 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
  * 轻量 Markdown：围栏代码块 + 行内 code / 粗体 / @提及 / 链接。
  * 不引入第三方依赖，也不使用 innerHTML，避免注入风险。
  */
-function RichText({ text }: { text: string }) {
+export function RichText({ text }: { text: string }) {
   const blocks = useMemo(() => parseBlocks(text), [text]);
   return (
     <>
@@ -1478,7 +1628,13 @@ function parseTextBlocks(text: string): Block[] {
   const lines = text.split("\n");
   const out: Block[] = [];
   let buffer: string[] = [];
-  const flush = () => { if (buffer.length) { out.push({ type: "text", text: buffer.join("\n") }); buffer = []; } };
+  // 文本块与代码 / 列表之间的空行已经由块间距表达；保留 pre-wrap 会在正文里多出一条空行
+  const flush = () => {
+    if (!buffer.length) return;
+    const text = buffer.join("\n").replace(/^\n+|\n+$/g, "");
+    if (text) out.push({ type: "text", text });
+    buffer = [];
+  };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const next = lines[i + 1] || "";
@@ -1615,22 +1771,8 @@ const LIVE_STATUS: Record<string, string> = {
 /** 运行中的实时进展：状态 + 已用时 + 步数 + 最近动作，可展开看最近几步。 */
 type LiveStep = { id: string; kind: string; text: string; detail: string; at: number };
 
-function phaseOfStep(step: LiveStep | undefined) {
-  if (!step) return "";
-  const head = step.text.toLowerCase();
-  if (/^bash\b|bash ·|exec|command|shell/.test(head)) return "执行命令";
-  if (/^write\b|write ·|edit ·|apply_patch|写入|修改文件/.test(head)) return "修改文件";
-  if (/^read\b|read ·|cat ·|读取/.test(head)) return "读取文件";
-  if (/^grep\b|rg \b|search|搜索/.test(head)) return "搜索";
-  if (/^ls\b|list ·|目录/.test(head)) return "查看目录";
-  if (step.kind === "thought") return "思考";
-  return "调用工具";
-}
-
-function LiveStatus({ run, agentName, projectName, steps, now }: {
+function LiveStatus({ run, steps, now }: {
   run: State["runs"][number];
-  agentName: string;
-  projectName: string;
   steps: { total: number; all: LiveStep[]; recent: LiveStep[] };
   now: number;
 }) {
@@ -1652,50 +1794,45 @@ function LiveStatus({ run, agentName, projectName, steps, now }: {
   const list = showAll ? steps.all : steps.recent;
   const label = LIVE_STATUS[run.status] ?? RUN_STATUS[run.status] ?? run.status;
   const latest = steps.recent[0];
-  const phase = phaseOfStep(latest);
   const waiting = run.status !== "running";
   return (
-    <div className={`chat-live ${run.status} ${waiting ? "waiting" : ""}`} aria-live="polite" ref={boxRef}>
-      <span className="chat-live-dots" aria-hidden="true"><span /><span /><span /></span>
-      <div className="chat-live-main">
-        <div className="chat-live-head">
-          {projectName && <span className="chat-live-project ellipsis" title={projectName}>{projectName}</span>}
-          <b>{agentName}</b>
-          <span className="chat-live-state">{label}</span>
-          {phase && <><i>·</i><span className="chat-live-phase">{phase}</span></>}
-          <i>·</i>
-          <span className="mono">已用 {duration(run, tick)}</span>
-          {steps.total > 0 && <span className="mono chat-live-steps-count">{steps.total} 步</span>}
-          {steps.recent.length > 0 && (
-            <button className="link chat-live-toggle" onClick={toggle} aria-expanded={open}>
-              {open ? "收起进展" : "查看进展"}
-            </button>
-          )}
-        </div>
-        {latest && <div className="chat-live-action ellipsis mono" title={latest.detail || latest.text}>{latest.text}</div>}
-        {!latest && <div className="chat-live-action">正在等待 Agent 的第一个动作…</div>}
-        {open && (
-          <div className={`chat-live-steps ${showAll ? "all" : ""}`}>
+    <>
+      <div className={`ds-running ${waiting ? "waiting" : ""}`} aria-live="polite" ref={boxRef}>
+        <span className="ds-running-icon" aria-hidden><SparkleIcon size={14} /></span>
+        <span className="ds-running-text">
+          <span className="ds-shimmer">{waiting ? label : "正在深入处理"} · 已用 {duration(run, tick)}</span>
+          {steps.total > 0 && <span className="ds-running-steps"> · {steps.total} 步</span>}
+        </span>
+        {steps.recent.length > 0 && (
+          <button className="ds-action" onClick={toggle} aria-expanded={open} title={open ? "收起进展" : "查看进展"} aria-label={open ? "收起进展" : "查看进展"}>
+            <ChevronDownIcon size={14} className={open ? "rot-180" : ""} />
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="ds-running-detail">
+          {latest && <div className="ds-running-latest mono ellipsis" title={latest.detail || latest.text}>{latest.text}</div>}
+          <div className={`ds-running-steps ${showAll ? "all" : ""}`}>
             {steps.total > steps.recent.length && (
-              <div className="chat-live-step-note">
+              <div className="ds-running-note">
                 <span>{showAll ? `全部 ${steps.total} 步` : `最近 ${steps.recent.length} 步 · 共 ${steps.total} 步`}</span>
-                <button className="link chat-live-all" onClick={() => setShowAll((v) => !v)}>{showAll ? "只看最近" : "看全部"}</button>
+                <button className="ds-action-text" onClick={() => setShowAll((v) => !v)}>{showAll ? "只看最近" : "看全部"}</button>
               </div>
             )}
             {list.map((step) => (
-              <div className="chat-live-step" key={step.id}>
-                <span className={`chat-live-step-dot ${step.kind}`} />
-                <span className="chat-live-step-main">
+              <div className="ds-running-step" key={step.id}>
+                <span className="ds-row-icon">{step.kind === "thought" ? <SparkleIcon size={14} /> : <WrenchIcon size={14} />}</span>
+                <span className="ds-running-step-main">
                   <span className="mono ellipsis" title={step.detail ? `${step.text}\n${step.detail}` : step.text}>{step.text}</span>
-                  {step.detail && <span className="chat-live-step-detail mono ellipsis" title={step.detail}>{step.detail}</span>}
+                  {step.detail && <span className="ds-running-step-detail mono ellipsis" title={step.detail}>{step.detail}</span>}
                 </span>
-                <em>{timeAgo(step.at, tick)}</em>
+                <span className="ds-tool-time">{timeAgo(step.at, tick)}</span>
               </div>
             ))}
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -1703,11 +1840,14 @@ function RunDivider({ state, runId, now }: { state: State; runId: string; now: n
   const run = state.runs.find((r) => r.id === runId);
   const status = run?.status ?? "";
   return (
-    <div className={`run-divider ${status}`}>
-      <span className="mono">{runId}</span>
-      <span>{RUN_STATUS[status] ?? status ?? "未知"}</span>
-      {run && <span className="mono">{duration(run, now)}</span>}
-      {run?.branch && <span className="mono ellipsis" title={run.branch}>{run.branch}</span>}
+    <div className={`ds-divider ${status}`}>
+      <span className="ds-divider-line" aria-hidden />
+      <span className="ds-divider-text">
+        {RUN_STATUS[status] ?? status ?? "未知"}
+        {run && <span className="mono"> · {duration(run, now)}</span>}
+        {run?.branch && <span className="mono ellipsis" title={run.branch}> · {run.branch}</span>}
+      </span>
+      <span className="ds-divider-line" aria-hidden />
     </div>
   );
 }

@@ -207,7 +207,7 @@ renderer  叠加图（ZhulongOverlay）+ 核对 / 区块 / JSON 三个页签
 ## 7. 验证
 
 ```bash
-npm run zhulong:selftest   # 归一化 / 核对项纯函数自测（不联网）
+npm test -- zhulong   # 归一化 / 核对项纯函数自测（不联网）
 npm run verify:plugins     # manifest + 入口语法
 npm run typecheck && npm run build
 npm run verify:design      # token / PageHeader 约束

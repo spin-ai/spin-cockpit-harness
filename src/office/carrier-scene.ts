@@ -2,10 +2,14 @@
 // 场景主体移植自 docs/prototype/carrier-3d.js（three.js r149，MIT）；运行时数据由 React 外壳注入。
 import * as THREE from "three";
 import type { OfficeActor, OfficeModel, OfficeTone, OfficeZone } from "./model";
+import type { CoordinationStageView } from "../types";
 import { ZONE_LABEL } from "./motion";
 
 type MotionTier = "calm" | "full" | "off";
 type Theme = "light" | "dark";
+
+/** 舞台机位预设：总览 / 舰首 / 舰岛 / 着舰道 / 俯视（存进场景 prefs 的 view） */
+export type CarrierView = CoordinationStageView;
 
 interface MountOptions {
   host: HTMLElement;
@@ -15,10 +19,14 @@ interface MountOptions {
   getMotion: () => { tier: MotionTier; reduced: boolean; walk: number };
   getTheme: () => Theme;
   onSelect: (id: string) => void;
+  /** 双击复位时把机位同步回 React（下拉框要跟着变） */
+  onViewChange?: (view: CarrierView) => void;
 }
 
 export interface Carrier3DApi {
   launch: () => void;
+  land: () => void;
+  setView: (view: CarrierView) => void;
   update: () => void;
   setSelected: (id: string | null) => void;
   setTheme: (theme: Theme) => void;
@@ -32,7 +40,7 @@ export interface Carrier3DApi {
  * 数据换成真实 OfficeModel：弹射位 = 并发 run，着舰道 = review / approval 串行闸门。
  */
 export function mountCarrier3D(options: MountOptions): Carrier3DApi {
-  const { host, getModel, getSelected, getMotion, getTheme, onSelect } = options;
+  const { host, getModel, getSelected, getMotion, getTheme, onSelect, onViewChange } = options;
   const doc = host.ownerDocument;
   host.innerHTML = "";
   const canvas = doc.createElement("canvas");
@@ -1243,18 +1251,21 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
       const inner = new THREE.Mesh(new THREE.CircleGeometry(0.15, 12), new THREE.MeshBasicMaterial({ color: 0x24140e, toneMapped: false }));
       inner.position.set(s * 0.27, 0, -len / 2 - 0.5); g.add(inner);
     });
-    // landing gear
+    // landing gear（单独成组：离舰后整组收进机腹）
+    const gear = new THREE.Group();
+    g.add(gear);
+    g.userData.gear = gear;
     const wheelMat = new THREE.MeshStandardMaterial({ color: 0x11171a, roughness: 0.7, metalness: 0.2 });
     const strutMat = metalMat;
     const noseGear = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.48), strutMat);
-    noseGear.position.set(0, -0.4, 1.25); g.add(noseGear);
+    noseGear.position.set(0, -0.4, 1.25); gear.add(noseGear);
     const noseWheel = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.08, 10), wheelMat);
-    noseWheel.rotation.z = Math.PI / 2; noseWheel.position.set(0, -0.64, 1.25); g.add(noseWheel);
+    noseWheel.rotation.z = Math.PI / 2; noseWheel.position.set(0, -0.64, 1.25); gear.add(noseWheel);
     [-1, 1].forEach((s) => {
       const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.5), strutMat);
-      strut.position.set(s * 0.62, -0.4, -0.7); g.add(strut);
+      strut.position.set(s * 0.62, -0.4, -0.7); gear.add(strut);
       const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.09, 10), wheelMat);
-      wheel.rotation.z = Math.PI / 2; wheel.position.set(s * 0.62, -0.66, -0.7); g.add(wheel);
+      wheel.rotation.z = Math.PI / 2; wheel.position.set(s * 0.62, -0.66, -0.7); gear.add(wheel);
     });
     // nose pitot
     const pitot = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.45, 4), metalMat);
@@ -1389,26 +1400,26 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
     x.fillStyle = "#7c3a30"; x.fillRect(0, 212, 1024, 5);
     x.fillStyle = "rgba(12,18,20,.35)"; x.fillRect(0, 205, 1024, 7);
 
-    // hull number
+    // hull number（抬高到水线以上，别被浪挡掉）
     x.save();
     x.fillStyle = "rgba(236,238,233,.92)";
-    x.font = "700 82px 'Helvetica Neue', Arial, sans-serif";
+    x.font = "700 74px 'Helvetica Neue', Arial, sans-serif";
     x.textAlign = "center";
-    x.fillText(String(number), 512, 150);
+    x.fillText(String(number), 512, 116);
     x.restore();
 
     // draft marks near bow
-    x.fillStyle = "rgba(232,236,232,.65)";
+    x.fillStyle = "rgba(232,236,232,.62)";
     x.font = "600 15px monospace";
     for (let i = 0; i < 5; i++) {
-      x.fillRect(760, 70 + i * 26, 26, 2);
-      x.fillText(String(i + 2), 790, 76 + i * 26);
+      x.fillRect(760, 46 + i * 26, 26, 2);
+      x.fillText(String(i + 2), 790, 52 + i * 26);
     }
     // anchor recess
     x.fillStyle = "rgba(16,23,26,.7)";
-    x.beginPath(); x.ellipse(160, 120, 34, 20, -0.2, 0, Math.PI * 2); x.fill();
+    x.beginPath(); x.ellipse(180, 84, 34, 20, -0.2, 0, Math.PI * 2); x.fill();
     x.fillStyle = "rgba(32,41,45,.9)";
-    x.beginPath(); x.ellipse(160, 120, 25, 13, -0.2, 0, Math.PI * 2); x.fill();
+    x.beginPath(); x.ellipse(180, 84, 25, 13, -0.2, 0, Math.PI * 2); x.fill();
 
     const t = new THREE.CanvasTexture(c);
     t.encoding = THREE.sRGBEncoding;
@@ -1475,167 +1486,303 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
   function makeEscort(kind) {
     const g = new THREE.Group();
     const isSupply = kind === "supply";
-    const len = isSupply ? 18 : 14;
+    /* 一条统一的尺度线：龙骨 / 甲板 / 舰首楔形都从这里推，任何部件都不会互相插进去 */
+    const LEN = isSupply ? 19.5 : 15.5;
+    const BEAM = 3.3;
+    const HB = BEAM / 2;
+    const KEEL_Y = -0.85;
+    const DECK_Y = 0.55;
+    const BOW_START = LEN / 2 - 2.9;
+    const BOW_TIP = LEN / 2;
+    const STERN_Z = -LEN / 2;
     const number = isSupply ? "886" : "101";
 
     const hullTex = makeEscortHullTexture(kind, number);
     const deckTex = makeEscortDeckTexture(kind);
-    const sideMat = new THREE.MeshStandardMaterial({ map: hullTex, color: 0x3f4a4f, roughness: 0.8, metalness: 0.2, envMapIntensity: 0.5 });
-    const topMat = new THREE.MeshStandardMaterial({ map: deckTex, color: 0x3a454a, roughness: 0.95, metalness: 0.05, envMapIntensity: 0.16 });
+    const sideMat = new THREE.MeshStandardMaterial({ map: hullTex, color: 0xa9b2b6, roughness: 0.82, metalness: 0.16, envMapIntensity: 0.45 });
+    const topMat = new THREE.MeshStandardMaterial({ map: deckTex, color: 0x8c969a, roughness: 0.95, metalness: 0.05, envMapIntensity: 0.16 });
     const bottomMat = new THREE.MeshStandardMaterial({ color: 0x5a2b24, roughness: 0.92 });
-    const supMat = new THREE.MeshStandardMaterial({ color: 0x465257, roughness: 0.72, metalness: 0.28, envMapIntensity: 0.55 });
-    const bowMat = new THREE.MeshStandardMaterial({ color: 0x3f4a4f, roughness: 0.78, metalness: 0.22, envMapIntensity: 0.5 });
-    const dark = new THREE.MeshStandardMaterial({ color: 0x2f3a3f, roughness: 0.6, metalness: 0.45, envMapIntensity: 0.8 });
-    const glass = new THREE.MeshStandardMaterial({ color: 0x101a20, roughness: 0.16, metalness: 0.7, emissive: 0x1a2a33, emissiveIntensity: 0.35 });
+    const supMat = new THREE.MeshStandardMaterial({ color: 0x808b90, roughness: 0.72, metalness: 0.2, envMapIntensity: 0.42 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x3c474c, roughness: 0.6, metalness: 0.4, envMapIntensity: 0.8 });
+    const winMat = new THREE.MeshStandardMaterial({ color: 0x0e1a20, roughness: 0.2, metalness: 0.66, emissive: 0x33210f, emissiveIntensity: 0.32 });
     const warm = new THREE.MeshBasicMaterial({ color: 0xffc37e, toneMapped: false });
     const railMat = new THREE.MeshStandardMaterial({ color: 0x9da8ac, roughness: 0.55, metalness: 0.42 });
 
-    const hull = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.2, len), [sideMat, sideMat, topMat, bottomMat, sideMat, sideMat]);
-    hull.position.y = -0.2; hull.castShadow = true; hull.receiveShadow = true; g.add(hull);
+    /* ── 舰体：直舷段（带涂装与舷号）+ 插入式舰首楔形 ── */
+    const bodyLen = BOW_START - STERN_Z;
+    const hull = new THREE.Mesh(
+      new THREE.BoxGeometry(BEAM, DECK_Y - KEEL_Y, bodyLen),
+      [sideMat, sideMat, topMat, bottomMat, sideMat, sideMat],
+    );
+    hull.position.set(0, (DECK_Y + KEEL_Y) / 2, (BOW_START + STERN_Z) / 2);
+    hull.castShadow = true;
+    hull.receiveShadow = true;
+    g.add(hull);
 
-    const bow = new THREE.Mesh(new THREE.ConeGeometry(1.6, 3.4, 4), bowMat);
-    bow.rotation.x = -Math.PI / 2; bow.rotation.y = Math.PI / 4;
-    bow.position.set(0, 0.34, len / 2 + 1.4); bow.castShadow = true; g.add(bow);
+    (function bowSection() {
+      /* 五面楔形：两舷 / 底面 / 甲板，截面与直舷段完全对齐，不再是一根戳在外面的圆锥。
+         两舷沿用船体的涂装 UV，舰首和舯部是同一种钢板色。 */
+      const A = [-HB, DECK_Y, BOW_START];
+      const B = [HB, DECK_Y, BOW_START];
+      const C = [-HB, KEEL_Y, BOW_START];
+      const D = [HB, KEEL_Y, BOW_START];
+      const T = [0, DECK_Y + 0.26, BOW_TIP];
+      const U = [0, KEEL_Y + 0.28, BOW_TIP - 0.6];
+      const hullCenter = [0, (DECK_Y + KEEL_Y) / 2, BOW_START - 1.5];
+      const side: number[] = [];
+      const uvOf = (p: number[]) => [(BOW_START - p[2]) / bodyLen, (p[1] - KEEL_Y) / (DECK_Y - KEEL_Y)];
+      const pushFace = (pts: number[][], withUV: boolean) => {
+        const [a, b, c] = pts;
+        const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        let cx = 0, cy = 0, cz = 0;
+        for (const p of pts) { cx += p[0] / pts.length; cy += p[1] / pts.length; cz += p[2] / pts.length; }
+        const out = n[0] * (cx - hullCenter[0]) + n[1] * (cy - hullCenter[1]) + n[2] * (cz - hullCenter[2]);
+        const ordered = out >= 0 ? pts : [pts[0], ...pts.slice(1).reverse()];
+        const tris = ordered.length === 3
+          ? [ordered]
+          : [[ordered[0], ordered[1], ordered[2]], [ordered[0], ordered[2], ordered[3]]];
+        for (const tri of tris) {
+          for (const p of tri) side.push(...p);
+          if (withUV) for (const p of tri) sideUV.push(...uvOf(p));
+        }
+      };
+      const sideUV: number[] = [];
+      pushFace([A, C, U, T], true);    // 左舷
+      pushFace([B, D, U, T], true);    // 右舷
+      const sideGeo = new THREE.BufferGeometry();
+      sideGeo.setAttribute("position", new THREE.Float32BufferAttribute(side, 3));
+      sideGeo.setAttribute("uv", new THREE.Float32BufferAttribute(sideUV, 2));
+      sideGeo.computeVertexNormals();
+      const bow = new THREE.Mesh(sideGeo, sideMat);
+      bow.castShadow = true;
+      g.add(bow);
+      /* 舰首底面 */
+      const btm: number[] = [];
+      const btmPush = (tri: number[][]) => { for (const p of tri) btm.push(...p); };
+      btmPush([C, D, U]);
+      const btmGeo = new THREE.BufferGeometry();
+      btmGeo.setAttribute("position", new THREE.Float32BufferAttribute(btm, 3));
+      btmGeo.computeVertexNormals();
+      g.add(new THREE.Mesh(btmGeo, bottomMat));
+      /* 舰首甲板：沿用主甲板的 UV 投影 */
+      const deckGeo = new THREE.BufferGeometry();
+      deckGeo.setAttribute("position", new THREE.Float32BufferAttribute([...A, ...T, ...B], 3));
+      deckGeo.setAttribute("uv", new THREE.Float32BufferAttribute([
+        0, 1,
+        0.5, (BOW_TIP - STERN_Z) / bodyLen,
+        1, 1,
+      ], 2));
+      deckGeo.computeVertexNormals();
+      const bowDeck = new THREE.Mesh(deckGeo, topMat);
+      bowDeck.receiveShadow = true;
+      g.add(bowDeck);
+      // 首柱
+      const stem = new THREE.Mesh(new THREE.BoxGeometry(0.1, DECK_Y + 0.3 - (KEEL_Y + 0.28), 0.12), dark);
+      stem.position.set(0, (DECK_Y + 0.3 + KEEL_Y + 0.28) / 2, BOW_TIP - 0.22);
+      g.add(stem);
+    })();
 
-    // stern transom / deck edge
-    const stern = new THREE.Mesh(new THREE.BoxGeometry(3.22, 0.16, 0.4), dark);
-    stern.position.set(0, 0.42, -len / 2); g.add(stern);
+    // 舷墙 / 尾封板
+    const transom = new THREE.Mesh(new THREE.BoxGeometry(BEAM + 0.04, 0.12, 0.12), dark);
+    transom.position.set(0, DECK_Y + 0.04, STERN_Z + 0.06);
+    g.add(transom);
 
-    // superstructure
-    const bridge = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.35, isSupply ? 3.2 : 3.8), supMat);
-    bridge.position.set(0, 1.1, isSupply ? -5.2 : -1.2); bridge.castShadow = true; g.add(bridge);
-    const bridge2 = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.9, 2.6), supMat);
-    bridge2.position.set(0, 2.15, isSupply ? -5.2 : -1.2); bridge2.castShadow = true; g.add(bridge2);
-    const bridgeTop = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.12, 2.8), dark);
-    bridgeTop.position.set(0, 2.66, isSupply ? -5.2 : -1.2); g.add(bridgeTop);
+    /* ── 上层建筑：尺寸先定，窗户再贴到真实面上 ── */
+    const zSup = isSupply ? -4.6 : -1.2;
+    const bridgeW = isSupply ? 2.24 : 2.3;
+    const bridgeH = isSupply ? 1.65 : 1.45;
+    const bridgeD = isSupply ? 3.0 : 3.6;
+    const b2W = isSupply ? 1.7 : 1.76;
+    const b2H = isSupply ? 0.9 : 0.95;
+    const b2D = isSupply ? 2.1 : 2.3;
+    const b1Y = DECK_Y + bridgeH / 2;
+    const b2Y = DECK_Y + bridgeH + b2H / 2;
+    const b1 = new THREE.Mesh(new THREE.BoxGeometry(bridgeW, bridgeH, bridgeD), supMat);
+    b1.position.set(0, b1Y, zSup);
+    b1.castShadow = true;
+    g.add(b1);
+    const b2 = new THREE.Mesh(new THREE.BoxGeometry(b2W, b2H, b2D), supMat);
+    b2.position.set(0, b2Y, zSup);
+    b2.castShadow = true;
+    g.add(b2);
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(b2W + 0.22, 0.09, b2D + 0.28), dark);
+    roof.position.set(0, b2Y + b2H / 2 + 0.045, zSup);
+    g.add(roof);
 
-    // bridge windows
-    const winMat = new THREE.MeshStandardMaterial({ color: 0x0d181e, roughness: 0.18, metalness: 0.65, emissive: 0x2a1b0e, emissiveIntensity: 0.45 });
-    const winF = new THREE.Mesh(new THREE.PlaneGeometry(1.55, 0.32), winMat);
-    winF.position.set(0, 2.2, (isSupply ? -5.2 : -1.2) + (isSupply ? 1.61 : 1.91)); g.add(winF);
+    const addWindow = (w, h, x, y, z, ry) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), winMat);
+      m.position.set(x, y, z);
+      m.rotation.y = ry;
+      g.add(m);
+    };
+    // 舰桥正脸（b2 前壁）
+    addWindow(b2W - 0.42, 0.3, 0, b2Y + 0.04, zSup + b2D / 2 + 0.014, 0);
+    // b2 两舷 + 下层舰桥两舷（贴在各自真实外皮上，不再悬空）
     [-1, 1].forEach((s) => {
-      const w = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 0.3), winMat);
-      w.rotation.y = s * Math.PI / 2;
-      w.position.set(s * 1.11, 2.2, isSupply ? -5.2 : -1.2); g.add(w);
+      addWindow(b2D - 0.5, 0.28, s * (b2W / 2 + 0.014), b2Y + 0.04, zSup, s * Math.PI / 2);
+      addWindow(bridgeD - 1.2, 0.3, s * (bridgeW / 2 + 0.014), DECK_Y + bridgeH * 0.58, zSup, s * Math.PI / 2);
     });
-    // side window bands / bridge texture
-    [-1, 1].forEach((sd) => {
-      const band = new THREE.Mesh(new THREE.PlaneGeometry(isSupply ? 2.4 : 3.0, 0.26), winMat);
-      band.rotation.y = sd * Math.PI / 2;
-      band.position.set(sd * 1.113, 1.72, isSupply ? -5.2 : -1.2); g.add(band);
-    });
-    const door = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.55), new THREE.MeshStandardMaterial({ color: 0x39464b, roughness: 0.6, metalness: 0.35 }));
-    door.position.set(0.65, 0.85, (isSupply ? -5.2 : -1.2) + (isSupply ? 1.61 : 1.91)); g.add(door);
+    // 舰桥门 + 舱室暖光条
+    const door = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.5), new THREE.MeshStandardMaterial({ color: 0x39464b, roughness: 0.6, metalness: 0.35 }));
+    door.position.set(0.62, DECK_Y + 0.26, zSup + bridgeD / 2 + 0.012);
+    g.add(door);
+    const strip = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.07), warm);
+    strip.position.set(-0.3, DECK_Y + bridgeH * 0.16, zSup + bridgeD / 2 + 0.014);
+    g.add(strip);
+    if (!isSupply) {
+      // 相控阵面板
+      [-1, 1].forEach((s) => {
+        const a = new THREE.Mesh(new THREE.PlaneGeometry(bridgeD - 1.7, 0.5), new THREE.MeshStandardMaterial({ color: 0x0f222d, roughness: 0.42, metalness: 0.55, emissive: 0x050f16, emissiveIntensity: 0.45 }));
+        a.rotation.y = s * Math.PI / 2;
+        a.position.set(s * (bridgeW / 2 + 0.014), DECK_Y + bridgeH * 0.3, zSup);
+        g.add(a);
+      });
+    }
 
-    // warm cabin strip
-    const strip = new THREE.Mesh(new THREE.PlaneGeometry(1.35, 0.08), warm);
-    strip.position.set(0, 1.55, (isSupply ? -5.2 : -1.2) + (isSupply ? 1.62 : 1.92)); g.add(strip);
-
-    // mast / radar
-    const mastZ = isSupply ? -5.8 : -1.9;
-    [-0.34, 0.34].forEach((dx) => {
-      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 3.6, 5), railMat);
-      p.position.set(dx, 4.4, mastZ); g.add(p);
+    /* ── 桅杆 / 雷达 ── */
+    const mastZ = isSupply ? zSup - bridgeD / 2 - 0.8 : -3.3;
+    const mastTop = DECK_Y + 3.3;
+    [-0.3, 0.3].forEach((dx) => {
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.05, mastTop - DECK_Y, 5), railMat);
+      p.position.set(dx, (mastTop + DECK_Y) / 2, mastZ);
+      g.add(p);
     });
     for (let i = 0; i < 5; i++) {
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.035, 0.035), railMat);
-      bar.position.set(0, 2.9 + i * 0.7, mastZ); g.add(bar);
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.03, 0.03), railMat);
+      bar.position.set(0, DECK_Y + 0.62 + i * 0.6, mastZ);
+      g.add(bar);
     }
-    const radar = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.16, 0.3), dark);
-    radar.position.set(0, 5.9, mastZ); g.add(radar);
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), supMat);
-    dome.position.set(0, 5.5, mastZ - 0.5); g.add(dome);
-
-    // AESA panels on bridge sides
-    [-1, 1].forEach((s) => {
-      const a = new THREE.Mesh(new THREE.PlaneGeometry(1.05, 0.48), new THREE.MeshStandardMaterial({ color: 0x173346, roughness: 0.38, metalness: 0.55, emissive: 0x06131d, emissiveIntensity: 0.5 }));
-      a.rotation.y = s * Math.PI / 2;
-      a.position.set(s * 1.112, 1.55, isSupply ? -5.2 : -1.2); g.add(a);
-    });
+    const radar = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 0.26), dark);
+    radar.position.set(0, mastTop + 0.04, mastZ);
+    g.add(radar);
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), supMat);
+    dome.position.set(0, mastTop - 0.34, mastZ - 0.5);
+    g.add(dome);
 
     if (!isSupply) {
-      // VLS block
-      const vls = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.26, 2.1), dark);
-      vls.position.set(0, 0.55, 2.1); g.add(vls);
+      // 主炮（炮塔 + 指向舰首的炮管）
+      const gunZ = BOW_START - 1.1;
+      const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.56, 0.46, 12), new THREE.MeshStandardMaterial({ color: 0x6d787c, roughness: 0.7, metalness: 0.32 }));
+      turret.position.set(0, DECK_Y + 0.23, gunZ);
+      turret.castShadow = true;
+      g.add(turret);
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 2.1, 8), dark);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, DECK_Y + 0.42, gunZ + 1.25);
+      g.add(barrel);
+      // 垂发
+      const vlsZ = 1.7;
+      const vls = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.26, 2.3), dark);
+      vls.position.set(0, DECK_Y + 0.13, vlsZ);
+      g.add(vls);
+      const cellMat = new THREE.MeshStandardMaterial({ color: 0x161e22, roughness: 0.72 });
       for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
-        const cell = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 0.28), new THREE.MeshStandardMaterial({ color: 0x151d21, roughness: 0.7 }));
-        cell.rotation.x = -Math.PI / 2; cell.position.set(-0.6 + i * 0.4, 0.69, 1.5 + j * 0.4); g.add(cell);
+        const cell = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 0.28), cellMat);
+        cell.rotation.x = -Math.PI / 2;
+        cell.position.set(-0.63 + i * 0.42, DECK_Y + 0.265, vlsZ - 0.82 + j * 0.42);
+        g.add(cell);
       }
-      // main gun
-      const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.55, 0.42, 10), new THREE.MeshStandardMaterial({ color: 0x7a8589, roughness: 0.68, metalness: 0.35 }));
-      turret.position.set(0, 0.72, 4.6); g.add(turret);
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 2.2, 8), dark);
-      barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.9, 5.8); g.add(barrel);
-      // CIWS
-      const ciws = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.3, 0.3, 10), supMat);
-      ciws.position.set(0, 1.0, -4.5); g.add(ciws);
-      const ciwsDome = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), dark);
-      ciwsDome.position.set(0, 1.15, -4.5); g.add(ciwsDome);
-      // funnel
-      const funnel = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.85, 1.3), dark);
-      funnel.position.set(0, 1.55, -3.4); g.add(funnel);
-      const fcap = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.1, 1.24), new THREE.MeshBasicMaterial({ color: 0x11181b }));
-      fcap.position.set(0, 1.99, -3.4); g.add(fcap);
-      // helo pad
-      const pad = new THREE.Mesh(new THREE.CircleGeometry(1.25, 28), new THREE.MeshStandardMaterial({ color: 0x454f53, roughness: 0.92 }));
-      pad.rotation.x = -Math.PI / 2; pad.position.set(0, 0.43, -6.1); g.add(pad);
-      const ring = new THREE.Mesh(new THREE.RingGeometry(1.08, 1.2, 28), new THREE.MeshBasicMaterial({ color: 0xe6e7dc, transparent: true, opacity: 0.65 }));
-      ring.rotation.x = -Math.PI / 2; ring.position.set(0, 0.445, -6.1); g.add(ring);
-      const hMat = new THREE.MeshBasicMaterial({ color: 0xe6e7dc, transparent: true, opacity: 0.7 });
-      const h1 = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 0.8), hMat); h1.rotation.x = -Math.PI / 2; h1.position.set(-0.22, 0.45, -6.1); g.add(h1);
-      const h2 = h1.clone(); h2.position.x = 0.22; g.add(h2);
-      const h3 = new THREE.Mesh(new THREE.PlaneGeometry(0.44, 0.1), hMat); h3.rotation.x = -Math.PI / 2; h3.position.set(0, 0.45, -6.1); g.add(h3);
-      // hangar
-      const hangar = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.72, 2.2), supMat);
-      hangar.position.set(0, 0.88, -5.4); g.add(hangar);
+      // 烟囱 + 后部平台（近防炮）
+      const funnel = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.9, 1.15), dark);
+      funnel.position.set(0, DECK_Y + 0.45, -2.4);
+      funnel.castShadow = true;
+      g.add(funnel);
+      const fcap = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.08, 1.1), new THREE.MeshBasicMaterial({ color: 0x11181b }));
+      fcap.position.set(0, DECK_Y + 0.93, -2.4);
+      g.add(fcap);
+      const hangar = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.72, 1.0), supMat);
+      hangar.position.set(0, DECK_Y + 0.36, -4.4);
+      hangar.castShadow = true;
+      g.add(hangar);
+      const ciws = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.3, 0.28, 10), supMat);
+      ciws.position.set(0, DECK_Y + 1.0, -4.4);
+      g.add(ciws);
+      const ciwsDome = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), dark);
+      ciwsDome.position.set(0, DECK_Y + 1.14, -4.4);
+      g.add(ciwsDome);
+      // 飞行甲板标线
+      const padY = DECK_Y + 0.012;
+      const padMat = new THREE.MeshStandardMaterial({ color: 0x4d575b, roughness: 0.94 });
+      const pad = new THREE.Mesh(new THREE.CircleGeometry(1.18, 28), padMat);
+      pad.rotation.x = -Math.PI / 2;
+      pad.position.set(0, padY, -6.2);
+      g.add(pad);
+      const ring = new THREE.Mesh(new THREE.RingGeometry(1.0, 1.14, 28), new THREE.MeshBasicMaterial({ color: 0xe6e7dc, transparent: true, opacity: 0.6 }));
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(0, padY + 0.004, -6.2);
+      g.add(ring);
+      const hMat = new THREE.MeshBasicMaterial({ color: 0xe6e7dc, transparent: true, opacity: 0.66 });
+      const h1 = new THREE.Mesh(new THREE.PlaneGeometry(0.09, 0.72), hMat);
+      h1.rotation.x = -Math.PI / 2; h1.position.set(-0.2, padY + 0.005, -6.2); g.add(h1);
+      const h2 = h1.clone(); h2.position.x = 0.2; g.add(h2);
+      const h3 = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.09), hMat);
+      h3.rotation.x = -Math.PI / 2; h3.position.set(0, padY + 0.005, -6.2); g.add(h3);
     } else {
-      // cargo containers
-      const colors = [0x7a4a32, 0x345a6e, 0x4e6a4a, 0x8a6a3a, 0x5c4c6a];
+      // 货柜（两列三排，留出舷边通道）
+      const colors = [0x7a4a32, 0x345a6e, 0x4e6a4a, 0x8a6a3a, 0x5c4c6a, 0x6a5348];
       for (let i = 0; i < 6; i++) {
-        const box = new THREE.Mesh(new THREE.BoxGeometry(1.18, 0.72, 2.1), new THREE.MeshStandardMaterial({ color: colors[i % colors.length], roughness: 0.78, metalness: 0.22 }));
-        box.position.set(-0.6 + (i % 2) * 1.2, 0.75, -1.6 + Math.floor(i / 2) * 2.2);
-        box.castShadow = true; g.add(box);
+        const box = new THREE.Mesh(new THREE.BoxGeometry(1.24, 0.82, 1.95), new THREE.MeshStandardMaterial({ color: colors[i % colors.length], roughness: 0.78, metalness: 0.2 }));
+        box.position.set((i % 2 ? 0.7 : -0.7), DECK_Y + 0.41, 5.35 - Math.floor(i / 2) * 2.15);
+        box.castShadow = true;
+        g.add(box);
       }
-      // cranes
-      [2.8, -3.4].forEach((z) => {
-        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, 3.4, 6), new THREE.MeshStandardMaterial({ color: 0xb38a3e, roughness: 0.65, metalness: 0.3 }));
-        post.position.set(1.35, 1.8, z); g.add(post);
-        const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 3.2, 6), new THREE.MeshStandardMaterial({ color: 0xb38a3e, roughness: 0.65, metalness: 0.3 }));
-        boom.rotation.z = Math.PI / 2.7; boom.position.set(2.1, 3.1, z); g.add(boom);
+      // 吊机：立柱在两舷、吊臂朝上朝前，不穿货柜也不穿舰桥
+      [-1, 1].forEach((s) => {
+        const postZ = -2.35;
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, 2.5, 7), new THREE.MeshStandardMaterial({ color: 0xb38a3e, roughness: 0.62, metalness: 0.3 }));
+        post.position.set(s * 1.25, DECK_Y + 1.25, postZ);
+        post.castShadow = true;
+        g.add(post);
+        const dirB = new THREE.Vector3(s * 0.34, 0.3, 0.88).normalize();
+        const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.085, 3.1, 6), new THREE.MeshStandardMaterial({ color: 0xb38a3e, roughness: 0.62, metalness: 0.3 }));
+        boom.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dirB);
+        boom.position.set(s * 1.25, DECK_Y + 2.5, postZ).addScaledVector(dirB, 1.5);
+        boom.castShadow = true;
+        g.add(boom);
       });
     }
 
-    // deck railings
-    const railPts = [
-      -1.58, 0.5, -len / 2, 1.58, 0.5, -len / 2, 1.58, 0.5, len / 2 - 3,
-    ];
+    /* ── 舷侧栏杆 ── */
+    const railY = DECK_Y + 0.32;
+    const z0 = STERN_Z + 0.25;
+    const z1 = BOW_START - 0.35;
+    const railPts: number[] = [];
+    [-1, 1].forEach((s) => {
+      railPts.push(s * (HB - 0.04), railY, z0, s * (HB - 0.04), railY, z1);
+      railPts.push(s * (HB - 0.04), railY - 0.3, z0, s * (HB - 0.04), railY - 0.3, z1);
+      railPts.push(s * (HB - 0.04), railY - 0.3, z0, s * (HB - 0.04), railY, z0);
+      railPts.push(s * (HB - 0.04), railY - 0.3, z1, s * (HB - 0.04), railY, z1);
+    });
     const railGeo = new THREE.BufferGeometry();
-    railGeo.setAttribute("position", new THREE.Float32BufferAttribute([
-      -1.58, 0.5, -len / 2, -1.58, 0.5, len / 2 - 3,
-      1.58, 0.5, -len / 2, 1.58, 0.5, len / 2 - 3,
-    ], 3));
-    const rail = new THREE.LineSegments(railGeo, new THREE.LineBasicMaterial({ color: 0xc8d2d4, transparent: true, opacity: 0.45 }));
-    g.add(rail);
-    for (let i = 0; i < 9; i++) {
-      const z = -len / 2 + 1 + i * (len - 4) / 8;
-      [-1.57, 1.57].forEach((x) => {
-        const p = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.5, 4), railMat);
-        p.position.set(x, 0.25, z); g.add(p);
+    railGeo.setAttribute("position", new THREE.Float32BufferAttribute(railPts, 3));
+    g.add(new THREE.LineSegments(railGeo, new THREE.LineBasicMaterial({ color: 0xc8d2d4, transparent: true, opacity: 0.42 })));
+    for (let i = 0; i <= 8; i++) {
+      const z = z0 + (z1 - z0) * (i / 8);
+      [-1, 1].forEach((s) => {
+        const p = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.32, 4), railMat);
+        p.position.set(s * (HB - 0.04), DECK_Y + 0.16, z);
+        g.add(p);
       });
     }
 
-    // nav lights
-    const navR = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 5), new THREE.MeshBasicMaterial({ color: 0xff5a4e, toneMapped: false }));
-    navR.position.set(-1.5, 0.65, len / 2 - 1); g.add(navR);
-    const navG = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 5), new THREE.MeshBasicMaterial({ color: 0x74e29a, toneMapped: false }));
-    navG.position.set(1.5, 0.65, len / 2 - 1); g.add(navG);
-    const mastLight = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 5), warm); mastLight.position.set(0, 6.05, mastZ); g.add(mastLight);
+    /* ── 航行灯 / 桅灯 / 水线泡沫 ── */
+    const navR = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 5), new THREE.MeshBasicMaterial({ color: 0xff5a4e, toneMapped: false }));
+    navR.position.set(-(HB - 0.06), DECK_Y + bridgeH * 0.82, zSup + bridgeD / 2);
+    g.add(navR);
+    const navG = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 5), new THREE.MeshBasicMaterial({ color: 0x74e29a, toneMapped: false }));
+    navG.position.set(HB - 0.06, DECK_Y + bridgeH * 0.82, zSup + bridgeD / 2);
+    g.add(navG);
+    const mastLight = new THREE.Mesh(new THREE.SphereGeometry(0.055, 6, 5), warm);
+    mastLight.position.set(0, mastTop + 0.16, mastZ);
+    g.add(mastLight);
 
-    // waterline foam strip
-    const wlMat = new THREE.MeshBasicMaterial({ color: 0xdfeef4, transparent: true, opacity: 0.28, depthWrite: false });
-    [-1.61, 1.61].forEach((x) => {
-      const w = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, len - 1), wlMat);
-      w.position.set(x, -0.325, 0); g.add(w);
+    const wlMat = new THREE.MeshBasicMaterial({ color: 0xdfeef4, transparent: true, opacity: 0.24, depthWrite: false });
+    [-1, 1].forEach((s) => {
+      const w = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, bodyLen - 0.6), wlMat);
+      w.position.set(s * (HB + 0.02), -0.34, (BOW_START + STERN_Z) / 2);
+      g.add(w);
     });
 
     // escort wakes/foam planes are intentionally not added: at this camera
@@ -1646,7 +1793,7 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
 
   const escorts = [
     { m: makeEscort("destroyer"), x: -52, z: 22, ry: -0.4 },
-    { m: makeEscort("supply"), x: -40, z: 52, ry: -0.4 },
+    { m: makeEscort("supply"), x: -96, z: 6, ry: -0.44 },
   ];
   escorts.forEach((e) => { e.m.position.set(e.x, -4.0, e.z); e.m.rotation.y = e.ry; scene.add(e.m); });
 
@@ -1660,8 +1807,37 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
   const CAT: Slot[] = [
     { x: -4.2, z: 25, rot: 0, dx: 0, dz: 1 },
     { x: 2.2, z: 24, rot: 0, dx: 0, dz: 1 },
-    { x: -11.4, z: -10, rot: -0.32, dx: 0.52, dz: 0.85 },
+    { x: -11.4, z: -10, rot: 0.55, dx: 0.52, dz: 0.85 },
   ];
+  /* 弹射节奏：蓄力 → 行程（加速）→ 离舰（持续加速爬升、拐弯离场） */
+  const T_TENSION = 0.8;
+  const T_STROKE = 1.15;
+  const V_LIFT = 24;
+  const ACC_AIR = 9;
+  const TURN_RATE = -0.135;
+  const CLIMB = 26;
+  const FLIGHT_END = 6.4;
+  /* 着舰节奏：进场（下滑 + 拉平）→ 拦阻（滑跑减速）→ 滑回机位 */
+  const T_APPROACH = 2.4;
+  const T_ROLLOUT = 1.5;
+  const APPROACH = 46;
+  const APPROACH_ALT = 11;
+  /** 沿甲板方向射线与甲板轮廓求交：每种弹射位的真实行程，飞机一定从甲板边缘离舰 */
+  function deckRun(x: number, z: number, dx: number, dz: number) {
+    let best = Infinity;
+    for (let i = 0; i < DECK.length; i++) {
+      const [ax, az] = DECK[i];
+      const [bx, bz] = DECK[(i + 1) % DECK.length];
+      const ex = bx - ax, ez = bz - az;
+      const den = dx * ez - dz * ex;
+      if (Math.abs(den) < 1e-6) continue;
+      const t = ((ax - x) * ez - (az - z) * ex) / den;
+      const u = ((ax - x) * dz - (az - z) * dx) / den;
+      if (t > 2 && u >= -0.02 && u <= 1.02) best = Math.min(best, t);
+    }
+    if (!Number.isFinite(best)) best = 20;
+    return Math.max(8, Math.min(64, best - 1.2));
+  }
   const HOLD: Slot[] = [
     { x: 6.4, z: -20, rot: -0.1 },
     { x: 9.0, z: 7, rot: 0 },
@@ -1696,27 +1872,104 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
     tone: OfficeTone;
     prevTone: OfficeTone;
     prevCat: number;
-    flight: { start: number; cat: number; mode: "auto" | "demo" } | null;
+    flight: { start: number; cat: number; mode: "auto" | "demo"; run: number } | null;
+    landing: { start: number; mode: "auto" | "demo" } | null;
     airborne: boolean;
-    airStart: number;
-    airBase: { x: number; y: number; z: number };
     dirX: number;
     dirZ: number;
+    gearK: number;
   }
   const entries = new Map<string, Entry>();
 
+  /* 甲板地勤：作训服 + 岗位色马甲 + 防护头盔，不是「一根柱子加一个球」 */
   function makeCrew(accent: number, white = false) {
     const g = new THREE.Group();
-    const vest = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.55, 8), new THREE.MeshStandardMaterial({ color: white ? 0xd8dde0 : accent, roughness: 0.7 }));
-    vest.position.y = 0.4;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 6), new THREE.MeshStandardMaterial({ color: 0xd9c0a4, roughness: 0.8 }));
-    head.position.y = 0.78;
-    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.155, 8, 6), new THREE.MeshStandardMaterial({ color: white ? 0xe9edf0 : accent, roughness: 0.6 }));
-    helmet.position.y = 0.84;
-    helmet.scale.y = 0.6;
-    g.add(vest, head, helmet);
-    g.scale.setScalar(2.3);
-    g.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = true; });
+    const cloth = new THREE.MeshStandardMaterial({ color: 0x2f3f4c, roughness: 0.9, metalness: 0.03 });
+    const jer = new THREE.Color(white ? 0xe2e8ea : accent).multiplyScalar(0.86);
+    const jersey = new THREE.MeshStandardMaterial({ color: jer, roughness: 0.68, metalness: 0.05 });
+    const jerseyDark = new THREE.MeshStandardMaterial({ color: jer.clone().multiplyScalar(0.7), roughness: 0.7, metalness: 0.05 });
+    const skin = new THREE.MeshStandardMaterial({ color: 0xc9a179, roughness: 0.92 });
+    const bootMat = new THREE.MeshStandardMaterial({ color: 0x141a1f, roughness: 0.66, metalness: 0.28 });
+    const strap = new THREE.MeshStandardMaterial({ color: 0x101820, roughness: 0.64, metalness: 0.24 });
+    const lens = new THREE.MeshStandardMaterial({ color: 0x0b1216, roughness: 0.2, metalness: 0.7, envMapIntensity: 1.4 });
+    const tape = new THREE.MeshStandardMaterial({ color: 0xdfe6e6, roughness: 0.36, metalness: 0.12 });
+
+    /* 靴子 + 裤腿（两条腿微微分开站，不是一根柱子） */
+    [-1, 1].forEach((s) => {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(0.078, 0.05, 0.128), bootMat);
+      b.position.set(s * 0.055, 0.025, 0.016);
+      g.add(b);
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.037, 0.044, 0.3, 8), cloth);
+      leg.position.set(s * 0.055, 0.2, 0);
+      g.add(leg);
+    });
+    /* 腰胯 */
+    const hips = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.115, 0.1, 10), cloth);
+    hips.position.y = 0.355;
+    g.add(hips);
+    const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.113, 0.117, 0.035, 10), strap);
+    belt.position.y = 0.392;
+    g.add(belt);
+    /* 躯干（作训服） + 救生马甲 + 反光带 */
+    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.113, 0.107, 0.26, 10), cloth);
+    torso.position.y = 0.5;
+    g.add(torso);
+    const vest = new THREE.Mesh(new THREE.CylinderGeometry(0.124, 0.132, 0.2, 10), jersey);
+    vest.position.y = 0.5;
+    g.add(vest);
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.098, 0.122, 0.05, 10), jerseyDark);
+    collar.position.y = 0.622;
+    g.add(collar);
+    const tapeBand = new THREE.Mesh(new THREE.CylinderGeometry(0.134, 0.136, 0.018, 10), tape);
+    tapeBand.position.y = 0.552;
+    g.add(tapeBand);
+    /* 肩章 + 手臂 + 手 */
+    [-1, 1].forEach((s) => {
+      const pad = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.03, 0.1), jerseyDark);
+      pad.position.set(s * 0.104, 0.612, 0);
+      g.add(pad);
+      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.033, 0.029, 0.25, 8), cloth);
+      arm.position.set(s * 0.148, 0.487, 0.006);
+      arm.rotation.z = s * 0.1;
+      g.add(arm);
+      const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.031, 0.029, 0.03, 8), jerseyDark);
+      cuff.position.set(s * 0.16, 0.375, 0.008);
+      g.add(cuff);
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.031, 7, 5), skin);
+      hand.position.set(s * 0.163, 0.348, 0.01);
+      g.add(hand);
+    });
+    /* 脖子 / 头 / 防护头盔（壳 + 帽檐 + 耳罩 + 护目镜 + 下颌带） */
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.031, 0.037, 0.045, 7), skin);
+    neck.position.y = 0.652;
+    g.add(neck);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.078, 10, 8), skin);
+    head.position.y = 0.714;
+    head.scale.set(0.95, 1.06, 0.97);
+    g.add(head);
+    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.081, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.56), jersey);
+    helmet.position.y = 0.736;
+    g.add(helmet);
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.083, 0.0855, 0.02, 12, 1, true), jersey);
+    brim.position.y = 0.716;
+    g.add(brim);
+    [-1, 1].forEach((s) => {
+      const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.027, 0.027, 0.02, 8), strap);
+      cup.rotation.z = Math.PI / 2;
+      cup.position.set(s * 0.081, 0.712, 0.002);
+      g.add(cup);
+    });
+    const goggles = new THREE.Mesh(new THREE.BoxGeometry(0.112, 0.03, 0.012), lens);
+    goggles.position.set(0, 0.744, 0.086);
+    goggles.rotation.x = -0.12;
+    g.add(goggles);
+    const chinStrap = new THREE.Mesh(new THREE.BoxGeometry(0.011, 0.058, 0.046), strap);
+    chinStrap.position.set(0.046, 0.686, 0.075);
+    chinStrap.rotation.z = 0.2;
+    g.add(chinStrap);
+
+    g.scale.setScalar(2.05);
+    g.traverse((o) => { if ((o as THREE.Mesh).isMesh) { o.castShadow = true; o.receiveShadow = false; } });
     return g;
   }
 
@@ -1782,22 +2035,27 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
       crew.position.set(LEAD.x, 0, LEAD.z);
       ship.add(crew);
       label.addEventListener("click", () => onSelect(actor.id));
-      return { crew, ring: ringFor(tone, 1.2), label, line, dot, anchorX: 0, anchorY: 0, target: LEAD, cur: { x: LEAD.x, y: 0, z: LEAD.z, rot: 0 }, tone, prevTone: tone, prevCat: -1, flight: null, airborne: false, airStart: 0, airBase: { x: 0, y: 0, z: 0 }, dirX: 0, dirZ: 1 };
+      return { crew, ring: ringFor(tone, 1.2), label, line, dot, anchorX: 0, anchorY: 0, target: LEAD, cur: { x: LEAD.x, y: 0, z: LEAD.z, rot: 0 }, tone, prevTone: tone, prevCat: -1, flight: null, landing: null, airborne: false, dirX: 0, dirZ: 1, gearK: 0 };
     }
     const kind = planeKind(actor, index);
     const mesh = makeJet(kind, false);
     mesh.position.set(0, 0.74, 0);
+    /* YXZ：先偏航再俯仰，飞机拐弯爬升时姿态才不会歪 */
+    mesh.rotation.order = "YXZ";
+    mesh.rotation.y = CAT[0].rot;
     mesh.traverse((o) => { if ((o as THREE.Mesh).isMesh) { o.castShadow = true; o.receiveShadow = false; } });
+    /* 左红右绿：机头朝 +z 时左翼在 +x */
     const left = new THREE.Mesh(new THREE.SphereGeometry(0.09, 5, 4), navRed);
-    left.position.set(-3.0, 0.1, -0.2);
+    left.position.set(3.0, 0.1, -0.2);
     mesh.add(left);
     const right = new THREE.Mesh(new THREE.SphereGeometry(0.09, 5, 4), navGreen);
-    right.position.set(3.0, 0.1, -0.2);
+    right.position.set(-3.0, 0.1, -0.2);
     mesh.add(right);
     const ao = new THREE.Mesh(new THREE.PlaneGeometry(9, 7), planeAO);
     ao.rotation.x = -Math.PI / 2;
     ao.position.y = -0.675;
     mesh.add(ao);
+    mesh.userData.ao = ao;
     ship.add(mesh);
     const exhaust = new THREE.Sprite(new THREE.SpriteMaterial({
       map: EXHAUST_TEX, color: 0xffb45e, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0,
@@ -1806,25 +2064,57 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
     exhaust.position.set(0, 0, -3.6);
     mesh.add(exhaust);
     label.addEventListener("click", () => onSelect(actor.id));
-    return { plane: mesh, ring: ringFor(tone, 2.2), label, line, dot, exhaust, anchorX: 0, anchorY: 0, target: CAT[0], cur: { x: CAT[0].x, y: 0.74, z: CAT[0].z, rot: CAT[0].rot }, tone, prevTone: tone, prevCat: -1, flight: null, airborne: false, airStart: 0, airBase: { x: 0, y: 0, z: 0 }, dirX: 0, dirZ: 1 };
+    return { plane: mesh, ring: ringFor(tone, 2.2), label, line, dot, exhaust, anchorX: 0, anchorY: 0, target: CAT[0], cur: { x: CAT[0].x, y: 0.74, z: CAT[0].z, rot: CAT[0].rot }, tone, prevTone: tone, prevCat: -1, flight: null, landing: null, airborne: false, dirX: 0, dirZ: 1, gearK: 0 };
   }
 
   let firstSync = true;
+  /** 落回甲板：飞行结束后瞬移回机位（那时飞机已飞出画面，不会看到瞬移） */
+  function parkPlane(entry: Entry) {
+    if (!entry.plane) return;
+    const t = entry.target;
+    entry.flight = null;
+    entry.landing = null;
+    entry.airborne = false;
+    entry.gearK = 0;
+    entry.cur.x = t.x;
+    entry.cur.y = 0.74;
+    entry.cur.z = t.z;
+    entry.cur.rot = t.rot;
+    entry.plane.position.set(t.x, 0.74, t.z);
+    entry.plane.rotation.set(0, t.rot, 0);
+    entry.ring.position.set(t.x, 0.11, t.z);
+    entry.ring.visible = true;
+    if (entry.exhaust) entry.exhaust.material.opacity = 0;
+    const gear = entry.plane.userData.gear;
+    if (gear) { gear.scale.y = 1; gear.visible = true; }
+    const ao = entry.plane.userData.ao;
+    if (ao) ao.visible = true;
+    if (entry.steam) { entry.steam.removeFromParent(); entry.steam = undefined; }
+  }
+
   function startFlight(entry: Entry, catIdx: number, mode: "auto" | "demo") {
     if (!entry.plane || !entry.exhaust) return;
     if (motion.tier === "off" || motion.reduced) return;
     const base = CAT[catIdx] || CAT[0];
-    entry.flight = { start: tFlight, cat: Math.max(0, catIdx), mode };
+    const dl = Math.hypot(base.dx ?? 0, base.dz ?? 1) || 1;
+    const dx = (base.dx ?? 0) / dl;
+    const dz = (base.dz ?? 1) / dl;
+    entry.flight = { start: tFlight, cat: Math.max(0, catIdx), mode, run: deckRun(base.x, base.z, dx, dz) };
     entry.airborne = false;
-    entry.dirX = base.dx ?? 0;
-    entry.dirZ = base.dz ?? 1;
+    entry.gearK = 0;
+    entry.dirX = dx;
+    entry.dirZ = dz;
     if (!cine) cine = { entry, start: tFlight };
     entry.cur.x = base.x;
     entry.cur.z = base.z;
     entry.cur.y = 0.74;
-    entry.cur.rot = base.rot;
+    entry.cur.rot = Math.atan2(dx, dz);
     entry.plane.position.set(base.x, 0.74, base.z);
-    entry.plane.rotation.set(0, Math.PI + base.rot, 0);
+    entry.plane.rotation.set(0, entry.cur.rot, 0);
+    const gear = entry.plane.userData.gear;
+    if (gear) { gear.scale.y = 1; gear.visible = true; }
+    const ao = entry.plane.userData.ao;
+    if (ao) ao.visible = true;
     entry.ring.position.set(base.x, 0.11, base.z);
     entry.ring.visible = false;
     if (entry.steam) { entry.steam.removeFromParent(); entry.steam = undefined; }
@@ -1837,8 +2127,44 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
     entry.steam = steam;
   }
 
+  /** 着舰：从舰艉后方对正下滑道进场 → 拦阻 → 滑回自己的机位 */
+  function startLanding(entry: Entry, mode: "auto" | "demo") {
+    if (!entry.plane) return;
+    if (motion.tier === "off" || motion.reduced) return;
+    if (entry.landing) return;
+    entry.flight = null;
+    entry.landing = { start: tFlight, mode };
+    entry.airborne = false;
+    entry.gearK = 0;
+    const dir = { x: Math.sin(LAND.rot), z: Math.cos(LAND.rot) };
+    entry.dirX = dir.x;
+    entry.dirZ = dir.z;
+    entry.cur.x = LAND.x - dir.x * APPROACH;
+    entry.cur.z = LAND.z - dir.z * APPROACH;
+    entry.cur.y = APPROACH_ALT;
+    entry.cur.rot = LAND.rot;
+    entry.plane.position.set(entry.cur.x, entry.cur.y, entry.cur.z);
+    entry.plane.rotation.set(-0.06, LAND.rot, 0);
+    entry.ring.position.set(LAND.x, 0.11, LAND.z);
+    entry.ring.visible = false;
+    const gear = entry.plane.userData.gear;
+    if (gear) { gear.scale.y = 1; gear.visible = true; }
+    const ao = entry.plane.userData.ao;
+    if (ao) ao.visible = false;
+    if (entry.exhaust) entry.exhaust.material.opacity = 0.16;
+    if (entry.steam) { entry.steam.removeFromParent(); entry.steam = undefined; }
+    if (!cine) cine = { entry, start: tFlight };
+  }
+
+  function landDemo() {
+    const list = [...entries.values()].filter((e) => e.plane && !e.flight && !e.landing);
+    if (!list.length) return;
+    const review = list.find((e) => e.tone === "review" || e.target === LAND);
+    startLanding(review ?? list[0], "demo");
+  }
+
   function launchDemo() {
-    const list = [...entries.values()].filter((e) => e.plane && !e.flight);
+    const list = [...entries.values()].filter((e) => e.plane && !e.flight && !e.landing);
     if (!list.length) return;
     const running = list.find((e) => e.tone === "run" && CAT.includes(e.target));
     const target = running ?? list[0];
@@ -1872,13 +2198,15 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
       const catIdx = CAT.indexOf(target);
       if (entry.plane) {
         if (entry.flight && catIdx < 0) entry.flight = null;
-        if (entry.airborne && (actor.tone !== "run" || catIdx < 0)) {
-          entry.airborne = false;
-        }
         const becameRun = actor.tone === "run" && entry.prevTone !== "run";
         const enteredCat = actor.tone === "run" && catIdx >= 0 && entry.prevCat !== catIdx;
-        if (!firstSync && !entry.flight && !entry.airborne && (becameRun || enteredCat)) {
+        if (!firstSync && !entry.flight && !entry.airborne && !entry.landing && (becameRun || enteredCat)) {
           startFlight(entry, Math.max(0, catIdx), "auto");
+        }
+        /* 进入 review / approval = 回到着舰道：放一次降落，落到自己的机位 */
+        const becameReview = actor.tone === "review" && entry.prevTone !== "review";
+        if (!firstSync && !entry.flight && !entry.airborne && !entry.landing && becameReview) {
+          startLanding(entry, "auto");
         }
       }
       entry.prevTone = actor.tone;
@@ -1914,7 +2242,7 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
         v.set(0, 2.9, 0);
         entry.plane.localToWorld(v);
       } else {
-        v.set(LEAD.x, 2.5, LEAD.z);
+        v.set(LEAD.x, 2.2, LEAD.z);
         ship.localToWorld(v);
       }
       v.project(camera);
@@ -2021,14 +2349,51 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
   }
   applyTheme(theme);
 
+  /* 机位预设：都是世界坐标（舰体只会轻微起伏），拖动时绕 look 点环绕 */
+  const VIEWS: Record<CarrierView, { pos: [number, number, number]; look: [number, number, number]; fov: number }> = {
+    overview: { pos: [52, 20, 64], look: [1, 9, -5], fov: 36 },
+    bow: { pos: [-44, 12, 24], look: [-2, 4, 12], fov: 38 },
+    island: { pos: [44, 14, 28], look: [6, 5, 1], fov: 30 },
+    landing: { pos: [27, 8, -52], look: [2, 2.5, -28], fov: 34 },
+    top: { pos: [2, 152, 6], look: [2, 0, 2], fov: 40 },
+  };
+  const view: { key: CarrierView; yaw: number; pitch: number; zoom: number } = { key: "overview", yaw: 0, pitch: 0, zoom: 1 };
+  function resetOrbit() { view.yaw = 0; view.pitch = 0; view.zoom = 1; }
+
   const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
+  let drag: { id: number; x: number; y: number } | null = null;
+  const onPointerDown = (e: PointerEvent) => {
+    /* 只有按在画布上才拖视角，点姓名牌不抢事件 */
+    if (e.button !== 0 || e.target !== canvas) return;
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    canvas.style.cursor = "grabbing";
+  };
   const onPointerMove = (e: PointerEvent) => {
     const r = host.getBoundingClientRect();
     pointer.tx = ((e.clientX - r.left) / Math.max(1, r.width) - 0.5) * 2;
     pointer.ty = ((e.clientY - r.top) / Math.max(1, r.height) - 0.5) * 2;
+    if (!drag || e.pointerId !== drag.id) return;
+    view.yaw -= (e.clientX - drag.x) * 0.005;
+    view.pitch = Math.max(-0.32, Math.min(0.95, view.pitch + (e.clientY - drag.y) * 0.004));
+    drag.x = e.clientX;
+    drag.y = e.clientY;
   };
-  const onDoubleClick = () => { pointer.tx = 0; pointer.ty = 0; };
+  const onPointerUp = (e: PointerEvent) => {
+    if (drag && e.pointerId === drag.id) { drag = null; canvas.style.cursor = ""; }
+  };
+  /* 双击回到总览机位（拖动过的角度一并复位） */
+  const onDoubleClick = () => {
+    pointer.tx = 0;
+    pointer.ty = 0;
+    view.key = "overview";
+    resetOrbit();
+    onViewChange?.("overview");
+  };
+  host.addEventListener("pointerdown", onPointerDown);
   host.addEventListener("pointermove", onPointerMove);
+  host.addEventListener("pointerup", onPointerUp);
+  host.addEventListener("pointercancel", onPointerUp);
+  host.addEventListener("pointerleave", onPointerUp);
   host.addEventListener("dblclick", onDoubleClick);
 
   function resize() {
@@ -2049,6 +2414,8 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
   let cine: { entry: Entry; start: number } | null = null;
   const camPos = new THREE.Vector3(52, 20, 64);
   const camLook = new THREE.Vector3(1, 9, -5);
+  let camFov = 36;
+  let camRoll = 0;
   let disposed = false;
   function animate() {
     if (disposed) return;
@@ -2071,8 +2438,16 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
       pointer.x = 0;
       pointer.y = 0;
     }
-    const baseCamX = 52 + Math.sin(tAnim * 0.11) * amp + pointer.x * 1.4;
-    const baseCamY = 20 + Math.sin(tAnim * 0.08 + 1.4) * amp * 0.35 - pointer.y * 0.8;
+    /* 机位 = 预设机位 + 拖动的环绕角（绕预设 look 点转），再叠一点呼吸和指针视差 */
+    const preset = VIEWS[view.key] ?? VIEWS.overview;
+    const offX = preset.pos[0] - preset.look[0];
+    const offY = preset.pos[1] - preset.look[1];
+    const offZ = preset.pos[2] - preset.look[2];
+    const baseR = Math.hypot(offX, offY, offZ) || 1;
+    const orbitYaw = Math.atan2(offX, offZ) + view.yaw;
+    const orbitPitch = Math.max(-0.32, Math.min(1.35, Math.asin(offY / baseR) + view.pitch));
+    const orbitR = baseR * view.zoom;
+    const cosPitch = Math.cos(orbitPitch);
     const mv = anim ? 1 : 0;
     ship.rotation.y = SHIP_YAW + Math.sin(tAnim * 0.05) * 0.006 * mv;
     ship.position.y = Math.sin(tAnim * 0.42) * 0.085 * mv;
@@ -2090,86 +2465,159 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
       if (entry.flight) {
         const flight = entry.flight;
         const base = CAT[flight.cat] || CAT[0];
-        const dx = base.dx ?? 0;
-        const dz = base.dz ?? 1;
+        const dx = entry.dirX;
+        const dz = entry.dirZ;
+        const heading0 = Math.atan2(dx, dz);
         const el = tFlight - flight.start;
         let y = 0.74;
         let dist = 0;
         let pitch = 0;
-        if (el < 0.8) {
+        let roll = 0;
+        let airborne = false;
+        if (el < T_TENSION) {
+          /* 蓄力：机轮锁死，机体轻微抖动，尾喷口升温 */
           launchingCats.add(flight.cat);
-          if (entry.exhaust) entry.exhaust.material.opacity = (el / 0.8) * 0.55;
-        } else if (el < 2.2) {
+          roll = Math.sin(el * 46) * 0.004;
+          if (entry.exhaust) entry.exhaust.material.opacity = 0.25 + (el / T_TENSION) * 0.4;
+        } else if (el < T_TENSION + T_STROKE) {
+          /* 行程：电磁弹射，二次方加速；到甲板末端刚好抬起机头 */
+          const p = (el - T_TENSION) / T_STROKE;
+          dist = flight.run * Math.pow(p, 2.05);
+          pitch = -0.11 * p * p;
+          shake = Math.max(shake, (1 - p) * 0.65);
           launchingCats.add(flight.cat);
-          const p = (el - 0.8) / 1.4;
-          const e = p * p;
-          dist = e * 14;
-          y = 0.74 + e * 0.22;
-          pitch = -0.04 * e;
-          shake = Math.max(shake, (1 - p) * 0.9);
           if (entry.exhaust) {
-            entry.exhaust.material.opacity = 0.9;
-            entry.exhaust.scale.setScalar(2.4 + e * 0.9);
-          }
-        } else if (el < 3.4) {
-          const p = (el - 2.2) / 1.2;
-          const e = 1 - Math.pow(1 - p, 3);
-          dist = 14 + e * 4;
-          y = 0.74 + e * 2.8;
-          pitch = -0.04 - e * 0.22;
-          if (entry.exhaust) {
-            entry.exhaust.material.opacity = 0.9 * (1 - p) + 0.25;
-            entry.exhaust.scale.setScalar(3.3 - e * 0.6);
+            entry.exhaust.material.opacity = 0.85;
+            entry.exhaust.scale.setScalar(2.6 + p * 1.2);
           }
         } else {
-          if (flight.mode === "auto") {
-            entry.airborne = true;
-            entry.ring.visible = false;
-            entry.airStart = tFlight;
-            entry.airBase = { x: base.x + dx * 18, y: 3.54, z: base.z + dz * 18 };
-            dist = 18;
-            y = 3.54;
-            pitch = -0.26;
-          } else {
-            entry.flight = null;
-            entry.airborne = false;
+          /* 离舰：持续加速、拉起、拐弯，真的飞出画面 */
+          airborne = true;
+          const u = el - T_TENSION - T_STROKE;
+          /* 沿圆弧积分：不会随帧率漂移 */
+          const steps = 10;
+          const h = u / steps;
+          let px = 0;
+          let pz = 0;
+          for (let i = 0; i < steps; i++) {
+            const th = TURN_RATE * (i + 0.5) * h;
+            const vi = V_LIFT + ACC_AIR * (i + 0.5) * h;
+            px += Math.sin(th) * vi * h;
+            pz += Math.cos(th) * vi * h;
           }
-          if (entry.exhaust) entry.exhaust.material.opacity = flight.mode === "auto" ? 0.28 : 0;
+          const c0 = Math.cos(heading0);
+          const s0 = Math.sin(heading0);
+          const arcX = c0 * px + s0 * pz;
+          const arcZ = -s0 * px + c0 * pz;
+          const startX = base.x + s0 * flight.run;
+          const startZ = base.z + c0 * flight.run;
+          y = 0.74 + CLIMB * (1 - Math.exp(-0.72 * u));
+          pitch = -(0.2 + 0.26 * Math.exp(-1.1 * u));
+          roll = 0.19 * Math.min(1, u / 1.3);
+          entry.cur.rot = heading0 + TURN_RATE * u;
+          entry.cur.x = startX + arcX;
+          entry.cur.z = startZ + arcZ;
+          if (entry.exhaust) {
+            entry.exhaust.material.opacity = 0.65 * Math.exp(-0.35 * u) + 0.12;
+            entry.exhaust.scale.setScalar(3.0 - Math.min(1, u / 3) * 0.9);
+          }
+          if (u > FLIGHT_END) { startLanding(entry, "auto"); continue; }
         }
-        entry.cur.x = base.x + dx * dist;
-        entry.cur.z = base.z + dz * dist;
+        entry.airborne = airborne;
+        if (!airborne) {
+          entry.cur.x = base.x + dx * dist;
+          entry.cur.z = base.z + dz * dist;
+          entry.cur.rot = heading0;
+        }
         entry.cur.y = y;
-        entry.cur.rot = base.rot;
         entry.plane.position.set(entry.cur.x, y, entry.cur.z);
-        entry.plane.rotation.y = Math.PI + base.rot;
-        entry.plane.rotation.x = pitch;
-        entry.ring.position.set(base.x, 0.11, base.z);
+        entry.plane.rotation.set(pitch, entry.cur.rot, roll);
+        entry.ring.visible = false;
+        /* 起落架：离舰后 0.9s 内收起 */
+        const gear = entry.plane.userData.gear;
+        if (gear) {
+          const u = el - T_TENSION - T_STROKE;
+          const k = airborne ? Math.min(1, Math.max(0, u / 0.9)) : 0;
+          entry.gearK = k;
+          gear.scale.y = Math.max(0.06, 1 - k * 1.02);
+          gear.visible = k < 0.9;
+        }
+        const ao = entry.plane.userData.ao;
+        if (ao) ao.visible = !airborne;
         if (entry.steam) {
           const sp = Math.min(1, el / 2.4);
           entry.steam.material.opacity = Math.max(0, 0.45 * (1 - sp));
           entry.steam.scale.setScalar(2.4 + sp * 5.5);
           if (el > 2.6) { entry.steam.removeFromParent(); entry.steam = undefined; }
         }
-      } else if (entry.airborne) {
-        const ta = Math.max(0, tFlight - entry.airStart);
-        const climb = 1 - Math.pow(1 - Math.min(1, ta / 2.8), 3);
-        const sway = Math.sin(ta * 0.55) * 1.2;
-        const dx = entry.dirX;
-        const dz = entry.dirZ;
-        entry.cur.x = entry.airBase.x + dx * 4 * climb + dz * sway;
-        entry.cur.z = entry.airBase.z + dz * 4 * climb - dx * sway;
-        entry.cur.y = entry.airBase.y + 3.2 * climb + Math.sin(ta * 1.1) * 0.12;
-        entry.plane.position.set(entry.cur.x, entry.cur.y, entry.cur.z);
-        entry.plane.rotation.set(-0.18, Math.PI + entry.cur.rot + Math.sin(ta * 0.55) * 0.03, Math.sin(ta * 0.55) * 0.12);
+      } else if (entry.landing) {
+        /* 着舰：对正下滑 → 拉平接地 → 拦阻滑跑 */
+        const landing = entry.landing;
+        const el = tFlight - landing.start;
+        const dir = { x: Math.sin(LAND.rot), z: Math.cos(LAND.rot) };
+        let along = 0;
+        let y = 0.74;
+        let pitch = 0;
+        if (el < T_APPROACH) {
+          const p = el / T_APPROACH;
+          along = -APPROACH * (1 - p);
+          y = 0.74 + (APPROACH_ALT - 0.74) * Math.pow(1 - p, 1.7);
+          pitch = -0.05 - 0.07 * Math.sin(Math.PI * Math.min(1, p * 1.15));
+          if (entry.exhaust) entry.exhaust.material.opacity = 0.16;
+        } else {
+          /* 拦阻索咬住：1 秒内从进场速度刹停，只往前滑几米 */
+          const q = Math.min(1, (el - T_APPROACH) / T_ROLLOUT);
+          along = 8.5 * (1 - Math.pow(1 - q, 2.4));
+          y = 0.74 - Math.sin(q * Math.PI) * 0.08;
+          pitch = 0.02 * q;
+          if (!entry.steam && q < 0.6) {
+            const smoke = new THREE.Sprite(new THREE.SpriteMaterial({
+              map: STEAM_TEX, color: 0xdff0ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0,
+            }));
+            smoke.position.set(LAND.x, 0.55, LAND.z);
+            smoke.scale.set(1.6, 1.6, 1);
+            ship.add(smoke);
+            entry.steam = smoke;
+          }
+          if (entry.steam) {
+            entry.steam.material.opacity = Math.max(0, 0.3 * (1 - q));
+            entry.steam.scale.setScalar(1.6 + q * 4.2);
+          }
+          if (entry.exhaust) entry.exhaust.material.opacity = 0;
+          if (q >= 1) {
+            /* 停稳后交回普通走位：滑回自己该在的机位 */
+            entry.landing = null;
+            entry.ring.visible = true;
+            entry.cur.x = LAND.x + dir.x * along;
+            entry.cur.z = LAND.z + dir.z * along;
+            entry.cur.y = 0.74;
+            entry.cur.rot = LAND.rot;
+            entry.plane.position.set(entry.cur.x, 0.74, entry.cur.z);
+            entry.plane.rotation.set(0, LAND.rot, 0);
+            const aoLand = entry.plane.userData.ao;
+            if (aoLand) aoLand.visible = true;
+            continue;
+          }
+        }
+        entry.cur.x = LAND.x + dir.x * along;
+        entry.cur.z = LAND.z + dir.z * along;
+        entry.cur.y = y;
+        entry.cur.rot = LAND.rot;
+        entry.plane.position.set(entry.cur.x, y, entry.cur.z);
+        entry.plane.rotation.set(pitch, LAND.rot, 0);
         entry.ring.visible = false;
-        if (entry.exhaust) entry.exhaust.material.opacity = 0.16;
+        const geoLand = entry.plane.userData.gear;
+        if (geoLand) { geoLand.scale.y = 1; geoLand.visible = true; }
+        const aoLand = entry.plane.userData.ao;
+        if (aoLand) aoLand.visible = false;
       } else {
+        entry.airborne = false;
         entry.cur.x += (t.x - entry.cur.x) * speed;
         entry.cur.z += (t.z - entry.cur.z) * speed;
         entry.cur.y += (0.74 - entry.cur.y) * speed;
         entry.cur.rot += (t.rot - entry.cur.rot) * speed;
         entry.plane.position.set(entry.cur.x, entry.cur.y, entry.cur.z);
-        entry.plane.rotation.y = Math.PI + entry.cur.rot;
+        entry.plane.rotation.y = entry.cur.rot;
         entry.plane.rotation.x += (0 - entry.plane.rotation.x) * speed;
         entry.plane.rotation.z += (0 - entry.plane.rotation.z) * speed;
         entry.ring.visible = entry.cur.y < 1.4;
@@ -2184,38 +2632,80 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
     });
     scene.updateMatrixWorld(true);
 
-    /* 起飞镜头：先在侧面跟住弹射位，起飞后拉高、后撤，让航母留在画面里 */
+    /* 弹射 / 着舰镜头：各自有固定的跟拍窗口，结束后回总览 */
     if (cine) {
-      const alive = Boolean(cine.entry.flight || cine.entry.airborne) && tFlight - cine.start < 9;
+      const el = tFlight - cine.start;
+      const alive = (Boolean(cine.entry.flight) && el < T_TENSION + T_STROKE + 2.7)
+        || (Boolean(cine.entry.landing) && el < T_APPROACH + T_ROLLOUT + 0.3);
       if (!alive) cine = null;
     }
-    const desiredPos = new THREE.Vector3(baseCamX, baseCamY, 64);
-    const desiredLook = new THREE.Vector3(1, 9, -5);
-    if (cine && cine.entry.plane) {
+    const desiredPos = new THREE.Vector3(
+      preset.look[0] + Math.sin(orbitYaw) * cosPitch * orbitR + Math.sin(tAnim * 0.11) * amp + pointer.x * 1.4,
+      preset.look[1] + Math.sin(orbitPitch) * orbitR + Math.sin(tAnim * 0.08 + 1.4) * amp * 0.35 - pointer.y * 0.8,
+      preset.look[2] + Math.cos(orbitYaw) * cosPitch * orbitR,
+    );
+    const desiredLook = new THREE.Vector3(preset.look[0], preset.look[1], preset.look[2]);
+    let desiredFov = preset.fov;
+    let desiredRoll = 0;
+    if (cine && cine.entry.plane && cine.entry.landing) {
+      /* 着舰镜头：机位在左舷外侧、进场道旁边，看飞机沿下滑道对正、拉平、咬住拦阻索 */
+      const entry = cine.entry;
       const p = new THREE.Vector3();
-      cine.entry.plane.getWorldPosition(p);
-      const dir = new THREE.Vector3(cine.entry.dirX, 0, cine.entry.dirZ).applyQuaternion(ship.quaternion).normalize();
+      entry.plane.getWorldPosition(p);
+      const dir = new THREE.Vector3(Math.sin(LAND.rot), 0, Math.cos(LAND.rot)).applyQuaternion(ship.quaternion).normalize();
       const perp = new THREE.Vector3(dir.z, 0, -dir.x);
-      const air = cine.entry.airborne;
-      const targetCam = air
-        ? p.clone().addScaledVector(perp, 26).addScaledVector(dir, -10).add(new THREE.Vector3(0, 9, 0))
-        : p.clone().addScaledVector(dir, -16).addScaledVector(perp, 7).add(new THREE.Vector3(0, 5, 0));
-      const targetLook = air
-        ? p.clone().addScaledVector(dir, -5).add(new THREE.Vector3(0, 0.8, 0))
-        : p.clone().addScaledVector(dir, 6).add(new THREE.Vector3(0, 1, 0));
-      desiredPos.copy(targetCam);
-      desiredLook.copy(targetLook);
+      const anchor = new THREE.Vector3(LAND.x, 0, LAND.z);
+      ship.localToWorld(anchor);
+      /* 跟在下滑道后上方：飞机沿下滑线压向甲板，拦阻后一路跟到停稳 */
+      desiredPos.copy(p).addScaledVector(dir, -15).addScaledVector(perp, -5).add(new THREE.Vector3(0, 5.2, 0));
+      desiredLook.copy(p).addScaledVector(dir, 7).add(new THREE.Vector3(0, -1.2, 0));
+      desiredFov = 35;
+      desiredRoll = 0.012;
+    } else if (cine && cine.entry.plane && cine.entry.flight) {
+      const entry = cine.entry;
+      const flight = entry.flight;
+      const base = CAT[flight.cat] || CAT[0];
+      const p = new THREE.Vector3();
+      entry.plane.getWorldPosition(p);
+      const dir = new THREE.Vector3(entry.dirX, 0, entry.dirZ).applyQuaternion(ship.quaternion).normalize();
+      const perp = new THREE.Vector3(dir.z, 0, -dir.x);
+      const el = tFlight - cine.start;
+      if (!entry.airborne) {
+        /* 弹射：贴着舷侧低机位，机头在画面里抬起来 */
+        const anchor = new THREE.Vector3(base.x, 0, base.z);
+        ship.localToWorld(anchor);
+        desiredPos.copy(anchor).addScaledVector(perp, 10).addScaledVector(dir, -16).add(new THREE.Vector3(0, 4.4, 0));
+        desiredLook.copy(p).addScaledVector(dir, 5).add(new THREE.Vector3(0, 1.1, 0));
+        desiredFov = 34;
+        desiredRoll = 0.01;
+      } else {
+        /* 离舰：机位钉在舰首外侧，机头抬起后从画面里飞出去（镜头不追着飞机跑，航母一直在画面里） */
+        const u = Math.max(0, el - T_TENSION - T_STROKE);
+        const recede = Math.min(1, u / 4.5);
+        const anchor = new THREE.Vector3(base.x + entry.dirX * flight.run, 0, base.z + entry.dirZ * flight.run);
+        ship.localToWorld(anchor);
+        desiredPos.copy(anchor).addScaledVector(perp, 48 + recede * 6).addScaledVector(dir, -30 - recede * 6).add(new THREE.Vector3(0, 19 + recede * 3, 0));
+        desiredLook.copy(anchor).addScaledVector(dir, -12).add(new THREE.Vector3(0, 2.5 + recede * 2, 0));
+        desiredFov = 34 + recede * 4;
+        desiredRoll = 0.026;
+      }
     }
     const ease = cine ? Math.min(1, dt * 4.4) : Math.min(1, dt * 2.2);
     camPos.lerp(desiredPos, ease);
     camLook.lerp(desiredLook, ease);
+    camFov += (desiredFov - camFov) * ease;
+    camRoll += (desiredRoll - camRoll) * ease;
     camera.position.copy(camPos);
     if (shake > 0) {
       camera.position.x += Math.sin(tAnim * 96) * 0.18 * shake;
       camera.position.y += Math.cos(tAnim * 83) * 0.12 * shake;
     }
     camera.lookAt(camLook);
-    scene.updateMatrixWorld(true);
+    camera.rotateZ(camRoll);
+    if (Math.abs(camera.fov - camFov) > 0.01) {
+      camera.fov = camFov;
+      camera.updateProjectionMatrix();
+    }
     renderer.render(scene, camera);
     projectLabels();
   }
@@ -2227,6 +2717,16 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
     launch() {
       if (disposed) return;
       launchDemo();
+    },
+    land() {
+      if (disposed) return;
+      landDemo();
+    },
+    setView(next) {
+      if (disposed) return;
+      if (!VIEWS[next]) return;
+      view.key = next;
+      resetOrbit();
     },
     update() {
       if (disposed) return;
@@ -2248,7 +2748,11 @@ export function mountCarrier3D(options: MountOptions): Carrier3DApi {
       disposed = true;
       cancelAnimationFrame(rafId);
       ro.disconnect();
+      host.removeEventListener("pointerdown", onPointerDown);
       host.removeEventListener("pointermove", onPointerMove);
+      host.removeEventListener("pointerup", onPointerUp);
+      host.removeEventListener("pointercancel", onPointerUp);
+      host.removeEventListener("pointerleave", onPointerUp);
       host.removeEventListener("dblclick", onDoubleClick);
       for (const entry of entries.values()) entry.label.remove();
       entries.clear();

@@ -102,8 +102,7 @@ macos-14 / ubuntu-24.04 / windows-2022
 npm run smoke:dsh     # 内置 dsh 冒烟
 npm run typecheck     # tsc --noEmit
 npm run docs:build    # GitHub Pages → dist-pages/
-npm run video:pages   # 横版介绍片 → public/video（1600×900，约 4.5MB）
 npm run wiki:publish  # resources/wiki/*.md → GitHub Wiki
 npm run verify:privacy # 真实账号 / 手机号 / 邮箱 / 本机路径 / 密钥
-node scripts/e2e-smoke.mjs  # UI 冒烟（需要调试端口）
+npm run test:e2e -- --suite=smoke  # UI 冒烟（需要调试端口）
 ```

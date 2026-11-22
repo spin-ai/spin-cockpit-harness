@@ -56,7 +56,7 @@ export function RowMenu({ children, title = "更多操作", popClassName = "" }:
         aria-expanded={open}
         onClick={toggle}
       >
-        <EllipsisIcon size={14} />
+        <EllipsisIcon size={13} />
       </button>
       {open && createPortal(
         <div

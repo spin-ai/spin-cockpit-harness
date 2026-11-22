@@ -138,7 +138,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [markdown, editor]);
 
-  if (!editor) return <div className="pane-empty">加载编辑器…</div>;
+  if (!editor) return <div className="inline-empty">加载编辑器…</div>;
 
   const active = (name: string, attrs?: Record<string, unknown>) => editor.isActive(name, attrs);
 

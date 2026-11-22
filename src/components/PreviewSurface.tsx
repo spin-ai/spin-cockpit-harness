@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ElementContext } from "../types";
-import { CameraIcon, ChevronRightIcon, CodeIcon, CopyIcon, DevtoolsIcon, ExternalIcon, ListIcon, RecordIcon, RefreshIcon, RevealIcon, SearchIcon, XIcon } from "./Icons";
+import { CameraIcon, ChevronRightIcon, CodeIcon, CopyIcon, DevtoolsIcon, ExternalIcon, ListIcon, MinusIcon, PlusIcon, RecordIcon, RefreshIcon, RevealIcon, SearchIcon, XIcon } from "./Icons";
 import { FileVisual, extOf, IMAGE_EXT, VIDEO_EXT, AUDIO_EXT, DOC_EXT } from "./FileVisual";
 import DOMPurify from "dompurify";
 import { slugifyHeading } from "../markdown";
 import { MarkdownEditor, type MarkdownEditorHandle } from "./MarkdownEditor";
+// CodeMirror + legacy-modes 不小：只在第一次打开文本 / 代码文件时加载
+const CodeEditor = lazy(() => import("./CodeEditor").then((m) => ({ default: m.CodeEditor })));
+import { PdfViewer } from "./PdfViewer";
 import { lazy, Suspense } from "react";
 import type { VisualEditorApi } from "./HtmlVisualEditor";
 
@@ -15,6 +18,8 @@ const HtmlVisualEditor = lazy(() => import("./HtmlVisualEditor").then((m) => ({ 
 const Webview: any = "webview";
 
 type FileInfo = { name: string; rel: string; root?: string };
+/** 这些扩展名默认折行（代码文件不折，长行横向滚动） */
+const WRAP_EXT = new Set(["txt", "log", "csv", "tsv", "tex", "rst", "org", "out"]);
 type Loaded = { text?: string; error?: string; size?: number; ext?: string; binary?: boolean; encoding?: string };
 /** 视口预设：宽 / 高都可以为空（= 跟随面板），自定义时两个都能填 */
 const VIEWPORTS = [
@@ -87,6 +92,8 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
   const isDoc = isFile && DOC_EXT.has(ext);
   // 浏览器原生就能画的格式：不读正文（不 base64、不受 2MB 文本限制），直接交给 webview
   const isNative = isHtml || isImage || isMedia || isPdf;
+  /* PDF 用自己的阅读器（主进程渲页图），其余原生格式仍交给 webview */
+  const usePdfViewer = isFile && isPdf;
   const abs = useMemo(() => (file?.root ? `${file.root.replace(/[\\/]+$/, "")}/${file.rel}` : ""), [file?.root, file?.rel]);
   const fileUrl = useMemo(() => fileUrlOf(abs), [abs]);
   const initialWeb = normalizeUrl(url || autoOpenUrl || defaultUrl);
@@ -160,7 +167,9 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
     if (!preset) { setViewport((v) => ({ w: v.w ?? 1024, h: v.h })); return; }
     setViewport({ w: preset.w, h: preset.h });
   };
-  const editable = isFile && (isHtml || isMarkdown);
+  /* 文本 / 代码文件都能改：html 有渲染/可视化/源码三段，markdown 有富文本/源码，其余直接是代码编辑器 */
+  const isTextFile = isFile && !isNative && !isDoc;
+  const editable = isHtml || isMarkdown || (isTextFile && !data?.binary);
   const dirty = editable && data?.text != null && draft !== data.text;
 
   // 文档优先版式：LibreOffice 转过 PDF 就交给 webview（内置阅读器），否则用解析出的 HTML
@@ -180,7 +189,7 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
     } catch { return raw; }
   };
   // webview 只用于网页 / HTML / 图片 / 音视频 / PDF；Markdown 与其他文本走 DOM 渲染
-  const useWebview = Boolean(src) && (!isFile || isNative || Boolean(docPdfSrc));
+  const useWebview = Boolean(src) && !usePdfViewer && (!isFile || isNative || Boolean(docPdfSrc));
   // HTML 文件即使源码模式也保留 webview，切回来不重新加载
   const showWebview = useWebview && (!isFile || !isHtml || fileMode === "render");
 
@@ -719,11 +728,11 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
 
   const fileText = data?.text != null
     ? <pre className="file-preview-text">{data.text}</pre>
-    : <div className="pane-empty">加载中…</div>;
+    : <div className="inline-empty">加载中…</div>;
   // 二进制 / 非 UTF-8：以前直接 utf8 解码塞进 <pre>，看到的是乱码
   const binaryNote = data?.binary
     ? (
-      <div className="pane-empty">
+      <div className="inline-empty">
         <div>{ext ? ext.toUpperCase() : "该文件"} {data.encoding === "non-utf8" ? "不是可识别的文本编码" : "是二进制文件"}，预览不支持</div>
         <div className="tiny faint">用「在 Finder 中显示」交给系统应用打开，或让 Agent 处理它</div>
       </div>
@@ -777,7 +786,7 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
           )}
         </div>
         <div className="preview-surface-actions">
-          {editable && data?.text != null && (
+          {(isHtml || isMarkdown) && data?.text != null && (
             <div className="file-preview-seg" role="group" aria-label="预览模式">
               <button className={fileMode === "render" ? "on" : ""} onClick={() => { if (fileMode === "visual") leaveVisualTo("render"); else setFileMode("render"); }}>{isHtml ? "预览" : "富文本"}</button>
               {isHtml && (
@@ -849,9 +858,9 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
                 <button className="btn tiny-btn" title="适应窗口（清除宽高）" onClick={() => setViewport({ w: null, h: null })}>适应</button>
               )}
               <div className="preview-zoom">
-                <button title="缩小" onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 10) / 10))}>−</button>
+                <button title="缩小" aria-label="缩小" onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 10) / 10))}><MinusIcon size={13} /></button>
                 <button className="preview-zoom-value" title="重置缩放" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
-                <button title="放大" onClick={() => setZoom((z) => Math.min(2, Math.round((z + 0.1) * 10) / 10))}>＋</button>
+                <button title="放大" aria-label="放大" onClick={() => setZoom((z) => Math.min(2, Math.round((z + 0.1) * 10) / 10))}><PlusIcon size={13} /></button>
               </div>
               <button className={`icon-btn ${findOpen ? "on" : ""}`} title="页内查找" disabled={!ready} onClick={() => setFindOpen((v) => !v)}><SearchIcon size={13} /></button>
               <button className={`icon-btn ${consoleOpen ? "on" : ""}`} title="控制台（页面日志）" onClick={() => setConsoleOpen((v) => !v)}>
@@ -937,9 +946,9 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
       {isFile && data?.encoding && !data.binary && (
         <div className="preview-hint">按 {data.encoding.toUpperCase()} 解码显示；保存会写成 UTF-8</div>
       )}
-      {isFile && isNative && !isHtml && (
+      {isFile && isNative && !isHtml && !usePdfViewer && (
         <div className="preview-hint" title="由 Chromium 原生渲染；空白或打不开时用「在 Finder 中显示」交给系统应用">
-          {isPdf ? "PDF" : isMedia ? "音视频" : "图片"}由 Chromium 原生渲染 · 打不开时用 Finder 打开
+          {isMedia ? "音视频" : "图片"}由 Chromium 原生渲染 · 打不开时用 Finder 打开
         </div>
       )}
       {consoleOpen && (
@@ -953,7 +962,7 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
           </div>
           <div className="preview-console-list">
             {logs.length === 0
-              ? <div className="pane-empty">还没有日志；页面 console.* 会出现在这里。</div>
+              ? <div className="inline-empty">还没有日志；页面 console.* 会出现在这里。</div>
               : logs.map((log, i) => (
                 <div key={`${log.at}-${i}`} className={`preview-console-row ${log.level >= 3 ? "error" : log.level === 2 ? "warn" : ""}`}>
                   <span className="preview-console-src" title={log.source}>{log.source ? `${log.source.split("/").pop()}:${log.line}` : "page"}</span>
@@ -983,7 +992,7 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
         )}
         <div className="preview-surface-content">
         {isFile && isHtml && fileMode === "visual" && draft != null && (
-          <Suspense fallback={<div className="pane-empty">加载可视化编辑器…</div>}>
+          <Suspense fallback={<div className="inline-empty">加载可视化编辑器…</div>}>
             <HtmlVisualEditor
               html={draft}
               fileKey={`${file?.root || ""}/${file?.rel || ""}`}
@@ -992,21 +1001,38 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
             />
           </Suspense>
         )}
+        {usePdfViewer && file && <PdfViewer rel={file.rel} root={file.root} name={file.name} onError={setError} />}
         {isFile && fileMode === "source" && editable && (
-          <textarea
-            className="file-source-editor"
+          <Suspense fallback={<div className="inline-empty">加载编辑器…</div>}>
+          <CodeEditor
+            key={`src:${file?.root || ""}/${file?.rel || ""}`}
             value={draft}
-            spellCheck={false}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="空文件，直接在这里写…"
+            name={file?.name || "file.txt"}
+            wrap={isMarkdown}
+            onDraft={setDraft}
+            onSave={() => void save()}
           />
+          </Suspense>
         )}
-        {isFile && !isHtml && !isMarkdown && !isNative && !isDoc && fileText}
+        {isFile && !isHtml && !isMarkdown && !isNative && !isDoc && (data?.text != null
+          ? (
+            <Suspense fallback={<div className="inline-empty">加载编辑器…</div>}>
+            <CodeEditor
+              key={`code:${file?.root || ""}/${file?.rel || ""}`}
+              value={draft}
+              name={file?.name || "file.txt"}
+              wrap={WRAP_EXT.has(extOf(file?.name || ""))}
+              onDraft={setDraft}
+              onSave={() => void save()}
+            />
+            </Suspense>
+          )
+          : data?.error ? null : fileText)}
         {isDoc && !docPdfSrc && (doc?.error
           ? <div className="preview-error">{doc.error}</div>
           : docHtml
             ? <div className="doc-preview" dangerouslySetInnerHTML={{ __html: docHtml }} />
-            : <div className="pane-empty">正在解析文档…</div>)}
+            : <div className="inline-empty">正在解析文档…</div>)}
         {isDoc && doc?.pdfPath && <div className="preview-hint" title="LibreOffice 转成 PDF 后用内置阅读器显示">版式预览（PDF）· 编辑请用「在 Finder 中显示」</div>}
       {isDoc && !doc?.pdfPath && doc?.html && <div className="preview-hint" title="没装 LibreOffice 时只做解析，版式不还原">文字版（安装 LibreOffice 可看版式）· 编辑请用「在 Finder 中显示」</div>}
       {isDoc && doc?.truncated && <div className="preview-hint">文档较大，只渲染了前一部分（完整内容请用「在 Finder 中显示」打开）</div>}
@@ -1041,7 +1067,7 @@ export function PreviewSurface({ mode, file, url, defaultUrl = "http://localhost
             />
           </div>
         )}
-        {!src && <div className="pane-empty">{remoteMode ? (tunnelError ? "隧道未建立，见下方原因" : "正在建立 SSH 隧道…") : "输入地址后点「打开」。"}</div>}
+        {!src && <div className="inline-empty">{remoteMode ? (tunnelError ? "隧道未建立，见下方原因" : "正在建立 SSH 隧道…") : "输入地址后点「打开」。"}</div>}
         </div>
       </div>
     </div>

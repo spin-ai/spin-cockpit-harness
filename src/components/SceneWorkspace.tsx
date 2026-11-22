@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { State } from "../types";
+import { Tabs } from "./Tabs";
+import { useT } from "../i18n";
 import { PageHeader } from "./PageHeader";
 import { EmptyState } from "./EmptyState";
 import { SceneGallery } from "./SceneGallery";
 import { ExecutionConfigTab } from "./ExecutionConfigTab";
 import { SCENE_TEMPLATES, templateLabel, templateOf } from "../office/templates";
 import { OfficeLive } from "./OfficeLive";
+import { XIcon } from "./Icons";
 import { buildOfficeModel, type OfficeCastMember } from "../office/model";
 import { DEFAULT_MOTION, MOTION_LABEL, motionOf, type ScenePrefs } from "../office/SceneConfigPanel";
 
@@ -23,13 +26,21 @@ function defaultPrefs(projectName: string): ScenePrefs {
     showLabels: true,
     light: "auto",
     motion: { ...DEFAULT_MOTION },
+    view: "overview",
   };
 }
 
 function prefsOf(scene: { name: string; template: ScenePrefs["template"]; config: { prefs: Partial<ScenePrefs> } }, fallbackName: string): ScenePrefs {
   const base = defaultPrefs(fallbackName);
   const saved = scene.config.prefs ?? {};
-  return { ...base, ...saved, name: scene.name, template: templateOf(scene.template), motion: { ...DEFAULT_MOTION, ...(saved.motion ?? {}) } };
+  return {
+    ...base,
+    ...saved,
+    name: scene.name,
+    template: templateOf(scene.template),
+    motion: { ...DEFAULT_MOTION, ...(saved.motion ?? {}) },
+    view: saved.view ?? base.view,
+  };
 }
 
 export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThread, onOpenTerminal, onNewThread, onOpenProjects, initialTab = "live", initialSelectedId = null, initialDetailOpen = false, initialMode = "live" }: {
@@ -49,8 +60,13 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
 }) {
   const project = state.projects.find((p) => p.id === state.activeProjectId) ?? null;
   const projectKey = state.activeProjectId || "global";
+  /** 每个项目记住上次看的场景：Chat → 场景来回切，不会又落回第一个（办公室） */
+  const sceneStoreKey = `cmh.scene.${projectKey}`;
   const [tab, setTab] = useState<Tab>(initialTab);
-  const [sceneId, setSceneId] = useState<string | null>(null);
+  const [sceneId, setSceneId] = useState<string | null>(() => {
+    if (initialSelectedId) return initialSelectedId;
+    try { return localStorage.getItem(`cmh.scene.${projectKey}`); } catch { return null; }
+  });
   const [newScene, setNewScene] = useState<{ name: string; template: ScenePrefs["template"] } | null>(null);
   const [localCast, setLocalCast] = useState<OfficeCastMember[] | null>(null);
   const [localPrefs, setLocalPrefs] = useState<ScenePrefs | null>(null);
@@ -62,8 +78,19 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
   const scene = scenes.find((s) => s.id === sceneId) ?? scenes[0] ?? null;
 
   useEffect(() => {
-    setSceneId((prev) => (prev && scenes.some((s) => s.id === prev) ? prev : scenes[0]?.id ?? null));
-  }, [scenes]);
+    let saved: string | null = null;
+    try { saved = localStorage.getItem(sceneStoreKey); } catch { saved = null; }
+    setSceneId((prev) => {
+      if (prev && scenes.some((s) => s.id === prev)) return prev;
+      if (saved && scenes.some((s) => s.id === saved)) return saved;
+      return scenes[0]?.id ?? null;
+    });
+  }, [scenes, sceneStoreKey]);
+
+  useEffect(() => {
+    if (!sceneId) return;
+    try { localStorage.setItem(sceneStoreKey, sceneId); } catch { /* 忽略 */ }
+  }, [sceneId, sceneStoreKey]);
 
   useEffect(() => {
     if (!state.activeProjectId || scenes.length) return;
@@ -89,7 +116,7 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
     if (saveTimer.current) { window.clearTimeout(saveTimer.current); saveTimer.current = null; }
   }, [scene?.id]);
 
-  /* 四时段光照对照只覆盖办公室；作战室 3D / 航母没有对应光照页，切模板时回到实况 */
+  /* 四时段光照对照只覆盖办公室；发射指挥 3D / 航母没有对应光照页，切模板时回到实况 */
   useEffect(() => {
     if (prefs.template !== "office" && tab === "lights") setTab("live");
   }, [prefs.template, tab]);
@@ -122,6 +149,7 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
             showLabels: next.showLabels,
             light: next.light,
             motion: next.motion ?? DEFAULT_MOTION,
+            view: next.view ?? "overview",
           },
         },
       });
@@ -213,17 +241,17 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
 
   const staged = tab === "live" || tab === "lights";
   const clock = new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const t = useT();
   const motion = motionOf(prefs);
 
   return (
     <div className={`page off-page ${staged ? "off-page-staged" : ""}`}>
       <PageHeader
-        kicker={staged ? "SCENE / LIVE · MOTION" : "SCENE"}
-        title={staged ? "动效工作台" : "场景"}
+        title={staged ? t("page.motion") : t("page.scene")}
         subtitle={subtitle}
         actions={(
           <div className="off-page-actions">
-            {tab === "gallery" ? <button className="btn primary" onClick={() => openNewScene()}>新建场景</button> : null}
+            {tab === "gallery" ? <button className="btn primary" onClick={() => openNewScene()}>{t("action.newScene")}</button> : null}
             {staged && tab === "live" ? (
               <select className="off-motion-select" value={motion.tier} title="动效档位" aria-label="动效档位"
                 onChange={(e) => persist({ motion: { ...motion, tier: e.target.value as typeof motion.tier } })}>
@@ -232,19 +260,24 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
                 <option value="off">动效 · {MOTION_LABEL.off}</option>
               </select>
             ) : null}
-            {staged ? <button className="btn" onClick={() => { setTab("live"); onNewThread(); }}>派活</button> : null}
-            {staged ? <button className="btn primary" onClick={() => { setTab("live"); setReplaySignal((v) => v + 1); }}>回放状态变化</button> : null}
+            {staged ? <button className="btn" onClick={() => { setTab("live"); onNewThread(); }}>{t("action.assign")}</button> : null}
+            {staged ? <button className="btn primary" onClick={() => { setTab("live"); setReplaySignal((v) => v + 1); }}>{t("action.replay")}</button> : null}
           </div>
         )}
         tabs={(
-          <div className="off-tabs">
-            <button className={`off-tab ${tab === "gallery" ? "on" : ""}`} onClick={() => setTab("gallery")}>场景库</button>
-            <button className={`off-tab ${tab === "live" ? "on" : ""}`} onClick={() => setTab("live")}>实况 <span className="off-live-dot" /></button>
-            {prefs.template === "office" ? <button className={`off-tab ${tab === "lights" ? "on" : ""}`} onClick={() => setTab("lights")}>光照</button> : null}
-            <button className={`off-tab ${tab === "execution" ? "on" : ""}`} onClick={() => setTab("execution")}>执行配置</button>
-            <span className="off-tab-fill" />
-            <span className="off-tab-clock" title="舞台挂钟">{clock}</span>
-          </div>
+          <Tabs
+            ariaLabel="场景视图"
+            wide
+            value={tab}
+            onChange={(id) => setTab(id as typeof tab)}
+            items={[
+              { id: "gallery", label: t("tab.gallery") },
+              { id: "live", label: t("tab.live"), dot: true },
+              ...(prefs.template === "office" ? [{ id: "lights", label: t("tab.lights") }] : []),
+              { id: "execution", label: t("tab.execution") },
+            ]}
+            trailing={<span className="tabs-clock" title="舞台挂钟">{clock}</span>}
+          />
         )}
       />
 
@@ -302,7 +335,7 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
       {newScene ? (
         <div className="modal-mask" onMouseDown={(e) => { if (e.target === e.currentTarget) setNewScene(null); }}>
           <div className="modal off-scene-modal" role="dialog" aria-modal="true" aria-label="新建协作场景">
-            <div className="modal-head"><div><h3>新建协作场景</h3><p>先选舞台模板，再配阵容与编排。创建后先进入实况。</p></div><button className="off-icon-btn" onClick={() => setNewScene(null)} aria-label="关闭">✕</button></div>
+            <div className="modal-head"><div><h3>新建协作场景</h3><p>先选舞台模板，再配阵容与编排。创建后先进入实况。</p></div><button className="off-icon-btn" title="关闭" onClick={() => setNewScene(null)} aria-label="关闭新建场景"><XIcon size={13} /></button></div>
             <div className="off-modal-field"><span>场景名称</span><input value={newScene.name} onChange={(e) => setNewScene((s) => s ? { ...s, name: e.target.value } : s)} autoFocus /></div>
             <div className="off-modal-field"><span>舞台模板</span>
               <div className="off-modal-templates">
@@ -314,7 +347,7 @@ export function SceneWorkspace({ state, now, act, notify, onOpenTask, onOpenThre
                 ))}
               </div>
             </div>
-            <div className="off-modal-note">办公室 / 作战室 3D / 航母 3D 共用同一套 SceneModel；流水线模板已下线。</div>
+            <div className="off-modal-note">办公室 / 发射指挥 3D / 航母 3D 共用同一套 SceneModel；流水线模板已下线。</div>
             <div className="modal-foot"><button className="btn" onClick={() => setNewScene(null)}>取消</button><button className="btn primary" onClick={createScene}>创建场景</button></div>
           </div>
         </div>

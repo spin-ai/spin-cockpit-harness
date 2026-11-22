@@ -1,4 +1,4 @@
-> 层：架构 · 状态：已落地 · 核对：2026-11-20 · 覆盖：thread 模型与 send 状态机，含人格 bot 的 bot thread
+> 层：架构 · 状态：已落地 · 核对：2026-11-20 · 覆盖：thread 模型与 send 状态机，含人格 bot 的 bot thread 与多会话
 
 # CHAT：从「两态」到「单会话（thread）」
 
@@ -85,6 +85,7 @@ messages(
 | 会话内容 | 只有**说出口的部分**进 `messages`（user 提问 / agent 回复，含主动开口与创建时的提问）；**沉默、被拦只留在 `bot_turns` 审计**里，不污染 Chat |
 | 历史来源 | `reply()` 的对话历史读这条 thread 的最后 10 条消息（含主动开口），不再从 `bot_turns` 拼 —— 这才叫"一条不间断会话" |
 | 老数据迁移 | `botThreadMigrate({ dryRun })`：按时间顺序把未镜像的 `bot_turns` 补成消息，写过的回合标 `mirrored`，所以**幂等**；先 dryRun 看数，再真跑。Bot 页 `⋯ → 迁移历史到会话` |
+| 多会话 | 一个 bot 可以有多条 `kind="bot"` thread（照搬 ORCA 的 Chats）：默认会话（最早那条）收主动开口与老回合，`botChatNew` 新开话题，`botChatRename` / `botChatRemove` / `botChatSearch` 管列表；`bot_turns.thread_id` 记这一轮属于哪条 |
 | 打开 | Bot 页「打开会话」→ `botThread` 拿 thread id → 跳到 Chat 同一个 thread |
 
 **为什么不多一张表**：多一张就等于 Chat 和 Bot 两处历史，用户永远不知道哪条是真的。现在 Bot 页是"这个 bot 的审计台"，Chat 是"这个 bot 的会话"，数据只有一份。
@@ -210,7 +211,7 @@ CHAT
 
 引擎已从 `sql.js`（WASM）换成内置 `node:sqlite`（`journal_mode=WAL`），文件格式仍是标准 SQLite：
 
-- 旧文件直接可读，不需要手工迁移（`npm run db:selftest` 覆盖这条路径）；
+- 旧文件直接可读，不需要手工迁移（`npm test -- db` 覆盖这条路径）；
 - 运行期会多出 `harness.db-wal` / `-shm`，正常退出与「导出数据库备份」都会先 checkpoint 合并回主文件；
 - 回滚到更老的版本（仍是 sql.js）也能读，但请先在应用里正常退出，避免 `-wal` 里还有未合并的改动。
 

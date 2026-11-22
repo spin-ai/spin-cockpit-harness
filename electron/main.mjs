@@ -31,6 +31,7 @@ import { pickElement, cancelPick, detachPreview } from "./preview.mjs";
 import { openTunnel, closeTunnel, closeAllTunnels, toRemoteUrl, onTunnelClosed } from "./preview-tunnel.mjs";
 import { formatContext, detectDevUrl } from "./ui-context.mjs";
 import { classifyFile, PREVIEW_NATIVE_EXT } from "./file-kinds.mjs";
+import { pageImage as renderPageImage } from "./knowledge/pageimage.mjs";
 import { MAX_DOC_BYTES, officeKind, renderOffice } from "./doc-preview.mjs";
 import { browserScreenshot, clearActivePreview, runBrowserTool, setActivePreview } from "./browser-tools.mjs";
 import { allows, describePermission, grant as grantPreviewPermission, listSites, originOf as previewOrigin, revoke as revokePreviewPermission } from "./preview-permissions.mjs";
@@ -302,9 +303,23 @@ const COORDINATION_TEMPLATES = new Set(["office", "warroom", "carrier"]);
 const TEMPLATE_ALIASES = { factory: "carrier" };
 const COORDINATION_PREFS = {
   reviewGate: true, escalate: true, inject: false, showLinks: true, showLabels: true, light: "auto",
+  motion: { tier: "calm", walk: 900, amp: 100, typing: true },
+  view: "overview",
 };
 
-const COORDINATION_LIGHTS = new Set(["auto", "day", "dusk", "night"]);
+const COORDINATION_LIGHTS = new Set(["auto", "dawn", "day", "dusk", "night"]);
+const COORDINATION_MOTION_TIERS = new Set(["calm", "full", "off"]);
+const COORDINATION_VIEWS = new Set(["overview", "bow", "island", "landing", "top", "screen", "desk", "gate"]);
+
+function normalizeCoordinationMotion(raw = {}) {
+  const clamp = (v, lo, hi, fallback) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.round(v))) : fallback);
+  return {
+    tier: COORDINATION_MOTION_TIERS.has(raw.tier) ? raw.tier : "calm",
+    walk: clamp(raw.walk, 300, 4000, 900),
+    amp: clamp(raw.amp, 0, 150, 100),
+    typing: raw.typing !== false,
+  };
+}
 
 function normalizeCoordinationPrefs(raw = {}) {
   return {
@@ -314,6 +329,8 @@ function normalizeCoordinationPrefs(raw = {}) {
     showLinks: raw.showLinks !== false,
     showLabels: raw.showLabels !== false,
     light: COORDINATION_LIGHTS.has(raw.light) ? raw.light : "auto",
+    motion: normalizeCoordinationMotion(raw.motion || {}),
+    view: COORDINATION_VIEWS.has(raw.view) ? raw.view : "overview",
   };
 }
 
@@ -1348,10 +1365,16 @@ function handleUpdate(run, todo, handle, u) {
     // 首行必须是「干了什么」：Bash · 完成 · ls -1（旧版首行只有 bash · completed）
     const content = formatToolContent({ title, status, hint, description, output });
     handle.toolMeta.set(key, { title, status, hint, description, output });
+    // 轨迹要保留结构化字段：原始参数 / 完整输出（首行摘要会丢 JSON 结构）
+    const toolRecord = {
+      title, status, hint, description,
+      input: u.rawInput ? JSON.stringify(u.rawInput).slice(0, 6000) : prev.input || "",
+      output: output.slice(0, 6000),
+    };
     // agent 用 todo_write 维护自己的清单：同步到任务的 subtasks，TODO LIST 行内可见
     if (applyPlan(todo, planEntries(u, title))) store.addEvent("todo.plan", `todo.plan ${todo.key} ${todo.subtasks.length} steps`);
-    if (existing) store.updateMessage(existing, { content });
-    else handle.tools.set(key, store.addMessage(threadId, run.id, "tool", "tool", content).id);
+    if (existing) store.updateMessage(existing, { content, meta: toolRecord });
+    else handle.tools.set(key, store.addMessage(threadId, run.id, "tool", "tool", content, { meta: toolRecord }).id);
     store.addEvent("run.tool", `run.tool ${title} ${status}`);
     const raw = u.rawInput || {};
     const rawFile = raw.path || raw.file_path || raw.filePath;
@@ -1386,6 +1409,17 @@ function startWikiMcpServer() {
       const payload = await readRequestBody(req);
       const name = String(payload.name || "");
       const args = payload.arguments || {};
+      /**
+       * 记忆归属：bot 起的 run（todo.botId）写的记忆属于这个 bot（`bot:<id>`），
+       * 其余 run（人手开的、主管自己起的）照旧写共享层（owner=""）。
+       * 读取端 memory.inject({ owner }) 只看「共享 + 自己的」，写入端不改就永远隔离不了。
+       */
+      const ownerOf = () => {
+        const rec = wikiTokens.get(token);
+        const run = rec?.runId ? store.state.runs.find((r) => r.id === rec.runId) : null;
+        const todo = run ? store.state.todos.find((t) => t.id === run.todoId) : null;
+        return todo?.botId ? `bot:${todo.botId}` : "";
+      };
       let result;
       if (name === "wiki_search") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.search", { query: args.query });
       else if (name === "wiki_list_sources") result = (await pluginHost.invoke("ai.cockpit.notes", "wiki.sources", {})).map((s) => ({ id: s.id, title: s.title, kind: s.kind, uri: s.uri }));
@@ -1393,11 +1427,11 @@ function startWikiMcpServer() {
       else if (name === "wiki_read_page") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.getPage", { id: args.id });
       else if (name === "wiki_upsert_draft") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.upsertDraft", { title: args.title, content: args.content, summary: args.summary, sourceIds: args.source_ids || [] });
       else if (name === "wiki_add_citation") result = await pluginHost.invoke("ai.cockpit.notes", "wiki.addCitation", { pageId: args.page, sourceId: args.source, quote: args.quote, locator: args.locator });
-      else if (name === "memory_inject") result = memory().inject({ maxChars: args.max_chars || 12000 });
+      else if (name === "memory_inject") result = memory().inject({ maxChars: args.max_chars || 12000, owner: ownerOf() });
       else if (name === "memory_search") result = transcriptSearch(args.query, args.limit || 8);
       else if (name === "run_read") result = runRead(args.run_id);
-      else if (name === "memory_note_write") result = memory().noteAdd({ body: args.body, kind: args.kind, confidence: args.confidence, sourceKind: args.source_kind || "transcript", sourceRef: args.source_ref || "" });
-      else if (name === "memory_entry_write") result = memory().entryUpsert({ layer: args.layer || "L4", title: args.title, body: args.body || "", sources: args.sources || [] });
+      else if (name === "memory_note_write") result = memory().noteAdd({ body: args.body, kind: args.kind, confidence: args.confidence, sourceKind: args.source_kind || "transcript", sourceRef: args.source_ref || "", owner: String(args.owner || ownerOf() || "") });
+      else if (name === "memory_entry_write") result = memory().entryUpsert({ layer: args.layer || "L4", title: args.title, body: args.body || "", sources: args.sources || [], owner: String(args.owner || ownerOf() || "") });
       else if (name === "memory_promote_note") result = memory().promoteNote({ id: args.id, layer: args.layer || "L4", supersedes: args.supersedes || [] });
       else if (name === "persona_lookup") {
         const answer = persona().ask({ question: args.question });
@@ -1672,6 +1706,7 @@ function now() { return Date.now(); }
 const SETTINGS_SPEC = {
   defaultView: { kind: "enum", values: ["workspace", "projects", "stats", "hosts"], fallback: "workspace" },
   theme: { kind: "enum", values: ["system", "light", "paper", "vslight", "dark", "vsdark", "midnight", "forest", "graphite", "monokai", "onedark", "solarized", "dracula"], fallback: "system" },
+  uiLanguage: { kind: "enum", values: ["zh", "en"], fallback: "zh" },
   chatFontSize: { kind: "number", min: 11, max: 16, fallback: 13 },
   uiScale: { kind: "number", min: 0, max: 150, fallback: 0 },   // 0 = 自动（跟随屏幕分辨率）
   enterToSend: { kind: "boolean", fallback: true },
@@ -2431,7 +2466,8 @@ async function supervisorPrompt(run, mission, handle, text) {
   if (handle.prompting) { handle.queue.push(text); return; }
   handle.prompting = true;
   try {
-    const res = await handle.client.prompt(text, 900000);
+    // 静默超时用统一的 PROMPT_IDLE_MS（默认 30 分钟无任何事件才算卡死）；主管与 worker 同口径
+    const res = await handle.client.prompt(text);
     if (!handle.done) {
       const before = { tokens: run.tokens, tokensIn: run.tokensIn, tokensOut: run.tokensOut };
       applyRunUsage(run, res);
@@ -2865,6 +2901,72 @@ function botWatchProbe(watch) {
 let botStore = null;
 let botTimer = null;
 const botAborts = new Map();
+
+/**
+ * 机器人会话的只读工具执行器。
+ *
+ * 只做「查」：记忆 / 知识库 / 任务 / 运行。写操作不在这里 ——
+ * 要动手就得走「提议 → 人确认 → 起 run」，也就是 capability 的三档。
+ */
+async function botReadTool(name, args = {}) {
+  const st = store.state;
+  const projectId = st.activeProjectId || null;
+  switch (name) {
+    case "memory_search": {
+      const query = String(args.query || "").trim();
+      const limit = Math.min(Math.max(Number(args.limit) || 6, 1), 12);
+      const entries = query ? memory().entrySearch({ query, limit }) : [];
+      const notes = query ? memory().noteList({ limit: 40 }).filter((n) => `${n.body || ""}`.includes(query)).slice(0, Math.max(1, limit - entries.length)) : [];
+      return {
+        entries: entries.map((e) => ({ layer: e.layer, title: e.title, body: String(e.body || "").slice(0, 240) })),
+        notes: notes.map((n) => ({ id: n.id, body: String(n.body || "").slice(0, 200), status: n.status })),
+      };
+    }
+    case "knowledge_search": {
+      const query = String(args.query || "").trim();
+      if (!query) return { hits: [] };
+      const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 10);
+      const hits = await knowledge().search(query, { limit });
+      return { hits: (hits?.hits || []).map((h) => ({ doc: h.doc_id, heading: h.heading || null, text: String(h.text || "").slice(0, 240) })) };
+    }
+    case "todo_list": {
+      const want = String(args.status || "all");
+      const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 50);
+      const rows = st.todos
+        .filter((t) => (!projectId || !t.projectId || t.projectId === projectId))
+        .filter((t) => want === "all" || t.status === want)
+        .slice(0, limit)
+        .map((t) => ({
+          key: t.key, title: t.title, status: t.confirmed ? "done" : t.status,
+          agent: st.agents.find((a) => a.id === t.agentId)?.alias || null,
+          kind: t.kind || "task",
+        }));
+      return { total: st.todos.length, rows };
+    }
+    case "run_status": {
+      const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 30);
+      const active = ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"];
+      const rows = st.runs
+        .filter((r) => active.includes(r.status))
+        .slice(-limit)
+        .map((r) => {
+          const todo = st.todos.find((t) => t.id === r.todoId);
+          return {
+            runId: r.id,
+            agent: st.agents.find((a) => a.id === r.agentId)?.alias || r.agentId,
+            task: todo ? `${todo.key} ${todo.title}` : r.todoId,
+            status: r.status,
+            queueReason: r.queueReason || null,
+            elapsedMs: r.startedAt ? Date.now() - r.startedAt : null,
+          };
+        });
+      return { running: rows.length, rows };
+    }
+    default:
+      return { error: `未知工具 ${name}` };
+  }
+}
+
 function bots() {
   if (!botStore) {
     botStore = createBots({
@@ -2874,6 +2976,7 @@ function bots() {
       chat: arkChat,
       chatStream: arkChatStream,
       key: () => arkKeyFromSettings(),
+      runTool: botReadTool,
       onChange: () => broadcast(),
       log: console,
     });
@@ -3771,19 +3874,118 @@ const actions = {
   botRemove: async ({ id } = {}) => { bots().remove(String(id || "")); return { ok: true }; },
   botTick: async ({ botId, force } = {}) => bots().tick({ botId: String(botId || ""), force: Boolean(force) }),
   /** 被动回复：流式把增量推给渲染层（harness:bot-delta），结束返回完整回合 */
-  botChat: async ({ botId, text } = {}) => {
+  /** 群聊：列表 / 新建或更新 / 删除 / 发一句（按 replyMode 决定发给谁） */
+  botGroups: async () => (store.state.botGroups || []).map((g) => ({ ...g })),
+  botGroupSave: async ({ id, name, memberIds, replyMode } = {}) => {
+    const list = store.state.botGroups || (store.state.botGroups = []);
+    let g = id ? list.find((x) => x.id === String(id)) : null;
+    if (!g) {
+      g = { id: store.nextId("grp"), name: "群聊", replyMode: { kind: "mentions" }, memberIds: [], createdAt: Date.now() };
+      list.push(g);
+    }
+    if (typeof name === "string" && name.trim()) g.name = name.trim().slice(0, 40);
+    if (Array.isArray(memberIds)) g.memberIds = memberIds.map(String).filter(Boolean);
+    if (replyMode && typeof replyMode === "object") g.replyMode = replyMode;
+    g.updatedAt = Date.now();
+    store.persist(); broadcast();
+    return { ...g };
+  },
+  botGroupRemove: async ({ id } = {}) => {
+    const gid = String(id || "");
+    store.state.botGroups = (store.state.botGroups || []).filter((g) => g.id !== gid);
+    store.state.botGroupMessages = (store.state.botGroupMessages || []).filter((m) => m.groupId !== gid);
+    store.persist(); broadcast();
+    return { ok: true };
+  },
+  /** 发一句：先落「你」的消息，再按 replyMode / @提及 逐个 bot 生成回复并落库 */
+  botGroupSend: async ({ id, text } = {}) => {
+    const gid = String(id || "");
+    const group = (store.state.botGroups || []).find((g) => g.id === gid);
+    if (!group) throw new Error("群不存在");
+    const value = String(text || "").trim();
+    if (!value) return { messages: [] };
+    const all = bots().list().filter((b) => (group.memberIds || []).includes(b.id));
+    if (!all.length) throw new Error("群里还没有成员");
+    const mode = group.replyMode || { kind: "mentions" };
+    const escape = (v) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // bot 名字通常是「PM · 项目经理」：@ 到短名（@PM）或全名都算，和 UI 的提示一致
+    const handleOf = (b) => String(b.name || "").split("·")[0].trim();
+    const named = all.filter((b) => [b.name, handleOf(b)].filter(Boolean)
+      .some((h) => new RegExp(`@${escape(h)}(?![\\p{L}\\p{N}_])`, "iu").test(value)));
+    const everyone = /@everyone\b/iu.test(value);
+    const targets = (mode.kind === "all" || everyone
+      ? all
+      : mode.kind === "bot"
+        ? all.filter((b) => b.id === mode.botId)
+        : named.length
+          ? named
+          : all.filter((b) => b.role === "supervisor").slice(0, 1).concat(all.filter((b) => b.role !== "supervisor").slice(0, 1)))
+      // 谁能找它 = owner 的 bot 不进群聊：它只在 1:1 里说话
+      .filter((b) => (b.policy?.whoCanAsk ?? "group") !== "owner");
+    const msgs = store.state.botGroupMessages || (store.state.botGroupMessages = []);
+    const nextSeq = () => (msgs.length ? Math.max(...msgs.map((m) => m.seq || 0)) + 1 : 0);
+    const push = (author, bot, body, decision = "answered", meta = null) => {
+      const msg = {
+        id: `gmsg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        groupId: gid, seq: nextSeq(), author, botId: bot?.id || null, botName: bot?.name || "",
+        text: String(body || ""), decision, createdAt: Date.now(), meta,
+      };
+      msgs.push(msg);
+      return msg;
+    };
+    push("owner", null, value);
+    const out = [];
+    for (const bot of targets) {
+      try {
+        const turn = await bots().reply(bot, value, {});
+        out.push(push("bot", bot, turn?.reply || "", turn?.decision || "answered", {
+          turnId: turn?.id || null, runId: turn?.runId || null, cost: turn?.cost || null,
+        }));
+      } catch (err) {
+        out.push(push("bot", bot, `（没回：${String(err?.message || err)}）`, "blocked"));
+      }
+    }
+    store.persist(); broadcast();
+    return { messages: out };
+  },
+  botChat: async ({ botId, text, threadId } = {}) => {
     const bot = bots().list().find((b) => b.id === String(botId || ""));
     if (!bot) throw new Error("bot 不存在");
     const controller = new AbortController();
     botAborts.set(bot.id, controller);
     try {
       return await bots().reply(bot, text, {
+        threadId: String(threadId || ""),
         signal: controller.signal,
         onDelta: (delta) => { if (win && !win.isDestroyed()) win.webContents.send("harness:bot-delta", { botId: bot.id, delta }); },
+        onTool: (tool) => { if (win && !win.isDestroyed()) win.webContents.send("harness:bot-tool", { botId: bot.id, ...tool }); },
       });
     } finally {
       botAborts.delete(bot.id);
     }
+  },
+  /** 会话列表（ORCA 的 Chats）：一个 bot 可以有多个话题，默认会话是主动开口的落点 */
+  botChats: async ({ botId, query } = {}) => bots().searchChats({ botId: String(botId || ""), query: String(query || "") }),
+  botChatNew: async ({ botId, title } = {}) => {
+    const thread = bots().newChat({ botId: String(botId || ""), title: String(title || "") });
+    broadcast();
+    return thread;
+  },
+  botChatRename: async ({ threadId, title } = {}) => {
+    const thread = bots().renameChat({ threadId: String(threadId || ""), title: String(title || "") });
+    broadcast();
+    return thread;
+  },
+  botChatRemove: async ({ threadId } = {}) => {
+    const res = bots().removeChat({ threadId: String(threadId || "") });
+    broadcast();
+    return res;
+  },
+  /** 从某条消息分支出一条新会话（源会话不动） */
+  botChatFork: async ({ threadId, messageId } = {}) => {
+    const res = bots().forkChat({ threadId: String(threadId || ""), messageId: String(messageId || "") });
+    broadcast();
+    return res;
   },
   botCancel: async ({ botId } = {}) => {
     const id = String(botId || "");
@@ -4530,6 +4732,74 @@ const actions = {
     store.state.settings = { ...DEFAULT_SETTINGS, dshEnv: encSecret("") };
     store.addEvent("settings.reset", "settings.reset");
     return store.state.settings;
+  },
+  /**
+   * 清空任务前的预览：只算数，不改任何东西。渲染层用它拼确认文案。
+   * 范围 = Task / Mission 图：todos + 它们的线程 / 消息 / runs / delegation / 计划 / 产物 / 终端绑定。
+   */
+  taskClearPreview: () => {
+    const st = store.state;
+    const todoIds = new Set(st.todos.map((t) => t.id));
+    const runIds = new Set(st.runs.filter((r) => todoIds.has(r.todoId)).map((r) => r.id));
+    const threadIds = new Set(st.threads.filter((t) => t.todoId && todoIds.has(t.todoId)).map((t) => t.id));
+    const active = ["running", "queued", "waiting_input", "waiting_plan", "waiting_children"];
+    return {
+      counts: {
+        todos: st.todos.length,
+        missions: st.todos.filter((t) => t.kind === "mission").length,
+        running: st.runs.filter((r) => todoIds.has(r.todoId) && active.includes(r.status)).length,
+        runs: runIds.size,
+        threads: threadIds.size,
+        messages: st.messages.filter((m) => (m.threadId && threadIds.has(m.threadId)) || (m.todoId && todoIds.has(m.todoId)) || (m.runId && runIds.has(m.runId))).length,
+        delegations: st.delegations.filter((d) => todoIds.has(d.missionId) || todoIds.has(d.childTodoId)).length,
+        plans: st.missionPlans.filter((p) => todoIds.has(p.missionId)).length,
+        artifacts: st.artifacts.filter((a) => todoIds.has(a.todoId) || runIds.has(a.runId)).length,
+        terminals: st.terminals.filter((t) => t.todoId && todoIds.has(t.todoId)).length,
+      },
+    };
+  },
+  /**
+   * 清空任务（破坏性）：必须显式传 confirm:"CLEAR"。
+   * 顺序：先停掉在跑的 run → flush + 整库备份（harness.db.bak-clear-<时间戳>）→ 清内存态 → persist。
+   * 备份失败就中不删。项目 / Agent / 机器人 / 设置 / 记忆 / 知识库 / 场景一律不动。
+   */
+  clearTasks: ({ confirm } = {}) => {
+    if (String(confirm) !== "CLEAR") throw new Error("清空任务需要二次确认");
+    const { counts } = actions.taskClearPreview();
+    if (!counts.todos) return { ok: true, counts, backup: null };
+    const st = store.state;
+    const todoIds = new Set(st.todos.map((t) => t.id));
+    const runIds = new Set(st.runs.filter((r) => todoIds.has(r.todoId)).map((r) => r.id));
+    const threadIds = new Set(st.threads.filter((t) => t.todoId && todoIds.has(t.todoId)).map((t) => t.id));
+    // 1. 先停：否则 pty / ACP 会话会在“已经没有任务”的状态下继续跑
+    for (const run of [...st.runs]) {
+      if (["running", "queued", "waiting_input", "waiting_plan", "waiting_children"].includes(run.status)) actions.stop({ runId: run.id });
+    }
+    // 2. 备份（flush 把 WAL 并回主库，单个 .db 文件就是完整快照）
+    store.flush();
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const backup = `${store.file}.bak-clear-${stamp}`;
+    try {
+      fs.copyFileSync(store.file, backup);
+    } catch (err) {
+      throw new Error(`备份失败，已中止清空：${String(err?.message || err)}`);
+    }
+    // 3. 清内存态（persist 会把空数组写回库里）
+    st.messages = st.messages.filter((m) => !(m.threadId && threadIds.has(m.threadId)) && !(m.todoId && todoIds.has(m.todoId)) && !(m.runId && runIds.has(m.runId)));
+    st.artifacts = st.artifacts.filter((a) => !todoIds.has(a.todoId) && !runIds.has(a.runId));
+    st.todoLinks = st.todoLinks.filter((l) => !todoIds.has(l.todoId));
+    st.terminals = st.terminals.filter((t) => !(t.todoId && todoIds.has(t.todoId)));
+    st.delegations = st.delegations.filter((d) => !todoIds.has(d.missionId) && !todoIds.has(d.childTodoId));
+    st.missionPlans = st.missionPlans.filter((p) => !todoIds.has(p.missionId));
+    st.runs = st.runs.filter((r) => !todoIds.has(r.todoId));
+    st.threads = st.threads.filter((t) => !(t.todoId && todoIds.has(t.todoId)));
+    // bot 回合是审计，不删；只断开指向已删任务的链接
+    st.botTurns = (st.botTurns || []).map((t) => (t.todoId && todoIds.has(t.todoId) ? { ...t, todoId: null } : t));
+    st.todos = [];
+    st.seq = 1;
+    store.addEvent("tasks.clear", `tasks.clear todos=${counts.todos} runs=${counts.runs} backup=${path.basename(backup)}`);
+    tick();
+    return { ok: true, counts, backup };
   },
   openQuickCapture: () => { openQuickCapture(); return true; },
   imStatus: () => (imGateway ? imGateway.status() : { enabled: false }),
@@ -6106,6 +6376,33 @@ ipcMain.handle("files:write", (_e, { rel, root, text } = {}) => {
   fs.writeFileSync(full, text, "utf8");
   store.addEvent("file.write", `file.write ${rel} ${Buffer.byteLength(text)}B`);
   return { ok: true, size: Buffer.byteLength(text) };
+});
+
+/**
+ * PDF 逐页渲图：预览里的 PDF 阅读器按页取图（pdfjs + skia 在主进程跑，
+ * 渲染层不用打包 pdf.js，也不用依赖 Chromium 的 PDF 插件）。
+ * 缓存按 path@mtime@page@scale，翻回上一页不重渲。
+ */
+const pageImageCache = new Map();
+ipcMain.handle("files:pageImage", async (_e, { rel, root, page = 1, scale = 1.6 } = {}) => {
+  const base = rootOf(root);
+  const full = filesInside(base, rel);
+  if (!fs.existsSync(full)) throw new Error("文件不存在");
+  const pageNo = Math.max(1, Math.min(5000, Math.round(Number(page) || 1)));
+  const s = Math.max(0.4, Math.min(4, Number(scale) || 1.6));
+  const stat = fs.statSync(full);
+  const key = `${full}@${stat.mtimeMs}@${pageNo}@${s}`;
+  const hit = pageImageCache.get(key);
+  if (hit) return hit;
+  const img = await renderPageImage(full, pageNo, { scale: s });
+  const res = {
+    dataUrl: `data:${img.mime || "image/png"};base64,${img.buffer.toString("base64")}`,
+    width: img.width, height: img.height, pages: img.pages || 1, page: pageNo, scale: s,
+  };
+  /* 只留最近 24 张：一部 PDF 全页缓存会吃掉几百 MB */
+  if (pageImageCache.size >= 24) pageImageCache.delete(pageImageCache.keys().next().value);
+  pageImageCache.set(key, res);
+  return res;
 });
 
 ipcMain.handle("files:reveal", (_e, { rel, root } = {}) => {

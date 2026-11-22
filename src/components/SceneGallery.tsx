@@ -5,6 +5,7 @@ import type { ScenePrefs } from "../office/SceneConfigPanel";
 import type { CoordinationScene, CoordinationTemplate } from "../types";
 import { SCENE_TEMPLATES, templateDesc, templateLabel, templateOf } from "../office/templates";
 import { RowMenu } from "./RowMenu";
+import { XIcon } from "./Icons";
 
 function OfficeCover() {
   return (
@@ -211,7 +212,7 @@ export function SceneGallery({ state, model, scenes, activeSceneId, onSelectScen
         <span><b>{stats.running}</b> 运行中</span>
         <span><b>{stats.waiting}</b> 待确认</span>
         <span><b>{stats.review}</b> 待验收</span>
-        <span className="off-gal-muted">舞台模板 3 种 · 办公室 2.5D / 作战室 3D / 航母 3D 已上线</span>
+        <span className="off-gal-muted">舞台模板 3 种 · 办公室 2.5D / 发射指挥 3D / 航母 3D 已上线</span>
       </div>
 
       <div className="off-gal-tools">
@@ -223,7 +224,7 @@ export function SceneGallery({ state, model, scenes, activeSceneId, onSelectScen
             aria-label="搜索场景"
             spellCheck={false}
           />
-          {query ? <button className="off-icon-btn" onClick={() => setQuery("")} aria-label="清除搜索" title="清除搜索">✕</button> : null}
+          {query ? <button className="off-icon-btn" onClick={() => setQuery("")} aria-label="清除搜索" title="清除搜索"><XIcon size={13} /></button> : null}
         </div>
         <div className="off-gal-filters" role="group" aria-label="按舞台模板筛选">
           <button className={`off-gal-chip ${templateFilter === "all" ? "on" : ""}`} onClick={() => setTemplateFilter("all")}>

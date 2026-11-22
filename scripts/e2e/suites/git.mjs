@@ -1,0 +1,186 @@
+#!/usr/bin/env node
+/**
+ * Git（Source Control）冒烟：状态 / diff / 暂存 / 提交 / 分支。
+ *
+ * 前置：隔离 userData 的实例带调试端口在跑（会自建 /tmp/git-fixture 仓库）：
+ *   COCKPIT_USER_DATA=/tmp/cockpit-e2e \
+ *     ./node_modules/electron/dist/Electron.app/Contents/MacOS/Electron . --remote-debugging-port=9223
+ *
+ * 用法：node scripts/e2e-git.mjs [port]
+ */
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import { attach } from "../harness.mjs";
+
+const port = Number(process.argv[2] || 9223);
+const REPO = "/tmp/git-fixture";
+fs.rmSync(REPO, { recursive: true, force: true });
+fs.mkdirSync(REPO, { recursive: true });
+const sh = (...args) => execFileSync("git", args, { cwd: REPO, encoding: "utf8" });
+sh("init", "-q", "-b", "main");
+sh("config", "user.email", "e2e@example.com");
+sh("config", "user.name", "E2E");
+fs.writeFileSync(`${REPO}/a.txt`, "line1\nline2\n");
+fs.writeFileSync(`${REPO}/b.txt`, "old\n");
+fs.writeFileSync(`${REPO}/.gitignore`, "*.log\nbuild/\n");
+fs.mkdirSync(`${REPO}/build`, { recursive: true });
+fs.writeFileSync(`${REPO}/build/out.js`, "x\n");
+fs.writeFileSync(`${REPO}/debug.log`, "log\n");
+sh("add", "-A");
+sh("commit", "-q", "-m", "init: 初始提交");
+fs.writeFileSync(`${REPO}/a.txt`, "line1\nline2 changed\nline3\n");
+fs.writeFileSync(`${REPO}/new.txt`, "new file\n");
+fs.writeFileSync(`${REPO}/b.txt`, "old\nstaged line\n");
+sh("add", "b.txt");
+const connect = () => attach(port);
+
+const HELPERS = `window.__t={wait:(ms)=>new Promise(r=>setTimeout(r,ms)),click(el){el.dispatchEvent(new MouseEvent("click",{bubbles:true}))},
+ setValue(el,v){const p=el instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(p,"value").set.call(el,v);el.dispatchEvent(new Event("input",{bubbles:true}))},
+ async until(fn,ms=8000){const t0=Date.now();while(Date.now()-t0<ms){const v=fn();if(v)return v;await new Promise(r=>setTimeout(r,80));}return null;}}; true`;
+
+let conn = await connect();
+await conn.evaluate(HELPERS);
+let fails = 0;
+const check = (n, ok, d = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"} ${n}${d ? " · " + d : ""}`); };
+/** 单步带超时 + 断线重连重试：页面 reload 时不至于让整个脚本挂住 */
+const run = async (code, tries = 3) => {
+  for (let i = 1; i <= tries; i += 1) {
+    try {
+      return await Promise.race([
+        conn.evaluate(`(async()=>{ ${code} })()`),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("eval timeout")), 20000)),
+      ]);
+    } catch (err) {
+      if (i === tries) throw err;
+      await new Promise((r) => setTimeout(r, 800));
+      conn = await connect();
+      await conn.evaluate(HELPERS);
+    }
+  }
+};
+const git = (...args) => execFileSync("git", args, { cwd: REPO, encoding: "utf8" });
+
+// 打开项目 + Git 视图
+let r = await run(`
+  await window.harness.action("addProject", { path: "${REPO}", name: "git-fixture" });
+  const s = await window.harness.getState();
+  const p = s.projects.find((x) => x.name === "git-fixture");
+  await window.harness.action("switchProject", { id: p.id });
+  await __t.wait(600);
+  const rail = [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.trim() === "Git");
+  if (!rail) return { error: "no git rail" };
+  __t.click(rail);
+  const page = await __t.until(() => document.querySelector(".git-page"));
+  const head = await __t.until(() => document.querySelector(".git-page .page-header-sub"));
+  return { page: !!page, head: head?.textContent, files: [...document.querySelectorAll(".git-file .mono")].map((e) => e.textContent.trim()) };`);
+check("Git 视图：分支 + 变更文件列表", r.page === true && (r.head || "").includes("main") && r.files.includes("a.txt") && r.files.includes("new.txt"), JSON.stringify(r));
+
+// 选中文件看 diff
+r = await run(`
+  const row = [...document.querySelectorAll(".git-file")].find((el) => el.textContent.includes("a.txt"));
+  __t.click(row);
+  const d = await __t.until(() => document.querySelector(".git-diff"), 5000);
+  const add = [...d.querySelectorAll(".git-diff-line.add")].map((e) => e.textContent.trim());
+  const del = [...d.querySelectorAll(".git-diff-line.del")].map((e) => e.textContent.trim());
+  return { add, del, stat: document.querySelector(".git-diff-stat")?.textContent };`);
+check("Diff 渲染（增删行 + 统计）", r.add.some((l) => l.includes("line2 changed")) && r.del.length >= 1, JSON.stringify(r));
+
+// 暂存未跟踪文件 + 全部暂存按钮
+r = await run(`
+  const row = [...document.querySelectorAll(".git-file")].find((el) => el.textContent.includes("new.txt"));
+  const btn = row && [...row.querySelectorAll("button")].find((b) => b.textContent.trim() === "暂存");
+  if (!btn) return { error: "no stage button" };
+  __t.click(btn);
+  await __t.wait(900);
+  const stagedSection = document.querySelector(".git-side .panel");
+  return { staged: [...stagedSection.querySelectorAll(".git-file .mono")].map((e) => e.textContent.trim()) };`);
+check("UI 暂存文件", r.staged?.includes("new.txt"), JSON.stringify(r));
+
+// 提交
+r = await run(`
+  const ta = document.querySelector(".git-commit-msg");
+  __t.setValue(ta, "e2e: 暂存并提交");
+  await __t.wait(200);
+  const btn = [...document.querySelectorAll(".git-side .btn")].find((b) => b.textContent.includes("提交"));
+  if (!btn) return { error: "no commit btn" };
+  __t.click(btn);
+  await __t.wait(2000);
+  return { head: document.querySelector(".git-page .page-head .muted")?.textContent, output: document.querySelector(".git-output")?.textContent?.slice(0, 60) || "" };`);
+const log = git("log", "--oneline", "-3");
+check("UI 提交成功（写进仓库）", /e2e: 暂存并提交/.test(log), log.split("\n")[0]);
+check("提交后工作区减少（b.txt 已提交、new.txt 已提交）", git("status", "--porcelain").trim().split("\n").filter(Boolean).length === 1, git("status", "--porcelain").trim().replace(/\n/g, " | "));
+
+// 分支切换
+r = await run(`
+  const branch = await window.harness.gitBranches();
+  const res = await window.harness.gitCheckout(undefined, "feature/x", true);
+  await __t.wait(800);
+  const st = await window.harness.gitStatus();
+  return { created: res.ok, branch: st.branch, output: res.error || "" };`);
+check("新建并切换分支", r.created === true && r.branch === "feature/x", JSON.stringify(r));
+check("git 里确实切过去了", git("rev-parse", "--abbrev-ref", "HEAD").trim() === "feature/x", git("rev-parse", "--abbrev-ref", "HEAD").trim());
+
+// ── 右侧栏 Git 迷你面板（会话旁边）──────────────────────────
+r = await run(`
+  const rail = [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.includes("工作区"));
+  if (rail) __t.click(rail);
+  await __t.wait(500);
+  const tab = [...document.querySelectorAll(".right-tabs .icon-tab")].find((b) => b.getAttribute("aria-label") === "Git");
+  if (!tab) return { error: "no git tab", tabs: [...document.querySelectorAll(".right-tabs .icon-tab")].map((b) => b.getAttribute("aria-label")) };
+  __t.click(tab);
+  const panel = await __t.until(() => document.querySelector(".git-mini"), 6000);
+  return { panel: !!panel, branch: document.querySelector(".git-mini-head .mono")?.textContent || "", files: [...document.querySelectorAll(".git-mini-file .mono")].map((e) => e.textContent.trim()) };`);
+check("右侧栏 Git 标签存在（会话旁边）+ 显示状态", r.panel === true && r.files?.length >= 1, JSON.stringify(r));
+
+r = await run(`
+  const row = [...document.querySelectorAll(".git-mini-file")].find((el) => el.textContent.includes("a.txt"));
+  const btn = row && row.querySelector("button");
+  if (!btn) return { error: "no stage btn" };
+  __t.click(btn);
+  await __t.wait(900);
+  return { staged: [...document.querySelectorAll(".git-mini-scroll .git-mini-file")].map((e) => e.textContent.trim()) };`);
+check("迷你面板可暂存", r.staged?.some((x) => x.includes("a.txt")), JSON.stringify(r).slice(0, 120));
+
+r = await run(`
+  const ta = document.querySelector(".git-mini-msg");
+  if (!ta) return { error: "no commit box" };
+  __t.setValue(ta, "mini: 从侧栏提交");
+  await __t.wait(200);
+  const btn = [...document.querySelectorAll(".git-mini .btn")].find((b) => b.textContent.includes("提交"));
+  __t.click(btn);
+  await __t.wait(2200);
+  return { ok: true };`);
+check("迷你面板提交写进仓库", /mini: 从侧栏提交/.test(git("log", "--oneline", "-1")), git("log", "--oneline", "-1").trim());
+
+r = await run(`
+  const full = [...document.querySelectorAll(".git-mini-head .link")].find((b) => b.textContent.includes("全屏"));
+  if (!full) return { error: "no full link" };
+  __t.click(full);
+  await __t.wait(900);
+  return { gitPage: !!document.querySelector(".git-page") };`);
+check("「全屏」跳到 Git 页", r.gitPage === true, JSON.stringify(r));
+
+// ── 资源管理器 git 装饰（改/新着色，ignore 淡色斜体）──────────
+r = await run(`
+  const rail = [...document.querySelectorAll(".rail-btn")].find((b) => b.textContent.includes("工作区"));
+  if (rail) __t.click(rail);
+  await __t.wait(600);
+  // 右侧栏可能还停在 Git 标签：切回资源管理器再查文件树
+  const explorerTab = [...document.querySelectorAll(".right-tabs .icon-tab")].find((b) => b.getAttribute("aria-label") === "资源管理器");
+  if (explorerTab) __t.click(explorerTab);
+  await __t.wait(900);
+  const rows = [...document.querySelectorAll(".tree-row")];
+  const pick = (n) => rows.find((el) => el.textContent.includes(n));
+  const info = (n) => {
+    const el = pick(n);
+    if (!el) return null;
+    const label = el.querySelector("span.ellipsis");
+    return { cls: el.className, mark: el.querySelector(".tree-git")?.textContent || "", italic: label ? getComputedStyle(label).fontStyle : "", opacity: getComputedStyle(el).opacity };
+  };
+  return { log: info("debug.log"), build: info("build"), rows: rows.map((el) => el.textContent.trim()) };`);
+check("资源管理器：ignore 的文件淡色斜体", (r.log?.cls || "").includes("git-ignored") && r.log?.italic === "italic", JSON.stringify({ ...r.log, rows: r.rows }));
+check("资源管理器：ignore 的目录也淡色", (r.build?.cls || "").includes("git-ignored"), JSON.stringify(r.build));
+
+conn.socket.close();
+console.log(fails ? `${fails} 项失败` : "全部通过");
+process.exit(fails ? 1 : 0);

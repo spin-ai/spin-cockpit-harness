@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import type { OfficeActor, OfficeModel, OfficeTone } from "./model";
 import { RobotArt } from "./RobotArt";
+import { XIcon } from "../components/Icons";
 import type { SceneMotion } from "./SceneConfigPanel";
 import { a11yChecks, motionOf, poseLabel, triggerOf, ZONE_LABEL } from "./motion";
 
@@ -90,7 +91,7 @@ export function OfficeInspector({ actor, model, act, notify, onOpenTask, onOpenT
             {actor.agent ? ` · ${actor.hostName}` : ""}
           </span>
         </div>
-        <button type="button" className="icon-btn" onClick={onClose} aria-label="取消选中（Esc）">✕</button>
+        <button type="button" className="icon-btn" title="取消选中（Esc）" onClick={onClose} aria-label="取消选中（Esc）"><XIcon size={13} /></button>
       </div>
 
       <div className="insp-status">

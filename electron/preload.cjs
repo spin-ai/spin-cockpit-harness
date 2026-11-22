@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld("harness", {
   filesDuplicate: (rel, root) => ipcRenderer.invoke("files:duplicate", { rel, root }),
   filesTrash: (rel, root) => ipcRenderer.invoke("files:trash", { rel, root }),
   filesReveal: (rel, root) => ipcRenderer.invoke("files:reveal", { rel, root }),
+  filesPageImage: (rel, root, page, scale) => ipcRenderer.invoke("files:pageImage", { rel, root, page, scale }),
   filesWrite: (rel, root, text) => ipcRenderer.invoke("files:write", { rel, root, text }),
   docsPick: () => ipcRenderer.invoke("docs:pick"),
   docsRead: (paths) => ipcRenderer.invoke("docs:read", { paths }),
@@ -118,6 +119,11 @@ contextBridge.exposeInMainWorld("harness", {
     const handler = (_event, payload) => cb(payload);
     ipcRenderer.on("harness:bot-delta", handler);
     return () => ipcRenderer.removeListener("harness:bot-delta", handler);
+  },
+  onBotTool: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("harness:bot-tool", handler);
+    return () => ipcRenderer.removeListener("harness:bot-tool", handler);
   },
   onBotMessage: (cb) => {
     const handler = (_event, payload) => cb(payload);

@@ -1159,7 +1159,7 @@ export async function activate(context) {
    *
    * 硬规则：**只有 draft 允许被整理直接改写。**
    * reviewed / stale 的页面一律只产「待审建议」，人点头才写 —— 整理做错比不做更糟。
-   * 计算部分在 ./curate-structure.mjs（纯函数，自检见 scripts/wiki-curate-selftest.mjs）。
+   * 计算部分在 ./curate-structure.mjs（纯函数，自检见 tests/wiki-curate.test.mjs）。
    */
   const curateWiki = async ({ dryRun = false } = {}) => {
     const indexPage = data.pages.find((p) => p.title === INDEX_TITLE) || null;

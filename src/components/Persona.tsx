@@ -4,6 +4,9 @@ import { EmptyState } from "./EmptyState";
 import { RowMenu } from "./RowMenu";
 import { ListContextMenu } from "./ListContextMenu";
 import { UndoBar, useDensity, type UndoAction } from "./UndoBar";
+import { ChevronDownIcon, XIcon } from "./Icons";
+import { RefreshIcon } from "./Icons";
+import { useT } from "../i18n";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
@@ -78,6 +81,7 @@ function fmtDate(at?: number | null) {
 
 /** 人物：左列表常驻 → 中人设卡（一句话 / 基本信息 / 性格 / 处事 / 说话风格 / 关系网）→ 右复核、漂移、注入预览 */
 export function Persona({ act }: { act: Act }) {
+  const t = useT();
   const [people, setPeople] = useState<PersonRow[]>([]);
   const [stats, setStats] = useState<{ people: number; pending: number; confirmed: number; relations: number } | null>(null);
   const [pending, setPending] = useState<Obs[]>([]);
@@ -615,7 +619,7 @@ export function Persona({ act }: { act: Act }) {
           <em>依据 {sectionSupport(sec)} · 置信 {sectionLevel(sec)}{sectionOverflow(sec) ? ` · 另有 ${sectionOverflow(sec)} 条较早` : ""}</em>
           <span style={{ flex: 1 }} />
           {hasEvidence && (
-            <button className="link" onClick={() => toggleEv(key)}>{openEv[key] ? "收起原话" : "展开原话"}</button>
+            <button className="link row gap4" aria-expanded={Boolean(openEv[key])} title={openEv[key] ? "收起原话" : "展开原话"} onClick={() => toggleEv(key)}><ChevronDownIcon size={11} className={openEv[key] ? "rot-180" : ""} />原话</button>
           )}
         </div>
 
@@ -649,8 +653,9 @@ export function Persona({ act }: { act: Act }) {
                 <button
                   className="ev-del"
                   title="删除这条依据"
+                  aria-label="删除这条依据"
                   onClick={() => void act("personaObsRemove", { id: e.id }).then(async () => { setNotice("已删除该条事实"); if (card) await openPerson(card.person.id); })}
-                >×</button>
+                ><XIcon size={12} /></button>
                 <q>{e.quote || e.value}</q>
                 <div className="persona-ev-meta">
                   <span>{row.label}</span>
@@ -668,11 +673,10 @@ export function Persona({ act }: { act: Act }) {
   };
 
   return (
-    <div className="notes-page kv-page">
+    <div className="workbench kv-page">
       <PageHeader
-        kicker="PERSONA"
-        title="人物"
-        subtitle={<div className="notes-stats">
+        title={t("page.people")}
+        subtitle={<div className="stat-strip">
           <span><b>{stats?.people || 0}</b> 人物</span>
           <span><b>{people.filter((p) => p.completeness >= 50).length}</b> 人设卡就绪</span>
           <span className={stats?.pending ? "warn" : ""}><b>{stats?.pending || 0}</b> 待确认</span>
@@ -682,14 +686,14 @@ export function Persona({ act }: { act: Act }) {
           <button
             className="btn primary"
             onClick={() => { setOnlyMine(false); queueRef.current?.scrollIntoView({ block: "start" }); }}
-          >确认待确认 <em>{stats?.pending || 0}</em></button>
-          <button className="btn" onClick={() => setShowImport((v) => !v)}>{showImport ? "收起导入" : "导入聊天记录"}</button>
+          >{t("action.confirmPending")} <em>{stats?.pending || 0}</em></button>
+          <button className="btn" aria-expanded={showImport} title={showImport ? "收起导入" : "导入聊天记录"} onClick={() => setShowImport((v) => !v)}><ChevronDownIcon size={12} className={showImport ? "rot-180" : ""} />{t("action.importChats")}</button>
           <button
             className="btn"
             disabled={Boolean(job?.running)}
             title="建模：先用统计算出可观测特征，再让模型逐人分析（同一份样本只算一次）"
             onClick={() => void startModel("llm")}
-          >建模</button>
+          >{t("action.buildProfile")}</button>
           <RowMenu title="建模选项">
             <button
               disabled={Boolean(job?.running)}
@@ -713,13 +717,13 @@ export function Persona({ act }: { act: Act }) {
             <button onClick={() => void startModel("stats")} disabled={Boolean(job?.running)}>只跑统计（不调用模型，不消耗额度）</button>
             <button onClick={() => { setJob(null); setNotice(`上次任务：${job?.cards || 0} 人出卡`); }}>查看上次进度</button>
           </RowMenu>
-          <button className="icon-btn" onClick={() => void reload()} title="刷新">↻</button>
+          <button className="icon-btn" onClick={() => void reload()} title="刷新" aria-label="刷新"><RefreshIcon size={13} /></button>
         </>}
       />
       {(error || notice) && (
         <div className={`notes-banner ${error ? "error" : ""}`}>
           <span className="ellipsis">{error || notice}</span>
-          <button className="notes-banner-x" onClick={() => { setError(""); setNotice(""); }}>×</button>
+          <button className="notes-banner-x" title="关闭提示" aria-label="关闭提示" onClick={() => { setError(""); setNotice(""); }}><XIcon size={12} /></button>
         </div>
       )}
 
@@ -738,7 +742,7 @@ export function Persona({ act }: { act: Act }) {
               : <>
                 {job.llmAdded > 0 && <button className="btn tiny-btn primary" onClick={() => void act("personaModelResolve", { accept: true }).then(async () => { setNotice("本次 AI 结论已全部确认"); await reload(); })}>确认本次 AI 结论</button>}
                 {job.llmAdded > 0 && <button className="btn tiny-btn" onClick={() => void act("personaModelResolve", { accept: false }).then(async () => { setNotice("本次 AI 结论已全部拒绝"); await reload(); })}>全部拒绝</button>}
-                <button className="link tiny" onClick={() => setJob(null)}>收起</button>
+                <button className="icon-btn" title="收起" aria-label="收起建模任务" onClick={() => setJob(null)}><XIcon size={12} /></button>
               </>}
           </div>
         </div>
@@ -792,7 +796,7 @@ export function Persona({ act }: { act: Act }) {
             title="把所选合并到第一个点选的人（观察 / 关系 / 可观测特征并过去，旧名字记进别名）"
           >合并到「{[...picked].map((id) => people.find((p) => p.id === id)?.name).filter(Boolean)[0] || "第 1 个"}」</button>
           <button className="btn tiny-btn" onClick={() => void batchRemove()} disabled={!picked.size}>删除</button>
-          <button className="icon-btn" title="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}>×</button>
+          <button className="icon-btn" title="退出多选" aria-label="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}><XIcon size={13} /></button>
         </div>
       )}
 
@@ -875,7 +879,7 @@ export function Persona({ act }: { act: Act }) {
               {listOthers.map(personRow)}
             </div>
             {listSelf.length + listOthers.length === 0 && (
-              <p className="notes-meta-empty">还没有人物。导入聊天记录后，发言者会出现在这里。</p>
+              <p className="inline-empty">还没有人物。导入聊天记录后，发言者会出现在这里。</p>
             )}
           </div>
         </aside>
@@ -1082,7 +1086,7 @@ export function Persona({ act }: { act: Act }) {
               </div>
             )}
             {visibleQueue.length === 0 && (
-              <p className="notes-meta-empty">没有待确认的推断。导入聊天记录后，每条事实都要你确认才生效。</p>
+              <p className="inline-empty">没有待确认的推断。导入聊天记录后，每条事实都要你确认才生效。</p>
             )}
             {visibleQueue.slice(0, 12).map((o) => (
               <div className="persona-qitem" key={o.id}>
@@ -1091,12 +1095,12 @@ export function Persona({ act }: { act: Act }) {
                 </div>
                 {o.quote && <q>{o.quote}</q>}
                 {o.evidenceStat && (
-                  <p className="notes-meta-empty" style={{ margin: "2px 0 4px" }}>
+                  <p className="inline-empty" style={{ margin: "2px 0 4px" }}>
                     这条的「证据」其实是统计值，不是原话 —— 统计结论已经由「可观测特征」承担，多半可以直接拒绝。
                   </p>
                 )}
                 {!o.evidenceStat && o.quoteVerified === false && (
-                  <p className="notes-meta-empty" style={{ margin: "2px 0 4px" }}>
+                  <p className="inline-empty" style={{ margin: "2px 0 4px" }}>
                     这条引用在建模用的样本里核对不到，可能被模型改写或概括过 —— 确认前建议回聊天记录对一下。
                   </p>
                 )}
@@ -1107,7 +1111,7 @@ export function Persona({ act }: { act: Act }) {
                 </div>
               </div>
             ))}
-            {visibleQueue.length > 12 && <p className="notes-meta-empty">还有 {visibleQueue.length - 12} 条未显示。</p>}
+            {visibleQueue.length > 12 && <p className="inline-empty">还有 {visibleQueue.length - 12} 条未显示。</p>}
           </div>
 
           {card && card.needsReview.length > 0 && (
@@ -1116,7 +1120,7 @@ export function Persona({ act }: { act: Act }) {
               衰减与复核 <em>{card.needsReview.length}</em>
               <button className="link" disabled={busy} onClick={() => void reviewAll(true)}>全部仍然成立</button>
             </div>
-              <p className="notes-meta-empty" style={{ marginTop: 0 }}>
+              <p className="inline-empty" style={{ marginTop: 0 }}>
                 这几条说的时间已经过了，不再进人设卡与注入。「仍然成立」续期，否则用 valid_to 收口 —— 数据不删，回看里还在。
               </p>
               {card.needsReview.slice(0, 8).map((r) => (
@@ -1130,14 +1134,14 @@ export function Persona({ act }: { act: Act }) {
                   </div>
                 </div>
               ))}
-              {card.needsReview.length > 8 && <p className="notes-meta-empty">还有 {card.needsReview.length - 8} 条。</p>}
+              {card.needsReview.length > 8 && <p className="inline-empty">还有 {card.needsReview.length - 8} 条。</p>}
             </div>
           )}
 
           {merges.filter((m) => !skipMerges.has(`${m.keep.id}:${m.drop.id}`)).length > 0 && (
             <div className="kv-block">
               <div className="persona-block-title">近似说法 <em>{merges.length}</em></div>
-              <p className="notes-meta-empty" style={{ marginTop: 0 }}>
+              <p className="inline-empty" style={{ marginTop: 0 }}>
                 同一个字段里可能有两条在说一件事。合并只累加证据，不是改写结论 —— 是否同一件事由你判断。
               </p>
               {merges.filter((m) => !skipMerges.has(`${m.keep.id}:${m.drop.id}`)).slice(0, 4).map((m) => (
@@ -1184,7 +1188,7 @@ export function Persona({ act }: { act: Act }) {
             </div>
             {asOf ? (
               asOf.fields.length === 0 ? (
-                <p className="notes-meta-empty">这个时间点还没有已确认的事实。</p>
+                <p className="inline-empty">这个时间点还没有已确认的事实。</p>
               ) : (
                 <div className="persona-asof">
                   {asOf.fields.slice(0, 12).map((f) => (
@@ -1196,20 +1200,20 @@ export function Persona({ act }: { act: Act }) {
                       </span>
                     </div>
                   ))}
-                  <p className="notes-meta-empty">
+                  <p className="inline-empty">
                     「事件时间」看那个时间点什么是真的；「当时已知」只算系统当时已经得知的事实（双时间）。
                   </p>
                 </div>
               )
             ) : (
-              <p className="notes-meta-empty">选一个日期，看当时画像里什么是真的。需要事实带时间且已确认。</p>
+              <p className="inline-empty">选一个日期，看当时画像里什么是真的。需要事实带时间且已确认。</p>
             )}
           </div>
 
           <div className="kv-block">
             <div className="persona-block-title">变化与矛盾 <em>{drift.length}</em></div>
             {drift.length === 0 ? (
-              <p className="notes-meta-empty">没有可对比的变化。同一字段有了不同时间的记录后，这里会显示漂移与矛盾。</p>
+              <p className="inline-empty">没有可对比的变化。同一字段有了不同时间的记录后，这里会显示漂移与矛盾。</p>
             ) : (
               <div className="persona-drift">
                 {drift.map((d) => (
@@ -1237,7 +1241,7 @@ export function Persona({ act }: { act: Act }) {
               <em>{Math.min(100, Math.round(((inject?.chars || 0) / (inject?.budget || 6000)) * 100))}%</em>
             </div>
             <pre className="kv-inject">{inject?.markdown || "（还没有可注入的人设卡）"}</pre>
-            <p className="notes-meta-empty">
+            <p className="inline-empty">
               敏感项永不注入。按「字段优先级 × 热度（衰减后的权重）× 与问题的相关性」打分填预算，每节有配额上限。
               预算不足时先砍长期事实、再砍关系网。
               {inject?.dropped ? `本次省略 ${inject.dropped} 条。` : ""}

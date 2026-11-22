@@ -124,12 +124,17 @@ export interface BotTurn {
   runId?: string | null;
   todoId?: string | null;
   cost?: { tokens?: number | null; ms?: number };
+  /** 这一轮用过哪些工具：name / args / ms / ok / preview（前端渲染「过程」） */
+  tools?: { name: string; args?: string; ms?: number; ok?: boolean; rejected?: boolean; preview?: string }[];
   createdAt: number;
 }
 
 /** 多 bot 协作场景：与执行配置 Scene 分离；config 里是阵容 / 呈现偏好。 */
 export type CoordinationTemplate = "office" | "warroom" | "carrier";
 export type CoordinationLight = "auto" | "dawn" | "day" | "dusk" | "night";
+/** 3D 舞台机位：总览 / 舰首 / 舰岛 / 着舰道 / 俯视（航母舞台用） */
+/* 舞台机位：航母（舰首 / 舰岛 / 着舰道 / 俯视）与发射指挥（大屏 / 长桌 / 工位）共用一份存储 */
+export type CoordinationStageView = "overview" | "bow" | "island" | "landing" | "top" | "screen" | "desk" | "gate";
 export interface CoordinationMotion {
   tier: "calm" | "full" | "off";
   walk: number;
@@ -155,6 +160,8 @@ export interface CoordinationPrefs {
   light?: CoordinationLight;
   /** 动效档位与参数：走位时长 / 姿态幅度 / 打字 */
   motion?: CoordinationMotion;
+  /** 航母舞台机位（每个场景记住自己的机位） */
+  view?: CoordinationStageView;
 }
 export interface CoordinationScene {
   id: string;
@@ -249,7 +256,8 @@ export interface ElementContext {
   source?: { file?: string; line?: number } | null;
   screenshot?: string | null;
 }
-export interface Message { id: string; threadId: string; todoId: string | null; runId: string | null; role: string; kind: string; content: string; injected: boolean; delivery?: Delivery; context?: ElementContext | null; createdAt: number; /** 被编辑后的新版本取代时指向新 run，UI 不再展示 */ supersededBy?: string | null; }
+export interface MessageMeta { title?: string; status?: string; hint?: string; description?: string; input?: string; output?: string; }
+export interface Message { id: string; threadId: string; todoId: string | null; runId: string | null; role: string; kind: string; content: string; injected: boolean; delivery?: Delivery; context?: ElementContext | null; /** ACP 工具调用原始参数 / 完整输出（轨迹用） */ meta?: MessageMeta | null; createdAt: number; /** 被编辑后的新版本取代时指向新 run，UI 不再展示 */ supersededBy?: string | null; }
 export interface Artifact { id: string; todoId: string; runId: string; kind: string; title: string; origin: string; ref: string; deepLink: string; createdAt: number; }
 export interface Event { id: string; ts: number; type: string; text: string; }
 export interface ContextState { dataset?: string; selection?: string[]; figure?: string; canvasElement?: string; activeFile?: string; updatedAt?: number; stale?: boolean; source?: string; }
@@ -258,6 +266,8 @@ export interface Settings {
   /** 启动视图：统计 / 主机已收进设置，老值 stats|hosts 读到时落成 settings */
   defaultView: "workspace" | "projects" | "settings";
   theme: ThemeMode;
+  /** 界面语言：zh | en（en = 标题 / 导航 / 页签 / 页头按钮切英文；正文仍为中文） */
+  uiLanguage: "zh" | "en";
   /** 整窗缩放：0 = 自动（跟随屏幕分辨率），80–150 = 手动固定百分比 */
   uiScale: number;
   /** 只读：自动/手动换算后的实际百分比，由主进程算好给设置页显示 */
@@ -314,6 +324,36 @@ export interface Settings {
   /** 人物语料目录（datasets/wechat）；空则按 userData → 仓库顺序找 */
   personaDatasetDir?: string;
 }
+/** 群聊的一句话发给谁：指定某个成员 / 全体 / 被 @ 的人（ORCA 的 BotGroupReplyMode） */
+export type BotGroupReplyMode =
+  | { kind: "bot"; botId: string }
+  | { kind: "all" }
+  | { kind: "mentions" };
+
+export interface BotGroup {
+  id: string;
+  name: string;
+  memberIds: string[];
+  replyMode: BotGroupReplyMode;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface BotGroupMessage {
+  id: string;
+  groupId: string;
+  seq: number;
+  author: "owner" | "bot";
+  botId: string | null;
+  botName: string;
+  text: string;
+  /** 沉默 / 被拦也要留痕：作者是 bot 但没开口 */
+  decision: string;
+  createdAt: number;
+  /** 这一句对应的回合：turnId / runId / cost（点开看轨迹用） */
+  meta?: { turnId?: string | null; runId?: string | null; cost?: { tokens?: number | null; ms?: number } | null } | null;
+}
+
 export interface State {
   hosts: Host[]; agents: Agent[]; todos: Todo[]; runs: Run[]; threads: Thread[]; messages: Message[];
   missionPlans?: MissionPlanRecord[]; delegations?: Delegation[];
@@ -330,6 +370,8 @@ export interface State {
   coordinationScenes?: CoordinationScene[];
   bots?: Bot[];
   botTurns?: BotTurn[];
+  botGroups?: BotGroup[];
+  botGroupMessages?: BotGroupMessage[];
   routines?: BotRoutine[];
   terminals?: TerminalRecord[];
   runtimes?: RuntimeView[];

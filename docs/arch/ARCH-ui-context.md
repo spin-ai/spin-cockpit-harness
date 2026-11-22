@@ -1,4 +1,4 @@
-> 层：架构 · 状态：已落地 · 核对：2026-11-14 · 覆盖：预览拾取 → Agent 上下文
+> 层：架构 · 状态：已落地 · 核对：2026-11-22 · 覆盖：预览拾取 → Agent 上下文
 
 # UI 上下文：预览页拾取元素 → 注入 Agent
 
@@ -10,7 +10,7 @@
 ## 1. 操作流程
 
 1. Agent 在终端里起 dev server（`npm run dev`）。
-2. harness 从 pty 输出自动识别 `http://localhost:<port>`，Terminal 栏出现「打开预览 :5173」，点一下即作为**终端标签页**打开（与 pty 标签并列，可切换/关闭，也可在地址栏手动改）。没有识别到地址时，点工具栏「＋ 预览」也能打开，默认地址来自设置 → 预览。
+2. harness 从 pty 输出自动识别 `http://localhost:<port>`，Terminal 栏出现「打开预览 :5173」，点一下即作为**终端标签页**打开（与 pty 标签并列，可切换/关闭，也可在地址栏手动改）。没有识别到地址时，点工具栏「＋ 新建 → 新建预览页」也能打开，默认地址来自设置 → 预览。
 3. 点「拾取元素」→ 页面进入 DevTools 式 inspect：悬停高亮、带尺寸/标签提示。
 4. 点中目标元素 → 生成 `ElementContext`，插入 Chat 输入框上方的 chip。
 5. 在 Chat 里补一句「改成品牌蓝、字号 40px」→ 发送。
@@ -222,9 +222,9 @@ HTML：<h1 class="hero">hello</h1>
 ## 8. 验证
 
 - `node --check electron/preview.mjs electron/ui-context.mjs electron/preview-tunnel.mjs electron/main.mjs`
-- `npm run verify:preview-tunnel`：地址 → 隧道目标、私网判定、key 复用、ssh 报错文案（不建连，不需要远端机器）
-- `npm run verify:browser-tools`：URL / selector 校验、文本裁剪、bridge 协议（起子进程 + 假端点跑 initialize / tools/list / tools/call）
-- `npm run verify:preview-permissions` / `verify:preview-doc`：站点权限策略、docx / xlsx 转换与 LibreOffice 版式转换
+- `npm test -- preview-tunnel`：地址 → 隧道目标、私网判定、key 复用、ssh 报错文案（不建连，不需要远端机器）
+- `npm test -- browser-tools`：URL / selector 校验、文本裁剪、bridge 协议（起子进程 + 假端点跑 initialize / tools/list / tools/call）
+- `npm test -- preview-permissions` / `verify:preview-doc`：站点权限策略、docx / xlsx 转换与 LibreOffice 版式转换
 - `npx tsc --noEmit` / `npx vite build`
 - 纯函数测试：`formatContext` 输出、空样式过滤、`data-ym-src` 解析
 - DB 测试：新库 context 往返；10 列旧 messages 表迁移后自动加 `context` 列

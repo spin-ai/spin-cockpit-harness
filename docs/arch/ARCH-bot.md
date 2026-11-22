@@ -56,8 +56,24 @@
 | **建 / 改 / 删的入口**：新建 = 占位名 + 聚焦改名（不弹窗）；`⋯` 在**页头**（新建 / 重命名 / 迁移历史 / 删除）；日程用行内表单。原因见 `AGENTS.md` 第 12 条：Electron 不实现 `window.prompt`，之前这些按钮点了没反应 | `Bot.tsx` / `verify:design` |
 | **提问卡片（ask_user）**：模型主动开口时输出 `ASK: 一句话问题` → 落一张**可作答**卡片（`bot_turns.ask = { text, status, answer }`），挂在输入框上方；人不回也不挡聊天，回一句自动结掉；「先不管」→ `dismissed`；7 天懒过期 → `expired` | `askOpen()` / `openAsks()` / `settleAsks()` / Bot 页卡片 |
 | **日程落点**：`mode: "alongside"`（到点就跑）/ `"in-chat"`（等这个 bot 空下来，最多等 5 分钟就并进去）；有日程到点时 `gatesFor` 跳过「最小间隔」，否则排好的早报会被刚说的闲话挡掉 | `routine.mjs` / `tickBot()` |
-| **持续 chat（bot thread）**：一个 bot 一条 `threads.kind="bot"`，说出口的部分镜像进 `messages`，沉默/被拦只留 `bot_turns`；`reply()` 的历史改读 thread；老回合用 `botThreadMigrate({dryRun})` 幂等搬家 | `electron/bot/index.mjs` / `ARCH-chat-thread` |
+| **持续 chat（bot thread）**：默认会话一条 `threads.kind="bot"`，说出口的部分镜像进 `messages`，沉默/被拦只留 `bot_turns`；`reply()` 的历史改读 thread；老回合用 `botThreadMigrate({dryRun})` 幂等搬家 | `electron/bot/index.mjs` / `ARCH-chat-thread` |
+| **窗口三栏：机器人 / 聊天对话框 / 消息·设置**：左栏是 bot 与群聊（联系人，含未读点 / 暂停 / 静音）；中栏是聊天对话框（DeepSeek 式 transcript + composer）；右栏是 `消息 | 设置` 两个 tab —— 消息是当前联系人的会话列表（搜索、＋新会话、重命名 / 删除、`N 条执行`），设置是人格卡 / 记忆 / 任务 / 自动化 / 工具与通道 / 出场规则。页面不再有 `PageHeader`：暂停 / 静音 / 跑一次决策 / 重命名 / 删除都收进右栏消息头的 `⋯`，旁边只保留「决策」 | `Bot.tsx` / `.bot-grid` / `.bot-rail-tabs` |
+| **多会话（照搬 ORCA 的 Chats）**：一个 bot 可以有多个话题（`threads` 多条 `kind="bot"`）；回合记 `bot_turns.thread_id`，老回合与主动开口落在默认会话；新话题第一句话成为标题 | `chatsOf()` / `newChat()` / `botChats` / `Bot.tsx` |
+| **每轮轨迹（思考 / 工具 / 终端）**：`已汇报，用时 1秒` 这一行就是轨迹开关；展开后按时间列思考（可展开全文）、工具调用、终端。工具按族渲染专属卡：终端（命令 + 输出）、编辑（+/- 行 + diff 着色）、读取（路径 + 行数）、搜索/网页、通用 IN/OUT。run 的 `messages` 优先，bot 自己的只读工具用 `bot_turns.tools` 兜底 | `traceStepsOf()` / `ToolCard` / `state.messages` |
+| **独立轨迹视图**：中栏 `对话 | 轨迹`。轨迹 = 三轨时间轴（输入 / 模型 / 工具，按记录耗时比例，点击跳回回合）+ 可搜索账本（时间 / 角色 / 工具名 / 原始参数 / 结果 / 用量 / TTFT）；聊天右侧另有回合导航（1 / 2 / 3…） | `BotTrajectoryView` / `.ds-tr-*` / `.ds-turn-rail` |
+| **结构化轨迹落库**：`bot_turns.trace` 存每次模型请求（usage / TTFT / 文本）与每次工具调用（`argsRaw` / `result` / `at` / `ms`）；ACP 工具消息写 `messages.meta`（原始 `rawInput` / 完整输出），前端优先读结构字段，旧数据回退到拍平文本 | `chatStreamWithTools()` / `messages.meta` / `electron/db.mjs` 迁移 |
+| **会话里的附件 / 引用 / 分支**：附件走 `docsPick` 读文本文件（最多 3 个、每个截 4000 字）拼进这一句；消息上「引用」只带 1–3 行进输入框；「分支」= 复制到当前末尾的新会话（`forkChat`），源会话一条不动 | `Bot.tsx` / `forkChat()` |
+| **执行树（worker）**：会话行前面有 `N 条执行`，展开是这条会话起过的任务（`bot_turns.todoId` 反查），点进任务的会话 | `workersOf()` / `Bot.tsx` |
+| **接下来 / 未读点**：Chats 顶部收「提问 / 待定建议 / 到点日程」；机器人列表的小圆点由同一份数据算（`attentionOf`） | `upNext` / `attentionOf` |
+| **自动化面板**：一行一条（名称 / 下次·上次 / 启用 / 到点就跑·等这一轮 / 删除），新建仍是每天 / 每隔 / 变化才跑 | `Bot.tsx` §routines |
+| **工具与通道面板**：只读工具（4 个）、通道（local / group / feishu 未接入 / mobile 不适用）、已装插件 —— 只陈述「它能碰到什么」，写操作仍走审批 | `Bot.tsx` §connectors |
+| **出场规则 · 谁能找它**：`policy.whoCanAsk = owner / group / anyone`；`owner` 的 bot 不进群聊（`botGroupSend` 过滤），只在 1:1 回应 | `DEFAULT_POLICY` / `botGroupSend` |
+| **头像**：人格卡里选 emoji（不存图片），带底色档位 | `Bot.tsx` §persona |
+| **会话正文**：agent 回复走 `RichText`（与 Chat 窗口同一套 Markdown / 代码卡 / 列表），用户消息保留纯文本气泡；视觉规范见 `ARCH-chat-ui` | `RichText` / `src/components/TaskChat.tsx` |
 | **回合可恢复（bot 侧）**：被动回复先落一条 `decision: "streaming"`，增量每 800ms 节流刷新；成功后同一条改成 `replied`，取消 / 报错则删掉；**应用被杀**留下的 `streaming` 在下次 `ensureSeed()` 收成 `interrupted` 并保留半截正文 | `reply()` / `ensureSeed()` / Bot 页「被打断」行 |
+| **只读工具（function calling）**：`read` 档不给工具；`dispatch` / `work` 档带 `memory_search` / `knowledge_search` / `todo_list` / `run_status` 四个只读工具，最多 4 轮；模型自己编一个没授权的工具（如 `memory_write`）会被回一条 tool 错误让它解释，不会执行；网关不支持 tools 时自动退回纯对话。用过的工具留痕在 `bot_turns.tools` | `electron/bot/tools.mjs` / `chatStreamWithTools()` / `botReadTool()` |
+| **职责卡（persona.duty）**：目标 / 范围 / 交付物 / 不做什么 / 汇报口径，与 `mission`、`role` 一起进 system prompt —— 只写人设不写职责，PM 和 DE-A 在模型眼里是同一个人 | `buildSystemPrompt()` / Bot 页「职责卡」 |
+| **记忆写入按 bot 落 owner**：bot 起的 run（`todo.botId`）经 MCP 写记忆时默认 `owner=bot:<id>`，读侧 `inject({ owner })` 只看「共享 + 自己」；人手开的 run 仍写共享层 | `startWikiMcpServer()` 的 `ownerOf()` |
 
 **人格为什么留在 `bots.persona`**：这是**多 bot** 产品，人格属于「这个 bot」，不属于「我」。`persona` 模块建模的是"人"（含别人的双时态证据链），和 bot 人格不是一张表；两者只在"结构化字段"这一层同构。真要复用画像，也应该是「从某个画像复制一份人格卡」，不是共享一行记录。
 
@@ -175,14 +191,26 @@ type BotTurn = {
 - 可读四层（L4 结论 / L3 项目 / L2 事实 / L1 原始），但注入按 `memory.inject({ maxChars })` 裁剪，L1 默认只做回查不注入。
 - bot 与人的记忆**同源**（`harness.db`），不做第二套；差异只在「这个 bot 关心哪些项目/人」的视图过滤。
 - 视图形状：`inject({ owner: "bot:<id>" })` 只返回「`owner` 为空（共享）+ 自己的」条目；不传 owner 时行为不变（全库）；
-- 写入：bot 自己的结论仍走现有「观察 → 待确认 → 晋升」，不能自封 L4；写入侧的 `owner` 参数已就位，接 bot 记忆写入（P1）时传进去即生效。
+- 写入：bot 自己的结论仍走现有「观察 → 待确认 → 晋升」，不能自封 L4；**bot 起的 run** 经 MCP 写记忆时默认带 `owner = bot:<id>`（人手开的 run 不带，仍进共享层）。
 
 ### 3.3 能力 → Agent
 
 | 档位 | 能做什么 | 不能做什么 |
 |---|---|---|
-| `read` | 查记忆/资料、总结、解释 | 建 todo、起 run、改文件 |
-| `dispatch` | 建 todo、起 run（含子任务） | 自批审批、改设置、装插件 |
+| `read` | 查记忆/资料、总结、解释（工具表不下发） | 建 todo、起 run、改文件 |
+| `dispatch` | 四个只读工具 + 建 todo（需人确认） | 自批审批、改设置、装插件、改文件 |
+| `work` | 四个只读工具 + 建 todo 并盯执行体 | 自批审批、改设置、装插件、直接改文件 |
+
+**只读工具（2026-11-22）**：
+
+| 工具 | 作用 | 数据来源 |
+|---|---|---|
+| `memory_search` | 查长期记忆（条目 + 待确认观察） | `memory.entrySearch` / `noteList` |
+| `knowledge_search` | 查知识库片段 | `knowledge().search` |
+| `todo_list` | 看当前项目任务清单 | `state.todos` |
+| `run_status` | 看在跑 / 排队的运行 | `state.runs` |
+
+边界：工具表里**没有**写操作。写文件 / 跑命令 / 起任务只能「提议 → 人确认 → 走 run」；模型硬编一个未授权工具时回 tool 错误而不执行。
 
 `dispatch` 档位的硬约束：
 - 起任务前先回一句「我理解的是 X，要现在开吗」——**一句话确认**，不直接跑；
@@ -230,6 +258,8 @@ CREATE TABLE bot_turns(id TEXT PRIMARY KEY, bot_id TEXT, channel TEXT,
 ```
 
 索引：`bot_turns(bot_id, created_at)`、`bot_turns(decision, created_at)`（UI 过滤与频控统计）。
+
+**写入必须用显式列名**（`electron/db.mjs` 的 `persist()`）：`todo_id` / `proposal` 是之后 `ALTER TABLE` 追加的，物理列序在 `cost` / `created_at` 之后，位置插入会把四列整体错位（`todo_id` 变成 `{}`，于是 `botAcceptProposal` 永远报「这条建议已经建过任务」）。同理 `threads` 的 `kind` / `bot_id` 在老库里也被 ALTER 追加过，位置插入会把两列写反。迁移里保留了两条修复语句：丢弃 `todo_id LIKE '{%'` 的历史错位行；把 `kind` / `bot_id` 互换的线程改回来。回归用例见 `tests/db.test.mjs`「bot_turns / threads 列序」。
 
 ---
 
@@ -285,12 +315,14 @@ CREATE TABLE bot_turns(id TEXT PRIMARY KEY, bot_id TEXT, channel TEXT,
 
 - **work 档位能起 run，但仍需一次人工点击**：「开跑」按钮就是那次授权；模型不能自己触发 run。
 - **执行回流是摘要不是改稿**：run 结束后只回一条 200 字内的汇报，不重写 agent 的产出。
+- **bot 对话只有只读工具**：写文件 / 跑命令 / 改设置全部不在工具表里；要动手仍得人到 Chat 派活。
+- **工具调用只记名字与参数摘要**：`bot_turns.tools` 记 `{ name, args }`，不存完整返回体，避免回合表变大。
 - **飞书（P2）**：bot 只出本地回合流；群里 @ 触发依赖 `ARCH-im-gateway.md` §3 的长连接。
 - **多 bot 并发抢占**：tick 按 bot 顺序串行跑，没有「同一事件两个 bot 都想说」的去重与协商。
 - **人格模块打通**：`persona` 还没有 `subject=self`，人格卡暂时只存在 bot 档案里。
 - **主动消息不进 Chat**：只有 toast + Rail 未读徽标，回合本身仍只在 Bot 页。
 - **取消是硬中断**：没有"保留已生成部分写入回合"的选项。
-- **对话不进 thread 模型**：`bot_turns` 是独立表，Bot 页的对话和被动的回合不参与 Chat 的 thread/todo 统计。
+- ~~**对话不进 thread 模型**~~：2026-11-22 已改——bot 有 `threads.kind="bot"`，回合镜像进 `messages`，工作区 Chat 直接可聊（流式 + 打字中 + 停止）。
 
 - **公开社交平台**（X/微博/Mastodon）：无 API 配额与审核能力，且对外发言不可撤回。
 - **语音/形象**（TTS、3D avatar）：先把「说什么、该不该说」做对。

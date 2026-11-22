@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ILink } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -9,7 +9,8 @@ import { TaskDetail } from "./TaskDetail";
 import { PreviewSurface } from "./PreviewSurface";
 import { takeTerminalAdopt, takeTerminalRequests } from "../terminal-events";
 import { Splitter } from "./Splitter";
-import { ChevronDownIcon, ChevronUpIcon, EyeIcon, PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon, SearchIcon, SplitDownIcon, SplitRightIcon, XIcon } from "./Icons";
+import { ChevronDownIcon, ChevronUpIcon, EyeIcon, PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon, PlusIcon, SplitDownIcon, SplitRightIcon, XIcon } from "./Icons";
+import { QuickCommandDialog, QuickCommandMenu, useQuickCommands, type TermQuickCommand } from "./TerminalQuickCommands";
 
 /** 一个终端窗格 = 一个 pty（重启会新建 pty） */
 type PaneState = {
@@ -31,8 +32,10 @@ type PaneNode =
 
 type Tab = {
   id: string;
-  /** terminal = 可拆分的 pty 会话；preview = 单个网页预览；file = 文件预览 */
-  kind: "terminal" | "preview" | "file";
+  /** 归属项目（ORCA 的 worktree 概念在我们的粒度上就是项目）：标签只出现在它自己的项目里 */
+  ownerKey?: string | null;
+  /** terminal = 可拆分的 pty 会话；preview = 单个网页预览；file = 文件预览；task = 选中任务的详情 */
+  kind: "terminal" | "preview" | "file" | "task";
   title: string; cwd: string;
   root?: PaneNode;
   focusedPaneId?: string;
@@ -48,6 +51,23 @@ type Tab = {
 };
 
 const PREVIEW_MIME = "application/x-cockpit-preview";
+/** 任务详情是标签栏里的一入固定标签（id 固定，不会重复开） */
+const TASK_TAB_ID = "task";
+
+/** 每个项目的标签集合落盘：关掉应用再开，各项目的终端还在（pty 会新建，cwd / 标题 / 拆分保留） */
+const TABS_STORE_KEY = "cmh.terminal.tabs.v1";
+type PersistedPane = {
+  cwd: string; title: string; kind?: "terminal" | "preview" | "file";
+  branch?: string | null; url?: string; rel?: string; rootDir?: string;
+};
+type PersistedNode =
+  | { type: "pane"; pane: PersistedPane }
+  | { type: "split"; dir: "row" | "col"; ratio: number; a: PersistedNode; b: PersistedNode };
+type PersistedTab = {
+  kind: "terminal" | "preview" | "file" | "task"; title: string; cwd: string;
+  taskId?: string; branch?: string | null; renamed?: boolean;
+  url?: string; rel?: string; rootDir?: string; root?: PersistedNode;
+};
 // StrictMode 会先卸载再挂载：接管已有 pty 时，只有仍属于当前实例才关闭。
 const terminalOwners = new Map<string, symbol>();
 
@@ -94,6 +114,20 @@ const SEARCH_DECORATIONS = {
 function readZoom() {
   const n = Number(localStorage.getItem(ZOOM_KEY));
   return Number.isFinite(n) ? Math.max(-4, Math.min(16, Math.round(n))) : 0;
+}
+
+function allPanes(node: PaneNode | undefined): PaneState[] {
+  if (!node) return [];
+  return node.type === "pane" ? [node.pane] : [...allPanes(node.a), ...allPanes(node.b)];
+}
+
+/** 落盘用：去掉运行时字段（窗格 id / pty id），只留重建所需的信息 */
+function serializeNode(node: PaneNode): PersistedNode {
+  if (node.type === "split") {
+    return { type: "split", dir: node.dir, ratio: node.ratio, a: serializeNode(node.a), b: serializeNode(node.b) };
+  }
+  const p = node.pane;
+  return { type: "pane", pane: { cwd: p.cwd, title: p.title, kind: p.kind === "preview" || p.kind === "file" ? p.kind : "terminal", branch: p.branch ?? null, url: p.url, rel: p.rel, rootDir: p.rootDir } };
 }
 
 function firstPane(node: PaneNode): PaneState {
@@ -162,6 +196,11 @@ function updateRatioNode(node: PaneNode, splitId: string, delta: number): PaneNo
   return a === node.a && b === node.b ? node : { ...node, a, b };
 }
 
+function equalizeRatios(node: PaneNode): PaneNode {
+  if (node.type === "pane") return node;
+  return { ...node, ratio: 0.5, a: equalizeRatios(node.a), b: equalizeRatios(node.b) };
+}
+
 function paneCount(node: PaneNode): number {
   return node.type === "pane" ? 1 : paneCount(node.a) + paneCount(node.b);
 }
@@ -193,8 +232,8 @@ function cleanTitle(raw: string) {
   return String(raw || "").replace(/[\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
-export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, previewRoot, previewHost, onCollapse, terminalFontSize = 12, terminalScrollback = 5000, previewHomeUrl, onOpenThread, act, maximized = false, onToggleMaximize }: {
-  state: State; todo: Todo | null; onOpenProject: () => void;
+export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previewHost, onCollapse, terminalFontSize = 12, terminalScrollback = 5000, previewHomeUrl, onOpenThread, act, maximized = false, onToggleMaximize }: {
+  state: State; todo: Todo | null;
   onPickedContext: (ctx: ElementContext) => void;
   previewRoot?: string;
   /** 当前任务的 Agent 跑在远端主机时：预览地址要走 ssh -L 隧道（root 是远端项目绝对路径） */
@@ -214,31 +253,158 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
   const [lastUrl, setLastUrl] = useState("");
   const [previewReq, setPreviewReq] = useState<{ url: string; n: number } | null>(null);
   const [searchPaneId, setSearchPaneId] = useState<string | null>(null);
+  const [qcMenu, setQcMenu] = useState<MenuPoint | null>(null);
+  /** 工具栏 / 标签栏的「＋」共用一个新建菜单：终端 / 预览 / Agent 都在里面选 */
+  const [newMenu, setNewMenu] = useState<MenuPoint | null>(null);
+  const [qcEdit, setQcEdit] = useState<{ cmd?: TermQuickCommand } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [zoom, setZoom] = useState(readZoom);
-  // 终端槽位两个视图：终端（pty 标签）/ 任务（选中任务的详情）。pty 一直挂着，切视图不丢会话。
-  const [slotView, setSlotView] = useState<"term" | "task">(() => {
-    try { return localStorage.getItem("cmh.term.slot") === "task" ? "task" : "term"; } catch { return "term"; }
-  });
   const [focusToken, setFocusToken] = useState(0);
   const termToPane = useRef<Record<string, string>>({});
   const seq = useRef(1);
   const tabsRef = useRef<HTMLDivElement>(null);
 
   const fontSize = Math.max(MIN_FONT, Math.min(MAX_FONT, Math.round(terminalFontSize + zoom)));
+  const quick = useQuickCommands(state.projectPath || "");
+  /**
+   * 终端跟着项目走：标签栏只显示属于当前项目的终端。
+   * 判定顺序：终端记录的 projectId（worktree / Agent 终端也在记录里）→ 项目路径前缀；任务详情永远算当前任务的。
+   * 其它项目的标签不销毁（display:none），切回去还在，pty 也不会断。
+   */
+  /**
+   * 标签归属哪个项目：终端记录 projectId → cwd 最长前缀匹配 → 创建时记的 ownerKey。
+   * 为什么会话老标签需要前两条：ownerKey 是后加的，旧标签没有；而 worktree 目录不在项目路径下，
+   * 只有终端记录知道它属于哪个项目。
+   */
+  const projectOfPath = (p: string) => {
+    if (!p) return null;
+    const hits = (state.projects || []).filter((x) => {
+      const root = String(x.path || "").replace(/\/+$/, "");
+      return root && (p === root || p.startsWith(`${root}/`));
+    });
+    return hits.sort((a, b) => String(b.path).length - String(a.path).length)[0]?.id ?? null;
+  };
+  const resolveOwner = (t: Tab): string | null => {
+    const terminals = state.terminals || [];
+    const rec = allPanes(t.root).map((p) => p.terminalId).filter(Boolean)
+      .map((id) => terminals.find((x) => x.id === id)).find(Boolean) || null;
+    const base = t.rootDir || (t.root ? firstPane(t.root).cwd : t.cwd) || "";
+    const byPath = projectOfPath(base);
+    if (byPath) return byPath;
+    if (rec?.projectId) return rec.projectId;
+    return t.ownerKey ?? null;
+  };
+  const tabBelongs = (t: Tab) => resolveOwner(t) === (state.activeProjectId ?? null);
+  const projectTabs = tabs.filter(tabBelongs);
+  /** 每个项目各自记住当前标签：切回来落回你上次看的那一个 */
+  const activeByProject = useRef<Record<string, string>>({});
+  useEffect(() => {
+    const t = tabs.find((x) => x.id === active);
+    if (t && t.ownerKey !== undefined) activeByProject.current[String(t.ownerKey)] = t.id;
+  }, [active, tabs]);
+  /* ── 落盘 / 恢复 / 共享登记：项目 ↔ 终端一一对应（照 ORCA 的 unifiedTabsByWorktree） ── */
+
+  /** 从落盘数据重建窗格树（不保留旧 pty：重启后 pty 早没了，挂载时新建） */
+  const buildRestoredNode = (raw: PersistedNode): PaneNode => {
+    if (raw.type === "split") {
+      return { type: "split", id: `s${seq.current++}`, dir: raw.dir, ratio: raw.ratio, a: buildRestoredNode(raw.a), b: buildRestoredNode(raw.b) };
+    }
+    const p = raw.pane;
+    return {
+      type: "pane",
+      pane: {
+        id: `p${seq.current++}`, cwd: p.cwd, title: p.title || basename(p.cwd),
+        kind: p.kind, branch: p.branch ?? null, url: p.url, rel: p.rel, rootDir: p.rootDir,
+      },
+    };
+  };
+
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    let data: Record<string, { tabs?: PersistedTab[]; activeIndex?: number }> = {};
+    try { data = JSON.parse(localStorage.getItem(TABS_STORE_KEY) || "{}") || {}; } catch { return; }
+    const restored: Tab[] = [];
+    const activeHint: Record<string, string> = {};
+    for (const [projectKey, entry] of Object.entries(data)) {
+      const rows = (entry.tabs || []).slice(0, 12);
+      const made: Tab[] = [];
+      const seen = new Set<string>();
+      for (const p of rows) {
+        const sig = `${projectKey}|${p.kind}|${p.taskId || ""}|${p.title}|${p.cwd}`;
+        if (seen.has(sig)) continue;
+        seen.add(sig);
+        const root = p.root ? buildRestoredNode(p.root) : undefined;
+        made.push({
+          id: `t${seq.current++}`, ownerKey: projectKey || null, kind: p.kind, title: p.title,
+          cwd: p.cwd, taskId: p.taskId, branch: p.branch ?? null, renamed: p.renamed,
+          url: p.url, rel: p.rel, rootDir: p.rootDir, root,
+          focusedPaneId: root ? firstPane(root).id : undefined,
+        });
+      }
+      for (const t of made) t.ownerKey = resolveOwner(t);
+      const want = made[Math.max(0, Math.min(made.length - 1, Number(entry.activeIndex) || 0))];
+      if (want) activeHint[projectKey] = want.id;
+      restored.push(...made);
+    }
+    if (!restored.length) return;
+    Object.assign(activeByProject.current, activeHint);
+    setTabs((list) => [...restored, ...list]);
+    const key = String(state.activeProjectId ?? "");
+    const mine = restored.filter((t) => String(t.ownerKey ?? "") === key);
+    if (mine.length) {
+      setActive(activeByProject.current[key] || mine[0].id);
+      // 已经恢复出这个项目的标签了：别让「每个项目一个终端」的 effect 再叠一个
+      lastProject.current = state.projectPath;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** 写盘：按项目分组，记下每个项目当前激活的序号（下次恢复回到那个标签） */
+  const saveTimer = useRef<number | null>(null);
+  useEffect(() => {
+    if (!restoredRef.current) return;
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      const byProject: Record<string, { tabs: PersistedTab[]; activeIndex: number }> = {};
+      for (const t of tabs) {
+        const key = String(resolveOwner(t) ?? "");
+        const entry = byProject[key] || (byProject[key] = { tabs: [], activeIndex: 0 });
+        if (entry.tabs.length >= 12) continue;
+        entry.tabs.push({
+          kind: t.kind, title: t.title, cwd: t.cwd, taskId: t.taskId, branch: t.branch ?? null,
+          renamed: t.renamed, url: t.url, rel: t.rel, rootDir: t.rootDir,
+          root: t.root ? serializeNode(t.root) : undefined,
+        });
+      }
+      for (const [key, entry] of Object.entries(byProject)) {
+        const want = activeByProject.current[key];
+        entry.activeIndex = Math.max(0, tabs.filter((t) => String(resolveOwner(t) ?? "") === key).findIndex((t) => t.id === want));
+      }
+      try { localStorage.setItem(TABS_STORE_KEY, JSON.stringify(byProject)); } catch { /* 空间满 / 隐私模式忽略 */ }
+    }, 500);
+  }, [tabs]);
+
+  const prevProjectKey = useRef(state.activeProjectId ?? null);
+  useEffect(() => {
+    const key = state.activeProjectId ?? null;
+    if (prevProjectKey.current === key) return;
+    prevProjectKey.current = key;
+    const mine = tabs.filter((t) => resolveOwner(t) === key);
+    if (!mine.length) return;
+    const want = activeByProject.current[String(key)];
+    setActive(mine.some((m) => m.id === want) ? want : mine[mine.length - 1].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.activeProjectId]);
   const activeTab = tabs.find((t) => t.id === active) ?? null;
   const activeFocusedId = activeTab?.root ? (activeTab.focusedPaneId ?? firstPane(activeTab.root).id) : null;
   const activePane = activeTab?.root && activeFocusedId ? findPaneById(activeTab.root, activeFocusedId) : null;
   const activeUrl = activePane ? urlByPane[activePane.id] : undefined;
+  /* 能在终端里直接跑的 Agent（dsh 走 ACP，不在这一列） */
+  const terminalAgents = state.agents.filter((a) => a.chatRuntime === "terminal" && a.chatRunnable !== false);
 
   useEffect(() => { try { localStorage.setItem(ZOOM_KEY, String(zoom)); } catch { /* ignore */ } }, [zoom]);
-  useEffect(() => { try { localStorage.setItem("cmh.term.slot", slotView); } catch { /* ignore */ } }, [slotView]);
-  // 从 TODO 的「详情」动作切过来
-  useEffect(() => {
-    const on = () => setSlotView("task");
-    window.addEventListener("harness:task-detail", on);
-    return () => window.removeEventListener("harness:task-detail", on);
-  }, []);
 
   // 终端里打印出 dev server 地址 → 记住并给出「打开预览」入口
   useEffect(() => window.harness.onTerminalUrl(({ id, url }) => {
@@ -258,10 +424,11 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
     branch: init.branch || null,
   }), []);
 
-  const addTab = useCallback((init: { cwd: string; title?: string; taskId?: string; terminalId?: string; branch?: string | null }) => {
+  const addTab = useCallback((init: { cwd: string; title?: string; taskId?: string; terminalId?: string; branch?: string | null; ownerKey?: string | null }) => {
     const pane = makePane(init);
     const tab: Tab = {
       id: `t${seq.current++}`,
+      ownerKey: init.ownerKey ?? state.activeProjectId ?? null,
       kind: "terminal",
       cwd: pane.cwd,
       title: pane.title,
@@ -274,7 +441,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
     setActive(tab.id);
     setFocusToken((n) => n + 1);
     return tab;
-  }, [makePane]);
+  }, [makePane, state.activeProjectId]);
 
   // 只有一个预览标签：打开文件 = 切成文件模式，打开 URL = 切成地址模式（不新增标签）
   const openFilePreviewTab = useCallback((req: { rel: string; name?: string; root?: string }) => {
@@ -295,7 +462,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
       return;
     }
     const tab: Tab = {
-      id: `t${seq.current++}`, kind: "preview",
+      id: `t${seq.current++}`, kind: "preview", ownerKey: state.activeProjectId ?? null,
       cwd: root || state.projectPath, title, rel: req.rel, rootDir: root,
     };
     setTabs((list) => [...list, tab]);
@@ -303,11 +470,52 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
     setFocusToken((n) => n + 1);
   }, [tabs, state.projectPath]);
 
+  /** 一键发送：直接写进当前窗格的 pty，和手打完全一样 */
+  const runQuickCommand = useCallback((cmd: TermQuickCommand) => {
+    const termId = activePane?.terminalId;
+    if (!termId) return;
+    void window.harness.terminalInput(termId, cmd.appendEnter ? `${cmd.content}\r` : cmd.content);
+    setFocusToken((n) => n + 1);
+  }, [activePane?.terminalId]);
+
+  /** 终端里点文件路径（path:line）→ 在文件预览标签里打开；只认项目内的路径 */
+  const openPathFromTerminal = useCallback((target: string) => {
+    const clean = target.replace(/:\d+(?::\d+)?$/, "").replace(/^["'`]|["'`]$/g, "");
+    if (!clean) return;
+    const root = (state.projectPath || "").replace(/\/+$/, "");
+    let rel = clean;
+    if (clean.startsWith("/")) {
+      if (!root || !clean.startsWith(`${root}/`)) return;
+      rel = clean.slice(root.length + 1);
+    } else if (clean.startsWith("~/")) {
+      return;
+    }
+    rel = rel.replace(/^\.\//, "");
+    if (!rel || rel.split("/").includes("..")) return;
+    openFilePreviewTab({ rel });
+  }, [openFilePreviewTab, state.projectPath]);
+
   const activate = useCallback((tabId: string, paneId?: string) => {
     setActive(tabId);
     if (paneId) setTabs((list) => list.map((t) => (t.id === tabId ? { ...t, focusedPaneId: paneId } : t)));
     setFocusToken((n) => n + 1);
   }, []);
+
+  /** 任务详情不再占工具栏：它是标签栏里的一个固定标签（已开则切过去） */
+  const openTaskTab = useCallback(() => {
+    setTabs((list) => (list.some((t) => t.id === TASK_TAB_ID)
+      ? list
+      : [...list, { id: TASK_TAB_ID, kind: "task" as const, ownerKey: todo?.projectId ?? state.activeProjectId ?? null, cwd: state.projectPath, title: "任务" }]));
+    setActive(TASK_TAB_ID);
+    setFocusToken((n) => n + 1);
+  }, [state.projectPath]);
+
+  // 从 TODO 的「详情」动作切过来
+  useEffect(() => {
+    const on = () => openTaskTab();
+    window.addEventListener("harness:task-detail", on);
+    return () => window.removeEventListener("harness:task-detail", on);
+  }, [openTaskTab]);
 
   const patchTab = useCallback((tabId: string, patch: Partial<Tab>) => {
     setTabs((list) => list.map((t) => (t.id === tabId ? { ...t, ...patch } : t)));
@@ -324,9 +532,11 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
   }, []);
 
   const newTerminal = useCallback(() => {
-    const cwd = activePane?.cwd || state.projectPath;
+    // 当前标签属于别的项目时，别拿它的 cwd：新终端落在当前项目路径
+    const sameProject = activeTab ? tabBelongs(activeTab) : false;
+    const cwd = (sameProject && activePane?.cwd) || state.projectPath;
     addTab({ cwd, title: basename(cwd) });
-  }, [activePane?.cwd, state.projectPath, addTab]);
+  }, [activePane?.cwd, activeTab, state.activeProjectId, state.projectPath, addTab]);
 
   // 终端优先：不先建任务，直接在当前 cwd 起一个原生 CLI Agent（dsh 走 ACP，不在这里）
   const launchAgent = useCallback(async (agentId: string) => {
@@ -385,14 +595,14 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
       }));
       setActive(target.tab.id);
     } else {
-      const tab: Tab = { id: `t${seq.current++}`, kind: "preview", cwd: state.projectPath, title: previewTitle(url), url };
+      const tab: Tab = { id: `t${seq.current++}`, kind: "preview", ownerKey: state.activeProjectId ?? null, cwd: state.projectPath, title: previewTitle(url), url };
       setTabs((list) => [...list, tab]);
       setActive(tab.id);
     }
     setFocusToken((n) => n + 1);
   }, [tabs, state.projectPath]);
 
-  // 工具栏「＋ 预览」/ 命令面板入口：优先复用已打开的预览标签，否则用
+  // 命令面板 / 工具栏入口：优先复用已打开的预览标签，否则用
   // 当前窗格识别的地址 → 最近一次识别 → 设置里的默认预览地址
   const showPreview = useCallback(() => {
     const target = findPreviewLocation(tabs);
@@ -407,7 +617,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
       return;
     }
     const target = (url || activeUrl || lastUrl || previewHomeUrl || "http://localhost:5173/").trim();
-    const tab: Tab = { id: `t${seq.current++}`, kind: "preview", cwd: state.projectPath, title: previewTitle(target), url: target };
+    const tab: Tab = { id: `t${seq.current++}`, kind: "preview", ownerKey: state.activeProjectId ?? null, cwd: state.projectPath, title: previewTitle(target), url: target };
     setTabs((list) => [...list, tab]);
     setActive(tab.id);
     setFocusToken((n) => n + 1);
@@ -585,34 +795,37 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
     }));
   }, []);
 
-  // one terminal per opened project (a new tab when the project changes)
+  // 每个项目一个终端：切回已经开过的项目时复用同 cwd 的空标签，不要每次切换都叠一个
   const lastProject = useRef("");
   useEffect(() => {
     if (lastProject.current === state.projectPath) return;
     lastProject.current = state.projectPath;
+    const reuse = tabs.find((t) => !t.taskId && t.kind === "terminal" && t.cwd === state.projectPath);
+    if (reuse) { setActive(reuse.id); return; } // 该项目还没有终端时才走下面新建
     addTab({ cwd: state.projectPath, title: basename(state.projectPath) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.projectPath]);
 
-  // task selection focuses/creates that task's terminal
+  // 选中任务 = 打开它的 Chat（App.selectTodo 已切 thread），终端槽位按运行时决定：
+  //   · 终端型（agent.chatRuntime === "terminal" 或 run.runtime === "terminal" / 有 terminalId）
+  //     → 有绑定标签就聚焦并切到「终端」视图；没有绑定标签就什么都不动（不去看别人的终端）
+  //   · ACP 型 → 看「任务」详情；如果当前停在别的任务的终端上，也切回「任务」
+  // 任何情况下都**不新建**终端：终端 run 由 main 的 terminal-adopt 建标签，手动绑定用工具栏「接入 #KEY」。
   useEffect(() => {
     if (!todo) return;
-    setTabs((list) => {
-      const existing = list.find((t) => t.taskId === todo.id);
-      if (existing) {
-        setActive(existing.id);
-        setFocusToken((n) => n + 1);
-        return list;
-      }
-      const pane = makePane({ cwd: todo.cwd || state.projectPath, title: `${todo.key} ${todo.title}` });
-      const tab: Tab = {
-        id: `t${seq.current++}`, kind: "terminal", cwd: pane.cwd, title: pane.title,
-        taskId: todo.id, root: { type: "pane", pane }, focusedPaneId: pane.id,
-      };
-      setActive(tab.id);
+    const run = [...state.runs].reverse().find((r) => r.todoId === todo.id);
+    const agent = state.agents.find((a) => a.id === todo.agentId);
+    const isTerminal = Boolean(run?.terminalId) || run?.runtime === "terminal" || agent?.chatRuntime === "terminal";
+    const bound = tabs.find((t) => t.taskId === todo.id);
+    if (bound) {
+      setActive(bound.id);
       setFocusToken((n) => n + 1);
-      return [...list, tab];
-    });
+      if (!isTerminal) openTaskTab();
+      return;
+    }
+    if (isTerminal) return;
+    const current = tabs.find((t) => t.id === active);
+    if (current?.taskId && current.taskId !== todo.id) openTaskTab();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [todo?.id]);
 
@@ -633,7 +846,14 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
       if (pending.cwd) addTab({ cwd: pending.cwd, title: basename(pending.cwd) });
       if (pending.file) openFilePreviewTab(pending.file);
       const adopt = takeTerminalAdopt();
-      if (adopt) addTab({ cwd: adopt.cwd, title: adopt.title || basename(adopt.cwd), terminalId: adopt.terminalId, taskId: adopt.taskId, branch: adopt.branch });
+      if (adopt) {
+        const rec = (state.terminals || []).find((x) => x.id === adopt.terminalId);
+        addTab({
+          cwd: adopt.cwd, title: adopt.title || basename(adopt.cwd), terminalId: adopt.terminalId,
+          taskId: adopt.taskId, branch: adopt.branch,
+          ownerKey: rec?.projectId ?? state.activeProjectId ?? null,
+        });
+      }
     };
     consumeRequests();
     window.addEventListener("harness:new-terminal", onNew);
@@ -673,77 +893,37 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
     el?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [active, tabs.length]);
 
+  const openNewMenu = useCallback((el: HTMLElement) => {
+    const rect = el.getBoundingClientRect();
+    /* 右对齐触发器；上方开不下时 TermMenu 会自己夹回视口 */
+    setNewMenu({ x: Math.max(8, rect.right - 208), y: rect.bottom + 6 });
+  }, []);
+
+  const newSurfaceItems: MenuItem[] = [
+    { label: "新建终端", hint: "⌘T", run: newTerminal },
+    { label: "新建预览页", run: () => newPreviewTab() },
+    { label: todo ? `任务详情（${todo.key}）` : "任务详情", disabled: !todo, run: openTaskTab },
+    "sep",
+    { head: "起 Agent（不建任务）" },
+    ...(terminalAgents.length
+      ? terminalAgents.map((a): MenuItem => ({ label: `${a.name} · ${a.cli}`, run: () => { void launchAgent(a.id); } }))
+      : [{ label: "暂无终端 Agent", disabled: true, run: () => {} } as MenuItem]),
+  ];
+
   return (
     <section className={`terminal-pane${maximized ? " pane-max-target" : ""}`} tabIndex={0} aria-label="终端">
-      <div className="terminal-bar" onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest("button,select,input")) onToggleMaximize?.(); }}>
-        <div className="row gap6" style={{ minWidth: 0 }}>
-          <span className="term-brand" title="终端区：pty 会话与任务详情共用这块区域">Terminal</span>
-          <div className="seg term-slot-switch" role="group" aria-label="终端区域视图">
-            <button className={`seg-btn ${slotView === "term" ? "on" : ""}`} onClick={() => setSlotView("term")}>终端</button>
-            <button className={`seg-btn ${slotView === "task" ? "on" : ""}`} onClick={() => setSlotView("task")} title={todo ? `看 ${todo.key} 的详情` : "看选中任务的详情"}>任务</button>
-          </div>
-          <button className="link" onClick={onOpenProject}>打开项目</button>
-          {activeTab?.kind === "terminal" && activeTab.root && paneCount(activeTab.root) > 1 && (
-            <span className="term-pane-count">{paneCount(activeTab.root)} 窗格</span>
-          )}
-          {activeUrl && (
-            <button className="link" title={activeUrl} onClick={() => openPreview(activeUrl)}>
-              打开预览 {portOf(activeUrl)}
-            </button>
-          )}
-        </div>
-        <div className="row gap4">
-          {zoom !== 0 && activeTab?.kind === "terminal" && (
-            <button className="term-zoom-chip" onClick={() => setZoom(0)}>{fontSize}px</button>
-          )}
-          <button
-            className="term-icon-btn"
-            title="在终端中查找（⌘F）"
-            aria-label="查找"
-            disabled={!activePane}
-            onClick={() => {
-              if (!activePane) return;
-              setSearchPaneId((cur) => (cur === activePane.id ? null : activePane.id));
-            }}
-          >
-            <SearchIcon size={14} />
-          </button>
-          <select
-            className="term-agent-launch"
-            value=""
-            title="终端优先：直接起一个原生 CLI Agent（不先建任务）"
-            onChange={(e) => { const id = e.target.value; e.currentTarget.value = ""; if (id) void launchAgent(id); }}
-          >
-            <option value="">＋ Agent</option>
-            {state.agents.filter((a) => a.chatRuntime === "terminal" && a.chatRunnable !== false).map((a) => (
-              <option key={a.id} value={a.id}>{a.name} · {a.cli}</option>
-            ))}
-          </select>
-          {activeTab?.kind === "terminal" && activePane?.terminalId && todo && activeTab.taskId !== todo.id && (
-            <button className="link" title="把当前终端接到选中的任务，接管后的运行会显示在 TODO" onClick={() => void attachToTask()}>接入 {todo.key}</button>
-          )}
-          <button className="btn tiny-btn" onClick={newTerminal}>＋ 终端</button>
-          <button className="btn tiny-btn" title="新建预览（默认复用已有预览；这里显式开新标签，最多 3 个）" onClick={() => newPreviewTab()}>＋ 预览</button>
-          {onToggleMaximize && (
-            <button className="pane-collapse dark" title={maximized ? "还原（Esc）" : "最大化"} aria-label={maximized ? "还原终端" : "最大化终端"} onClick={onToggleMaximize}>
-              {maximized ? <PanelRestoreIcon size={13} /> : <PanelExpandIcon size={13} />}
-            </button>
-          )}
-          {onCollapse && (
-            <button className="pane-collapse dark" title="收起终端" aria-label="收起终端" onClick={onCollapse}>
-              <PanelCollapseIcon size={13} />
-            </button>
-          )}
-        </div>
-      </div>
-      <div className="term-slot-body" style={{ display: slotView === "term" ? "contents" : "none" }}>
+      {/* 只留一行：标签 + 右侧窗格控制。查找 / 快捷命令 / 拆分在右键菜单里，新建在 ＋ 里 */}
+      <div
+        className="term-strip"
+        onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest("button,input")) onToggleMaximize?.(); }}
+      >
       <div className="term-tabs" ref={tabsRef}>
-        {tabs.map((t) => (
+        {projectTabs.map((t) => (
           <div
             key={t.id}
             data-tab-id={t.id}
             className={`term-tab ${t.id === active ? "on" : ""} ${t.attention ? "attention" : ""} ${t.kind === "preview" || t.kind === "file" ? "preview-drag" : ""}`}
-            title={t.kind === "preview" ? `${t.url || (t.rel ? `${t.rootDir || ""}/${t.rel}` : "预览")} · 可拖到拆分的窗格` : `${t.cwd}${t.branch ? ` · ${t.branch}` : ""}`}
+            title={t.kind === "task" ? (todo ? `${todo.key} ${todo.title}` : "任务详情") : t.kind === "preview" ? `${t.url || (t.rel ? `${t.rootDir || ""}/${t.rel}` : "预览")} · 可拖到拆分的窗格` : `${t.cwd}${t.branch ? ` · ${t.branch}` : ""}`}
             draggable={t.kind === "preview" || t.kind === "file"}
             onDragStart={(e) => {
               if (t.kind !== "preview" && t.kind !== "file") return;
@@ -755,17 +935,21 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
               e.dataTransfer.setData(PREVIEW_MIME, JSON.stringify(data));
             }}
             onClick={() => activate(t.id)}
-            onDoubleClick={() => { setRenaming(t.id); }}
+            onDoubleClick={() => { if (t.kind !== "task") setRenaming(t.id); }}
             onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); close(t.id); } }}
           >
-            {t.kind === "preview"
+            {t.kind === "task"
+              ? (todo?.key ? <span className="term-tab-icon">{todo.key}</span> : <EyeIcon size={12} className="term-tab-icon" />)
+              : t.kind === "preview"
               ? (t.rel ? <FileVisual name={t.title} size={12} /> : <EyeIcon size={12} className="term-tab-icon" />)
               : <span className={`dot ${t.attention ? "amber" : t.taskId ? "green" : "slate"}`} />}
             {(state.terminals || []).some((rec) => rec.stalled && rec.status === "running"
+              && t.kind !== "task"
               && (rec.todoId && t.taskId ? rec.todoId === t.taskId : rec.cwd === t.cwd)) && (
               <span className="term-stalled" title="这个终端 5 分钟没有新输出，可能卡住了">⚠</span>
             )}
             {(state.terminals || []).some((rec) => rec.controlBy === "user"
+              && t.kind !== "task"
               && (rec.todoId && t.taskId ? rec.todoId === t.taskId : rec.cwd === t.cwd)) && (
               <span className="term-control" title="你正在接管这条终端：Agent 的写入会被拒绝，交回后它要重新看输出">✋</span>
             )}
@@ -782,15 +966,53 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
                 }}
               />
             ) : (
-              <span className="ellipsis">{t.title || (t.kind === "preview" ? "预览" : "终端")}</span>
+              <span className="ellipsis">{t.kind === "task" ? (todo ? todo.title : "任务详情") : (t.title || (t.kind === "preview" ? "预览" : "终端"))}</span>
             )}
-            <span className="term-close" onClick={(e) => { e.stopPropagation(); close(t.id); }}>×</span>
+            <span className="term-close" title="关闭标签" onClick={(e) => { e.stopPropagation(); close(t.id); }}><XIcon size={11} /></span>
           </div>
         ))}
-        <button className="term-tab add" title="新建终端" onClick={newTerminal}>＋</button>
+      </div>
+      <div className="term-strip-actions">
+        {activeUrl && (
+          <button className="link" title={activeUrl} onClick={() => openPreview(activeUrl)}>预览 {portOf(activeUrl)}</button>
+        )}
+        {activeTab?.kind === "terminal" && activePane?.terminalId && todo && activeTab.taskId !== todo.id && (
+          <button className="link" title="把当前终端接到选中的任务，接管后的运行会显示在 TODO" onClick={() => void attachToTask()}>接入 {todo.key}</button>
+        )}
+        <button
+          className="term-tab add"
+          title="新建：终端 / 预览 / 任务详情 / Agent"
+          aria-label="新建"
+          aria-haspopup="menu"
+          aria-expanded={Boolean(newMenu)}
+          onClick={(e) => openNewMenu(e.currentTarget)}
+        ><PlusIcon size={13} /></button>
+        {onToggleMaximize && (
+          <button className="pane-collapse dark" title={maximized ? "还原（Esc）" : "最大化"} aria-label={maximized ? "还原终端" : "最大化终端"} onClick={onToggleMaximize}>
+            {maximized ? <PanelRestoreIcon size={13} /> : <PanelExpandIcon size={13} />}
+          </button>
+        )}
+        {onCollapse && (
+          <button className="pane-collapse dark" title="收起终端" aria-label="收起终端" onClick={onCollapse}>
+            <PanelCollapseIcon size={13} />
+          </button>
+        )}
+      </div>
       </div>
       <div className="term-body">
         {tabs.map((t) => {
+          if (t.kind === "task") {
+            return (
+              <div key={t.id} className="term-tab-surface" style={{ display: t.id === active ? "flex" : "none" }}>
+                <TaskDetail
+                  state={state}
+                  todo={todo}
+                  act={act ?? (async () => null)}
+                  onOpenThread={(id) => onOpenThread?.(id)}
+                />
+              </div>
+            );
+          }
           if (t.kind === "file" || t.kind === "preview") {
             const isFileTab = Boolean(t.rel);
             return (
@@ -835,6 +1057,7 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
                         />
                       : <TermTab
                           key={pane.id}
+                          projectId={resolveOwner(t)}
                           pane={pane}
                           multi={multi}
                           visible={t.id === active}
@@ -865,6 +1088,10 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
                             const taken = (state.terminals || []).find((x) => x.id === termId)?.controlBy === "user";
                             void act?.(taken ? "terminalReleaseControl" : "terminalTakeControl", { id: termId });
                           }}
+                          onQuickCommands={(point) => setQcMenu(point)}
+                          onRename={() => setRenaming(t.id)}
+                          onEqualize={() => patchTab(t.id, { root: t.root ? equalizeRatios(t.root) : t.root })}
+                          onOpenPath={openPathFromTerminal}
                         />
                   )}
                   onRatio={(splitId, delta) => changeRatio(t.id, splitId, delta)}
@@ -883,18 +1110,30 @@ export function TerminalPanel({ state, todo, onOpenProject, onPickedContext, pre
                 if (!clis.length) return null;
                 return <>（如 {clis.map((c, i) => <span key={c}>{i ? " / " : ""}<code>{c}</code></span>)}）</>;
               })()}。<br />
-              想让它接任务、看进度，用左栏的 Super Agent 派活。
+              想让机器人接手：右键左侧的项目 →「交给机器人」，在对话里说一声。
             </div>
           </div>
         )}
       </div>
-      </div>
-      {slotView === "task" && (
-        <TaskDetail
-          state={state}
-          todo={todo}
-          act={act ?? (async () => null)}
-          onOpenThread={(id) => onOpenThread?.(id)}
+      {newMenu && (
+        <TermMenu point={newMenu} items={newSurfaceItems} onClose={() => setNewMenu(null)} />
+      )}
+      {qcMenu && (
+        <QuickCommandMenu
+          point={qcMenu}
+          commands={quick.commands}
+          onRun={(cmd) => { runQuickCommand(cmd); setQcMenu(null); }}
+          onEdit={(cmd) => { setQcMenu(null); setQcEdit({ cmd }); }}
+          onCreate={() => { setQcMenu(null); setQcEdit({}); }}
+          onRemove={(id) => quick.remove(id)}
+          onClose={() => setQcMenu(null)}
+        />
+      )}
+      {qcEdit && (
+        <QuickCommandDialog
+          initial={qcEdit.cmd}
+          onSave={(cmd) => { quick.save(cmd); setQcEdit(null); }}
+          onCancel={() => setQcEdit(null)}
         />
       )}
     </section>
@@ -1105,6 +1344,8 @@ function readTermTheme() {
 }
 
 type TermTabProps = {
+  /** 这个窗格属于哪个项目：建 pty 时带上，终端记录才不会被记成「当时激活的项目」 */
+  projectId?: string | null;
   pane: PaneState;
   multi: boolean;
   visible: boolean;
@@ -1131,9 +1372,15 @@ type TermTabProps = {
   /** 这条 pty 现在谁在用：null = 空着（Agent 可写），"user" = 你接管中 */
   controlBy?: string | null;
   onToggleControl: () => void;
+  /** 右键菜单：打开快捷命令 / 重命名标签 / 均分窗格 */
+  onQuickCommands: (point: MenuPoint) => void;
+  onRename: () => void;
+  onEqualize: () => void;
+  /** 点终端里的文件路径（path:line） */
+  onOpenPath: (target: string) => void;
 };
 
-function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSize, scrollback, onOpenSearch, onCloseSearch, onNewTab, onClosePane, onSplit, onOpenPreview, onFocusDir, onFocus, onCycleTab, onGotoTab, onZoom, onTermId, onUrl, onTitle, onBell, controlBy, onToggleControl }: TermTabProps) {
+function TermTab({ projectId, pane, multi, visible, focused, focusToken, searchOpen, fontSize, scrollback, onOpenSearch, onCloseSearch, onNewTab, onClosePane, onSplit, onOpenPreview, onFocusDir, onFocus, onCycleTab, onGotoTab, onZoom, onTermId, onUrl, onTitle, onBell, controlBy, onToggleControl, onQuickCommands, onRename, onEqualize, onOpenPath }: TermTabProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -1148,6 +1395,8 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
   const onBellRef = useRef(onBell);
   const onTermIdRef = useRef(onTermId);
   const onUrlRef = useRef(onUrl);
+  const onOpenPathRef = useRef(onOpenPath);
+  onOpenPathRef.current = onOpenPath;
   onTitleRef.current = onTitle;
   onBellRef.current = onBell;
   onTermIdRef.current = onTermId;
@@ -1173,6 +1422,32 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
       event.preventDefault();
       void window.harness.openExternal(uri);
     }));
+    /* 文件路径也做成链接：`src/foo.ts:12` 点一下就在文件预览里打开（只认项目内路径） */
+    const pathLinks = term.registerLinkProvider({
+      provideLinks: (lineNo, callback) => {
+        const line = term.buffer.active.getLine(lineNo - 1);
+        if (!line) { callback(undefined); return; }
+        const text = line.translateToString(true);
+        const links: ILink[] = [];
+        const re = /(?:^|[\s"'`(（])((?:\.{1,2}\/|~\/|\/)?[\w.@-]+\/[\w.@\/-]+\.[A-Za-z][\w]{0,7})(:\d+)?(:\d+)?/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(text))) {
+          const target = `${m[1]}${m[2] ?? ""}`;
+          const x = m.index + m[0].indexOf(m[1]);
+          if (x < 0) continue;
+          links.push({
+            range: { start: { x: x + 1, y: lineNo }, end: { x: x + m[1].length + (m[2] ?? "").length, y: lineNo } },
+            text: target,
+            hover: () => "在文件预览里打开",
+            activate: (event: MouseEvent, uri: string) => {
+              event.preventDefault();
+              onOpenPathRef.current(uri);
+            },
+          });
+        }
+        callback(links.length ? links : undefined);
+      },
+    });
     term.open(host);
     termRef.current = term;
     fitRef.current = fit;
@@ -1247,7 +1522,7 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
     if (pane.terminalId && incarnation === 0) {
       attach(pane.terminalId);
     } else {
-      window.harness.createTerminal(pane.cwd, { cols: term.cols, rows: term.rows }).then(({ id }) => {
+      window.harness.createTerminal(pane.cwd, { cols: term.cols, rows: term.rows, projectId: projectId || undefined }).then(({ id }) => {
         if (disposed) { void window.harness.closeTerminal(id); return; }
         attach(id);
       }).catch((err) => {
@@ -1274,6 +1549,7 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
       if (frame) cancelAnimationFrame(frame);
       ro.disconnect();
       sub.dispose();
+      pathLinks.dispose();
       resizeSub.dispose();
       titleSub.dispose();
       bellSub.dispose();
@@ -1421,10 +1697,26 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
     return () => wrap.removeEventListener("keydown", onKeyDown, true);
   }, [searchOpen, onOpenSearch, onCloseSearch, onNewTab, onClosePane, onSplit, onFocusDir, onCycleTab, onGotoTab, onZoom, clearScreen, selectAll, copySelection, paste, exited, restart]);
 
+  /* 「重置」只把 xterm 的状态清干净（滚动区 / 字符属性），不重启 shell */
+  const resetTerminal = () => {
+    termRef.current?.reset();
+    setScrolledUp(false);
+    focusTerm();
+  };
+  const copyTerminalId = useCallback(() => {
+    if (pane.terminalId) void window.harness.clipboardWrite(pane.terminalId);
+    focusTerm();
+  }, [pane.terminalId, focusTerm]);
+
   const menuItems: MenuItem[] = exited
     ? [
         { label: "重新启动", hint: "⌘R", run: restart } as MenuItem,
         { label: "复制", hint: "⌘C", run: () => void copySelection() },
+        { label: "重置终端显示", run: resetTerminal },
+        "sep",
+        { label: "快捷命令…", run: () => onQuickCommands({ x: menu!.x, y: menu!.y }) },
+        { label: "复制终端 ID", run: copyTerminalId },
+        "sep",
         { label: "关闭窗格", hint: "⌘W", danger: true, run: onClosePane },
       ]
     : [
@@ -1432,11 +1724,14 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
         { label: "粘贴", hint: "⌘V", run: () => void paste() },
         { label: "全选", hint: "⌘A", run: selectAll },
         "sep",
+        { label: "快捷命令…", run: () => onQuickCommands({ x: menu!.x, y: menu!.y }) },
         { label: "查找…", hint: "⌘F", run: onOpenSearch },
         { label: "清屏", hint: "⇧⌘K", run: clearScreen },
+        { label: "重置终端显示", run: resetTerminal },
         "sep",
         { label: "向右拆分", hint: "⌘D", run: () => onSplit("row") },
         { label: "向下拆分", hint: "⇧⌘D", run: () => onSplit("col") },
+        { label: "均分窗格", disabled: !multi, run: onEqualize },
         { label: "在右侧打开预览", run: onOpenPreview },
         "sep",
         {
@@ -1444,6 +1739,9 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
           label: controlBy === "user" ? "交回终端给 Agent" : "接管终端（Agent 暂停写入）",
           run: onToggleControl,
         },
+        "sep",
+        { label: "重命名标签", run: onRename },
+        { label: "复制终端 ID", run: copyTerminalId },
         "sep",
         { label: "新建终端", hint: "⌘T", run: onNewTab },
         { label: multi ? "关闭窗格" : "关闭标签", hint: "⌘W", run: onClosePane },
@@ -1494,7 +1792,7 @@ function TermTab({ pane, multi, visible, focused, focusToken, searchOpen, fontSi
   );
 }
 
-type MenuItem = { label: string; hint?: string; disabled?: boolean; danger?: boolean; run: () => void } | "sep";
+type MenuItem = { label: string; hint?: string; disabled?: boolean; danger?: boolean; run: () => void } | "sep" | { head: string };
 
 function TermMenu({ point, items, onClose }: { point: MenuPoint; items: MenuItem[]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -1522,6 +1820,8 @@ function TermMenu({ point, items, onClose }: { point: MenuPoint; items: MenuItem
       {items.map((item, i) =>
         item === "sep"
           ? <div key={`sep-${i}`} className="term-menu-sep" />
+          : "head" in item
+          ? <div key={`head-${i}`} className="term-menu-head">{item.head}</div>
           : (
             <button
               key={item.label}

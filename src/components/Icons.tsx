@@ -56,6 +56,10 @@ export const ChevronRightIcon = (p: IconProps) => (
   <Svg {...p}><path d="m9 18 6-6-6-6" /></Svg>
 );
 
+export const ChevronLeftIcon = (p: IconProps) => (
+  <Svg {...p}><path d="m15 18-6-6 6-6" /></Svg>
+);
+
 export const ChevronDownIcon = (p: IconProps) => (
   <Svg {...p}><path d="m6 9 6 6 6-6" /></Svg>
 );
@@ -122,12 +126,27 @@ export const SearchIcon = (p: IconProps) => (
   <Svg {...p}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></Svg>
 );
 
+/** 减号：缩小（不要再拿字符 − 当图标） */
+export const MinusIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M5 12h14" /></Svg>
+);
+
+/** 加号：新建 / 添加（不要再拿字符 ＋ 当图标） */
+export const PlusIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M12 5v14M5 12h14" /></Svg>
+);
+
 export const XIcon = (p: IconProps) => (
   <Svg {...p}><path d="m6 6 12 12M18 6 6 18" /></Svg>
 );
 
 export const ListIcon = (p: IconProps) => (
   <Svg {...p}><path d="M8 6h13M8 12h13M8 18h13" /><path d="M3 6h.01M3 12h.01M3 18h.01" /></Svg>
+);
+
+/** 看板：三列 */
+export const BoardIcon = (p: IconProps) => (
+  <Svg {...p}><rect x="3" y="4" width="5" height="16" rx="1.4" /><rect x="9.5" y="4" width="5" height="11" rx="1.4" /><rect x="16" y="4" width="5" height="7" rx="1.4" /></Svg>
 );
 
 export const ChatIcon = (p: IconProps) => (
@@ -186,8 +205,21 @@ export const ChevronUpIcon = (p: IconProps) => (
   <Svg {...p}><path d="m6 15 6-6 6 6" /></Svg>
 );
 
+/** 筛选 / 视图设置（三滑杆） */
+export const SlidersIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M4 7h10M18 7h2M4 12h3M11 12h9M4 17h9M17 17h3" /><circle cx="16" cy="7" r="2" /><circle cx="9" cy="12" r="2" /><circle cx="15" cy="17" r="2" /></Svg>
+);
+
 export const EllipsisIcon = (p: IconProps) => (
   <Svg {...p}><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></Svg>
+);
+
+export const BoltIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M13 2 4.5 13.5H10l-1 8.5 8.5-11.5H12l1-8.5Z" /></Svg>
+);
+
+export const TrashIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /><path d="M10 11v6M14 11v6" /></Svg>
 );
 
 export const SparkleIcon = (p: IconProps) => (

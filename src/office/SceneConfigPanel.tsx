@@ -1,6 +1,7 @@
-import type { State } from "../types";
+import type { CoordinationStageView, State } from "../types";
 import type { OfficeCastMember, OfficeCastRole, OfficeModel } from "./model";
 import { templateLabel } from "./templates";
+import { XIcon } from "../components/Icons";
 
 export type SceneLight = "auto" | "dawn" | "day" | "dusk" | "night";
 export type SceneMotionTier = "calm" | "full" | "off";
@@ -31,7 +32,17 @@ export interface ScenePrefs {
   showLabels: boolean;
   light: SceneLight;
   motion?: SceneMotion;
+  /** 航母舞台机位 */
+  view?: CoordinationStageView;
 }
+
+export const STAGE_VIEW_LABEL: Record<CoordinationStageView, string> = {
+  overview: "总览", bow: "舰首", island: "舰岛", landing: "着舰道", top: "俯视",
+  screen: "大屏", desk: "长桌", gate: "工位",
+};
+/* 每台舞台各自支持的机位；配置面板与舞台头共用这一份 */
+export const CARRIER_VIEWS: CoordinationStageView[] = ["overview", "bow", "island", "landing", "top"];
+export const WARROOM_VIEWS: CoordinationStageView[] = ["overview", "screen", "desk", "gate"];
 
 export function SceneConfigPanel({ state, model, cast, onCast, prefs, onPrefs, onClose, notify }: {
   state: State;
@@ -99,7 +110,7 @@ export function SceneConfigPanel({ state, model, cast, onCast, prefs, onPrefs, o
       <div className="off-insp-head">
         <div className="off-insp-title"><b>场景配置</b><span>{prefs.name} · {templateLabel(prefs.template)}</span></div>
         <span className="off-cfg-count">{rows.length} 人</span>
-        <button type="button" className="off-icon-btn" onClick={onClose} aria-label="关闭配置">✕</button>
+        <button type="button" className="off-icon-btn" title="关闭配置" onClick={onClose} aria-label="关闭配置"><XIcon size={13} /></button>
       </div>
       <div className="off-insp-body">
         <section className="off-insp-block">
@@ -108,7 +119,7 @@ export function SceneConfigPanel({ state, model, cast, onCast, prefs, onPrefs, o
             <div className="off-cfg-field"><span>舞台模板</span>
               <select value={prefs.template} onChange={(e) => onPrefs({ template: e.target.value as ScenePrefs["template"] })} aria-label="舞台模板">
                 <option value="office">办公室 · Office</option>
-                <option value="warroom">作战室 · War Room</option>
+                <option value="warroom">发射指挥 · Launch Control</option>
                 <option value="carrier">航母 · 电磁弹射</option>
               </select>
             </div>
@@ -165,13 +176,18 @@ export function SceneConfigPanel({ state, model, cast, onCast, prefs, onPrefs, o
               <option value="night">夜间</option>
             </select>
           </div> : null}
+          {prefs.template === "carrier" || prefs.template === "warroom" ? <div className="off-toggle-row"><div><b>舞台机位</b><span>{prefs.template === "carrier" ? "舰首 / 舰岛 / 着舰道 / 俯视" : "大屏 / 长桌 / 工位"}；舞台上也能拖动环绕、双击回总览</span></div>
+            <select className="off-light-select" value={prefs.view ?? "overview"} onChange={(e) => onPrefs({ view: e.target.value as CoordinationStageView })} aria-label="舞台机位">
+              {(prefs.template === "carrier" ? CARRIER_VIEWS : WARROOM_VIEWS).map((v) => <option key={v} value={v}>{STAGE_VIEW_LABEL[v]}</option>)}
+            </select>
+          </div> : null}
           <div className="off-toggle-row"><div><b>显示真实委派</b><span>只画运行中的 delegation</span></div><button className={`off-switch ${prefs.showLinks ? "on" : ""}`} onClick={() => onPrefs({ showLinks: !prefs.showLinks })} aria-pressed={prefs.showLinks}><i /></button></div>
           <div className="off-toggle-row"><div><b>显示姓名牌</b><span>关闭后只保留角色本体</span></div><button className={`off-switch ${prefs.showLabels ? "on" : ""}`} onClick={() => onPrefs({ showLabels: !prefs.showLabels })} aria-pressed={prefs.showLabels}><i /></button></div>
         </section>
 
         <div className="off-cfg-note"><b>边界：</b>场景只提供默认值与呈现；执行仍走 Mission / Delegation。</div>
       </div>
-      <div className="off-insp-foot"><button className="btn off-insp-btn" onClick={onClose}>关闭</button><span className="off-spacer" /><button className="btn primary off-insp-btn" onClick={() => notify("场景配置已保存（本地）")}>保存配置</button></div>
+      <div className="off-insp-foot"><button className="off-icon-btn" title="关闭配置" aria-label="关闭配置" onClick={onClose}><XIcon size={13} /></button><span className="off-spacer" /><button className="btn primary off-insp-btn" onClick={() => notify("场景配置已保存（本地）")}>保存配置</button></div>
     </aside>
   );
 }

@@ -3,7 +3,9 @@ import type { State } from "../types";
 import { STATUS_LABEL, statusTone } from "../ui";
 import { GitWiki } from "./GitWiki";
 import { EmptyState } from "./EmptyState";
+import { Tabs } from "./Tabs";
 import { PageHeader } from "./PageHeader";
+import { useT } from "../i18n";
 import { RowMenu } from "./RowMenu";
 
 type Commit = { hash: string; subject: string; author: string; when: string };
@@ -16,6 +18,7 @@ type Commit = { hash: string; subject: string; author: string; when: string };
  * 所有 git 操作都在当前项目根目录执行（主进程 `git:*`）。
  */
 export function GitView({ state, notify }: { state: State; notify: (m: string) => void }) {
+  const t = useT();
   const root = state.projectPath;
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -148,17 +151,22 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
   });
 
   const tabs = (
-    <div className="git-view-tabs">
-      <button className={tab === "source" ? "on" : ""} onClick={() => setTab("source")}>源码管理</button>
-      <button className={tab === "wiki" ? "on" : ""} onClick={() => setTab("wiki")}>项目 Wiki</button>
-      <span className="git-view-tabs-hint">内置文档 · 随仓库版本发布</span>
-    </div>
+    <Tabs
+      ariaLabel="Git 视图"
+      value={tab}
+      onChange={(id) => setTab(id as "source" | "wiki")}
+      hint="内置文档 · 随仓库版本发布"
+      items={[
+        { id: "source", label: t("tab.source") },
+        { id: "wiki", label: t("tab.wiki") },
+      ]}
+    />
   );
 
   if (tab === "wiki") {
     return (
       <div className="page git-page">
-        <PageHeader title="项目 Wiki" subtitle="随仓库版本发布的内置文档" tabs={tabs} />
+        <PageHeader title={t("page.wiki")} subtitle={t("page.wikiSub", "随仓库版本发布的内置文档")} tabs={tabs} />
         <GitWiki branch={status?.branch} head={commits[0]?.hash} />
       </div>
     );
@@ -167,7 +175,7 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
   if (!status) {
     return (
       <div className="page git-page">
-        <PageHeader title="Git" subtitle={root} tabs={tabs} />
+        <PageHeader title={t("page.git")} subtitle={root} tabs={tabs} />
         <div className="git-page-empty"><EmptyState title="正在读取 Git 状态…" desc={error || "稍等一下"} compact /></div>
       </div>
     );
@@ -211,7 +219,7 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
   return (
     <div className="page git-page">
       <PageHeader
-        title="Git"
+        title={t("page.git")}
         subtitle={`${status.branch || "(detached)"}${status.upstream ? ` → ${status.upstream}` : " · 无上游"}${status.ahead ? ` · ↑${status.ahead}` : ""}${status.behind ? ` · ↓${status.behind}` : ""}`}
         tabs={tabs}
         actions={<div className="row gap6">
@@ -219,7 +227,7 @@ export function GitView({ state, notify }: { state: State; notify: (m: string) =
             {!branches.includes(status.branch || "") && <option value={status.branch || ""}>{status.branch || "(detached)"}</option>}
             {branches.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>
-          <button className="btn tiny-btn" disabled={Boolean(busy)} onClick={refresh}>{loading ? "刷新中…" : "刷新"}</button>
+          <button className="btn tiny-btn" disabled={Boolean(busy)} onClick={refresh}>{loading ? "…" : t("action.refresh")}</button>
           <RowMenu title="更多 Git 操作">
             {branchDraft === null
               ? <button onClick={() => setBranchDraft("")}>新建分支</button>

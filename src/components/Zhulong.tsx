@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { State } from "../types";
 import { EmptyState } from "./EmptyState";
+import { Tabs } from "./Tabs";
+import { useT } from "../i18n";
 import { PageHeader } from "./PageHeader";
 import { RowMenu } from "./RowMenu";
 import { ZhulongOverlay, type ZhBlock, type ZhRelation } from "./ZhulongOverlay";
@@ -150,6 +152,7 @@ export function Zhulong({ state, act, notify, onOpenSettings }: {
   }, [busy]);
   const elapsed = busy && startedAt ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
 
+  const t = useT();
   const backend = String(settings.backend || "zhulong");
   const endpoint = String(settings.endpoint || "");
   const size: [number, number] = result?.size?.[0] ? result.size : natural;
@@ -403,7 +406,7 @@ export function Zhulong({ state, act, notify, onOpenSettings }: {
   if (!enabled) {
     return (
       <div className="page zh-page">
-        <PageHeader kicker="Plugin" title="视觉解析" subtitle="把手绘架构图 / 界面截图 / PDF 页面解析成区块与关系" />
+        <PageHeader title={t("page.visual")} subtitle="把手绘架构图 / 界面截图 / PDF 页面解析成区块与关系" />
         <EmptyState
           mark="◇"
           title="视觉解析插件未启用"
@@ -420,8 +423,7 @@ export function Zhulong({ state, act, notify, onOpenSettings }: {
   return (
     <div className="page zh-page">
       <PageHeader
-        kicker="Plugin"
-        title="视觉解析"
+        title={t("page.visual")}
         subtitle={(
           <>
             <span>{BACKEND_LABEL[backend] || backend}</span>
@@ -430,13 +432,13 @@ export function Zhulong({ state, act, notify, onOpenSettings }: {
         )}
         actions={(
           <>
-            <button className="btn" onClick={() => void runProbe()}>探测后端</button>
-            <button className="btn" disabled={!result || busy} onClick={() => void handoff()} title="把结构化摘要写进 Chat 草稿，人确认后再发">交给 Agent</button>
+            <button className="btn" onClick={() => void runProbe()}>{t("action.probeBackend")}</button>
+            <button className="btn" disabled={!result || busy} onClick={() => void handoff()} title="把结构化摘要写进 Chat 草稿，人确认后再发">{t("action.handToAgent")}</button>
             {busy ? (
               <button className="btn" onClick={() => void cancel()} title="中断这次解析">取消 · {elapsed}s</button>
             ) : (
               <button className="btn primary" disabled={!imageUrl} title="⌘↵" onClick={() => run()}>
-                {result ? "重新解析 ⌘↵" : "开始解析 ⌘↵"}
+                {result ? `${t("action.reparse")} ⌘↵` : `${t("action.startParse")} ⌘↵`}
               </button>
             )}
           </>
@@ -562,19 +564,26 @@ export function Zhulong({ state, act, notify, onOpenSettings }: {
 
           {result && (
             <>
-              <div className="zh-tabs" ref={tabsRef}>
-                <button className={tab === "blocks" ? "on" : ""} onClick={() => setTab("blocks")}>区块 <span className="zh-count">{stats?.blocks}</span></button>
-                <button className={tab === "relations" ? "on" : ""} onClick={() => setTab("relations")}>关系 <span className="zh-count">{stats?.relations}</span></button>
-                <button className={tab === "json" ? "on" : ""} onClick={() => setTab("json")}>JSON</button>
-                <span className="zh-tabs-hint">
-                  {(result.source.bytes / 1024).toFixed(0)} KB · {result.size[0]}×{result.size[1]} · {(result.elapsedMs / 1000).toFixed(1)}s
-                </span>
-                <RowMenu title="结果导出">
-                  <button onClick={() => void copyMarkdown()}>复制 Markdown</button>
-                  <button onClick={() => void copyJson()}>复制 JSON</button>
-                  <button onClick={() => void save()}>保存到项目</button>
-                  <button onClick={() => void saveToKnowledge()}>存为资料</button>
-                </RowMenu>
+              <div ref={tabsRef}>
+                <Tabs
+                  ariaLabel="解析结果视图"
+                  value={tab}
+                  onChange={(id) => setTab(id as typeof tab)}
+                  hint={`${(result.source.bytes / 1024).toFixed(0)} KB · ${result.size[0]}×${result.size[1]} · ${(result.elapsedMs / 1000).toFixed(1)}s`}
+                  items={[
+                    { id: "blocks", label: "区块", badge: stats?.blocks },
+                    { id: "relations", label: "关系", badge: stats?.relations },
+                    { id: "json", label: "JSON" },
+                  ]}
+                  trailing={(
+                    <RowMenu title="结果导出">
+                      <button onClick={() => void copyMarkdown()}>复制 Markdown</button>
+                      <button onClick={() => void copyJson()}>复制 JSON</button>
+                      <button onClick={() => void save()}>保存到项目</button>
+                      <button onClick={() => void saveToKnowledge()}>存为资料</button>
+                    </RowMenu>
+                  )}
+                />
               </div>
 
               {tab === "blocks" && (

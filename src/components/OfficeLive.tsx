@@ -1,12 +1,14 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import type { State } from "../types";
+import type { CoordinationStageView, State } from "../types";
 import { EmptyState } from "./EmptyState";
 import { buildOfficeModel, type OfficeCastMember, type OfficeModel, type OfficeTone, type OfficeZone } from "../office/model";
 import { OfficeStage, STAGE_SIZE } from "../office/OfficeStage";
 import { OfficeInspector } from "../office/OfficeInspector";
 import { RobotArt } from "../office/RobotArt";
-import { SceneConfigPanel, DEFAULT_MOTION, motionOf, type ScenePrefs, type SceneMotion } from "../office/SceneConfigPanel";
+import { XIcon } from "./Icons";
+import { EyeIcon, EyeOffIcon, WrenchIcon } from "./Icons";
+import { SceneConfigPanel, DEFAULT_MOTION, motionOf, STAGE_VIEW_LABEL, CARRIER_VIEWS, WARROOM_VIEWS, type ScenePrefs, type SceneMotion } from "../office/SceneConfigPanel";
 import { a11yChecks, ZONE_LABEL, triggerOf } from "../office/motion";
 import { templateLabel } from "../office/templates";
 import "../office/office.css";
@@ -109,6 +111,11 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
   const [showPaths, setShowPaths] = useState(false);
   const [reduced, setReduced] = useState(false);
   const [launchSignal, setLaunchSignal] = useState(0);
+  const [landSignal, setLandSignal] = useState(0);
+  /* 机位存在 prefs.view 里：航母和发射指挥共用一份字段，各自的机位表在 SceneConfigPanel。
+     换模板后旧机位可能不属于这台舞台，落回总览，避免下拉框空选。 */
+  const stageView: CoordinationStageView =
+    prefs.view && (prefs.template === "carrier" ? CARRIER_VIEWS : WARROOM_VIEWS).includes(prefs.view) ? prefs.view : "overview";
   const [walkOnly, setWalkOnly] = useState(false);
   const [walking, setWalking] = useState<Set<string>>(new Set());
   const [walkFrom, setWalkFrom] = useState<Record<string, string>>({});
@@ -400,6 +407,8 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
     idle: displayModel.actors.filter((a) => a.tone === "neutral").length,
   };
   const templateName = templateLabel(prefs.template);
+  /** Mission 在跑时，舞台上能一键回会话，不用再去左边找任务 */
+  const missionTask = displayModel.coordination.missionKey ? displayModel.lead?.task ?? null : null;
   const isWarRoom = prefs.template === "warroom";
   const isCarrier = prefs.template === "carrier";
   const is3D = isWarRoom || isCarrier;
@@ -429,6 +438,9 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
                 <span className={stats.failed ? "fail" : ""}><b>{stats.failed}</b>失败</span>
                 {stats.idle ? <span><b>{stats.idle}</b>空闲</span> : null}
               </div>
+              {missionTask ? (
+                <button className="link tiny" onClick={() => onOpenTask(missionTask.id)} title="回到这个 Mission 的计划与子任务">回到 Mission</button>
+              ) : null}
               <div className="stage-tools">
                 {!is3D ? (
                   <select className="mini-select" value={prefs.light} onChange={(e) => onPrefs({ light: e.target.value as ScenePrefs["light"] })} title="舞台光照（默认跟随本地时间）" aria-label="舞台光照">
@@ -439,12 +451,19 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
                     <option value="night">光照 · 夜晚</option>
                   </select>
                 ) : null}
-                <span className="hint">{isCarrier ? "点舰载机 → 状态与动效" : isWarRoom ? "点值班席 → 状态与动效" : "点角色 → 状态与动效"}</span>
+                <span className="hint">{isCarrier ? "点舰载机 → 状态与动效" : isWarRoom ? "点席位 → 状态与动效" : "点角色 → 状态与动效"}</span>
                 {!is3D ? <button className={`btn tiny ghost ${showPaths ? "on" : ""}`} aria-pressed={showPaths} onClick={() => setShowPaths((v) => !v)} title="画出各角色到目标区域的走位路径">走位路径</button> : null}
                 {isCarrier ? <button className="btn tiny ghost" onClick={() => setLaunchSignal((v) => v + 1)} title="演一遍电磁弹射">演一遍弹射</button> : null}
+                {isWarRoom ? <button className="btn tiny ghost" onClick={() => setLaunchSignal((v) => v + 1)} title="演一遍点火发射">演一遍发射</button> : null}
+                {isCarrier ? <button className="btn tiny ghost" onClick={() => setLandSignal((v) => v + 1)} title="演一遍着舰">演一遍着舰</button> : null}
+                {isCarrier || isWarRoom ? (
+                  <select className="mini-select" value={stageView} onChange={(e) => onPrefs({ view: e.target.value as CoordinationStageView })} title="舞台机位：快捷切换（也可在场景配置里改，会存进这个场景）" aria-label="舞台机位（快捷切换）">
+                    {(isCarrier ? CARRIER_VIEWS : WARROOM_VIEWS).map((v) => <option key={v} value={v}>视角 · {STAGE_VIEW_LABEL[v]}</option>)}
+                  </select>
+                ) : null}
                 <button className={`btn tiny ghost ${reduced ? "on" : ""}`} aria-pressed={reduced} onClick={() => setReduced((v) => !v)} title="模拟系统 reduced-motion / 动效关闭">模拟 reduced-motion</button>
-                <button className={`btn tiny ghost ${configOpen ? "on" : ""}`} onClick={() => { setConfigOpen((v) => !v); setSelectedId(null); setDetailOpen(false); }}>配置</button>
-                <button className={`btn tiny ${detailOpen ? "on" : ""}`} aria-pressed={detailOpen} onClick={() => setDetailOpen((v) => !v)}>详情</button>
+                <button className={`btn tiny ghost ${configOpen ? "on" : ""}`} aria-pressed={configOpen} title="场景配置" aria-label="场景配置" onClick={() => { setConfigOpen((v) => !v); setSelectedId(null); setDetailOpen(false); }}><WrenchIcon size={13} /></button>
+                <button className={`btn tiny ${detailOpen ? "on" : ""}`} aria-pressed={detailOpen} title={detailOpen ? "收起详情" : "详情"} aria-label={detailOpen ? "收起详情" : "详情"} onClick={() => setDetailOpen((v) => !v)}>{detailOpen ? <EyeOffIcon size={13} /> : <EyeIcon size={13} />}</button>
               </div>
             </div>
 
@@ -461,6 +480,9 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
                         motion={motion}
                         reduced={reduced}
                         launchSignal={launchSignal}
+                        landSignal={landSignal}
+                        view={stageView}
+                        onViewChange={(v) => onPrefs({ view: v })}
                       />
                     ) : (
                       <WarRoom3D
@@ -470,6 +492,9 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
                         onSelect={select}
                         motion={motion}
                         reduced={reduced}
+                        launchSignal={launchSignal}
+                        view={stageView}
+                        onViewChange={(v) => onPrefs({ view: v })}
                       />
                     )}
                   </Suspense>
@@ -523,7 +548,7 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
                   <div className="insp-head">
                     <div className="insp-avatar" style={{ "--accent": "var(--slate)" } as CSSProperties}><RobotArt tone="neutral" /></div>
                     <div className="insp-title"><b>没有选中角色</b><span>舞台上的位置和动作只读真实状态</span></div>
-                    <button type="button" className="icon-btn" onClick={() => setDetailOpen(false)} aria-label="收起详情">✕</button>
+                    <button type="button" className="icon-btn" title="收起详情" onClick={() => setDetailOpen(false)} aria-label="收起详情"><XIcon size={13} /></button>
                   </div>
                   <div className="insp-status">
                     <span className="pill idle">{hhmmss(cursorAt)}</span>
@@ -565,7 +590,7 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
                   <span><i className="dot wait" />待确认</span>
                   <span><i className="dot review" />待验收</span>
                   <span><i className="dot fail" />失败</span>
-                  <span className="note">{isCarrier ? "弹射位 = 并发 worker · 着舰道 = 串行 review / approval · 中止 = 复飞" : "长桌 = 值班席 · 主屏 = Mission · 闸门 = approval · 复盘墙 = review"}</span>
+                  <span className="note">{isCarrier ? "弹射位 = 并发 worker · 着舰道 = 串行 review / approval · 中止 = 复飞" : "大屏 = 发射流程 · 推进位 = 并发 worker · 发射许可 = approval · 复盘墙 = review"}</span>
                 </>
               ) : (
                 <>
@@ -648,7 +673,7 @@ export function OfficeLive({ state, now, act, notify, cast, onCast, prefs, onPre
           </>
         ) : prefs.template !== "office" ? (
           <div className="lights-view">
-            <div className="lights-note"><b>光照对照</b><span>作战室 3D 的光照跟随应用主题；四时段对照页目前只覆盖办公室舞台。</span></div>
+            <div className="lights-note"><b>光照对照</b><span>发射指挥 3D 的光照跟随应用主题；四时段对照页目前只覆盖办公室舞台。</span></div>
           </div>
         ) : (
           <div className="lights-view">

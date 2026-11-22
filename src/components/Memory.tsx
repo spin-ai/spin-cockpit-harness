@@ -4,6 +4,10 @@ import { EmptyState } from "./EmptyState";
 import { RowMenu } from "./RowMenu";
 import { ListContextMenu } from "./ListContextMenu";
 import { UndoBar, useDensity, type UndoAction } from "./UndoBar";
+import { Tabs } from "./Tabs";
+import { useT } from "../i18n";
+import { XIcon } from "./Icons";
+import { RefreshIcon } from "./Icons";
 import { relTime } from "../ui";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
@@ -47,6 +51,7 @@ const ttlFull = (n: Note) => (n.expiresAt ? new Date(n.expiresAt).toLocaleString
 
 /** 记忆：左选层级/来源 → 中看条目 → 右处理复核、注入与回查 */
 export function Memory({ act }: { act: Act }) {
+  const t = useT();
   const [overview, setOverview] = useState<{ byLayer: Record<string, number>; notes: number; notesPending: number; suggestions: number } | null>(null);
   const [layer, setLayer] = useState<string>("L4");
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -251,11 +256,10 @@ export function Memory({ act }: { act: Act }) {
   const cut = useMemo(() => (inject?.items || []).filter((i) => !i.included), [inject]);
 
   return (
-    <div className="notes-page kv-page pr-page">
+    <div className="workbench kv-page pr-page">
       <PageHeader
-        kicker="MEMORY"
-        title="记忆"
-        subtitle={<div className="notes-stats">
+        title={t("page.memory")}
+        subtitle={<div className="stat-strip">
           <span><b>{overview?.byLayer?.L4 || 0}</b> 结论</span>
           <span><b>{overview?.byLayer?.L3 || 0}</b> 项目</span>
           <span><b>{overview?.byLayer?.L2 || 0}</b> 事实</span>
@@ -264,15 +268,15 @@ export function Memory({ act }: { act: Act }) {
           </span>
         </div>}
         actions={<>
-          <button className="btn primary" onClick={() => { setTab("notes"); document.querySelector(".pr-side")?.scrollIntoView({ block: "nearest" }); }}>复核</button>
-          <button className="btn" onClick={() => void dream()} disabled={busy}>运行 Dream</button>
-          <button className="icon-btn" onClick={() => void load()} title="刷新">↻</button>
+          <button className="btn primary" onClick={() => { setTab("notes"); document.querySelector(".pr-side")?.scrollIntoView({ block: "nearest" }); }}>{t("action.review")}</button>
+          <button className="btn" onClick={() => void dream()} disabled={busy}>{t("action.runDream")}</button>
+          <button className="icon-btn" onClick={() => void load()} title="刷新" aria-label="刷新"><RefreshIcon size={13} /></button>
         </>}
       />
       {(error || notice) && (
         <div className={`notes-banner ${error ? "error" : ""}`}>
           <span className="ellipsis">{error || notice}</span>
-          <button className="notes-banner-x" onClick={() => { setError(""); setNotice(""); }}>×</button>
+          <button className="notes-banner-x" title="关闭提示" aria-label="关闭提示" onClick={() => { setError(""); setNotice(""); }}><XIcon size={12} /></button>
         </div>
       )}
 
@@ -299,7 +303,7 @@ export function Memory({ act }: { act: Act }) {
           {showArchived
             ? <button className="btn tiny-btn" onClick={() => void bulkAction("restore")} disabled={!picked.size}>恢复</button>
             : <button className="btn tiny-btn" onClick={() => void bulkAction("archive")} disabled={!picked.size}>标为过期</button>}
-          <button className="icon-btn" title="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}>×</button>
+          <button className="icon-btn" title="退出多选" aria-label="退出多选" onClick={() => { setPicking(false); setPicked(new Set()); }}><XIcon size={13} /></button>
         </div>
       )}
 
@@ -326,7 +330,7 @@ export function Memory({ act }: { act: Act }) {
                 <span className="pr-layer-name">{label}<em>{notes.filter((n) => n.sourceKind === id).length}</em></span>
               </button>
             ))}
-            <p className="notes-meta-empty">来源只用于筛选；注入时不看来源，只看层级与预算。</p>
+            <p className="inline-empty">来源只用于筛选；注入时不看来源，只看层级与预算。</p>
           </div>
           <div className="pr-block">
             <div className="pr-block-head">其它</div>
@@ -416,7 +420,7 @@ export function Memory({ act }: { act: Act }) {
             {showArchived && (
               <div className="pr-block">
                 <div className="pr-block-head">已过期 / 归档<em className="tiny faint">{archived.length}</em></div>
-                {archived.length === 0 && <p className="notes-meta-empty">没有归档条目。</p>}
+                {archived.length === 0 && <p className="inline-empty">没有归档条目。</p>}
                 {archived.map((e) => (
                   <div key={e.id} className="pr-entry">
                     <div className="pr-entry-head">
@@ -511,10 +515,16 @@ export function Memory({ act }: { act: Act }) {
         <aside className="pr-col pr-side">
           <div className="pr-block">
             <div className="pr-block-head">复核
-              <span className="kv-tabs mini">
-                <button className={tab === "notes" ? "on" : ""} onClick={() => setTab("notes")}>未验证观察{notes.length ? ` ${notes.length}` : ""}</button>
-                <button className={tab === "dream" ? "on" : ""} onClick={() => setTab("dream")}>Dream 建议{sugs.length ? ` ${sugs.length}` : ""}</button>
-              </span>
+              <Tabs
+                size="sm"
+                ariaLabel="复核队列"
+                value={tab}
+                onChange={(id) => setTab(id as typeof tab)}
+                items={[
+                  { id: "notes", label: t("tab.observations"), badge: notes.length || undefined },
+                  { id: "dream", label: t("tab.dream"), badge: sugs.length || undefined },
+                ]}
+              />
             </div>
 
             <div className="pr-dreamcfg">
@@ -565,7 +575,7 @@ export function Memory({ act }: { act: Act }) {
 
             {tab === "notes" && (
               <>
-                {shownNotes.length === 0 && <p className="notes-meta-empty">队列已清空。下次运行 Dream 或导入后才会再出现。</p>}
+                {shownNotes.length === 0 && <p className="inline-empty">队列已清空。下次运行 Dream 或导入后才会再出现。</p>}
                 {shownNotes.map((n) => (
                   <div key={n.id} className="pr-qitem">
                     <div className="pr-qh">
@@ -596,7 +606,7 @@ export function Memory({ act }: { act: Act }) {
 
             {tab === "dream" && (
               <>
-                {sugs.length === 0 && <p className="notes-meta-empty">没有待处理建议。Dream 只产建议，不直接改写已复核条目。</p>}
+                {sugs.length === 0 && <p className="inline-empty">没有待处理建议。Dream 只产建议，不直接改写已复核条目。</p>}
                 {sugs.map((sg) => (
                   <div key={sg.id} className="pr-qitem">
                     <div className="pr-qh">
@@ -629,7 +639,7 @@ export function Memory({ act }: { act: Act }) {
                     </div>
                   </div>
                 ))}
-                <p className="notes-meta-empty">拒绝后同类不再打扰。</p>
+                <p className="inline-empty">拒绝后同类不再打扰。</p>
               </>
             )}
           </div>
@@ -656,7 +666,7 @@ export function Memory({ act }: { act: Act }) {
               </span>
             </div>
             {injStats && injStats.runs > 0 ? (
-              <p className="notes-meta-empty">
+              <p className="inline-empty">
                 最近 {injStats.runs} 轮：注入 {injStats.injected} 条，回答里用到 {injStats.cited} 条
                 {injStats.injected ? `（${Math.round(injStats.hitRate * 100)}%）` : ""} · 平均 {injStats.avgChars} 字符
               </p>
@@ -671,8 +681,8 @@ export function Memory({ act }: { act: Act }) {
                 {openInjectId === it.id && <div className="pr-inj-reason">{it.reason}</div>}
               </div>
             ))}
-            {!(inject?.items || []).length && <p className="notes-meta-empty">还没有可注入的条目。</p>}
-            <p className="notes-meta-empty">按分数排序后自然截止：置顶 50 · 有来源 30 · 层级 · 近两周 10 · 被用过；L1 永不注入，note 单独留一块预算。点任意一条看入选 / 被裁原因。</p>
+            {!(inject?.items || []).length && <p className="inline-empty">还没有可注入的条目。</p>}
+            <p className="inline-empty">按分数排序后自然截止：置顶 50 · 有来源 30 · 层级 · 近两周 10 · 被用过；L1 永不注入，note 单独留一块预算。点任意一条看入选 / 被裁原因。</p>
           </div>
 
           <div className="pr-block">
@@ -684,7 +694,7 @@ export function Memory({ act }: { act: Act }) {
                 <span className="pr-hit-main"><b className="ellipsis">{e.title}</b><p>{e.body.slice(0, 90)}</p></span>
               </button>
             ))}
-            {entryQuery && entryHits.length === 0 && <p className="notes-meta-empty">没有匹配条目。</p>}
+            {entryQuery && entryHits.length === 0 && <p className="inline-empty">没有匹配条目。</p>}
           </div>
 
           <div className="pr-block">
@@ -699,7 +709,7 @@ export function Memory({ act }: { act: Act }) {
                 </span>
               </div>
             ))}
-            <p className="notes-meta-empty">回查只读原文，不改动任何条目。</p>
+            <p className="inline-empty">回查只读原文，不改动任何条目。</p>
           </div>
         </aside>
       </div>

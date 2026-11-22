@@ -632,7 +632,7 @@ mission.waiting_children / mission.finished / mission.cancelled / mission.interr
 
 ```sh
 npm run typecheck
-npm run verify:mission
+npm test -- mission
 npm run build
 ```
 

@@ -30,6 +30,7 @@ declare global {
       onTerminalExit(cb: (p: { id: string; exitCode: number | null; signal: string | null }) => void): () => void;
       onImPaired(cb: (p: { appId: string; allowIds?: string }) => void): () => void;
       onBotDelta(cb: (p: { botId: string; delta: string }) => void): () => void;
+      onBotTool(cb: (p: { botId: string; name: string; phase: "start" | "done" }) => void): () => void;
       onBotMessage(cb: (p: { botId: string; text: string; turnId: string }) => void): () => void;
       onPluginChatDraft(cb: (p: { text: string; context?: unknown }) => void): () => void;
       onPluginNotify(cb: (p: { message: string; level?: string }) => void): () => void;
@@ -50,6 +51,8 @@ declare global {
       filesDuplicate(rel: string, root?: string): Promise<{ path: string; name: string }>;
       filesTrash(rel: string, root?: string): Promise<boolean>;
       filesReveal(rel: string, root?: string): Promise<boolean>;
+      /** PDF 逐页渲图（主进程 pdfjs + skia）：预览里的阅读器按页取图 */
+      filesPageImage(rel: string, root?: string, page?: number, scale?: number): Promise<{ dataUrl: string; width: number; height: number; pages: number; page: number; scale: number }>;
       filesWrite(rel: string, root: string | undefined, text: string): Promise<{ ok: boolean; size: number }>;
       docsPick(): Promise<{ path: string; name: string; text?: string; size?: number; error?: string }[]>;
       docsRead(paths: string[]): Promise<{ path: string; name: string; text?: string; size?: number; error?: string }[]>;

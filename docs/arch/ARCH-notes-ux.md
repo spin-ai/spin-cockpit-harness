@@ -87,7 +87,7 @@ Untitled  draft         Draft · 0 citations        STATUS  Draft
 实现细节：行结构改成 `.notes-row`（按钮 + `.notes-row-actions`），动作按钮默认 `display:none`，hover 才出现，避免列表噪音；
 hover 时隐藏右侧计数（`em`）给动作让位。
 
-验证：`scripts/e2e-notes.mjs`（4/4）—— 自动导入+生成、删除资料（sources 3→2、edges 6→4）、
+验证：`npm run test:e2e -- --suite=notes`（4/4）—— 自动导入+生成、删除资料（sources 3→2、edges 6→4）、
 删除页面（pages 3→2、行数同步）、审核快捷接受。
 
 ## 9. 「导入资料」与「本地目录」的关系（去重）
@@ -107,7 +107,7 @@ hover 时隐藏右侧计数（`em`）给动作让位。
   · 右侧「导入为 Source」在已导入时变成「已在资料中」的说明块
 - 「生成 Wiki」本身按标题去重（已有同名页面就跳过），重复点击不会产生重复页面
 
-验证：`scripts/e2e-notes.mjs` + 本地脚本（4/4）——待导入数、导完置灰、重复 importSource 返回 deduped 且 sources 数量不变、重复生成 pages 不变。
+验证：`npm run test:e2e -- --suite=notes` + 本地脚本（4/4）——待导入数、导完置灰、重复 importSource 返回 deduped 且 sources 数量不变、重复生成 pages 不变。
 
 ## 10. 导入本地文档（本轮）
 
@@ -140,7 +140,7 @@ hover 时隐藏右侧计数（`em`）给动作让位。
 
 另外 `wiki.generate` 生成草稿时也会优先用资料正文的 H1（文件名 `doc-import` 不会再变成页面标题）。
 
-实现：插件 `wiki.curate`（确定性，不需要模型）；计算部分是纯函数 `plugins/notes/curate-structure.mjs`，断言见 `npm run wiki:curate:selftest` 第 [4] 组。UI 在收到结果后刷新列表，并把当前打开的页面重新 `wiki.getPage` 一次（`draft` 可能被改写）。
+实现：插件 `wiki.curate`（确定性，不需要模型）；计算部分是纯函数 `plugins/notes/curate-structure.mjs`，断言见 `npm test -- wiki-curate` 第 [4] 组。UI 在收到结果后刷新列表，并把当前打开的页面重新 `wiki.getPage` 一次（`draft` 可能被改写）。
 
 > 注意：`Wiki 索引` 是自动维护页，**只要它还是 draft** 就会被重写；一旦被审核成 `reviewed`，后续更新也要人点头。其它页面只重写上面四个段落，正文其它内容保留。
 
@@ -159,7 +159,7 @@ hover 时隐藏右侧计数（`em`）给动作让位。
 | 结论待确认 | 「审核」tab 顶部列出有 `conflict` / `orphan` 结论的页面（红点，标「结论待确认」），可「查看」或「全部解除」；解除只撤销锁定，不动正文 |
 | 漏引用 / 重复 | `⋯ → 查找重复与漏引用` 跑确定性扫描，结果进「审核」：行上标「引用」「合并」，弹层只展示依据（资料原文 / 两页标题），接受时分别「加入引用」「生成合并草稿」 |
 
-断言：`npm run wiki:plugin:selftest`（reviewed 字节不变、`needs_rebase` 不覆盖、写入字节 === payload、留 revision、人工结论被动到就不写）。
+断言：`npm test -- wiki-plugin`（reviewed 字节不变、`needs_rebase` 不覆盖、写入字节 === payload、留 revision、人工结论被动到就不写）。
 
 ### 11.2 模型整理（`wiki.curate.llm`）
 
@@ -178,7 +178,7 @@ hover 时隐藏右侧计数（`em`）给动作让位。
 | 成本 | 每页约 2k tokens（deepseek-v4-flash 仍会推理，实测 ~1.8k reasoning）；确认框会写明页数，结果里回显实际 tokens |
 | 无 key | 直接报错并提示先用「整理结构」，不静默降级 |
 
-纯函数（拼 prompt / 解析 / 嵌回正文）在 `electron/wiki-curate.mjs`，用 `npm run wiki:curate:selftest` 覆盖；
+纯函数（拼 prompt / 解析 / 嵌回正文）在 `electron/wiki-curate.mjs`，用 `npm test -- wiki-curate` 覆盖；
 加 `-- --ark` 会额外发一次真实调用验证解析链路。
 
 ## 12. 视觉收口（2026-11）：一个主面 / 收高亮 / 收按钮

@@ -97,7 +97,7 @@ WADE 会在每个 worktree 里装 `pre-push` 钩子（`core.hooksPath=.wade/gith
 
 ## 5. 验证
 
-`scripts/e2e-git.mjs`（自建 `/tmp/git-fixture` 仓库，CDP 驱动真实窗口）：
+`npm run test:e2e -- --suite=git`（自建 `/tmp/git-fixture` 仓库，CDP 驱动真实窗口）：
 
 ```
 PASS Git 视图：分支 + 变更文件列表

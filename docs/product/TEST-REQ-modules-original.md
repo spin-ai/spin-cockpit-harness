@@ -394,7 +394,7 @@
 已提供 P0 子集的自动化骨架，不依赖 Playwright/Puppeteer：
 
 ```text
-scripts/e2e-requirements.mjs        # runner：启动隔离 Electron + CDP
+scripts/e2e/run.mjs        # runner：启动隔离 Electron + CDP
 scripts/e2e/harness.mjs             # CDP / app 启停 / 截图 / 临时目录
 scripts/e2e/suites/requirements.mjs # 已代码化用例
 ```
@@ -402,11 +402,11 @@ scripts/e2e/suites/requirements.mjs # 已代码化用例
 运行（需要先 `npm run build`）：
 
 ```sh
-npm run test:e2e:requirements -- --list
-npm run test:e2e:requirements
-npm run test:e2e:requirements -- --only=THEME,GIT
-npm run test:e2e:requirements -- --keep   # 保留隔离 userData 便于排查
-npm run test:e2e:requirements -- --run-skipped  # 临时执行 skip 用例
+npm run test:e2e -- --list
+npm run test:e2e
+npm run test:e2e -- --only=THEME,GIT
+npm run test:e2e -- --keep   # 保留隔离 userData 便于排查
+npm run test:e2e -- --run-skipped  # 临时执行 skip 用例
 ```
 
 已代码化（24 条）：

@@ -1,4 +1,5 @@
 import { useEffect, useState, type MouseEvent } from "react";
+import { MinusIcon, PlusIcon } from "./Icons";
 
 export type ZhBlock = { id: string; type: string; cls?: string; bbox: [number, number, number, number]; text: string; conf: number | null };
 export type ZhRelation = { id?: string; from: string; to: string; type: string; confidence?: number | null };
@@ -59,9 +60,9 @@ export function ZhulongOverlay({
       <div className="zh-zoom-head">
         <span className="zh-zoom-meta mono">{w}×{h}</span>
         <div className="zh-zoom-bar">
-          <button className="zh-zoom-btn" disabled={zoom === 1} onClick={() => setZoom((z) => ZOOMS[Math.max(0, ZOOMS.indexOf(z) - 1)])} title="缩小">−</button>
+          <button className="zh-zoom-btn" disabled={zoom === 1} onClick={() => setZoom((z) => ZOOMS[Math.max(0, ZOOMS.indexOf(z) - 1)])} title="缩小" aria-label="缩小"><MinusIcon size={13} /></button>
           <button className={`zh-zoom-btn wide ${zoom === 1 ? "on" : ""}`} onClick={() => setZoom(1)} title="适应宽度">适应</button>
-          <button className="zh-zoom-btn" disabled={zoom === ZOOMS[ZOOMS.length - 1]} onClick={() => setZoom((z) => ZOOMS[Math.min(ZOOMS.length - 1, ZOOMS.indexOf(z) + 1)])} title="放大">+</button>
+          <button className="zh-zoom-btn" disabled={zoom === ZOOMS[ZOOMS.length - 1]} onClick={() => setZoom((z) => ZOOMS[Math.min(ZOOMS.length - 1, ZOOMS.indexOf(z) + 1)])} title="放大" aria-label="放大"><PlusIcon size={13} /></button>
           <span className="zh-zoom-label">{Math.round(zoom * 100)}%</span>
         </div>
       </div>

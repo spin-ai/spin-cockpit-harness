@@ -50,7 +50,7 @@
 - **Dream 循环化（2026-11-16）**：提案带 `diff / base_rev / confidence / dream_id`，接受前校验目标版本（人改过就标 `superseded`，不覆盖）；语义 pass 的候选带证据（观察自己的 L1 出处 + 相关会话片段 + 页面引用原句），`correct` 必须有证据且 ref 必须是给过它的；`dreamFingerprint` 幂等（输入没变不重跑）；空闲触发（`idleMinutes`，无 run 在跑才跑）；每轮写 `dream_runs` 台账，记忆页显示「上次 空闲 · N 分钟前 · 几条 · 耗时」。
 - **语义 pass（默认关）**：`llmPass` 打开后，Dream 多跑一次模型调用（最近 60 条观察），产出 `merge` / `correct` 建议；三道闸门（开关 / key / 当日调用预算 20 次）+ 入队校验（id 必须存在、keep 必须落在 ids、必须有 reason、同组 id 只入队一次）。解析器 `parseDreamItems` 是纯函数，禁得起脏输出。
 - **`run_read`**：单 run 回查（状态 / 耗时 / token / 错误 + 最多 20 条消息 + 提到它的关键事件），与 `memory_search` 分工明确。
-- 回归：`npm run memory:selftest`（临时目录，含老库补列）、`npm run memory:preview`（渲染层预览：断言 + 亮/暗截图，不启动 Electron）。
+- 回归：`npm test -- memory`（临时目录，含老库补列）、`npm run preview:memory`（渲染层预览：断言 + 亮/暗截图，不启动 Electron）。
 - **记忆页 UI**：观察卡片显示种类（规则/踩坑/偏好/决定）、「已到期」或「至 MM 月」（完整日期在 title，队列行空间窄）；条目显示「置顶」；归档视图把「已失效 · 有新结论取代」和「已归档」分开表达；行内菜单多一项「标记失效（保留溯源）」，与「标为过期」是两个语义。- Dream 五种动作全部落地，只产建议：
   `fix`（失效引用 / 缺摘要）、`build`（有资料无页面）、`fill`（无引用无反链）、`promote`（已验证观察）、`prune`（L3 体积超限）。
   接受后由 `applyMemorySuggestion()` 执行（建 draft / 生成页面 / 标 stale / 归档条目），拒绝写 `rejects`。
@@ -69,7 +69,7 @@
   | `csv` | 表头含 时间/发送者/内容（或 time/sender/text） | 支持逗号与制表符；无表头按「时间,说话人,内容」假定并给 warning |
 
   **认不出就不猜**：格式不明时返回空消息 + warning，由调用方决定是否回落到旧的 `parseChat`。
-  自检：`npm run persona:selftest`（四种格式 + 兜底/坏 JSON，纯函数、不联网）。
+  自检：`npm test -- persona`（四种格式 + 兜底/坏 JSON，纯函数、不联网）。
 
 ### 4.8 记忆语义：记什么 / 推翻什么 / 什么时候忘（2026-11）
 
@@ -100,19 +100,19 @@
 - **注入是检索不是罗列**：`字段优先级 × heat × 与问题相关性`（中文 2-gram）贪心填预算，每节配额上限（处事 40% / 性格 30% / 声音 15% / 基本信息 10% / 事实 5%），分节标题也计入预算，超出的条数如实报 `dropped`。
 - **质量指标可见**：`peopleList` / `card.metrics` 给出 `supportMedian`（每字段证据数中位数，恒为 1 就说明记忆没在累积）、`conflictRatio`、`needsReview`、`measureAt`（测量值最后重算时间）。
 - **为什么 evict 不做成「标 expired」**：把超出上限的语气样本标 stale，会把复核队列瞬间灌成几百条（老库里 voice 445 条 / 244 人），人就不会再去清它。展示上限是读时的事，回写状态反而把“复核”这个动作稀释了。
-- **老库对账**：`npm run persona:reconcile`（先自动备份；`--dry-run` 在副本上跑）。做四件事：`source_kind='stats'` 的观察 → `measures`；单值字段按时间收口；归一化相同的重复值合并；补 `expires_at` 并标 stale。
-- **自检**：`npm run persona:lifecycle`（临时目录，四类遗忘 + 证据累积 + 复审 + 双时间 + 注入预算 + 检索上限 + 人物合并 + 点名注入）；`npm run verify:persona` 一次跑接线 + 导入格式 + 生命周期。
-- **统计特征不再依赖「建模」**（不花钱的部分人人都有）：`applyStats()` 是唯一写入路径，`import()` 在解析完就给「本批发言 ≥10 条」的人算一遍特征（返回 `statsUpdated` 条数 / `statsPeople` 人数，导入提示里说「N 人算出可观测特征」），`personaModel` 复用同一条路径。历史数据用 `npm run persona:stats`（`--apply` 才写）回填：本机 118 人 / 1360 项，跳过 566 个库里没有的发言人、146 个发言不足 10 条的。
+- **老库对账**（一次性脚本，已跑完并删除，逻辑留在 git 历史）：先自动备份；`--dry-run` 在副本上跑。做四件事：`source_kind='stats'` 的观察 → `measures`；单值字段按时间收口；归一化相同的重复值合并；补 `expires_at` 并标 stale。
+- **自检**：`npm test -- persona-lifecycle`（临时目录，四类遗忘 + 证据累积 + 复审 + 双时间 + 注入预算 + 检索上限 + 人物合并 + 点名注入）；`npm run verify:persona` 一次跑接线 + 导入格式 + 生命周期。
+- **统计特征不再依赖「建模」**（不花钱的部分人人都有）：`applyStats()` 是唯一写入路径，`import()` 在解析完就给「本批发言 ≥10 条」的人算一遍特征（返回 `statsUpdated` 条数 / `statsPeople` 人数，导入提示里说「N 人算出可观测特征」），`personaModel` 复用同一条路径。历史数据用一次性回填脚本（已跑完并删除，`--apply` 才写）处理：本机 118 人 / 1360 项，跳过 566 个库里没有的发言人、146 个发言不足 10 条的。
 - **待确认队列按「证据质量」分三组**（`personaPending` 返回 `evidenceStat` + 三态 `quoteVerified`）：
   ① 引用核过（`quoteVerified === true`，且引用 ≥6 字）→ 「只确认这些」，批量但不盲目
   ② 核不到（`false`）→ 统计值那部分给「这些直接拒绝」，其余标「引用待核对」逐条看
   ③ 没有可用引用（`null`：模型归纳 / 太短）→ 必须逐条判断
   敏感项永不进任何批量动作。本机实测：142 条 pending = 49 可确认 + 49 核不到（41 统计值 / 8 找不到）+ 44 无可用引用。
-- **存量结论的回查**（`npm run persona:verify-quotes`，`--apply` 才写）：旧版本的 evidence 从来没校验过。按语料（该人发言 + 紧邻上下文）回查分三类 —— 原话找得到 / **证据其实是统计值** / 找不到原话。本机实测 111 条带引用的模型结论：49 条找得到、41 条证据是统计值、8 条找不到、13 条无法判定。前两类已标 `quote_verified=0`；「证据是统计值」那批在待确认块里单独提示并给「这些直接拒绝」入口（统计结论已由 measures 承担）。
+- **存量结论的回查**（一次性脚本，已跑完并删除；`--apply` 才写）：旧版本的 evidence 从来没校验过。按语料（该人发言 + 紧邻上下文）回查分三类 —— 原话找得到 / **证据其实是统计值** / 找不到原话。本机实测 111 条带引用的模型结论：49 条找得到、41 条证据是统计值、8 条找不到、13 条无法判定。前两类已标 `quote_verified=0`；「证据是统计值」那批在待确认块里单独提示并给「这些直接拒绝」入口（统计结论已由 measures 承担）。
 - **引用可核对**（`quote_verified`）：模型给的 `evidence` 必须能在「它当时看到的样本」里核对上（宽松归一化 + 允许截断）。核不到的不删不拦，标 `quoteVerified:false`、`heat × 0.6` 降权、卡片与待确认队列标「引用待核对」，建模汇总里报条数。**存量 pending 无法回溯核对**（没存当时的样本），新跑的一律核对。
 - **面向人的方法论**写在 `resources/wiki/persona.md`：App 内「说明」页（`src/wiki/pages.ts`）和 GitHub Wiki（`scripts/publish-wiki.mjs`）同源，人在平台里就能读到四种「忘」的判据与踩过的坑。
 - **接线自检**（`npm run verify:persona` 第一段）：这个模块的接线是「渲染层 `act("x")` → 主进程动作表 → MCP 工具名」三处手抄，改名字不会报错、只会静默失灵（踩过：`autoConfirmStats` 成了死参数）。脚本静态校验 ① 人物页调用的每个动作主进程都有 ② 新增动作的字段名与后端一致 ③ MCP 工具都有 `name === "…"` 分支。
-- **UI 预览**：`npm run persona:preview`（headless Chrome + vite，注入 mock `window.harness`，不启动 Electron、不抢焦点），断言页面能把四种状态表达出来并出亮/暗两版截图到 `.preview/`。
+- **UI 预览**：`npm run preview:persona`（headless Chrome + vite，注入 mock `window.harness`，不启动 Electron、不抢焦点），断言页面能把四种状态表达出来并出亮/暗两版截图到 `.preview/`。
 
 ### 4.7 时间演变与回看（`US-Persona-03`）
 

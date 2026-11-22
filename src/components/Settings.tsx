@@ -3,6 +3,8 @@ import type { PluginRecord, Settings as SettingsModel, State } from "../types";
 import { THEMES } from "../themes";
 import { PageHeader } from "./PageHeader";
 import { Hosts, Stats } from "./Views";
+import { useT } from "../i18n";
+import { ChevronDownIcon, XIcon } from "./Icons";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 export type SettingsSection = "general" | "appearance" | "execution" | "terminal" | "preview" | "im" | "hosts" | "stats" | "plugins" | "data" | "shortcuts" | "about";
@@ -31,7 +33,7 @@ const SECTIONS: { id: Section; label: string; desc: string; group: SectionGroup 
 /** 与 electron/db.mjs DEFAULT_SETTINGS 对齐：用于「恢复默认」判定与恢复 */
 const DEFAULTS: Partial<Record<keyof SettingsModel, unknown>> = {
   defaultView: "workspace", defaultAgentId: null, enterToSend: true, confirmStop: false,
-  theme: "system", uiScale: 0, chatFontSize: 13,
+  theme: "system", uiLanguage: "zh", uiScale: 0, chatFontSize: 13,
   maxConcurrentRuns: 0, approvalPolicy: "ask", dshBinary: "", dshHome: "", model: "", effort: "",
   superAgentEnabled: true, maxSupervisorRuns: 1, maxMissionChildren: 4, missionBudgetMinutes: 30,
   shellPath: "", terminalFontSize: 12, terminalScrollback: 5000, autoDetectDevServerUrl: true,
@@ -45,7 +47,7 @@ const DEFAULTS: Partial<Record<keyof SettingsModel, unknown>> = {
 /** 恢复本页默认 */
 const SECTION_KEYS: Partial<Record<Section, (keyof SettingsModel)[]>> = {
   general: ["defaultView", "defaultAgentId", "enterToSend", "confirmStop"],
-  appearance: ["theme", "uiScale", "chatFontSize"],
+  appearance: ["uiLanguage", "theme", "uiScale", "chatFontSize"],
   execution: ["maxConcurrentRuns", "approvalPolicy", "dshBinary", "dshHome", "dshEnv", "model", "effort", "personaDatasetDir",
     "superAgentEnabled", "maxSupervisorRuns", "maxMissionChildren", "missionBudgetMinutes", "worktreeMode"],
   terminal: ["shellPath", "terminalFontSize", "terminalScrollback", "autoDetectDevServerUrl"],
@@ -174,7 +176,7 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
   const settings = state.settings;
 
   if (!settings) {
-    return <div className="pane-empty">设置不可用</div>;
+    return <div className="inline-empty">设置不可用</div>;
   }
 
   const set = async (patch: Partial<SettingsModel>) => {
@@ -244,19 +246,21 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
     }, 60);
   };
 
+  const t = useT();
   const current = SECTIONS.find((s) => s.id === section) ?? SECTIONS[0];
+  const GROUP_KEY: Record<string, string> = { "基础": "group.basics", "运行": "group.runtime", "连接": "group.connect", "观察": "group.observe", "维护": "group.maintain" };
 
   return (
     <ResetCtx.Provider value={{ settings, reset: resetKey }}>
     <div className="settings-page">
       <aside className="settings-nav">
         <div className="settings-nav-head">
-          <b>设置</b>
+          <b>{t("nav.settings")}</b>
           <input
             ref={searchRef}
             className="settings-search"
             value={query}
-            placeholder="搜索设置  ⌘F"
+            placeholder={t("settings.search")}
             spellCheck={false}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -270,7 +274,7 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
             {hits.map((item) => (
               <button key={`${item.section}-${item.title}`} className="settings-hit" onClick={() => jumpTo(item.section, item.k || item.title)}>
                 <span className="ellipsis">{item.title}</span>
-                <span className="tiny faint">{SECTIONS.find((x) => x.id === item.section)?.label}</span>
+                <span className="tiny faint">{t(`section.${SECTIONS.find((x) => x.id === item.section)?.id || "general"}`)}</span>
               </button>
             ))}
             {hits.length === 0 && <div className="settings-hit-empty">没有匹配的设置</div>}
@@ -279,7 +283,7 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
           SECTIONS.map((item, i) => (
             <Fragment key={item.id}>
               {i === 0 || SECTIONS[i - 1].group !== item.group ? (
-                <div className="settings-nav-group">{item.group}</div>
+                <div className="settings-nav-group">{t(GROUP_KEY[item.group] || item.group)}</div>
               ) : null}
             <button
               className={`settings-nav-item ${section === item.id ? "on" : ""}`}
@@ -290,7 +294,7 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
               }}
               onClick={() => setSection(item.id)}
             >
-              {item.label}
+              {t(`section.${item.id}`)}
             </button>
             </Fragment>
           ))
@@ -299,10 +303,10 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
 
       <div className="settings-body" ref={bodyRef}>
         <PageHeader
-          title={current.label}
-          subtitle={current.desc}
+          title={t(`section.${current.id}`)}
+          subtitle={t(`sectionDesc.${current.id}`)}
           actions={<div className="row gap8">
-            {savedAt != null && <span className="settings-saved">✓ 已自动保存</span>}
+            {savedAt != null && <span className="settings-saved">{t("settings.saved")}</span>}
             {SECTION_KEYS[section] && (
               <button
                 className="btn tiny-btn"
@@ -314,7 +318,7 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
                   if (Object.keys(patch).length) void set(patch as Partial<SettingsModel>);
                   notify(`已恢复「${current.label}」默认值`);
                 }}
-              >本页恢复默认</button>
+              >{t("action.resetPage")}</button>
             )}
           </div>}
         />
@@ -352,7 +356,7 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
 
             <Card title="布局">
               <Row title="重置面板尺寸" hint="任务 / 会话 / 终端 / 文件的列宽恢复默认">
-                <button className="btn tiny-btn" onClick={() => { window.dispatchEvent(new Event("harness:reset-layout")); notify("已重置"); }}>重置</button>
+                <button className="btn tiny-btn" onClick={() => { window.dispatchEvent(new Event("harness:reset-layout")); notify("已重置"); }}>{t("action.reset")}</button>
               </Row>
             </Card>
           </>
@@ -360,6 +364,18 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
 
         {section === "appearance" && (
           <>
+            <Card title={t("settings.language")}>
+              <Row k="uiLanguage" title={t("settings.language")} hint={t("settings.languageHint")}>
+                <select
+                  className="settings-control"
+                  value={settings.uiLanguage || "zh"}
+                  onChange={(e) => void set({ uiLanguage: e.target.value as SettingsModel["uiLanguage"] })}
+                >
+                  <option value="zh">中文</option>
+                  <option value="en">English</option>
+                </select>
+              </Row>
+            </Card>
             <Card title="主题">
               <div className="theme-grid" data-set-key="theme">
                 {THEMES.map((t) => (
@@ -634,8 +650,8 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
                   onChange={(event) => setSetupText(event.target.value)}
                 />
                 <div className="im-quick-actions">
-                  <button className="btn tiny-btn primary" disabled={setupBusy || !setupText.trim()} onClick={() => void runSetup()}>{setupBusy ? "验证中…" : "保存并测试"}</button>
-                  <button className="btn tiny-btn" onClick={() => void (pair ? stopPair() : startPair())}>{pair ? "关闭二维码" : "用手机扫码"}</button>
+                  <button className="btn tiny-btn primary" disabled={setupBusy || !setupText.trim()} onClick={() => void runSetup()}>{setupBusy ? "…" : t("action.saveAndTest")}</button>
+                  {(pair ? <button className="btn tiny-btn" title="关闭二维码" aria-label="关闭二维码" onClick={() => void stopPair()}><XIcon size={12} /></button> : <button className="btn tiny-btn" onClick={() => void startPair()}>用手机扫码</button>)}
                   <button className="btn tiny-btn" onClick={async () => {
                     setSetupBusy(true);
                     setSetupStatus(null);
@@ -653,7 +669,7 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
                     const res = (await act("imStatus", {})) as { result?: { ws?: boolean; wsReady?: boolean; wsError?: string; feishu?: boolean; inbound?: number; recent?: { at: number; line: string }[] } } | null;
                     setImInfo(res?.result || null);
                   }}>检查连接</button>
-                  <button className="btn tiny-btn ghost" onClick={() => setAdvanced((v) => !v)}>{advanced ? "收起高级" : "高级"}</button>
+                  <button className="btn tiny-btn ghost" aria-expanded={advanced} title={advanced ? "收起高级" : "高级"} onClick={() => setAdvanced((v) => !v)}><ChevronDownIcon size={12} className={advanced ? "rot-180" : ""} />高级</button>
                   <span className="tiny muted">{String(settings.imFeishuAppId || "") ? `已配置 ${String(settings.imFeishuAppId).slice(0, 12)}…` : settings.imWebhookUrl ? "已配置 webhook" : "未配置"}</span>
                 </div>
                 {setupStatus && <div className={`im-quick-status ${setupStatus.ok ? "ok" : "fail"}`}>{setupStatus.text}</div>}
@@ -792,8 +808,29 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
               </div>
             </Card>
             <Card title="清理">
+              <Row title="清空任务" hint="删除全部 Task / Mission，以及它们的会话、消息、运行记录、Delegation、计划、产物与终端绑定；项目 / Agent / 机器人 / 设置 / 记忆 / 知识库不动。删前自动备份数据库，备份文件名里带时间戳">
+                <button
+                  className="btn tiny-btn danger"
+                  onClick={async () => {
+                    const preview = await act("taskClearPreview");
+                    const n = preview?.counts;
+                    if (!n) return;
+                    if (!n.todos) { notify("没有任务可清空"); return; }
+                    const lines = [
+                      `将删除 ${n.todos} 条任务（含 ${n.missions} 个 Mission）`,
+                      `${n.runs} 条运行记录、${n.threads} 个任务会话、${n.messages} 条消息`,
+                      `计划 ${n.plans} 份、Delegation ${n.delegations} 条、产物 ${n.artifacts} 个`,
+                    ];
+                    if (n.running) lines.push(`其中 ${n.running} 条运行还在进行，会先被停止`);
+                    if (!window.confirm(`${lines.join("\n")}\n\n确定清空？`)) return;
+                    if (!window.confirm("最后确认：任务、会话与运行记录都会消失（删前会自动备份数据库，可手动回滚）。继续？")) return;
+                    const res = await act("clearTasks", { confirm: "CLEAR" });
+                    if (res?.ok) notify(res.backup ? `已清空任务 · 备份 ${String(res.backup).split("/").pop()}` : "没有任务可清空");
+                  }}
+                >清空任务…</button>
+              </Row>
               <Row title="重置设置" hint="恢复全部默认值，不影响数据">
-                <button className="btn tiny-btn danger" onClick={() => { if (window.confirm("恢复默认设置？")) void act("resetSettings"); }}>重置</button>
+                <button className="btn tiny-btn danger" onClick={() => { if (window.confirm("恢复默认设置？")) void act("resetSettings"); }}>{t("action.reset")}</button>
               </Row>
             </Card>
           </>
@@ -1027,7 +1064,7 @@ function PluginSettings({ act, plugin }: { act: Act; plugin: PluginRecord }) {
   return (
     <div className="settings-plugin-settings">
       <div className="row" style={{ gap: 8 }}>
-        <button className="btn tiny-btn" onClick={() => setOpen((v) => !v)}>{open ? "收起配置" : "配置"}</button>
+        <button className="btn tiny-btn" aria-expanded={open} title={open ? "收起配置" : "配置"} onClick={() => setOpen((v) => !v)}><ChevronDownIcon size={12} className={open ? "rot-180" : ""} />配置</button>
         {probeCommand && <button className="btn tiny-btn" disabled={!plugin.enabled || busy} onClick={() => void probe()}>{busy ? "探测中…" : "探测后端"}</button>}
         {!plugin.enabled && <span className="muted small">启用后可配置</span>}
       </div>

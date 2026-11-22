@@ -304,7 +304,7 @@
 
 **ACP 的代价要说清**：结构化事件是优势（审批、纠错回执、工具调用可见），但它把会话状态放在 dsh 进程里——**进程一走，session 就没了**。
 
-**2026-11-20 已用内置 dsh 实测**（`npm run verify:acp-resume`，6 项断言全过）：`initialize` 的 `agentCapabilities.sessionCapabilities` 是 `{ close, list, resume }`，所以它能续，但有两条硬约束——
+**2026-11-20 已用内置 dsh 实测**（`npm test -- acp-resume`，6 项断言全过）：`initialize` 的 `agentCapabilities.sessionCapabilities` 是 `{ close, list, resume }`，所以它能续，但有两条硬约束——
 
 | 事实 | 实测结论 |
 |---|---|
@@ -411,7 +411,7 @@
 
 ## 15. 可抄清单（12 条，按性价比）
 
-> **落地进度**（2026-11-20）：**12 条全部落地**，各有测试（顺位 2 附 `npm run verify:acp-resume` 6 项实测；顺位 9 = `entry_revisions` + `expectedUpdatedAt`；顺位 6 = `ASK:` 约定 + 可作答卡片；顺位 12③ 已把 45 项断言拆成 11 个按不变量命名的文件）。
+> **落地进度**（2026-11-20）：**12 条全部落地**，各有测试（顺位 2 附 `npm test -- acp-resume` 6 项实测；顺位 9 = `entry_revisions` + `expectedUpdatedAt`；顺位 6 = `ASK:` 约定 + 可作答卡片；顺位 12③ 已把 45 项断言拆成 11 个按不变量命名的文件）。
 
 | 顺位 | 状态 | 抄什么 | 为什么值得 | 落点 |
 |---|---|---|---|---|

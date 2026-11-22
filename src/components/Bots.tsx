@@ -3,6 +3,10 @@ import type { Bot, BotRoutine, BotTurn, State } from "../types";
 import { EmptyState } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
 import { RowMenu } from "./RowMenu";
+import { Overview } from "./Overview";
+import { useT } from "../i18n";
+import { Segmented } from "./Tabs";
+import { ListIcon, TableIcon } from "./Icons";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 type Layout = "cards" | "list";
@@ -46,6 +50,7 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
   /** 打开某个机器人的会话（控制台） */
   onOpenBot: (botId: string) => void;
 }) {
+  const t = useT();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [sort, setSort] = useState<Sort>("recent");
@@ -176,32 +181,37 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
   return (
     <div className="page bots-page">
       <PageHeader
-        title="机器人"
+        title={t("page.bots")}
         subtitle={`${bots.length} 个机器人 · ${bound} 个绑定执行体 · ${quiet} 个静音或暂停；人设与出场规则在这里改，说话在会话里`}
         actions={<div className="row gap8">
-          <div className="view-switch" role="group" aria-label="机器人视图">
-            <button className={layout === "cards" ? "on" : ""} onClick={() => setLayout("cards")} title="卡片视图">▦ 卡片</button>
-            <button className={layout === "list" ? "on" : ""} onClick={() => setLayout("list")} title="列表视图">☰ 列表</button>
-          </div>
-          <button className="btn primary" onClick={() => void create()}>＋ 新建机器人</button>
+          <Segmented
+            ariaLabel="机器人视图"
+            value={layout}
+            onChange={(id) => setLayout(id as Layout)}
+            items={[
+              { id: "cards", label: (<><TableIcon size={12} /> {t("action.cards")}</>), title: "卡片视图" },
+              { id: "list", label: (<><ListIcon size={12} /> {t("action.list")}</>), title: "列表视图" },
+            ]}
+          />
+          <button className="btn primary" onClick={() => void create()}>＋ {t("action.newBot")}</button>
         </div>}
       />
 
-      <div className="project-overview">
-        <div className="project-overview-item"><b>{bots.length}</b><span>机器人</span></div>
-        <div className="project-overview-item"><b>{bound}</b><span>绑定执行体</span></div>
-        <div className={`project-overview-item ${speaking ? "run" : ""}`}><b>{speaking}</b><span>本小时开口</span></div>
-        <div className="project-overview-item"><b>{bots.length - bound}</b><span>待绑定</span></div>
-        <div className="project-overview-item active-name"><span>静音 / 暂停</span><b>{quiet}</b></div>
-      </div>
+      <Overview items={[
+        { label: "机器人", value: bots.length },
+        { label: "绑定执行体", value: bound },
+        { label: "本小时开口", value: speaking, tone: speaking ? "run" : undefined },
+        { label: "待绑定", value: bots.length - bound },
+        { label: "静音 / 暂停", value: quiet, active: true },
+      ]} />
 
-      <section className="panel project-list-panel">
-        <div className="project-list-head">
+      <section className="panel list-panel">
+        <div className="list-head">
           <div className="row gap8">
             <b>全部机器人</b>
             <span className="tiny faint">{filtered.length}/{bots.length}{filter !== "all" ? ` · ${filterLabel}` : ""}</span>
           </div>
-          <div className="project-list-tools">
+          <div className="list-tools">
             <select className="project-filter" aria-label="筛选机器人" value={filter} onChange={(e) => setFilter(e.target.value as Filter)}>
               <option value="all">全部</option>
               <option value="bound">已绑定执行体</option>
@@ -264,12 +274,12 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
             ))}
           </div>
         ) : (
-          <div className="project-list-rows">
+          <div className="list-rows">
             {filtered.map((e) => (
-              <div className="project-list-item" key={e.bot.id}>
-                <div className="project-list-main">
+              <div className="list-item" key={e.bot.id}>
+                <div className="list-main">
                   <span className={`bot-card-avatar ${e.bot.avatarClass || "a"}`}>{e.bot.avatar || e.bot.name.slice(0, 1)}</span>
-                  <div className="project-list-title">
+                  <div className="list-title">
                     <div className="row gap6 wrap">
                       <b className="ellipsis">{e.bot.name}</b>
                       <span className="tag">{CAP_LABEL[e.bot.capability || "read"] || "只读"}</span>
@@ -278,12 +288,12 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
                     {meta(e)}
                   </div>
                 </div>
-                <div className="project-list-stats">
+                <div className="list-stats">
                   <span><b>{e.turnsThisHour}</b>本小时</span>
                   <span><b>{e.mine.length}</b>日程</span>
                   <span><b>{e.executor ? 1 : 0}</b>执行体</span>
                 </div>
-                <span className="project-list-time tiny faint">最近 {timeAgo(e.last?.createdAt, now)}前</span>
+                <span className="list-time tiny faint">最近 {timeAgo(e.last?.createdAt, now)}前</span>
                 <div className="project-actions">{actionsFor(e)}</div>
               </div>
             ))}

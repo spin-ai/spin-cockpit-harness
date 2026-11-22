@@ -6,6 +6,17 @@ import readline from "node:readline";
 
 const DSH_BIN = process.env.DSH_BIN || "dsh";
 const DSH_HOME = process.env.DSH_HOME || "";
+/**
+ * prompt 的**静默**超时：连续这么久没收到 dsh 的任何消息才算卡死。
+ * 不是总时长——真实开发任务跑一小时很正常，只要还在出事件就不该被扠。
+ * `COCKPIT_PROMPT_IDLE_MS=0` 可关闭；默认 30 分钟。
+ */
+export const PROMPT_IDLE_MS = (() => {
+  const raw = process.env.COCKPIT_PROMPT_IDLE_MS;
+  if (raw === undefined || raw === "") return 30 * 60 * 1000;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : 30 * 60 * 1000;
+})();
 
 /**
  * GUI 启动的 Electron 通常拿不到登录 shell 的 PATH；补上常见安装位置，
@@ -122,8 +133,16 @@ export class AcpClient extends EventEmitter {
     if (effort) { try { await this.request("session/set_config_option", { sessionId: this.sessionId, configId: "reasoning_effort", value: effort }); } catch { /* ignore */ } }
   }
 
-  prompt(text, timeoutMs = 600000) {
-    return this.request("session/prompt", { sessionId: this.sessionId, prompt: [{ type: "text", text }] }, timeoutMs);
+  /**
+   * 等待 prompt 跑完。
+   *
+   * 这里是**静默超时**，不是总时长上限：dsh 只要还在发事件（session/update、工具调用、
+   * 权限请求），计时就重新开始；只有「连续这么久一条消息都没有」才判定卡死。
+   * 之前写成 10 分钟总时长，长任务会在 10 分钟整被无条件扠断（不是真的卡了）。
+   * 0 = 不限时（只靠人手动停止 / Mission 预算）。
+   */
+  prompt(text, idleMs = PROMPT_IDLE_MS) {
+    return this.request("session/prompt", { sessionId: this.sessionId, prompt: [{ type: "text", text }] }, idleMs, { idle: true });
   }
 
   cancel() { if (this.sessionId) this.notify("session/cancel", { sessionId: this.sessionId }); }
@@ -134,14 +153,30 @@ export class AcpClient extends EventEmitter {
     setTimeout(() => { try { this.proc.kill("SIGTERM"); } catch { /* ignore */ } }, 200);
   }
 
-  request(method, params, timeoutMs = 120000) {
+  request(method, params, timeoutMs = 120000, { idle = false } = {}) {
     if (!this.proc || this.closed) return Promise.reject(new Error("dsh not running"));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} timeout`)); }, timeoutMs);
-      this.pending.set(id, { resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
+      let timer = null;
+      const arm = () => {
+        if (!timeoutMs) return;
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} timeout`)); }, timeoutMs);
+      };
+      arm();
+      this.pending.set(id, {
+        idle,
+        rearm: idle ? arm : null,
+        resolve: (v) => { if (timer) clearTimeout(timer); resolve(v); },
+        reject: (e) => { if (timer) clearTimeout(timer); reject(e); },
+      });
       this.#send({ jsonrpc: "2.0", id, method, params });
     });
+  }
+
+  /** 收到任何来自 dsh 的消息（含通知 / 权限请求）就算“它还活着”，给静默计时器续期。 */
+  #touchIdle() {
+    for (const pending of this.pending.values()) pending.rearm?.();
   }
 
   notify(method, params) { this.#send({ jsonrpc: "2.0", method, params }); }
@@ -181,6 +216,7 @@ export class AcpClient extends EventEmitter {
       return;
     }
     if (msg.id !== undefined && msg.method) {
+      this.#touchIdle();
       if (msg.method === "session/request_permission") {
         const params = msg.params || {};
         this.permissions.set(String(msg.id), { id: msg.id, params });
@@ -190,6 +226,6 @@ export class AcpClient extends EventEmitter {
       }
       return;
     }
-    if (msg.method) this.emit("notification", msg.method, msg.params);
+    if (msg.method) { this.#touchIdle(); this.emit("notification", msg.method, msg.params); }
   }
 }

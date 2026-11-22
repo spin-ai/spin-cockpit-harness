@@ -4,11 +4,94 @@
 
 ## [Unreleased]
 
+### Changed（计数与徽标：tab / 图标 / 标题上不再挂数字）
+- **右栏「会话历史」tab 上的计数下线**：数字挂在图标后面（原来 `5`），既和「智能体会话」头的总数重复，又让导航带上数据；`title` / `aria-label` 里的 `会话历史（5）` 一并去掉，读屏不再多念一个数
+- **「智能体会话」面板头的总数下线**：列表已按今天 / 昨天 / 更早分组并在行尾计数，头的总数是冗余；0 个分组时也不再有孤零零的 `0`
+- **机器人配置页「待处理」tab 的珀色圆角徽标下线**：数字仍写在待处理面板自己的标题行「待处理 3」，只是不再压在 tab 上
+- 删除无引用样式：`.tab-count`、`.tab-count-inline`、`.icon-tab-count`、`.bot-tab-count`
+- `docs/DESIGN-SYSTEM.md` §5 新增「计数与徽标（数字）」：允许列表行尾 / 概览统计 / 区块内容头，禁止 tab / 图标旁 / 区域头 / 页头标题；只有「需要你处理」才配出现在 chrome 上且 `>0` 才渲染；计数是 10.5–11px 小字，不用彩色 pill / 徽标球 / 红点；§8、§9 同步
+- `AGENTS.md` §2.3 新增硬约束第 19 条（原 §2.4 的 18–20 须延为 20–22）
+- `scripts/verify-design.mjs`：新增两项检查——旧计数类不许在 `src/` 里长回来；`AGENTS.md` 与 `DESIGN-SYSTEM.md` 必须同时含这条规则
+
+### Changed（BOT 窗口：联系人 / 消息 / 对话三栏 + 每轮轨迹）
+- **三栏布局**：`机器人 | 聊天对话框 | 消息 · 设置`。左栏联系人（bot + 群聊，未读 / 暂停 / 静音）；中栏是 DeepSeek 式对话；右栏两个 tab：消息（会话列表 + 搜索 + 新会话 + 执行树）与设置（人格 / 日程 / 配额 / 连接器）。页面大标题 / 副标题整块删除，机器人操作收进消息头的 `⋯`（只留一个「决策」）
+- **每轮轨迹**：轮次头 `已完成 / 已汇报 / 已提问，用时 N秒` 就是展开开关；展开后按时间列出思考（可展开全文）、工具调用（名称 / 参数 / 输出）、终端（可直接「打开终端」）
+- 工具按族渲染专属卡：终端（命令 + 输出）、编辑（+/- 行 + diff 着色）、读取（路径 + 行数）、搜索 / 网页、通用 IN/OUT；轨迹数据优先读 run 的 `messages`，只读工具用 `bot_turns.tools` 兜底
+- 轨迹升级为中栏主视图 `对话 | 轨迹`：三轨时间轴（输入 / 模型 / 工具）+ 可搜索账本（角色 / 工具名 / 原始参数 / 结果 / 用量 / TTFT）+ 回合分组；聊天右侧加回合导航 1/2/3…；每轮动作行显示 tokens
+- 结构化轨迹落库：`bot_turns.trace` 保存每次模型请求（usage / TTFT）与每次工具调用（原始 args / result / 时间）；ACP 工具消息新增 `messages.meta`（rawInput / 完整输出）；数据库迁移自动补列，旧数据回退到拍平文本
+- 打开会话自动滚到最新一条；进入对话不再显示逐条 sender 名 / 头像
+
+### Changed（Chat 窗口：照搬 deepseek-harness 的会话界面）
+- **transcript 换成 DeepSeek 的扁平结构**：用户消息右对齐浅色气泡（R20、最大 82%/560、无头像无 meta）；agent 消息是 14/24 的扁平正文，不包气泡；时间 / 复制 / 重新生成收进正文下方的 28px 图标行
+- **过程收成一行**：思考是「已深度思考 + 摘要」的一行折叠；工具 / 步骤是 33px 的「已处理」行 + hairline，展开后一步一行（16px 图标位 + 标题 + 圆点 + 摘要），不再画工具组卡片
+- **运行中是蓝色 shimmer 一行**：`正在深入处理 · 已用 12s`，项目和步数细节收进 chevron；日期 / run 边界改成两侧 hairline + 居中说明
+- **composer 换成 28px 卡片**：14/24 输入、28px 工具行、34px 圆形蓝色发送；Agent / 作用域 / 模型保留为无边框 chip select，去掉 Enter 提示与「模型」标签
+- **BOT 页和 CHAT 共用同一套 `.ds-*` 语言**：机器人会话的正文、过程、动作、composer 一起改；群聊 / 回合归属降为 12px 渐变说明，不再有头像和 IM 气泡
+- 设计系统新增 `--radius-chat-bubble` / `--radius-chat-composer` 两个 token，并把 Chat 窗口记为 Surface 圆角规则的唯一例外；`docs/arch/ARCH-chat-ui.md` 重写为 DeepSeek 对照表 + 新结构
+- 预览：`npm run preview:bot` 现在同时输出 `.preview/bot-chat.png` 与 `bot-chat-dark.png`，断言同步到 `.ds-*`
+
+### Changed（终端：整条工具栏删掉，只剩一行标签栏）
+- **工具栏整行移除**（`Terminal` 品牌字、`终端 / 任务` 切换、`打开项目`、🔍、⚡、字号 chip、`＋ 新建` 全部下线）：终端区现在只有一行 34px 的标签栏，标签在左、`＋` 与最大化 / 收起在右，高度比原来少约 40px
+- 新建入口收成一个 `＋` 菜单：「新建终端（⌘T）/ 新建预览页 / 任务详情 / 起 Agent（不建任务）」，Agent 列表按分组展示，没有可用的就显示「暂无终端 Agent」（原来并排的 `＋ Agent` 下拉 / `＋ 终端` / `＋ 预览` 三个控件）
+- **任务详情变成标签**：`Tab.kind = "task"`（id 固定 `task`），TODO 行内「详情」或 `＋` 菜单打开同一个标签；原来占工具栏的 `终端 / 任务` 视图切换和 `localStorage.cmh.term.slot` 一并删除
+- 查找回到 `⌘F` / 右键「查找…」，快捷命令回到右键「快捷命令…」，字号复位用 `⌘0`；`打开预览 :PORT`、`接入 #KEY` 作为窄 chip 只在需要时出现在标签栏右侧
+- 同步清理：`.terminal-bar`、`.term-icon-btn`、`.term-zoom-chip`、`.term-pane-count`、`.term-slot-switch`、`.term-brand` 规则删除；新增 `.term-strip` / `.term-strip-actions` / `.term-chip` 级样式；`.term-menu` 增加分组标题 `.term-menu-head`
+
+### Docs（设计规范：把「简洁」写成可检查的规则）
+- `docs/DESIGN-SYSTEM.md`：§1 新增原则 8「一个区域一行 chrome」；§5 新增「一行 chrome（区域头 / 工具栏）」小节（常驻只放当前对象 + 主操作、一个动作一个常驻入口、「删掉它是否要多点两次」判据、不写区域品牌字、动态信息做条件 chip、菜单条目 ≤ 8）；§8 禁止模式 + §9 检查清单同步
+- `AGENTS.md`：新增 §2.4「简洁：一个区域一行 chrome」（第 18–20 条硬约束）
+- `scripts/verify-design.mjs`：新增两项检查 —— 两份文档必须同时含该原则；`terminal-bar` / `term-brand` / `term-slot-switch` / `term-slot-body` / `term-icon-btn` / `term-zoom-chip` / `term-pane-count` 这些旧工具栏类不许在 `src/` 里长回来
+
+### Added（预览：代码编辑器 + 自带 PDF 阅读器）
+- **代码文件可编辑**：预览里的文本 / 代码一律换成 CodeMirror 6（行号、折叠、括号匹配、自动缩进、行内查找、多光标），改动后出现「保存」按钮，⌘S 写回磁盘（原来只有 HTML / Markdown 能改，其余是只读 `<pre>`）
+- **高亮覆盖**：js/ts/jsx/tsx/json、html/vue/svelte、css/scss/less、md 用官方 lang 包；py / go / rs / c / cpp / java / cs / swift / rb / lua / sh / sql / yaml / toml / ini / dockerfile / proto / diff 走 `@codemirror/legacy-modes`；认不出的当纯文本也能编辑
+- **PDF 自带阅读器**：新增 `files:pageImage`（主进程 pdfjs + skia 逐页渲 PNG，按 `路径@mtime@页@scale` 缓存最近 24 张），预览里换成自己的阅读器——翻页、页码输入、100–300% 缩放、←→ 翻页、重新渲染；不再依赖 Chromium 的 PDF 插件，暗色主题下也不再是一块白
+- `office-preview.html?page=file[&ext=pdf]`：dev-only 的文件预览页，用来单独核对代码编辑器与 PDF 阅读器
+
+### Added（终端：快捷命令 + 文件路径链接）
+- **快捷命令**（对照 ORCA quick commands）：工具栏 ⚡ / 右键「快捷命令…」→ 一键把常用命令写进当前 pty；可新建 / 编辑 / 删除，每条带「范围（本项目 / 全部项目）」与「发送后回车」开关；存 `localStorage["harness.terminal.quickCommands.v1"]`，按项目路径分组
+- **文件路径链接**：终端输出里的 `src/foo.ts:12` 可点，直接在文件预览标签里打开（只认项目内路径，`..` 与项目外绝对路径忽略）
+- 右键菜单补齐：快捷命令…、重置终端显示（只清 xterm 状态，不重启 shell）、均分窗格、重命名标签、复制终端 ID
+- `office-preview.html?page=terminal`：dev-only 的终端页预览（假的 pty 桩），用来单独核对终端 UI
+
+### Changed（发射指挥：改成真实指挥大厅 + 真人比例的工作人员）
+- **长桌改阶梯控制台**：三排台面统一朝前方大屏（前排落地、后两排各抬 0.34 并带台沿灯带），一排 8 台显示器；前墙大屏两侧加 TELEMETRY / TRACK 辅助屏
+- **席位改成三排工位**：`desk` 坐工位、`lead` 坐前排正中指挥席、`review / approval / meeting` 站到前墙与工位前沿、`tea / standby` 站两侧过道；同一工位多人时左右错开
+- **人物重做**：按真人比例建模（髋 / 膝 / 肩 / 肘四个关节，关节补球）；躯干用 Lathe 轮廓压成椭圆（有胸腰差），四肢锥形；头部有颅骨 / 下颌 / 鼻 / 耳 / 眼 + 分层头发，头戴耳机（头梁 / 耳罩 / 耳垫 / 通话杆）+ 工牌；白色防静电工装带腰带、胸袋、大腿侧兜、裤脚反光条，鞋分鞋底 / 鞋面 / 圆鞋头；站姿、坐姿共用一套骨架，坐姿改成上臂垂下、小臂水平搭在台面；个体有身高差与三种发色，`tone` 落在肩章、袖标、工牌与耳罩环上
+- 机位随布局重调（总览改成俯视阶梯、长桌改成左前方看工位）
+
+### Changed（作战室 → 发射指挥：航天发射场景）
+- **模板改名「发射指挥」**（id 仍是 `warroom`，老场景不用迁移）：大屏换成航天发射指挥台——**发射检查单**（`board.rows`）+ **发射工位实时画面**（塔架 / 探照灯 / 火箭 / 尾焰 / 烟雾，2D canvas 现画）+ **GO / NO-GO 系统状态**（推进 / 制导 / 遥测 / 发射许可 / 通讯，各自映射真实 zone 与终端数）+ 发射时序
+- **新增发射演示**：舞台头「演一遍发射」→ T−4 倒计时（墙面警示灯同步闪红）→ T−0 点火，火箭带尾焰升空、地面腾烟，大屏方向打一束暖光扫过桌面，之后淡出复位
+- **新增机位**：总览 / 大屏 / 长桌 / 工位四个预设，舞台头下拉 + 场景配置「呈现 → 舞台机位」共用 `prefs.view`；画布拖动绕预设 `look` 点环绕，双击回总览
+- 去掉了原来浮在大屏前面的地球全息（挡住真正的画面），大屏中间改成大幅发射场画面；顶栏徽标改为 `LAUNCH CONTROL · THREE.JS`
+
+### Changed（航母舞台：地勤形象 / 真起飞 / 护航舰建模）
+- **甲板地勤换成穿军装的人**：作训服 + 岗位色救生马甲（含反光带、肩章、腰带）+ 防护头盔（耳罩 / 护目镜 / 下颌带）+ 军靴，带手臂和手；不再是「一根柱子顶一个球」
+- **起飞真的飞走**：弹射行程长度改成从弹射位到甲板边缘的射线求交（`deckRun`），三种弹射位都从甲板边缘离舰；离舰后持续加速、拉起、带坡度转向飞走，起落架收起、机腹 AO 关掉，6.4s 飞出画面才回收到甲板位（不再挂在舰边悬停）
+- **机头方向修正**：舰载机原来朝艉停放、弹射时尾朝前飞出，现在机头朝舰首；姿态改用 `YXZ`（先偏航再俯仰），拐弯爬升不会歪；航行灯改回左红右绿
+- **起飞镜头**：弹射段贴舷侧低机位跟拍，离舰段机位钉在舰首外侧看它拉起飞远（不追着飞机跑，航母一直在画面里），约 4.7s 后回总览
+- **视角可切换（并跟着场景记住）**：舞台头新增「视角」下拉、场景配置 → 呈现 → 舞台机位（同一份 `prefs.view`，落库到 `coordination_scenes`），切换按球坐标插值飞过去；画布上按住拖动可以绕看点环绕（原来提示写着「拖动看视角」但其实只有指针视差，现在是真的能转），双击复位回总览
+- **修：场景 prefs 的 `motion` / `dawn` 没落库**：主进程 `normalizeCoordinationPrefs` 的白名单漏了 `motion` 和光照 `dawn`，动效档位和清晨光照重开场景就被打回默认；一并补上，并给 `motion` 加了范围钳制
+- **新增着舰场景**：飞出去之后不再瞬移归位，而是从舰艉后方对正下滑道进场、末段拉平、接地时冒拦阻蒸汽、1.5s 内刹停，停稳后滑回自己的机位；`review` 状态变化时也放一次着舰（着舰道 = review / approval 串行）。镜头跟在下滑道后上方，舞台头新增「演一遍着舰」手动触发
+- **护航舰建模重做**：驱逐舰 / 补给舰统一按一条尺度线（龙骨 / 甲板 / 舰首楔形）推；舰首改成接直舷段截面的五面楔形（原来是一根朝向反了的圆锥戳在舷外），窗户 / 相控阵 / 舱门贴到各自真实外皮上（原来悬在舰桥外面），吊机吊臂越过货柜而不是穿过它，舷号抬到水线以上；两舰改成远近编队，都在画面里
+
+### Changed（脚本目录收口：`scripts/` 只留流程，测试搬进 `tests/`）
+- **新增 `tests/` + `npm test`**：19 个后端用例（原 `*-selftest.mjs` / `verify-mission` / `scripts/bot/`）按 core / persona / knowledge / memory / im / bot 分组，`npm test -- persona` 过滤、`npm test --list` 列清单；`knowledge` 两项自动切到 Electron 的 Node 跑（内置 FTS5）。断言逻辑没改，统一的是入口和分组
+- **`package.json` 的 script 从 68 条收到 45 条**：`memory:selftest` / `knowledge:selftest` / `persona:selftest` / `verify:preview-*` / `verify:mission` / `db:selftest` / `wiki:*:selftest` 等合并进 `npm test`；`persona:preview` → `preview:persona`、`memory:preview` → `preview:memory`；补上 `install:renderer`
+- **E2E 收成一个入口**：`scripts/e2e/run.mjs`，`npm run test:e2e` 跑 requirements，`--suite=smoke|git|notes|preview|md-rich` 跑旧套件（窗口和端口都由 runner 起，套件只负责驱动）；散在根目录的 5 个 `e2e-*.mjs` 收进 `scripts/e2e/suites/`
+- **删掉一次性脚本**（逻辑留在 git 历史）：`build-docs-html.py`（docs 已由 `site/` 接管）、`safari-feishu.mjs`、`persona-reconcile.mjs` / `persona-stats-backfill.mjs` / `persona-verify-quotes.mjs`（存量数据已修完）、`article-images/` 与 `video/`（产物已提交，重新出图再捡脚本）
+
+### Fixed
+- **`reply()` 盖过种子默认职责**：种子 bot 带了默认 `persona.mission`，而「第一句话成为职责」只在 mission 为空时才写，于是提问卡片问完就再也不会记用户的话。改成 `intro` 期间（问了还没答）优先用用户原话，并且提问后不再立刻把 `intro` 置 false（重复提问仍由 `!turns.some` 拦）
+- **requirements E2E 数组里有 3 个裸逗号**（删用例留下的空位），`undefined` 元素让 `--list` 和整跑都炸在 `test.skip` 上
+- **`db.test.mjs` 的 `INSERT INTO todos` 写死 22 个占位符**，schema 加到 23 列后直接报错；改成按 `SCHEMA` 推导列名
+
 ### Added（机器人配置页，像项目一样）
 - **rail 上「机器人」= 配置页**（`src/components/Bots.tsx`）：概览条（机器人 / 绑定执行体 / 本小时开口 / 待绑定 / 静音暂停）+ 卡片·列表两种排布 + 筛选（全部 / 已绑定 / 未绑定执行体 / 静音或暂停）+ 排序（最近开口 / 名称 / 本小时开口）+ 搜索（名字 / 职责 / 执行体）；卡片里是头像、职责、执行体、日程数、最近一条回合（决定 + 原因）
 - **行内操作**：「打开会话」进会话面；`⋯` → 人设配额与日程 / 暂停或恢复主动开口 / 静音 1 小时 / 取消静音 / 删除
 - **会话面（`Bot.tsx`）不再占 rail**：从配置页带着 `initialBotId` 进来，页头多了「← 机器人」；任务面板的「管理机器人」也指向配置页
-- 新增 `routines` 进 `State` 类型（配置页读日程条数）；预览页支持 `?page=bots&layout=list`
+- 新增 `routines` 进 `State` 类型（配置页读日程条数）；预览入口统一到 `office-preview.html?page=bots&layout=list`
 - 原型侧同步收口：`docs/prototype/bot.html` 回到「会话与审计」单面，README 写明**配置在应用的「机器人」页**，并记下 Orca 式 sidebar split 为什么没采纳（配置要独立一页，左栏只服务工作区）
 
 ### Changed（设置：用语、顺序、排版）
@@ -24,7 +107,7 @@
 - **rail 不再有「统计」「主机」**：两块内容以 `embedded` 模式嵌进设置分区（`Hosts` / `Stats`，不再自带 `PageHeader`，只留一条右对齐工具条），设置分区顺序：通用 / 外观 / 执行 / 终端 / 预览与元素 / 即时通信 / **主机** / **统计** / 插件 / 数据 / 快捷键 / 关于
 - **旧入口都还能用**：命令面板「统计 / 主机」→ 设置对应分区；`defaultView=stats|hosts` 的老库读到时落成 `settings`；`harness:view` 传 `stats|hosts` 同样落到分区。主机离线的红点从 rail 挪到「设置」的角标
 - **启动视图选项**：`工作区 / 项目 / 设置`（原来的「统计」换成「设置」）
-- 新增 dev-only 预览 `settings-preview.html`（`?section=hosts|stats&theme=dark`），设置分区里的整页内容也能截图检查
+- dev-only 预览统一到 `office-preview.html`：`?page=settings&section=hosts|stats` 看设置分区，`?page=bots` 看机器人配置页
 
 ### Changed（舞台的主角从 Agent 换成 Bot）
 - **阵容按机器人登记**：`coordination_scenes.config.cast[]` 从 `agentId` 改成 `botId`（`src/types.ts: CoordinationCastMember`）。人格、头像、配色、走位、名字牌都跟机器人走，执行体（Agent）只是它**此刻借的身体**——换执行体不再等于换人

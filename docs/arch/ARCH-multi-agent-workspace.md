@@ -116,7 +116,7 @@ context get/set
 
 - `runResume({ runId })`：把 run 放回 `queued`，写 `resumeSessionId = acpSession`；
 - `startRun()`：有 `resumeSessionId` 时用 `client.resumeSession(id, cwd)`，**cwd 用原 run 的 cwd**（绝不新建 worktree，否则上次未提交的改动就丢了）；续不上（`session is not resumable`）就老实报一句再开新会话；
-- 实测约束（`npm run verify:acp-resume`）：`cwd` 必填；响应不含 sessionId；活跃会话不能在同进程内 resume；不存在的 id 会明确报错。
+- 实测约束（`npm test -- acp-resume`）：`cwd` 必填；响应不含 sessionId；活跃会话不能在同进程内 resume；不存在的 id 会明确报错。
 
 ---
 

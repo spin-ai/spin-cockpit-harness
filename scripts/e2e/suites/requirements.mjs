@@ -863,9 +863,8 @@ export const TESTS = [
       await ctx.action("cleanupWorktree", { runId: run.id });
     },
   },
-,
-,
-,
+  // 原先这里是 3 条被删掉的用例，留下了裸逗号（数组里出现 undefined），
+  // 会让 --list 和整跑都炸在 test.skip 上。删掉的用例别再留占位逗号。
   {
     id: "E2E-03",
     group: "E2E",

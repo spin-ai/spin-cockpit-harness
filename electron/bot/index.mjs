@@ -12,6 +12,7 @@ import { redactSecrets } from "../redact.mjs";
 import { suppressionReason } from "./guard.mjs";
 import { notifyDecision } from "./notify.mjs";
 import { WAIT_LIMIT_MS, describeRoutine, nextRunAt, normalizeRoutine, routineDue } from "./routine.mjs";
+import { BOT_READ_TOOLS, BOT_READ_TOOL_NAMES, parseToolArgs } from "./tools.mjs";
 
 const HOUR = 60 * 60 * 1000;
 const MINUTE = 60 * 1000;
@@ -28,6 +29,8 @@ export const DEFAULT_PERSONA = {
 
 export const DEFAULT_POLICY = {
   requireMentionInGroup: true,
+  // 谁能找它：owner = 只在 1:1（Chat / Bot 页）回应，群里 @ 也不回；group = 群里 @ 才回；anyone = 群里按回复模式都可能开口
+  whoCanAsk: "group",
   maxTurnsPerHour: 6,
   minGapMs: 2 * MINUTE,
   quietHours: [23, 8],
@@ -171,6 +174,7 @@ export function collectCandidates(state, { now = Date.now(), recentTurns = [], b
 export function buildSystemPrompt(bot, injected = "", { proactive = true, recentProactive = [] } = {}) {
   const persona = bot.persona || {};
   const policy = bot.policy || {};
+  const duty = persona.duty || {};
   const memoryText = typeof injected === "string"
     ? (injected.trim() || "（这一轮没有注入记忆）")
     : (injected.length
@@ -179,7 +183,13 @@ export function buildSystemPrompt(bot, injected = "", { proactive = true, recent
   const recent = (recentProactive || []).filter(Boolean).slice(-3);
   return [
     `你在扮演「${bot.name}」。用第一人称，不要解释自己是 AI。`,
+    bot.role ? `角色：${bot.role === "supervisor" ? "主管（拆解、分派、盯进展、汇总，不亲手改代码）" : "执行者（在自己职责范围内把事做完）"}` : "",
     persona.mission ? `你的职责（用户亲口说的）：${persona.mission}` : "",
+    duty.goal ? `目标：${duty.goal}` : "",
+    duty.scope ? `范围：${duty.scope}` : "",
+    duty.deliverable ? `交付物：${duty.deliverable}` : "",
+    duty.forbidden ? `不做什么：${duty.forbidden}` : "",
+    duty.report ? `汇报口径：${duty.report}` : "",
     `语气：${persona.tone || DEFAULT_PERSONA.tone}`,
     `称呼：${persona.address || DEFAULT_PERSONA.address}`,
     `长短：${persona.length || DEFAULT_PERSONA.length}`,
@@ -187,10 +197,11 @@ export function buildSystemPrompt(bot, injected = "", { proactive = true, recent
     `习惯：${persona.habit || DEFAULT_PERSONA.habit}`,
     policy.escalate ? `必须请人来做（不要声称已经办了）：${policy.escalate}` : "",
     recent.length ? `你最近主动说过（别自相矛盾、也别重复）：\n${recent.map((t) => `- ${clip(t, 120)}`).join("\n")}` : "",
-    `能力档位：${bot.capability === "dispatch" ? "可以起 Agent 任务，但必须先问人、由人审批" : "只读：能读记忆、资料和运行状态，不能写文件、不能起任务"}`,
-    bot.capability === "dispatch"
-      ? "不要声称能直接改代码；要动手就先说明会建一个任务、并请人确认。"
-      : "不要声称自己能写代码、改文件、跑命令或起任务；需要动手时，让对方在 Chat 里派活。",
+    `能力档位：${bot.capability === "dispatch" ? "可以起 Agent 任务，但必须先问人、由人审批" : bot.capability === "work" ? "能起任务并跟踪执行体" : "只读：能读记忆、资料和运行状态，不能写文件、不能起任务"}`,
+    bot.capability === "read"
+      ? "不要声称自己能写代码、改文件、跑命令或起任务；需要动手时，让对方在 Chat 里派活。"
+      : `只读工具（可以直接调，不用问）：${BOT_READ_TOOL_NAMES.join(" / ")}。除此之外你不能写文件、跑命令、起任务——要动手就先说清楚会建一个什么任务，并请人确认。`,
+    bot.capability === "dispatch" ? "不要声称能直接改代码；要动手就先说明会建一个任务、并请人确认。" : "",
     proactive
       ? "你会收到一条「工作区事件」和几条记忆。只输出你要说的一句话（最多两句）。"
       : "现在有人在直接跟你说话。正常对话，别复述人格设定，别解释自己是 AI。",
@@ -201,7 +212,7 @@ export function buildSystemPrompt(bot, injected = "", { proactive = true, recent
 
 /* ------------------------------------------------------------------ 运行时 */
 
-export function createBots({ store, memory, chat, chatStream, key, probeWatch, onChange = () => {}, now = () => Date.now(), log = console } = {}) {
+export function createBots({ store, memory, chat, chatStream, key, probeWatch, runTool, onChange = () => {}, now = () => Date.now(), log = console } = {}) {
   const stateOf = () => store.state;
   const bots = () => (stateOf().bots || []);
   const turnsOf = () => (stateOf().botTurns || []);
@@ -270,16 +281,44 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
 
   const threadsOf = () => (stateOf().threads = Array.isArray(stateOf().threads) ? stateOf().threads : []);
 
-  /** 一个 bot 一条 thread（todo_id 为空、kind=bot）；持续 chat 的落点 */
+  /** 一个 bot 的默认 thread（todo_id 为空、kind=bot）：主动开口、老回合、未指定会话的落点 */
   function threadOf(botId) {
     return threadsOf().find((t) => t.kind === "bot" && t.botId === botId) || null;
   }
 
-  function ensureBotThread(bot) {
+  /**
+   * 这个 bot 的会话列表（照搬 ORCA 的 Chats：一条会话一行）。
+   * 默认会话永远在里面（老回合的落点），其余按最近活动排。
+   */
+  function chatsOf(botId) {
+    const threads = threadsOf().filter((t) => t.kind === "bot" && t.botId === botId);
+    if (!threads.length) return [];
+    const msgs = stateOf().messages || [];
+    const out = threads.map((t) => {
+      const mine = msgs.filter((m) => m.threadId === t.id && !m.supersededBy);
+      const last = mine[mine.length - 1] || null;
+      return {
+        id: t.id,
+        title: t.title || "会话",
+        createdAt: t.createdAt || 0,
+        updatedAt: t.updatedAt || last?.createdAt || t.createdAt || 0,
+        count: mine.length,
+        last: last ? String(last.content || "").replace(/\s+/g, " ").slice(0, 120) : "",
+        lastAt: last?.createdAt || 0,
+      };
+    });
+    return out.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  }
+
+  function ensureBotThread(bot, { threadId = "", title = "" } = {}) {
+    if (threadId) {
+      const hit = threadsOf().find((t) => t.id === threadId && t.kind === "bot" && t.botId === bot.id);
+      if (hit) return hit;
+    }
     const existing = threadOf(bot.id);
     if (existing) return existing;
     const thread = {
-      id: `th-bot-${bot.id}`, todoId: null, title: bot.name || "bot",
+      id: `th-bot-${bot.id}`, todoId: null, title: title || bot.name || "bot",
       projectId: null, project: "", agentId: null,
       model: "", modelName: "", effort: "",
       kind: "bot", botId: bot.id,
@@ -288,6 +327,103 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
     threadsOf().push(thread);
     store.persist();
     return thread;
+  }
+
+  /** 新开一个话题（ORCA 的 New chat）：同一个 bot，不同的会话 */
+  function newChat({ botId, title = "" } = {}) {
+    const bot = bots().find((b) => b.id === String(botId || ""));
+    if (!bot) throw new Error("bot 不存在");
+    // 还没有任何会话时，这一次就是默认会话（主动开口和老回合的落点），不再额外造一条
+    if (!threadOf(bot.id)) return ensureBotThread(bot, { title: title || "新话题" });
+    const thread = {
+      id: `th-bot-${bot.id}-${now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+      todoId: null, title: String(title || "新话题").slice(0, 60),
+      projectId: null, project: "", agentId: null,
+      model: "", modelName: "", effort: "",
+      kind: "bot", botId: bot.id,
+      createdAt: now(), updatedAt: now(),
+    };
+    threadsOf().push(thread);
+    store.persist();
+    return thread;
+  }
+
+  function renameChat({ threadId, title } = {}) {
+    const thread = threadsOf().find((t) => t.id === String(threadId || "") && t.kind === "bot");
+    if (!thread) throw new Error("会话不存在");
+    thread.title = String(title || "").trim().slice(0, 60) || thread.title;
+    thread.updatedAt = now();
+    store.persist();
+    return thread;
+  }
+
+  /** 删会话：连它的消息一起删；默认会话不能删（老回合与主动开口都落在那里） */
+  function removeChat({ threadId } = {}) {
+    const id = String(threadId || "");
+    const thread = threadsOf().find((t) => t.id === id && t.kind === "bot");
+    if (!thread) throw new Error("会话不存在");
+    if (thread.id === threadOf(thread.botId)?.id) throw new Error("默认会话不能删");
+    stateOf().threads = threadsOf().filter((t) => t.id !== id);
+    if (Array.isArray(stateOf().messages)) stateOf().messages = stateOf().messages.filter((m) => m.threadId !== id);
+    stateOf().botTurns = turnsOf().filter((t) => t.threadId !== id);
+    store.persist();
+    return { ok: true };
+  }
+
+  /**
+   * 从某条消息分支出新会话（ORCA 的 fork）：复制到这条为止的消息，标题加「分支」。
+   * 源会话一条都不动 —— 分支是用来「换个说法重开」，不是编辑历史。
+   */
+  function forkChat({ threadId, messageId = "" } = {}) {
+    const src = threadsOf().find((t) => t.id === String(threadId || "") && t.kind === "bot");
+    if (!src) throw new Error("会话不存在");
+    const msgs = (stateOf().messages || []).filter((m) => m.threadId === src.id && !m.supersededBy);
+    if (!msgs.length) throw new Error("这条会话还没有消息可以分支");
+    const at = messageId ? msgs.findIndex((m) => m.id === messageId) : msgs.length - 1;
+    const keep = at >= 0 ? msgs.slice(0, at + 1) : msgs;
+    const thread = {
+      id: `th-bot-${src.botId}-${now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+      todoId: null, title: `${String(src.title || "会话").slice(0, 50)}（分支）`,
+      projectId: null, project: "", agentId: null,
+      model: "", modelName: "", effort: "",
+      kind: "bot", botId: src.botId,
+      createdAt: now(), updatedAt: now(),
+    };
+    threadsOf().push(thread);
+    for (const m of keep) {
+      try { store.addMessage(thread.id, m.runId ?? null, m.role, m.kind || "text", m.content); }
+      catch { /* 极简 store 没有消息层时只建会话 */ }
+    }
+    store.persist();
+    return { thread, copied: keep.length };
+  }
+
+  /** 会话内搜索（ORCA 的 Chats 搜索框）：标题 + 消息正文，返回命中的会话与片段 */
+  function searchChats({ botId, query = "" } = {}) {
+    const q = String(query || "").trim().toLowerCase();
+    const chats = chatsOf(String(botId || ""));
+    if (!q) return { chats, hits: [] };
+    const msgs = stateOf().messages || [];
+    const hits = [];
+    for (const chat of chats) {
+      const mine = msgs.filter((m) => m.threadId === chat.id && !m.supersededBy);
+      for (const m of mine) {
+        const text = String(m.content || "");
+        const at = text.toLowerCase().indexOf(q);
+        if (at < 0) continue;
+        hits.push({
+          threadId: chat.id, messageId: m.id, at: m.createdAt || 0, role: m.role,
+          snippet: `${at > 20 ? "…" : ""}${text.slice(Math.max(0, at - 20), at + q.length + 40)}`,
+        });
+        break; // 一个会话只要一条命中，列表里够用了
+      }
+    }
+    const matched = new Set(hits.map((h) => h.threadId));
+    const titled = chats.filter((c) => c.title.toLowerCase().includes(q));
+    return {
+      chats: chats.filter((c) => matched.has(c.id) || titled.includes(c)),
+      hits,
+    };
   }
 
   /**
@@ -300,7 +436,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
     if (!speaks || (!row.input && !row.reply)) return;
     const bot = bots().find((b) => b.id === row.botId);
     if (!bot) return;
-    const thread = ensureBotThread(bot);
+    const thread = ensureBotThread(bot, { threadId: row.threadId || "" });
     if (row.decision === "replied" && row.input) store.addMessage(thread.id, null, "user", "text", row.input);
     if (row.reply) store.addMessage(thread.id, null, "agent", "text", row.reply);
     row.mirrored = true;
@@ -311,7 +447,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
     // 落库前脱敏：用户可能把 key 直接粘进输入框，回合账是本地的但也不该存明文
     const row = {
       id: nextTurnId(),
-      channel: "local", input: "", runId: null, cost: {}, ...turn, createdAt: now(),
+      channel: "local", input: "", runId: null, cost: {}, trace: [], ...turn, createdAt: now(),
     };
     if (row.input) row.input = redactSecrets(row.input).text;
     if (row.reply) row.reply = redactSecrets(row.reply).text;
@@ -423,6 +559,12 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
         if (t) acc[b.id] = t.id;
         return acc;
       }, {}),
+      // 照搬 ORCA 的 Chats：每个 bot 一条会话列表（默认会话 + 自己新开的）
+      botChats: bots().reduce((acc, b) => {
+        const list = chatsOf(b.id);
+        if (list.length) acc[b.id] = list;
+        return acc;
+      }, {}),
       recent: {
         answeredHour: turns.filter((t) => t.decision === "answered" && now() - t.createdAt < HOUR).length,
         blockedHour: turns.filter((t) => t.decision === "blocked" && now() - t.createdAt < HOUR).length,
@@ -520,9 +662,8 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
     // 0) 创建后第一轮：先问用途。不问的话它永远是个"默认 bot"（Rakazo 的 hidden intro 同款做法）
     if (bot.intro && !turns.some((t) => t.botId === bot.id)) {
       const question = `我是${bot.name}。你想让我干什么？说一句就行，我记成职责；以后随时能改。`;
-      bot.intro = false;
-      bot.updatedAt = now();
-      store.persist();
+      // 注意：这里不落 `intro = false`——要等用户真答了才结（reply 里落），
+      // 否则"第一句话成为职责"永远走不到。重复提问由上面的 `!turns.some` 拦住。
       return record({
         id: turnId, botId: bot.id, trigger: { kind: "intro", ref: "" },
         decision: "asked", reason: "创建后第一次开口：先问用途，不先客套",
@@ -656,8 +797,100 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
     });
   }
 
+  /**
+   * 一轮对话可能包含多次只读工具调用：模型要查，就去查；查完再回答。
+   *
+   * 设计边界（和 capability 三档对齐）：
+   *  - 这里**只**能调只读工具（记忆 / 资料 / 任务 / 运行），执行体在 main；
+   *  - 写操作（改文件、跑命令、起任务）不在工具表里，只能靠提议给人确认；
+   *  - 最多 4 轮，防模型在两个工具之间来回问；网关不支持 tools 时自动退回纯对话。
+   */
+  async function chatStreamWithTools(messages, bot, onDelta, signal, onTool) {
+    const tools = bot.capability === "read" || !runTool ? [] : BOT_READ_TOOLS;
+    const trace = [];
+    const events = [];
+    let conversation = messages;
+    let text = "";
+    for (let round = 0; round < 4; round += 1) {
+      const roundAt = now();
+      let res;
+      try {
+        res = await chatStream(conversation, {
+          key: key(),
+          maxTokens: Number(bot.budget?.tokensPerTurn) || DEFAULT_BUDGET.tokensPerTurn,
+          temperature: 0.7,
+          onDelta,
+          signal,
+          tools: tools.length ? tools : null,
+        });
+      } catch (err) {
+        // 部分网关不支持 function calling：第一轮就退回纯对话，不要让人看不到回复
+        if (round === 0 && tools.length && /tools?|function|400/i.test(String(err?.message || ""))) {
+          res = await chatStream(messages, {
+            key: key(), maxTokens: Number(bot.budget?.tokensPerTurn) || DEFAULT_BUDGET.tokensPerTurn,
+            temperature: 0.7, onDelta, signal,
+          });
+          return { ...res, toolTrace: [] };
+        }
+        throw err;
+      }
+      events.push({
+        kind: "request", round,
+        at: roundAt, ms: Math.max(0, now() - roundAt),
+        usage: res?.usage || {}, ttft: res?.ttft, text: String(res?.text || ""),
+      });
+      text += String(res?.text || "");
+      const calls = res?.toolCalls || [];
+      if (!calls.length) return { ...res, text, toolTrace: trace };
+      // 模型可能编出工具表里没有的名字（比如 memory_write）：照样回一条 tool 错误，
+      // 让它自己解释「这个要人来确认」，而不是整轮变成空答复。
+      conversation = [
+        ...conversation,
+        {
+          role: "assistant",
+          content: String(res?.text || ""),
+          tool_calls: calls.map((c) => ({ id: c.id || c.name, type: "function", function: { name: c.name, arguments: c.args || "{}" } })),
+        },
+      ];
+      for (const call of calls) {
+        const allowed = BOT_READ_TOOL_NAMES.includes(call.name);
+        let result;
+        if (allowed) {
+          const args = parseToolArgs(call.args);
+          const startedAt = now();
+          try { onTool?.({ name: call.name, phase: "start" }); } catch { /* 回调失败不影响查询 */ }
+          try { result = await runTool(call.name, args, { bot }); } catch (err) { result = { error: String(err?.message || err) }; }
+          try { onTool?.({ name: call.name, phase: "done" }); } catch { /* 忽略 */ }
+          const failed = Boolean(result && typeof result === "object" && "error" in result);
+          const resultText = JSON.stringify(result).slice(0, 6000);
+          trace.push({
+            name: call.name,
+            args: JSON.stringify(args).slice(0, 240),
+            argsRaw: JSON.stringify(args).slice(0, 6000),
+            result: resultText,
+            ms: Math.max(0, now() - startedAt),
+            at: startedAt,
+            ok: !failed,
+            preview: String(failed ? result.error : resultText).slice(0, 240),
+          });
+          events.push({ kind: "tool", name: call.name, argsRaw: JSON.stringify(args).slice(0, 6000), result: resultText, ms: Math.max(0, now() - startedAt), at: startedAt, ok: !failed });
+        } else {
+          const rejectedAt = now();
+          trace.push({ name: call.name, rejected: true, ok: false, at: rejectedAt, preview: "不在只读工具表里（写操作必须走提议 → 人确认）" });
+          events.push({ kind: "tool", name: call.name, argsRaw: String(call.args || "{}").slice(0, 6000), result: "不在只读工具表里（写操作必须走提议 → 人确认）", at: rejectedAt, ms: 0, ok: false, rejected: true });
+          result = { error: `工具 ${call.name} 不可用：你只能查询，不能写文件 / 跑命令 / 起任务；要动手请先请人确认。` };
+        }
+        conversation = [...conversation, {
+          role: "tool", tool_call_id: call.id || call.name,
+          content: JSON.stringify(result).slice(0, 4000),
+        }];
+      }
+    }
+    return { text, toolCalls: [], usage: {}, toolTrace: trace, events };
+  }
+
   /** 被动回复：同一个 bot、同一份记忆，流式吐字；落一条 decision=replied 的回合 */
-  async function reply(bot, text, { onDelta, signal } = {}) {
+  async function reply(bot, text, { onDelta, onTool, signal, threadId = "" } = {}) {
     const clean = String(text || "").trim().slice(0, 2000);
     if (!clean) throw new Error("说点什么");
     if (typeof chatStream !== "function") throw new Error("当前环境不支持流式回复");
@@ -665,8 +898,9 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
     const turnId = nextTurnId();
     // 人回话了：把这个 bot 挂着的提问卡片结掉（卡片不挡聊天，所以允许一句话答多张）
     try { settleAsks(bot.id, { answer: clean, status: "answered" }); } catch { /* 卡片结不掉不影响回话 */ }
-    // 创建后它先问了"你想让我干什么"：用户的第一句话就是职责（不覆盖已有职责）
-    if (!bot.persona?.mission) {
+    // 创建后它先问了"你想让我干什么"：用户的第一句话就是职责（不覆盖已有职责）。
+    // intro 期间种子里的默认 mission 只是占位，用户亲口说的要盖过它。
+    if (bot.intro || !bot.persona?.mission) {
       bot.persona = { ...(bot.persona || {}), mission: redactSecrets(clean).text.slice(0, 200) };
       bot.intro = false;
       bot.updatedAt = now();
@@ -674,8 +908,8 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
       onChange();
     }
     const { markdown, injected } = recall(bot, `bot:${bot.id}:${turnId}`);
-    // 历史优先读这条 thread 的真实消息（含主动开口），没有消息层时退回 bot_turns
-    const thread = ensureBotThread(bot);
+    // 历史优先读这条会话的真实消息（含主动开口），没有消息层时退回 bot_turns
+    const thread = ensureBotThread(bot, { threadId });
     const fromThread = (stateOf().messages || [])
       .filter((m) => m.threadId === thread.id && (m.role === "user" || m.role === "agent") && m.content && !m.supersededBy)
       .slice(-10)
@@ -691,7 +925,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
     // 用户看到的是"说到一半被打断"，而不是整段对话凭空消失。
     const pending = record({
       id: turnId, botId: bot.id, trigger: { kind: "mention", ref: "" },
-      input: clean, injected, reply: "", decision: "streaming", cost: {},
+      input: clean, injected, reply: "", decision: "streaming", cost: {}, threadId: thread.id,
     });
     let acc = "";
     let lastFlush = 0;
@@ -703,17 +937,11 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
     };
     let res;
     try {
-      res = await chatStream([
+      res = await chatStreamWithTools([
         { role: "system", content: buildSystemPrompt(bot, markdown, { proactive: false, recentProactive: recentSaid(bot) }) },
         ...history,
         { role: "user", content: clean },
-      ], {
-        key: key(),
-        maxTokens: Number(bot.budget?.tokensPerTurn) || DEFAULT_BUDGET.tokensPerTurn,
-        temperature: 0.7,
-        onDelta: onDeltaTracked,
-        signal,
-      });
+      ], bot, onDeltaTracked, signal, onTool);
     } catch (err) {
       // 取消 / 报错：这条回合不该留在账上（半截流式内容只在真崩溃时才有意义）
       stateOf().botTurns = turnsOf().filter((t) => t.id !== pending.id);
@@ -730,6 +958,14 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
       reply: answer.slice(0, 4000), decision: "replied",
       cost: { tokens: res?.usage?.total_tokens ?? null, ms: now() - started },
     });
+    // 新话题的第一句话就是标题：Chats 列表里不出现一排“新话题”
+    if (thread.title === "新话题") {
+      thread.title = clean.replace(/\s+/g, " ").slice(0, 40);
+      thread.updatedAt = now();
+    }
+    // 工具调用留痕：没有这一步，“它到底查了什么”只能靠猜
+    if (res?.toolTrace?.length) pending.tools = res.toolTrace.slice(0, 40);
+    pending.trace = [...(res?.events || []), ...(res?.toolTrace || [])].slice(0, 200);
     // 成功后补镜像（streaming 阶段还不该进会话，否则 Chat 里会先出现一条空回复）
     try { mirror(pending); } catch (err) { log.warn?.(`[bot] 镜像到会话失败：${String(err?.message || err)}`); }
     store.persist();
@@ -809,6 +1045,8 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, o
     openAsks,
     settleAsks,
     threadOf: (botId) => threadOf(String(botId || "")),
+    chats: (botId) => chatsOf(String(botId || "")),
+    newChat, renameChat, removeChat, searchChats, forkChat,
     ensureBotThread, migrateThreads,
   };
 }

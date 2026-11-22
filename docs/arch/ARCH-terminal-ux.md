@@ -1,4 +1,4 @@
-> 层：架构 · 状态：已落地 · 核对：2026-11-14 · 覆盖：终端易用性 / pane 拆分 / 回放
+> 层：架构 · 状态：已落地 · 核对：2026-11-22 · 覆盖：终端易用性 / pane 拆分 / 回放
 
 # 终端易用性（Terminal UX）
 
@@ -9,7 +9,7 @@
 
 ## 1. 目标
 
-harness 的 Terminal 是「Agent 干活 + 人直接敲命令」的同一个 pane。原实现只有多标签和 `＋ 终端`，日常使用有四个明显摩擦：
+harness 的 Terminal 是「Agent 干活 + 人直接敲命令」的同一个 pane。原实现只有多标签和一个「新建终端」按钮，日常使用有四个明显摩擦：
 
 1. 输出找不到（没有查找、没有回到底部）。
 2. 标签多了没有快捷切换，关闭只能点 ×。
@@ -23,27 +23,30 @@ harness 的 Terminal 是「Agent 干活 + 人直接敲命令」的同一个 pane
 | 能力 | 交互 | 实现 |
 |---|---|---|
 | 标签切换 | `⌃Tab` / `⇧⌃Tab`、`⌘⇧[` / `⌘⇧]`、`⌘⇧1…9` | `TermTab` 的 capture keydown → `cycleTab` / `onGotoTab` |
-| 新建 / 关闭 | `⌘T` / `⌘W`、`＋`、标签 ×、中键 | `addTab` / `close`；在终端内截获 App 的同名快捷键，避免执行两次 |
+| 新建 / 关闭 | `⌘T` / `⌘W`、标签栏 `＋`（菜单）、标签 ×、中键 | `addTab` / `close`；在终端内截获 App 的同名快捷键，避免执行两次 |
 | 标签重命名 | 双击标签，Enter 提交、Esc 取消 | `renaming` 状态 + `renamed` 标记（重命名后不再跟随 shell 标题） |
 | 标签标题 | 跟随 shell 的 OSC 0/2 标题（如正在跑的命令） | `term.onTitleChange` → `patchTab` |
 | 后台完成提示 | 后台标签收到 bell 时亮琥珀色提示点，切回后清除 | `term.onBell` + `attention` |
 | 标签过多 | 标签条纵向滚轮转横向、激活标签自动滚入视野 | wheel listener + `scrollIntoView` |
-| 查找 | `⌘F` / 工具栏放大镜；增量高亮、Enter / ⇧Enter 跳转、Esc 关闭、区分大小写、正则 | `@xterm/addon-search` + `TermSearch`（配色见 `SEARCH_DECORATIONS`） |
+| 查找 | `⌘F` / 右键「查找…」；增量高亮、Enter / ⇧Enter 跳转、Esc 关闭、区分大小写、正则 | `@xterm/addon-search` + `TermSearch`（配色见 `SEARCH_DECORATIONS`） |
 | 复制 / 粘贴 | `⌘C`（有选区才拦截，无选区仍发 `^C`）、`⌘V`、右键菜单 | Electron `clipboard` IPC；粘贴走 `term.paste()`，保留 bracketed paste |
-| 右键菜单 | 复制 / 粘贴 / 全选 / 查找 / 清屏 / 新建 / 关闭 | `TermMenu`（贴边自动收进窗口） |
+| 右键菜单 | 复制 / 粘贴 / 全选 / **快捷命令…** / 查找 / 清屏 / **重置终端显示** / 拆分 / **均分窗格** / 预览 / 接管 / **重命名标签** / **复制终端 ID** / 新建 / 关闭 | `TermMenu`（贴边自动收进窗口）；「均分窗格」把整棵树的比例递归置 0.5；「重置」只 `term.reset()`，不重启 shell |
 | 清屏 | `⇧⌘K` | `term.clear()` |
-| 字号缩放 | `⌘+` / `⌘-` / `⌘0`；缩放后工具栏出现 `Npx` 复位按钮 | 面板级 `zoom` delta，持久化到 `localStorage["cmh.term.zoom"]`，上限 8–32px |
+| 字号缩放 | `⌘+` / `⌘-` / `⌘0`；`⌘0` 复位（不再有 `Npx` chip） | 面板级 `zoom` delta，持久化到 `localStorage["cmh.term.zoom"]`，上限 8–32px |
 | 链接 | `http(s)` / `mailto` 可点击，用系统浏览器打开 | `@xterm/addon-web-links` + `shell:openExternal`（仅白名单 scheme） |
+| 文件路径链接 | 输出里的 `src/foo.ts:12` 这类带目录的路径可点，**在文件预览标签里打开**（只认项目内路径，`..` 与项目外绝对路径直接忽略） | `term.registerLinkProvider`（正则 `路径(:行)?(:列)?`）+ `openFilePreviewTab`；hover 提示「在文件预览里打开」 |
+| 快捷命令 | 右键「快捷命令…」：一键把常用命令写进当前 pty；可编辑 / 删除；每条带**范围**（本项目 / 全部项目）与**发送后回车**开关（关掉只填命令行） | `src/components/TerminalQuickCommands.tsx`：`localStorage["harness.terminal.quickCommands.v1"]`（按项目路径分组，`*` 为全局），发送 = `terminalInput(id, content + (appendEnter ? "\r" : ""))`，不经过主进程、不新增 State 字段 |
 | 拆分窗格 | `⌘D` 向右、`⇧⌘D` 向下（递归嵌套）；拖拽分隔条调比例；`⌘⌥←/→/↑/↓` 按几何方向移动焦点；右键菜单 / 命令面板同入口 | `Tab.root` 二叉树 + `SplitSurface` 绝对定位布局；新窗格继承当前窗格 cwd；预览标签可拖入 pane 边缘 |
 | 关闭窗格 | `⌘W` 关闭当前窗格，最后一个窗格时关闭整个标签 | `closeFocusedPane` 删除叶子并折叠空的 split |
-| 预览标签 | 预览与终端共用一条标签栏，且**只有唯一一个预览标签**：打开文件 = 文件模式（渲染/源码），地址栏「URL」或 `打开预览 :PORT` = 地址模式（dev server / 远程页）；可双击重命名、`⌘W`/中键关闭；命令面板「打开预览（文件 / dev server / URL）」；工具栏不再单列「＋ 预览」 | `Tab.kind = "preview"`（`rel` 有值即文件模式）+ `PreviewSurface`（同一 webview 生命周期）；切到后台标签会自动取消拾取，避免挂在隐藏 webview 上 |
+| 预览标签 | 预览与终端共用一条标签栏，且**只有唯一一个预览标签**：打开文件 = 文件模式（渲染/源码），地址栏「URL」或 `打开预览 :PORT` = 地址模式（dev server / 远程页）；可双击重命名、`⌘W`/中键关闭；命令面板「打开预览（文件 / dev server / URL）」；**没有工具栏**：新建终端 / 新建预览页 / 任务详情 / 起 Agent 全部收进标签栏末尾的 `＋` 菜单 | `Tab.kind = "preview"`（`rel` 有值即文件模式）+ `PreviewSurface`（同一 webview 生命周期）；切到后台标签会自动取消拾取，避免挂在隐藏 webview 上 |
 | 文件预览（Markdown） | 双击即打开，**TipTap / ProseMirror 富文本编辑器**（对齐 ORCA，不再用 contentEditable+execCommand）：工具栏 H1–H3 / B / I / S / 行内代码 / 列表 / 引用 / 代码块 / 表格 / 分割线 / 链接 / 撤销重做、选中态高亮；**Markdown 输入规则**由 StarterKit 提供（`# ` `## ` `### ` 标题、`- ` 列表、`1. ` 有序、`> ` 引用、``` 代码块）；空段落输入 `/` 打开块插入菜单；`⌘S` 保存 → `getHTML()` + turndown+gfm 转 Markdown（表格用自定义规则转 pipe 表）；`⌘K` 链接、`⌘⇧M` 切源码；TOC 跟随实时内容更新；空文档有 placeholder 提示 |
 | 文件预览（HTML） | 三段「预览 / 可视化 / 源码」：① 预览=webview 只读；② **可视化=GrapesJS 画布**（懒加载，右/左面板可拖组件、改文字、调样式；保存时 `getHtml()/getCss()` 重新拼完整文档，`<head>` 里的 title/meta/script 原样保留，样式写进唯一的 `<style data-grapes>`，重复保存不会叠加）；③ 源码=textarea + ⌘S。离开可视化若有未保存修改会确认；其它文本/图片保持只读 |
 | 回到最新 | 向上滚动时右下角出现悬浮按钮 | `term.onScroll` → `scrolledUp` |
 | 退出态 | 进程退出后浮层显示退出码，可「重新启动」（纯 shell 标签）或关闭 | `terminal:exit` + `incarnation` 重建 xterm |
 | 尺寸自适应 | 拖分隔条 / 收起侧栏 / 窗口缩放后重新 `fit` | `ResizeObserver` + rAF 节流 |
 | 首屏不丢输出 | 挂载前 pty 已经打印的 banner 会回放 | 主进程 buffer + `terminal:attach` |
-| 任务详情 | 工具栏 `终端 / 任务` 切换：任务视图显示选中任务的描述全文、验收清单、最近运行（耗时 / token / 错误）、环境（cwd / 分支 / Agent / 终端数）、产物；TODO 行内「详情」直接切过去 | `slotView`（`localStorage.cmh.term.slot`）只切显隐，pty 不卸载；`TaskDetail` 读 `state`，不再单独建表 |
+| 任务详情 | 标签栏里的一个「任务详情」标签（id 固定，不重复开）：显示选中任务的描述全文、验收清单、最近运行（耗时 / token / 错误）、环境（cwd / 分支 / Agent / 终端数）、产物；TODO 行内「详情」直接切过去 | `Tab.kind = "task"`（id `task`）+ `openTaskTab()`；pty 标签照常常驻，`TaskDetail` 读 `state`，不再单独建表 |
+| 任务与终端绑定 | 点 TODO **默认落到 Chat**（面板收起时先展开，同「问清楚」）；终端槽位按运行时决定：终端型任务（`agent.chatRuntime=terminal` 或 `run.runtime=terminal` / 有 `terminalId`）聚焦已绑定标签并切到「终端」视图，ACP 任务停在「任务」详情；**任何情况都不新建**终端标签 | `App.selectTodo` 派发 `harness:focus-chat`；`TerminalPanel` 的 `[todo?.id]` effect 只 `setActive` + `openTaskTab()`。终端标签只由 `harness:terminal-adopt`（终端 run 启动）或工具栏「接入 #KEY」产生 —— **禁止**在选中路径上 `addTab`（否则点一条 TODO 就多一个空 shell，跨项目还会再叠一个） |
 
 快捷键完整列表同步在 设置 → 快捷键。
 
@@ -51,7 +54,7 @@ harness 的 Terminal 是「Agent 干活 + 人直接敲命令」的同一个 pane
 
 ### 3.1 输出回放（为什么需要）
 
-Agent 从工具栏下拉启动时，流程是：
+Agent 从标签栏 `＋` 菜单里的「起 Agent」启动时，流程是：
 
 ```
 renderer: createTerminal()  ──►  main: pty.spawn()  ──►  shell/Agent 立刻打印 banner
@@ -116,7 +119,7 @@ Electron 默认菜单自带的加速键会和终端抢：`⌘W` 关窗口、`⌘
 
 `src/styles.css` 终端段新增：
 
-- `.term-icon-btn` / `.term-zoom-chip`：工具栏小控件（查找、字号复位）；
+- `.term-strip` / `.term-strip-actions`：终端唯一一行标签栏（标签在左，`＋` 与窗格控制在右）；
 - `.term-search`：查找浮层；
 - `.term-menu*`：右键菜单（`position: fixed`，贴边自动收）；
 - `.term-jump-bottom`：回到底部按钮；
@@ -135,10 +138,16 @@ Electron 默认菜单自带的加速键会和终端抢：`⌘W` 关窗口、`⌘
 | 关闭时确认「命令仍在运行」 | 未做：需要前台进程探测（参考实现用 pid / 前台进程采样） |
 | 会话恢复 / 休眠唤醒 / 守护进程 | 未做：pty 生命周期跟随窗口，重启应用即结束；拆分布局也不持久化 |
 | 命令完成通知（OSC 133 / hook） | 未做：目前只利用 bell 做标签提示 |
-| 文件路径链接点击 → 编辑器 | 未做：只处理 URL；文件跳转仍在右侧资源管理器 |
-| 快速命令（quick commands） | 未做：可从命令面板派生的后续项 |
 | 拖拽文件到终端（插入路径） | 未做：参考实现会转义路径写进 pty |
 | 任务详情里直接改任务 | 未做：详情是只读的，编辑仍在 TODO 行（双击 / 「编辑」），避免两处编辑态打架 |
+
+### 3.5 快捷命令为什么不进主进程
+
+ORCA 的 quick commands 存在仓库级配置里（要跨机器同步）。harness 只在一台机器上跑，快捷命令属于「手感偏好」而不是可审计的执行语义，所以：
+
+- 存 `localStorage`，按项目绝对路径分组，`*` 是全局桶；
+- 发送走的是**和手打完全一样**的 `terminalInput`，因此 Agent 正在跑的会话、接管态、拆分窗格都自然适用，不需要额外的权限判断；
+- 不做「命令执行结果」的状态机：run 的语义仍归 TODO / run，终端只是通道。
 
 ## 7. 验证
 
@@ -151,7 +160,7 @@ node --check electron/preload.cjs
 
 手工回归：
 
-1. 从 `＋ Agent` 启动任一 CLI，首屏应出现完整 banner（回放生效）。
+1. 从「＋ 新建 → 起 Agent」启动任一 CLI，首屏应出现完整 banner（回放生效）。
 2. `⌘F` 搜索历史输出，Enter / ⇧Enter 跳转，Esc 关闭。
 3. 多标签下 `⌃Tab` / `⌘⇧1…9` 切换，双击重命名后 shell 标题不再覆盖。
 4. `⌘C` 有选区复制、无选区仍能中断前台命令；`⌘V` 粘贴多行。

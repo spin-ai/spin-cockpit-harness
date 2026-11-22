@@ -6,6 +6,10 @@
   --mono:"Geist Mono Variable", "Geist Mono", "SF Mono", SFMono-Regular, ui-monospace, Menlo, Consolas, monospace;
   --radius:10px; --radius-sm:6px; --radius-lg:14px;
   --radius-card:10px; --radius-control:8px; --radius-float:14px;
+  /* Chat 窗口照搬 deepseek-harness：用户气泡 R20、composer R28，只在 .ds-* 内使用 */
+  --radius-chat-bubble:20px; --radius-chat-composer:28px;
+  /* 图标行：点击区 20px、缝 2px（一行里并排的纯图标按钮统一用这两个值） */
+  --icon-size:20px; --icon-gap:2px;
   --shadow-1:0 1px 2px rgba(10,10,10,.045);
   --shadow-2:0 10px 24px rgba(0,0,0,.16);
   --shadow-float:0 18px 46px rgba(0,0,0,.22),0 2px 8px rgba(0,0,0,.10);
@@ -52,7 +56,6 @@ body{letter-spacing:0;font-size:13.5px;line-height:1.55}
 .pane-head,.right-tabs{height:40px}
 .right-tabs button{height:32px}
 .pane-head{font-size:12.5px;letter-spacing:.01em}
-.term-brand{letter-spacing:.01em}
 .thread-bar{padding:10px 12px 8px}
 .git-view-tabs{background:var(--page-canvas)}
 .git-view-tabs button.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow-1)}
@@ -149,7 +152,7 @@ body{letter-spacing:0;font-size:13.5px;line-height:1.55}
 .main.pane-focus-terminal .todo-pane,.main.pane-focus-terminal .chat-pane,.main.pane-focus-terminal .files-pane,
 .main.pane-focus-files .todo-pane,.main.pane-focus-files .chat-pane,.main.pane-focus-files .terminal-pane{opacity:.9}
 .main.pane-focus-todo .todo-pane .pane-head,.main.pane-focus-chat .chat-pane .pane-head,
-.main.pane-focus-terminal .terminal-pane .terminal-bar,.main.pane-focus-files .files-pane .right-tabs{color:var(--fg)}
+.main.pane-focus-terminal .terminal-pane .term-strip,.main.pane-focus-files .files-pane .right-tabs{color:var(--fg)}
 
 .fail-row, .git-commit-row, .agent-stat, .host-meta, .trend-yaxis, .git-diff-stat, .commit-time{font-variant-numeric:tabular-nums}
 .fail-row{padding-left:8px;padding-right:8px;border-radius:6px;transition:background-color .12s}
@@ -224,7 +227,7 @@ body{letter-spacing:0;font-size:13.5px;line-height:1.55}
 .main.pane-focus-chat .todo-pane,.main.pane-focus-chat .terminal-pane,.main.pane-focus-chat .files-pane,
 .main.pane-focus-terminal .todo-pane,.main.pane-focus-terminal .chat-pane,.main.pane-focus-terminal .files-pane,
 .main.pane-focus-files .todo-pane,.main.pane-focus-files .chat-pane,.main.pane-focus-files .terminal-pane{opacity:1}
-.main.pane-focus-todo .chat-pane .pane-head,.main.pane-focus-todo .terminal-pane .terminal-bar,.main.pane-focus-todo .files-pane .right-tabs,
-.main.pane-focus-chat .todo-pane .pane-head,.main.pane-focus-chat .terminal-pane .terminal-bar,.main.pane-focus-chat .files-pane .right-tabs,
+.main.pane-focus-todo .chat-pane .pane-head,.main.pane-focus-todo .terminal-pane .term-strip,.main.pane-focus-todo .files-pane .right-tabs,
+.main.pane-focus-chat .todo-pane .pane-head,.main.pane-focus-chat .terminal-pane .term-strip,.main.pane-focus-chat .files-pane .right-tabs,
 .main.pane-focus-terminal .todo-pane .pane-head,.main.pane-focus-terminal .chat-pane .pane-head,.main.pane-focus-terminal .files-pane .right-tabs,
-.main.pane-focus-files .todo-pane .pane-head,.main.pane-focus-files .chat-pane .pane-head,.main.pane-focus-files .terminal-pane .terminal-bar{opacity:.62}
+.main.pane-focus-files .todo-pane .pane-head,.main.pane-focus-files .chat-pane .pane-head,.main.pane-focus-files .terminal-pane .term-strip{opacity:.62}
