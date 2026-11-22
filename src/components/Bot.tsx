@@ -686,9 +686,36 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
     return out;
   }, [turns]);
   const railTurns = useMemo(
-    () => rows.filter((r) => r.kind === "msg").map((r, i) => ({ id: r.turn.id, index: i + 1 })),
+    () => rows.filter((r) => r.kind === "msg").map((r, i) => ({ id: r.turn.id, index: i + 1, turn: r.turn })),
     [rows],
   );
+  /** 悬停 / 聚焦回合轨的细线：就地预览这一轮说了什么（不占常驻位） */
+  const [peek, setPeek] = useState<{ id: string; top: number } | null>(null);
+  const showPeek = (id: string, el: HTMLElement) => {
+    const main = el.closest(".bot-main") as HTMLElement | null;
+    if (!main) return;
+    const base = main.getBoundingClientRect();
+    const box = el.getBoundingClientRect();
+    setPeek({ id, top: box.top - base.top + box.height / 2 });
+  };
+  /** 回合轨只画细线不写数字：靠 dark 一条标出「现在读的是第几轮」 */
+  const [activeTurnId, setActiveTurnId] = useState("");
+  const syncActiveTurn = useCallback(() => {
+    const root = streamRef.current;
+    if (!root) return;
+    const nodes = Array.from(root.querySelectorAll<HTMLElement>("[data-turn-id]"));
+    if (!nodes.length) { setActiveTurnId(""); return; }
+    const rootTop = root.getBoundingClientRect().top;
+    let currentId = nodes[0].dataset.turnId || "";
+    for (const node of nodes) {
+      if (node.getBoundingClientRect().top - rootTop <= 32) currentId = node.dataset.turnId || currentId;
+    }
+    setActiveTurnId(currentId);
+  }, []);
+  useEffect(() => {
+    if (chatView === "chat") syncActiveTurn();
+  }, [turns.length, chatView, botId, openThreadId, syncActiveTurn]);
+
   const jumpToTurn = (id: string) => {
     const root = streamRef.current;
     if (!root) return;
@@ -1688,9 +1715,44 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
           {!isGroup && chatView === "chat" && railTurns.length > 1 && (
             <nav className="ds-turn-rail" aria-label="回合导航">
               {railTurns.map((t) => (
-                <button key={t.id} className="ds-turn-dot" onClick={() => jumpToTurn(t.id)} title={`第 ${t.index} 轮`} aria-label={`跳到第 ${t.index} 轮`}>{t.index}</button>
+                <button
+                  key={t.id}
+                  className={`ds-turn-mark ${t.id === activeTurnId ? "on" : ""}`}
+                  onClick={() => jumpToTurn(t.id)}
+                  onMouseEnter={(event) => showPeek(t.id, event.currentTarget)}
+                  onFocus={(event) => showPeek(t.id, event.currentTarget)}
+                  onMouseLeave={() => setPeek(null)}
+                  onBlur={() => setPeek(null)}
+                  title={`第 ${t.index} 轮`}
+                  aria-label={`跳到第 ${t.index} 轮`}
+                  aria-current={t.id === activeTurnId ? "true" : undefined}
+                />
               ))}
             </nav>
+          )}
+          {!isGroup && chatView === "chat" && peek && (() => {
+            const hit = railTurns.find((t) => t.id === peek.id);
+            if (!hit) return null;
+            const turn = hit.turn;
+            const sender = turn.decision === "replied" ? "你" : (snapshot.bots.find((b) => b.id === turn.botId)?.name || "机器人");
+            const text = (turn.reply || turn.input || turn.reason || "").trim();
+            return (
+              <div className="ds-turn-peek" style={{ top: peek.top }} role="presentation">
+                <div className="ds-turn-peek-head">
+                  <b>{sender}</b>
+                  <span>第 {hit.index} 轮</span>
+                  <span className="spacer" />
+                  <span className="mono">{hm(turn.createdAt)}</span>
+                </div>
+                <p className="ds-turn-peek-text">{text || "这一轮没有说话"}</p>
+              </div>
+            );
+          })()}
+          {!isGroup && !openThreadId && (
+            <div className="bot-chat-tabs">
+              <button className={chatView === "chat" ? "on" : ""} onClick={() => setChatView("chat")}>对话</button>
+              <button className={chatView === "trajectory" ? "on" : ""} onClick={() => setChatView("trajectory")}>轨迹</button>
+            </div>
           )}
           {(isGroup || openThreadId) ? (
           <>
@@ -1731,6 +1793,7 @@ export function BotConsole({ act, notify, onOpenMemory, onOpenThread, state, ini
             onScroll={(event) => {
               const el = event.currentTarget;
               stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+              syncActiveTurn();
             }}
           >
             {!turns.length && (

@@ -60,7 +60,7 @@
 | **窗口三栏：机器人 / 聊天对话框 / 消息·设置**：左栏是 bot 与群聊（联系人，含未读点 / 暂停 / 静音）；中栏是聊天对话框（DeepSeek 式 transcript + composer）；右栏是 `消息 | 设置` 两个 tab —— 消息是当前联系人的会话列表（搜索、＋新会话、重命名 / 删除、`N 条执行`），设置是人格卡 / 记忆 / 任务 / 自动化 / 工具与通道 / 出场规则。页面不再有 `PageHeader`：暂停 / 静音 / 跑一次决策 / 重命名 / 删除都收进右栏消息头的 `⋯`，旁边只保留「决策」 | `Bot.tsx` / `.bot-grid` / `.bot-rail-tabs` |
 | **多会话（照搬 ORCA 的 Chats）**：一个 bot 可以有多个话题（`threads` 多条 `kind="bot"`）；回合记 `bot_turns.thread_id`，老回合与主动开口落在默认会话；新话题第一句话成为标题 | `chatsOf()` / `newChat()` / `botChats` / `Bot.tsx` |
 | **每轮轨迹（思考 / 工具 / 终端）**：`已汇报，用时 1秒` 这一行就是轨迹开关；展开后按时间列思考（可展开全文）、工具调用、终端。工具按族渲染专属卡：终端（命令 + 输出）、编辑（+/- 行 + diff 着色）、读取（路径 + 行数）、搜索/网页、通用 IN/OUT。run 的 `messages` 优先，bot 自己的只读工具用 `bot_turns.tools` 兜底 | `traceStepsOf()` / `ToolCard` / `state.messages` |
-| **独立轨迹视图**：中栏 `对话 | 轨迹`。轨迹 = 三轨时间轴（输入 / 模型 / 工具，按记录耗时比例，点击跳回回合）+ 可搜索账本（时间 / 角色 / 工具名 / 原始参数 / 结果 / 用量 / TTFT）；聊天右侧另有回合导航（1 / 2 / 3…） | `BotTrajectoryView` / `.ds-tr-*` / `.ds-turn-rail` |
+| **独立轨迹视图**：中栏 `对话 | 轨迹`。轨迹 = 三轨时间轴（输入 / 模型 / 工具，按记录耗时比例，点击跳回回合）+ 可搜索账本（时间 / 角色 / 工具名 / 原始参数 / 结果 / 用量 / TTFT）；聊天右侧另有回合导航（短细线，**不写序号**，当前轮更长更深） | `BotTrajectoryView` / `.ds-tr-*` / `.ds-turn-rail` |
 | **结构化轨迹落库**：`bot_turns.trace` 存每次模型请求（usage / TTFT / 文本）与每次工具调用（`argsRaw` / `result` / `at` / `ms`）；ACP 工具消息写 `messages.meta`（原始 `rawInput` / 完整输出），前端优先读结构字段，旧数据回退到拍平文本 | `chatStreamWithTools()` / `messages.meta` / `electron/db.mjs` 迁移 |
 | **会话里的附件 / 引用 / 分支**：附件走 `docsPick` 读文本文件（最多 3 个、每个截 4000 字）拼进这一句；消息上「引用」只带 1–3 行进输入框；「分支」= 复制到当前末尾的新会话（`forkChat`），源会话一条不动 | `Bot.tsx` / `forkChat()` |
 | **执行树（worker）**：会话行前面有 `N 条执行`，展开是这条会话起过的任务（`bot_turns.todoId` 反查），点进任务的会话 | `workersOf()` / `Bot.tsx` |

@@ -316,6 +316,23 @@ check("正文渲染 Markdown 列表", await ev(`!!document.querySelector(".ds-as
 check("run 汇报带产物", (await text(".bot-stream")).includes("src/App.tsx"));
 check("消息动作：引用 / 分支", await ev(`!!document.querySelector('.ds-action[title="引用这条继续问"]') && !!document.querySelector('.ds-action[title^="复制到新会话"]')`));
 check("citations：为什么说 / 注入记忆", (await text(".bot-stream")).includes("为什么说"));
+// 回合轨：不写序号，悬停细线预览这一轮的内容
+check("回合轨：细线无序号", await ev(`(() => { const marks = [...document.querySelectorAll(".ds-turn-mark")]; return marks.length > 1 && marks.every((m) => m.textContent.trim() === ""); })()`));
+await run(`
+  const mark = [...document.querySelectorAll(".ds-turn-mark")][1];
+  if (!mark) throw new Error("没有回合轨");
+  mark.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  mark.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+  await new Promise((r) => setTimeout(r, 220));
+  return true;`);
+check("回合轨：悬停有内容预览", (await text(".ds-turn-peek")).includes("第 2 轮"));
+check("回合轨：预览是浮层（不挤正文）", await ev(`(() => { const p = document.querySelector(".ds-turn-peek"); if (!p) return false; const s = getComputedStyle(p); return s.position === "absolute" && s.pointerEvents === "none"; })()`));
+await shot(path.join(OUT, "bot-chat-peek.png"));
+await run(`
+  const mark = [...document.querySelectorAll(".ds-turn-mark")][1];
+  mark.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 150));
+  return true;`);
 await shot(path.join(OUT, "bot-chat.png"));
 // 暗色再拍一张：亮暗同构是 Chat 窗口的硬约束
 await run(`document.documentElement.dataset.theme = "dark"; document.documentElement.dataset.mode = "dark"; return true;`);
@@ -416,7 +433,7 @@ check("出场规则：谁能找它（只有我 / 群里 @ 它 / 群里任何人�
 check("没有控制台报错", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 
 
-console.log(`\n${fails ? `✗ ${fails} 项失败` : "全部通过"} · 截图：${OUT}/bot-chats.png、bot-chat.png、bot-chat-dark.png`);
+console.log(`\n${fails ? `✗ ${fails} 项失败` : "全部通过"} · 截图：${OUT}/bot-chats.png、bot-chat.png、bot-chat-peek.png、bot-chat-dark.png`);
 ws.close();
 cleanup();
 process.exit(fails ? 1 : 0);
