@@ -1,10 +1,14 @@
 /**
  * 日程（routine）判定：只管"该不该跑"，不管"怎么跑"。
  *
- * 三类触发，按落地成本排序（先做最便宜的两类）：
+ * 四类触发，按落地成本排序：
  *  - `daily`  每天某个整点跑一次（本地时区，按"今天的这个点"有没有跑过来判）；
  *  - `every`  每隔 N 毫秒跑一次（分钟为单位配置）；
+ *  - `once`   某个绝对时间跑一次（"20 分钟后提醒我"）；
  *  - `watch`  变化才跑：给一个 probe（文件 mtime+size 或命令输出指纹），指纹变了才跑。
+ *
+ * 每条日程都带 `prompt`：到点要它做什么。没有 prompt 的日程只会念名字，
+ * 那不是「AI 同事」，是闹钟。
  *
  * 为什么不引 cron 库：本项目只需要"每天一次 / 每隔 N 分钟 / 变了才跑"三种，
  * cron 表达式会带来一周 5 天与周序的边界问题，而收益只是让用户写出更复杂的规则
@@ -13,7 +17,7 @@
  * 全部是纯函数：`probe` 由调用方注入，所以能在不碰文件系统的情况下测。
  */
 
-export const ROUTINE_KINDS = ["daily", "every", "watch"];
+export const ROUTINE_KINDS = ["daily", "every", "once", "watch"];
 
 const MINUTE = 60 * 1000;
 const DAY = 24 * 60 * MINUTE;
@@ -33,6 +37,8 @@ export const DEFAULT_ROUTINE = {
   mode: "alongside",
   atHour: 9,
   everyMs: 60 * MINUTE,
+  onceAt: 0,
+  prompt: "",
   watch: { kind: "file", path: "", cmd: "" },
   enabled: true,
   lastFiredAt: 0,
@@ -50,6 +56,8 @@ export function normalizeRoutine(patch = {}, existing = null) {
     kind,
     atHour,
     everyMs,
+    onceAt: Math.max(0, Number(patch.onceAt ?? existing?.onceAt ?? 0) || 0),
+    prompt: String(patch.prompt ?? existing?.prompt ?? "").slice(0, 1000),
     watch: { kind: watch.kind === "cmd" ? "cmd" : "file", path: String(watch.path || "").slice(0, 400), cmd: String(watch.cmd || "").slice(0, 400) },
     mode: ROUTINE_MODES.includes(patch.mode) ? patch.mode : (existing?.mode || "alongside"),
     enabled: patch.enabled === undefined ? (existing?.enabled ?? true) : Boolean(patch.enabled),
@@ -60,6 +68,14 @@ export function normalizeRoutine(patch = {}, existing = null) {
     createdAt: existing?.createdAt || Number(patch.createdAt) || Date.now(),
     updatedAt: Date.now(),
   };
+}
+
+/** 本地时间：MM-DD HH:mm（日程文案与"还有多久"共用，不引日期库） */
+export function formatLocal(ts) {
+  const d = new Date(Number(ts) || 0);
+  if (!Number.isFinite(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function clampInt(value, lo, hi) {
@@ -92,6 +108,14 @@ export function routineDue(routine, { now = Date.now(), probe } = {}) {
     return { due: true, reason: `到点（${routine.atHour}:00）`, nextAt: slot + DAY };
   }
 
+  if (routine.kind === "once") {
+    const at = Number(routine.onceAt) || 0;
+    if (!at) return { due: false, reason: "还没设置时间", nextAt: null };
+    if (routine.lastFiredAt >= at) return { due: false, reason: "这一次已经跑过", nextAt: null };
+    if (now < at) return { due: false, reason: `${formatLocal(at)} 还没到`, nextAt: at };
+    return { due: true, reason: `到点（${formatLocal(at)} 一次）`, nextAt: null };
+  }
+
   if (routine.kind === "every") {
     const at = (routine.lastFiredAt || 0) + routine.everyMs;
     if (!routine.lastFiredAt) return { due: true, reason: "还没跑过", nextAt: now + routine.everyMs };
@@ -122,6 +146,7 @@ export function nextRunAt(routine, now = Date.now()) {
     return routine.lastFiredAt >= slot ? slot + DAY : Math.max(now, slot);
   }
   if (routine.kind === "every") return (routine.lastFiredAt || now) + routine.everyMs;
+  if (routine.kind === "once") return !routine.onceAt || routine.lastFiredAt >= routine.onceAt ? null : routine.onceAt;
   return null;
 }
 
@@ -132,9 +157,11 @@ export function describeRoutine(routine) {
     ? `每天 ${String(routine.atHour).padStart(2, "0")}:00`
     : routine.kind === "every"
       ? `每 ${Math.round(routine.everyMs / MINUTE)} 分钟`
-      : (() => {
-        const w = routine.watch || {};
-        return `变化才跑 · ${w.kind === "cmd" ? `命令 ${w.cmd}` : `文件 ${w.path}`}`;
-      })();
+      : routine.kind === "once"
+        ? `一次 · ${routine.onceAt ? formatLocal(routine.onceAt) : "还没定时间"}`
+        : (() => {
+          const w = routine.watch || {};
+          return `变化才跑 · ${w.kind === "cmd" ? `命令 ${w.cmd}` : `文件 ${w.path}`}`;
+        })();
   return routine.mode === "in-chat" ? `${base} · 等这一轮` : base;
 }

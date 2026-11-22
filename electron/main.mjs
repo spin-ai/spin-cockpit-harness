@@ -15,8 +15,14 @@ import { safeStorage } from "electron";
 import { AcpClient, dshPathEnv } from "./acp.mjs";
 import { createKnowledge } from "./knowledge/index.mjs";
 import { CHAT_MODEL_CATALOG, chat as arkChat, chatStream as arkChatStream, resolveArkKey as resolveArkKeyFor } from "./knowledge/ark.mjs";
-import { createBots } from "./bot/index.mjs";
+import { BOT_INJECT_CHARS, createBots } from "./bot/index.mjs";
 import { notifyDecision } from "./bot/notify.mjs";
+import { TIDY_MAX_ARCHIVE, planTidy } from "./bot/tidy.mjs";
+import { botTemplate, templateSummaries } from "./bot/templates.mjs";
+import { describeRoutine, nextRunAt, normalizeRoutine } from "./bot/routine.mjs";
+import { BOT_TOOL_META } from "./bot/tools.mjs";
+import { clipChars, grepWorkspace, listWorkspace, readWorkspaceFile } from "./bot/workspace.mjs";
+import { redactSecrets } from "./redact.mjs";
 import { createPairing } from "./im/pairing.mjs";
 import { createFeishu, createDedup, parseFeishuSetup } from "./im/feishu.mjs";
 import { createFeishuWs } from "./im/feishu-ws.mjs";
@@ -2968,15 +2974,69 @@ const sendGroupMessage = (groupId, message) => {
  * 只做「查」：记忆 / 知识库 / 任务 / 运行。写操作不在这里 ——
  * 要动手就得走「提议 → 人确认 → 起 run」，也就是 capability 的三档。
  */
+/**
+ * 记忆整理计划：只取数，不落库。按 bot 的 owner 视角算「注入了多少」，
+ * 否则会拿别的 bot 的私有条目把占用算高。
+ */
+function botMemoryTidyPlan(botId = "") {
+  const id = String(botId || "");
+  if (!bots().list().some((b) => b.id === id)) throw new Error("bot 不存在");
+  const budget = BOT_INJECT_CHARS;
+  const ctx = memory().inject({ maxChars: budget, owner: `bot:${id}` });
+  const plan = planTidy({ items: ctx.items || [], used: ctx.chars || 0, budget: ctx.budget || budget });
+  const usage = memory().usage({ maxChars: budget });
+  return { ...plan, usage: { entries: usage.entries, notes: usage.notes, dropped: usage.dropped } };
+}
+
+function parseRoutineWhen(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return 0;
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?$/);
+  const d = m ? new Date(`${m[1]}T${m[2]}:${m[3] || "00"}`) : new Date(s);
+  const t = d.getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+/**
+ * 工具统一超时：工具自己抛的错变成 { error }，不把一轮回复炸掉。
+ * 超时只挡“卡死”（例如 git diff 遇到大仓库），不改工具语义。
+ */
+function withTimeout(promise, ms, label) {
+  if (!ms) return promise;
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} 超时（${ms}ms）`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 async function botReadTool(name, args = {}, ctx = {}) {
+  const meta = BOT_TOOL_META[name];
+  if (!meta) return { error: `未知工具 ${name}` };
+  try {
+    return await withTimeout(botReadToolNow(name, args, ctx), Number(meta.timeoutMs) || 0, `工具 ${name}`);
+  } catch (err) {
+    return { error: String(err?.message || err) };
+  }
+}
+
+async function botReadToolNow(name, args = {}, ctx = {}) {
   const st = store.state;
   const projectId = st.activeProjectId || null;
   switch (name) {
     case "memory_search": {
       const query = String(args.query || "").trim();
       const limit = Math.min(Math.max(Number(args.limit) || 6, 1), 12);
-      const entries = query ? memory().entrySearch({ query, limit }) : [];
-      const notes = query ? memory().noteList({ limit: 40 }).filter((n) => `${n.body || ""}`.includes(query)).slice(0, Math.max(1, limit - entries.length)) : [];
+      const owner = ctx?.bot?.id ? `bot:${ctx.bot.id}` : "";
+      const entries = query ? memory().entrySearch({ query, limit, owner }) : [];
+      const notes = query
+        ? memory().noteList({ limit: 40 })
+          .filter((n) => !owner || !n.owner || n.owner === owner)
+          .filter((n) => `${n.body || ""}`.includes(query))
+          .slice(0, Math.max(1, limit - entries.length))
+        : [];
       return {
         entries: entries.map((e) => ({ layer: e.layer, title: e.title, body: String(e.body || "").slice(0, 240) })),
         notes: notes.map((n) => ({ id: n.id, body: String(n.body || "").slice(0, 200), status: n.status })),
@@ -3062,8 +3122,10 @@ async function botReadTool(name, args = {}, ctx = {}) {
     case "run_status": {
       const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 30);
       const active = ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"];
+      const includeDone = args.include_done === true || args.includeDone === true;
       const rows = st.runs
-        .filter((r) => active.includes(r.status))
+        // 只返回在跑的运行会让「r1061 跑完没有」永远答不出来：入选条件按参数放开，但不改默认口径
+        .filter((r) => (includeDone ? true : active.includes(r.status)))
         .slice(-limit)
         .map((r) => {
           const todo = st.todos.find((t) => t.id === r.todoId);
@@ -3073,10 +3135,188 @@ async function botReadTool(name, args = {}, ctx = {}) {
             task: todo ? `${todo.key} ${todo.title}` : r.todoId,
             status: r.status,
             queueReason: r.queueReason || null,
-            elapsedMs: r.startedAt ? Date.now() - r.startedAt : null,
+            elapsedMs: r.startedAt ? (r.endedAt ? r.endedAt - r.startedAt : Date.now() - r.startedAt) : null,
+            endedAt: r.endedAt || null,
+            hasResult: Boolean(r.result),
+            resultSource: r.resultSource || null,
           };
         });
-      return { running: rows.length, rows };
+      return { running: rows.filter((r) => active.includes(r.status)).length, rows };
+    }
+    case "workspace_list":
+      return listWorkspace({
+        root: activeProjectPath(),
+        rel: String(args.path || ""),
+        depth: Number(args.depth) || 1,
+      });
+    case "workspace_read":
+      return readWorkspaceFile({
+        root: activeProjectPath(),
+        rel: String(args.path || ""),
+        offset: Number(args.offset) || 0,
+        limit: Number(args.limit) || 200,
+      });
+    case "workspace_grep":
+      return grepWorkspace({
+        root: activeProjectPath(),
+        query: String(args.query || ""),
+        path: String(args.path || ""),
+        limit: Number(args.limit) || 40,
+      });
+    case "git_status": {
+      const res = await gitRun(activeProjectPath(), ["status", "--porcelain=v1", "-b"], { timeout: 10000 });
+      if (!res.ok) return { error: res.error || "git 执行失败" };
+      const clipped = clipChars(res.stdout, 10000);
+      return { text: clipped.text, truncated: clipped.truncated };
+    }
+    case "git_log": {
+      const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 30);
+      const argv = ["log", "--oneline", "-n", String(limit)];
+      if (args.path) argv.push("--", String(args.path));
+      const res = await gitRun(activeProjectPath(), argv, { timeout: 10000 });
+      if (!res.ok) return { error: res.error || "git 执行失败" };
+      const clipped = clipChars(res.stdout, 10000);
+      return { text: clipped.text, truncated: clipped.truncated };
+    }
+    case "git_diff": {
+      const argv = ["diff"];
+      if (args.staged === true) argv.push("--cached");
+      if (args.stat !== false) argv.push("--stat");
+      if (args.path) argv.push("--", String(args.path));
+      const res = await gitRun(activeProjectPath(), argv, { timeout: 15000 });
+      if (!res.ok) return { error: res.error || "git 执行失败" };
+      const clipped = clipChars(res.stdout, 12000);
+      return { text: clipped.text || "（没有未提交改动）", truncated: clipped.truncated };
+    }
+    case "memory_write": {
+      const bot = ctx?.bot;
+      if (!bot) return { error: "缺少 bot 上下文" };
+      const body = String(args.body || "").trim().slice(0, 400);
+      if (!body) return { error: "body 不能为空" };
+      const clean = redactSecrets(body);
+      if (clean.hits > 0) return { error: "这条含密钥/令牌，已拒绝写入；换成一句描述" };
+      const kind = ["rule", "gotcha", "guess", "preference", "decision"].includes(args.kind) ? args.kind : "decision";
+      try {
+        const note = memory().noteAdd({
+          body: clean.text,
+          kind,
+          confidence: 0.6,
+          sourceKind: "bot_turn",
+          sourceRef: `bot:${bot.id}:${ctx?.turnId || "turn"}`,
+          owner: `bot:${bot.id}`,
+        });
+        return { ok: true, id: note.id, deduped: Boolean(note.deduped), scope: `bot:${bot.id}` };
+      } catch (err) {
+        return { error: String(err?.message || err) };
+      }
+    }
+    case "memory_forget": {
+      const bot = ctx?.bot;
+      if (!bot) return { error: "缺少 bot 上下文" };
+      const owner = `bot:${bot.id}`;
+      const mine = memory().noteList({ limit: 500 }).filter((n) => (n.owner || "") === owner);
+      const id = String(args.id || "");
+      const query = String(args.query || "").trim();
+      let target = id ? mine.find((n) => n.id === id) || null : null;
+      if (!target && query) {
+        const hits = mine.filter((n) => String(n.body || "").includes(query));
+        if (hits.length !== 1) {
+          return { error: hits.length ? `命中 ${hits.length} 条，先给 id：${hits.slice(0, 5).map((n) => n.id).join(" / ")}` : "没有命中你自己的记忆" };
+        }
+        target = hits[0];
+      }
+      if (!target) return { error: "只删你自己的记忆：先 memory_search 拿到 id" };
+      memory().noteRemove({ id: target.id });
+      return { ok: true, id: target.id, body: String(target.body || "").slice(0, 120) };
+    }
+    case "handoff_to_bot": {
+      const bot = ctx?.bot;
+      const groupId = String(ctx?.groupId || "");
+      if (!bot || !groupId) return { error: "只在群聊里能交接" };
+      const group = (st.botGroups || []).find((g) => g.id === groupId);
+      if (!group) return { error: "群不存在" };
+      const raw = String(args.to || "").trim().replace(/^@/, "").toLowerCase();
+      const handleOf = (b) => String(b.name || "").split("·")[0].trim().toLowerCase();
+      const target = bots().list().find((b) => b.id === String(args.to || "")
+        || String(b.name || "").toLowerCase() === raw
+        || handleOf(b) === raw);
+      if (!target) return { error: `找不到机器人 ${args.to || "（空）"}` };
+      if (target.id === bot.id) return { error: "不能交给自己" };
+      if (!(group.memberIds || []).includes(target.id)) return { error: `${target.name} 不在这个群里` };
+      const task = String(args.task || "").trim().slice(0, 200);
+      if (!task) return { error: "task 不能为空：说清要它接什么" };
+      return {
+        ok: true,
+        handoff: {
+          to: target.id, toName: target.name, task,
+          reason: String(args.reason || "").trim().slice(0, 160),
+        },
+      };
+    }
+    case "routine_propose": {
+      const bot = ctx?.bot;
+      if (!bot) return { error: "缺少 bot 上下文" };
+      const name = String(args.name || "").trim().slice(0, 40);
+      const prompt = String(args.instruction || args.prompt || "").trim().slice(0, 1000);
+      if (!name) return { error: "name 不能为空" };
+      if (!prompt) return { error: "instruction 不能为空：到点要它做什么" };
+      const kind = ["daily", "every", "once", "watch"].includes(args.kind) ? args.kind : "daily";
+      const patch = { botId: bot.id, name, kind, prompt, mode: args.mode === "in-chat" ? "in-chat" : "alongside" };
+      if (kind === "daily") patch.atHour = Math.min(23, Math.max(0, Number(args.atHour) || 9));
+      if (kind === "every") patch.everyMs = Math.min(7 * 24 * 60, Math.max(1, Number(args.everyMinutes) || 60)) * 60_000;
+      if (kind === "once") {
+        const at = parseRoutineWhen(args.onceAt);
+        if (!at) return { error: "onceAt 要 YYYY-MM-DD HH:mm 或 ISO 时间" };
+        if (at <= Date.now()) return { error: "onceAt 必须是未来时间" };
+        patch.onceAt = at;
+      }
+      if (kind === "watch") {
+        const watchPath = String(args.watchPath || "").trim();
+        const watchCmd = String(args.watchCmd || "").trim();
+        if (!watchPath && !watchCmd) return { error: "watch 需要 watchPath 或 watchCmd" };
+        patch.watch = watchCmd ? { kind: "cmd", cmd: watchCmd } : { kind: "file", path: watchPath };
+      }
+      const routine = normalizeRoutine(patch);
+      return { ok: true, routine: { ...routine, when: describeRoutine(routine), nextAt: nextRunAt(routine) } };
+    }
+    case "run_log":
+    case "run_detail": {
+      // 一次运行的产出：状态 / 错误 / 来源；正文来自 run.result（ACP 结论 / 终端尾巴 / 报错）
+      const todoKey = String(args.todo_key || args.todoKey || "").trim();
+      const wantTodo = todoKey ? st.todos.find((t) => t.key === todoKey || t.key === todoKey.replace(/^#/, "")) : null;
+      const run = String(args.run_id || args.runId || "").trim()
+        ? st.runs.find((r) => r.id === String(args.run_id || args.runId).trim())
+        : wantTodo
+          ? [...st.runs].reverse().find((r) => r.todoId === wantTodo.id)
+          : [...st.runs].reverse().find((r) => !projectId || !st.todos.find((t) => t.id === r.todoId)?.projectId || st.todos.find((t) => t.id === r.todoId)?.projectId === projectId) || null;
+      if (!run) return { error: "没找到这次运行" };
+      const todo = st.todos.find((t) => t.id === run.todoId) || null;
+      const limit = Math.min(Math.max(Number(args.result_limit) || 1200, 200), 4000);
+      const body = String(run.result || "");
+      const messages = st.messages
+        .filter((m) => m.runId === run.id)
+        .slice(-Math.min(Math.max(Number(args.limit) || 8, 1), 30))
+        .map((m) => ({ role: m.role, at: m.createdAt, text: String(m.content || "").slice(0, 400) }));
+      const term = run.terminalId ? (terminalSnapshot().find((t) => t.id === run.terminalId) || null) : null;
+      return {
+        runId: run.id,
+        task: todo ? `${todo.key} ${todo.title}` : run.todoId,
+        agent: st.agents.find((a) => a.id === run.agentId)?.alias || run.agentId,
+        status: run.status,
+        runtime: run.runtime || null,
+        startedAt: run.startedAt || null,
+        endedAt: run.endedAt || null,
+        durationMs: run.durationMs ?? (run.startedAt && run.endedAt ? run.endedAt - run.startedAt : null),
+        exitCode: run.exitCode ?? null,
+        error: run.error || null,
+        errorClass: run.errorClass || null,
+        resultSource: run.resultSource || null,
+        resultTruncated: Boolean(run.resultTruncated),
+        result: body ? body.slice(-limit) : null,
+        artifacts: st.artifacts.filter((a) => a.todoId === run.todoId).map((a) => a.title).slice(0, 8),
+        terminalTail: term?.tail ? String(term.tail).slice(-1500) : null,
+        messages,
+      };
     }
     default:
       return { error: `未知工具 ${name}` };
@@ -4034,6 +4274,46 @@ const actions = {
     return res;
   },
   botSave: async (patch = {}) => bots().save(patch || {}),
+  botTemplates: async () => templateSummaries(),
+  /** 从模板新建：人格 / 职责 / 能力深拷贝；预置日程默认停用，等人打开 */
+  botCreateFromTemplate: async ({ templateId } = {}) => {
+    const tpl = botTemplate(templateId);
+    if (!tpl) throw new Error("模板不存在");
+    const bot = bots().save({
+      name: tpl.name, avatar: tpl.avatar, avatarClass: tpl.avatarClass,
+      role: tpl.role, capability: tpl.capability, persona: tpl.persona, policy: tpl.policy,
+    });
+    let routine = null;
+    if (tpl.routine) routine = bots().saveRoutine({ botId: bot.id, ...tpl.routine, enabled: false });
+    broadcast();
+    return { bot, routine };
+  },
+  /** 人格 / 职责 / 配额的历史与恢复：每次实质修改都存上一版 */
+  botRevisions: async ({ botId } = {}) => bots().revisions(String(botId || "")),
+  botRevisionDiff: async ({ botId, revisionId } = {}) => bots().revisionDiff(String(botId || ""), String(revisionId || "")),
+  botRestoreRevision: async ({ botId, revisionId } = {}) => {
+    const res = bots().restore(String(botId || ""), String(revisionId || ""));
+    broadcast();
+    return { ok: true, ...res };
+  },
+  /** 记忆整理：只归档（可恢复），不删除；apply 只接受当前计划里的 id */
+  botMemoryTidyPlan: async ({ botId } = {}) => botMemoryTidyPlan(String(botId || "")),
+  botMemoryTidyApply: async ({ botId, ids } = {}) => {
+    const plan = botMemoryTidyPlan(String(botId || ""));
+    const allowed = new Set(plan.picks.map((p) => p.id));
+    const chosen = (Array.isArray(ids) ? ids : [])
+      .map(String)
+      .filter((id) => allowed.has(id))
+      .slice(0, TIDY_MAX_ARCHIVE);
+    if (!chosen.length) return { ok: false, error: "没有可归档的条目（计划可能已过期，刷新再看）" };
+    for (const id of chosen) memory().entryArchive({ id });
+    broadcast();
+    return {
+      ok: true,
+      archived: chosen.length,
+      freed: plan.picks.filter((p) => chosen.includes(p.id)).reduce((n, p) => n + p.chars, 0),
+    };
+  },
   /** bot 对话可选模型（composer 右下角选择器） */
   botModels: async () => CHAT_MODEL_CATALOG,
   botStatus: async ({ id, status, mutedUntil } = {}) => bots().setStatus(String(id || ""), { status, mutedUntil }),
@@ -4110,16 +4390,24 @@ const actions = {
       .join("\n")
       .slice(-2000);
     /** 一个成员：开跑前先发 thinking，回完只落这一行 + 增量下发，不整包广播 */
-    const respond = async (bot) => {
+    const repliedIds = new Set();
+    const handoffs = [];
+    const respond = async (bot, { handoff = null, depth = 0 } = {}) => {
+      repliedIds.add(bot.id);
       const base = { botId: bot.id, groupId: gid, name: bot.name };
       // 每个成员各自一个 abort：客户端「停止」能掐正在说话的那一个
       const controller = new AbortController();
       botAborts.set(bot.id, controller);
       sendPhase(base, "thinking");
       try {
-        const turn = await bots().reply(bot, value, {
+        // 被交接的目标：把“原话 + 交接待办”一起给它，但不伪装成 owner 又发了一遍
+        const input = handoff
+          ? `${value}\n\n[${handoff.fromName} 把这件事交给你]：${handoff.task}${handoff.reason ? `；原因：${handoff.reason}` : ""}`
+          : value;
+        const turn = await bots().reply(bot, input, {
           signal: controller.signal,
           groupContext: contextOf(bot),
+          groupId: gid,
           onDelta: (delta) => sendDelta(base, delta),
           onTool: (tool) => sendTool(base, tool),
         });
@@ -4130,6 +4418,13 @@ const actions = {
         store.saveGroupMessage?.(msg);
         sendGroupMessage(gid, msg);
         out.push(msg);
+        if (turn?.handoff?.to) {
+          const line = push("system", null, `【交接】${bot.name} → ${turn.handoff.toName}：${turn.handoff.task}${turn.handoff.reason ? `（${turn.handoff.reason}）` : ""}`, "handoff");
+          store.saveGroupMessage?.(line);
+          sendGroupMessage(gid, line);
+          // 只跟一跳：被交接的人再交回去也不继续唤醒，避免两个 bot 来回踢皮球
+          if (depth === 0) handoffs.push({ ...turn.handoff, fromId: bot.id, fromName: bot.name });
+        }
       } catch (err) {
         flushDelta(base);
         const msg = controller.signal.aborted
@@ -4150,7 +4445,15 @@ const actions = {
     const rest = targets.filter((b) => b.id !== lead?.id);
     const PARALLEL = 3;
     for (let i = 0; i < rest.length; i += PARALLEL) {
-      await Promise.all(rest.slice(i, i + PARALLEL).map(respond));
+      await Promise.all(rest.slice(i, i + PARALLEL).map((b) => respond(b)));
+    }
+    // 交接：等本轮都说完了再叫目标，避免“被交接的人已经在队列里”变成双答
+    const woken = new Set();
+    for (const h of handoffs.slice(0, 2)) {
+      const target = all.find((b) => b.id === h.to);
+      if (!target || repliedIds.has(target.id) || woken.has(target.id)) continue;
+      woken.add(target.id);
+      await respond(target, { handoff: h, depth: 1 });
     }
     store.persist(); broadcast();
     return { messages: out };
@@ -4274,6 +4577,32 @@ const actions = {
     const turn = (store.state.botTurns || []).find((t) => t.id === String(turnId || ""));
     if (!turn?.proposal) throw new Error("这一轮没有建议");
     turn.proposal = { ...turn.proposal, dismissed: true };
+    store.persist();
+    broadcast();
+    return { ok: true };
+  },
+  /** 日程建议：确认后才真的建；不确认就只是回合里的一张卡 */
+  botAcceptRoutineProposal: async ({ turnId } = {}) => {
+    const turn = (store.state.botTurns || []).find((t) => t.id === String(turnId || ""));
+    if (!turn?.routineProposal) throw new Error("这一轮没有日程建议");
+    if (turn.routineId) throw new Error("这条日程已经建过");
+    const bot = (store.state.bots || []).find((b) => b.id === turn.botId);
+    if (!bot) throw new Error("bot 不存在");
+    const p = turn.routineProposal;
+    const routine = bots().saveRoutine({
+      botId: bot.id, name: p.name, kind: p.kind, prompt: p.prompt, mode: p.mode,
+      atHour: p.atHour, everyMs: p.everyMs, onceAt: p.onceAt, watch: p.watch,
+    });
+    turn.routineId = routine.id;
+    turn.routineProposal = { ...p, acceptedAt: Date.now() };
+    store.persist();
+    broadcast();
+    return { ok: true, routine };
+  },
+  botDismissRoutineProposal: async ({ turnId } = {}) => {
+    const turn = (store.state.botTurns || []).find((t) => t.id === String(turnId || ""));
+    if (!turn?.routineProposal) throw new Error("这一轮没有日程建议");
+    turn.routineProposal = { ...turn.routineProposal, dismissed: true };
     store.persist();
     broadcast();
     return { ok: true };

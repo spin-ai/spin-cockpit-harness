@@ -14,13 +14,14 @@ import { WAIT_LIMIT_MS, describeRoutine, nextRunAt, normalizeRoutine, routineDue
 // system prompt：人格卡、记忆正文、主动说过的话、配额边界
 
 test("system prompt 带能力边界：只读 bot 不许声称能写代码/起任务", () => {
-  const read = buildSystemPrompt({ name: "戈洛", capability: "read", persona: DEFAULT_POLICY ? undefined : undefined });
+  const read = buildSystemPrompt({ name: "戈洛", capability: "read", persona: {} }, "", { proactive: false });
   assert.match(read, /只读/);
-  assert.match(read, /不要声称自己能写代码/);
-  const dispatch = buildSystemPrompt({ name: "戈洛", capability: "dispatch" });
+  assert.match(read, /不能建任务/);
+  assert.match(read, /不能改文件、不能跑命令/);
+  const dispatch = buildSystemPrompt({ name: "戈洛", capability: "dispatch" }, "", { proactive: false });
   assert.match(dispatch, /起 Agent 任务/);
   assert.match(dispatch, /请人确认/);
-  assert.doesNotMatch(dispatch, /不要声称自己能写代码/);
+  assert.doesNotMatch(dispatch, /不能建任务/);
 });
 
 test("system prompt 带上注入的记忆条目与人格卡字段", () => {

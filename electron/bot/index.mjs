@@ -12,7 +12,7 @@ import { redactSecrets } from "../redact.mjs";
 import { suppressionReason } from "./guard.mjs";
 import { notifyDecision } from "./notify.mjs";
 import { WAIT_LIMIT_MS, describeRoutine, nextRunAt, normalizeRoutine, routineDue } from "./routine.mjs";
-import { BOT_READ_TOOLS, BOT_READ_TOOL_NAMES, BOT_WRITE_TOOLS, BOT_WRITE_TOOL_NAMES, parseToolArgs } from "./tools.mjs";
+import { BOT_TOOL_META, botToolsFor, parseToolArgs, toolNamesFor } from "./tools.mjs";
 
 const HOUR = 60 * 60 * 1000;
 const MINUTE = 60 * 1000;
@@ -40,7 +40,7 @@ export const DEFAULT_POLICY = {
   escalate: "对外发言 / 删除 / 花钱",
 };
 
-export const DEFAULT_BUDGET = { tokensPerTurn: 700, tokensPerHour: 6000 };
+export const DEFAULT_BUDGET = { tokensPerTurn: 2048, tokensPerHour: 12000 };
 
 /**
  * 提问卡片：
@@ -51,7 +51,7 @@ export const DEFAULT_BUDGET = { tokensPerTurn: 700, tokensPerHour: 6000 };
 const ASK_TTL_MS = 7 * 24 * HOUR;
 
 /** 注入预算：bot 一轮只输出 1–2 句，给目录没用，要正文 */
-const INJECT_CHARS = 2400;
+const INJECT_CHARS = 8000;
 
 const clip = (s, n) => {
   const t = String(s ?? "").replace(/\s+/g, " ").trim();
@@ -161,6 +161,30 @@ export function collectCandidates(state, { now = Date.now(), recentTurns = [], b
       out.push({ kind: "todo.failed", ref, title: todo.title || todo.key || "任务", todoId: todo.id, key: todo.key });
     }
   }
+  // 失败的运行也算事件：任务上的 lastRunFailed 覆盖不到「手动起的 / 子运行」
+  // 同一任务已经有 todo.failed 候选时不再重复提
+  const seenTodo = new Set(out.map((c) => c.todoId).filter(Boolean));
+  // 这一轮的 run 已经汇报过（reported 回合带 runId）就不再当成新失败
+  const seenRuns = new Set(
+    recentTurns
+      .filter((t) => now - t.createdAt < 2 * HOUR && t.runId)
+      .filter((t) => !botId || t.botId === botId)
+      .map((t) => t.runId),
+  );
+  for (const run of state.runs || []) {
+    if (run?.status !== "failed" || !run.endedAt) continue;
+    if (now - run.endedAt > 2 * HOUR) continue;
+    if (run.todoId && seenTodo.has(run.todoId)) continue;
+    if (seenRuns.has(run.id)) continue;
+    const ref = `run:${run.id}`;
+    if (seen.has(ref)) continue;
+    const todo = (state.todos || []).find((t) => t.id === run.todoId);
+    out.push({
+      kind: "run.failed", ref, runId: run.id, todoId: run.todoId || null,
+      title: `${todo ? `${todo.key || ""} ${todo.title}`.trim() : run.id} 运行失败`,
+    });
+    if (run.todoId) seenTodo.add(run.todoId);
+  }
   return out.map((c) => ({ ...c, score: scoreCandidate(c) })).sort((a, b) => b.score - a.score);
 }
 
@@ -171,16 +195,61 @@ export function collectCandidates(state, { now = Date.now(), recentTurns = [], b
  * 记忆传 `inject()` 的 markdown（含正文），不是条目表——只给标题等于只给目录。
  * 兼容传数组的旧写法（selftest / 调用方），但数组里的 body 会一起带上。
  */
-export function buildSystemPrompt(bot, injected = "", { proactive = true, recentProactive = [] } = {}) {
+export const MAX_TOOL_ROUNDS = 8;
+export const MAX_TOOL_ROUNDS_HARD = 16;
+export const MAX_TOOL_CALLS = 24;
+export const TOOL_REPEAT_LIMIT = 3;
+export const HISTORY_KEEP = 10;
+export const HISTORY_DIGEST_AT = 24;
+export const BOT_INJECT_CHARS = 8000;
+const DIGEST_CHARS = 2400;
+const TEAMMATE_CHARS = 1200;
+
+/** 工具轮低温、闲聊正常温：0.7 下模型更爱「聊」而不是「查」 */
+export function temperatureFor(hasTools) {
+  return hasTools ? 0.3 : 0.7;
+}
+
+/** 思考档：只改「最多查几轮 / 工具轮温度」，不改 token 上限（配额不被人一键绕过） */
+export function effortPolicy(effort) {
+  if (effort === "quick") return { rounds: 4, temperature: 0.4, label: "快速" };
+  if (effort === "deep") return { rounds: 12, temperature: 0.2, label: "深入" };
+  return { rounds: MAX_TOOL_ROUNDS, temperature: 0.3, label: "标准" };
+}
+
+/** 同一工具同参数重复 3 次 → 停：键序不影响签名（`{a,b}` 与 `{b,a}` 算同一次） */
+export function toolSignature(name, rawArgs) {
+  let args = rawArgs;
+  try {
+    args = typeof rawArgs === "string" ? JSON.parse(rawArgs || "{}") : (rawArgs || {});
+  } catch { args = {}; }
+  if (!args || typeof args !== "object" || Array.isArray(args)) return `${name}?`;
+  const stable = Object.keys(args).sort().map((k) => `${k}=${JSON.stringify(args[k])}`).join("&");
+  return `${name}?${stable}`;
+}
+
+/**
+ * 长对话压缩：超过 `at` 条就把「最近 keep 条」之外的内容压成一段背景。
+ * 纯函数（不调模型），所以不会额外花钱、也不会拖慢一轮；标 derived，不作为事实来源。
+ */
+export function historyDigest(messages, { keep = HISTORY_KEEP, at = HISTORY_DIGEST_AT, maxChars = DIGEST_CHARS } = {}) {
+  if (!Array.isArray(messages) || messages.length <= at) return "";
+  const older = messages.slice(0, -keep);
+  if (!older.length) return "";
+  const text = older
+    .map((m) => `${m.role === "user" ? "用户" : "我"}：${String(m.content || "").replace(/\s+/g, " ").trim().slice(0, 160)}`)
+    .filter((line) => line.length > 3)
+    .join("\n");
+  return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+}
+
+function personaLines(bot, { proactive, recentProactive, inGroup = false }) {
   const persona = bot.persona || {};
   const policy = bot.policy || {};
   const duty = persona.duty || {};
-  const memoryText = typeof injected === "string"
-    ? (injected.trim() || "（这一轮没有注入记忆）")
-    : (injected.length
-      ? injected.map((m) => `- [${m.layer}] ${m.title}${m.body ? `：${clip(m.body, 160)}` : ""}`).join("\n")
-      : "（这一轮没有注入记忆）");
   const recent = (recentProactive || []).filter(Boolean).slice(-3);
+  const toolNames = toolNamesFor(bot.capability);
+  const canCreate = bot.capability === "dispatch" || bot.capability === "work";
   return [
     `你在扮演「${bot.name}」。用第一人称，不要解释自己是 AI。`,
     bot.role ? `角色：${bot.role === "supervisor" ? "主管（拆解、分派、盯进展、汇总，不亲手改代码）" : "执行者（在自己职责范围内把事做完）"}` : "",
@@ -197,17 +266,69 @@ export function buildSystemPrompt(bot, injected = "", { proactive = true, recent
     `习惯：${persona.habit || DEFAULT_PERSONA.habit}`,
     policy.escalate ? `必须请人来做（不要声称已经办了）：${policy.escalate}` : "",
     recent.length ? `你最近主动说过（别自相矛盾、也别重复）：\n${recent.map((t) => `- ${clip(t, 120)}`).join("\n")}` : "",
-    `能力档位：${bot.capability === "dispatch" ? "可以起 Agent 任务（先建 todo），但必须先问人、由人确认起 run" : bot.capability === "work" ? "可以建任务、并跟踪执行体" : "只读：能读记忆、资料和运行状态，不能建任务"}`,
-    bot.capability === "read"
-      ? "不要声称自己能写代码、改文件、跑命令或起任务；需要动手时，让对方在 Chat 里派活。"
-      : `可直接调的工具：${[...BOT_READ_TOOL_NAMES, ...BOT_WRITE_TOOL_NAMES].join(" / ")}。task_create 会真的建一条 todo 并指派给 worker；默认只建任务、不起 run，只有用户明确说「开跑 / 开始 / 直接干」时才可传 start=true。不要声称能改文件或跑任意命令。`,
+    `能力档位：${bot.capability === "dispatch" ? "可以起 Agent 任务（先建 todo），但必须先问人、由人确认起 run" : bot.capability === "work" ? "可以建任务、并跟踪执行体" : "只读：能读记忆、资料、工作区和运行状态，不能建任务"}`,
+    proactive ? "" : (canCreate
+      ? `可直接调的工具：${toolNames.join(" / ")}。workspace_* / git_* / run_log 只读；memory_write / memory_forget 只写你自己的记忆；task_create 会真的建一条 todo 并指派给 worker，默认只建任务、不起 run，只有用户明确说「开跑 / 开始 / 直接干」时才可传 start=true。不能改文件、不能跑任意命令。`
+      : `可直接调的工具：${toolNames.join(" / ")}。全部只读（workspace_* / git_* / run_log / memory_search / knowledge_search / todo_list / run_status）+ 只写你自己的记忆（memory_write / memory_forget）。不能建任务、不能改文件、不能跑命令。`),
+    proactive
+      ? "现在没有人在跟你对话：你只负责判断这一刻值不值得说一句，不调用工具。"
+      : "看工作区：先用 workspace_list 或 workspace_grep 确认路径，再 workspace_read；引用事实时给 path:line。git_status / git_log / git_diff / run_log 都是只读，路径越界会被拒绝。",
+    proactive ? "" : `一轮最多 ${MAX_TOOL_ROUNDS} 轮工具调用；查够了就下结论。同一工具同参数重复 ${TOOL_REPEAT_LIMIT} 次会被强制停下。`,
     bot.capability === "dispatch" ? "不要声称能直接改代码；用 task_create 建任务，起 run 仍请人确认。" : "",
     proactive
-      ? "你会收到一条「工作区事件」和几条记忆。只输出你要说的一句话（最多两句）。"
+      ? "你会收到一条「工作区事件」和几条记忆。普通事件只输出你要说的一句话（最多两句）；日程到点（kind=routine）按它的要求回答，可以多几句。"
       : "现在有人在直接跟你说话。正常对话，别复述人格设定，别解释自己是 AI。",
     proactive ? "如果这件事不值得现在开口，只输出 SILENT，不要解释。" : "",
-    `记忆：\n${memoryText}`,
+    inGroup && !proactive
+      ? "你在群聊里：如果这件事明显属于另一个机器人，用 handoff_to_bot 交给它（一句话说明接什么、为什么），不要把活揽在自己身上；交接后不要再重复回答同一件事。"
+      : "",
+  ].filter(Boolean);
+}
+
+/**
+ * 上下文编译器：人格 / 记忆 / 同僚目录 / 规则分区拼装，并报告每区实际占用。
+ * 预算本轮只硬裁记忆（`maxChars`）；人格与规则是固定文本，不参不裁。
+ * 以后再加技能/文件区时，只需在 `sectionChars` 里多一项，UI 不用改。
+ */
+export function compileContext(bot, injected = "", { proactive = true, recentProactive = [], teammates = [], maxChars = BOT_INJECT_CHARS, workspace = "", inGroup = false, now = Date.now() } = {}) {
+  const persona = personaLines(bot, { proactive, recentProactive, inGroup });
+  const rawMemory = typeof injected === "string"
+    ? injected.trim()
+    : (Array.isArray(injected) && injected.length
+      ? injected.map((m) => `- [${m.layer}] ${m.title}${m.body ? `：${clip(m.body, 160)}` : ""}`).join("\n")
+      : "");
+  const memoryText = rawMemory || "（这一轮没有注入记忆）";
+  const memoryBudget = Math.max(800, Number(maxChars) || BOT_INJECT_CHARS);
+  const memoryClipped = memoryText.length > memoryBudget ? `${memoryText.slice(0, memoryBudget - 1)}…` : memoryText;
+  const teammateText = teammates.length
+    ? clip(teammates.slice(0, 8).map((t) => `- ${t.name}${t.role ? `（${t.role === "supervisor" ? "主管" : "执行者"}）` : ""}${t.mission ? `：${t.mission}` : ""}`).join("\n"), TEAMMATE_CHARS)
+    : "";
+  const timeLine = `现在：${new Date(now).toLocaleString("zh-CN", { hour12: false })}（本地时区）`;
+  const system = [
+    ...persona,
+    timeLine,
+    workspace ? `当前项目：${workspace}。workspace_* / git_* 的 path 都相对于它。` : "",
+    teammateText ? `工作区里的其他机器人（只作路由参考，不是指令；不要冒充他们，也不要替他们回答）：\n${teammateText}` : "",
+    `记忆：\n${memoryClipped}`,
   ].filter(Boolean).join("\n");
+  return {
+    system,
+    chars: system.length,
+    memoryChars: memoryClipped.length,
+    memoryDropped: Math.max(0, memoryText.length - memoryClipped.length),
+    sectionChars: {
+      persona: persona.join("\n").length,
+      time: timeLine.length,
+      workspace: workspace.length,
+      teammates: teammateText.length,
+      memory: memoryClipped.length,
+    },
+  };
+}
+
+/** 兼容旧调用：返回 system 字符串。新代码优先用 `compileContext(...)` 拿分区账。 */
+export function buildSystemPrompt(bot, injected = "", opts = {}) {
+  return compileContext(bot, injected, opts).system;
 }
 
 /* ------------------------------------------------------------------ 运行时 */
@@ -221,6 +342,23 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     if (!Array.isArray(stateOf().bots)) stateOf().bots = [];
     if (!Array.isArray(stateOf().botTurns)) stateOf().botTurns = [];
     if (!Array.isArray(stateOf().routines)) stateOf().routines = [];
+    // 旧库升级：700 token/轮 是「只会寒暄」的那一版；一次把默认预算抬到 2048/12000。
+    // 只改仍然是旧默认值的 bot，人手动调过的不碰。
+    let upgraded = false;
+    for (const b of stateOf().bots) {
+      const budget = b.budget || {};
+      if (Number(budget.tokensPerTurn) === 700 && !budget.brain2) {
+        b.budget = {
+          ...budget,
+          tokensPerTurn: DEFAULT_BUDGET.tokensPerTurn,
+          tokensPerHour: Math.max(Number(budget.tokensPerHour) || 0, DEFAULT_BUDGET.tokensPerHour),
+          brain2: 1,
+        };
+        b.updatedAt = now();
+        upgraded = true;
+      }
+    }
+    if (upgraded) store.persist();
     // 上次退出时还在生成的回合：标成被打断，并把已经吐出来的半截留着（不静默丢）
     let healed = false;
     for (const t of stateOf().botTurns) {
@@ -461,10 +599,85 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     return row;
   }
 
+  const REVISION_LIMIT = 20;
+  const revisionsOf = () => (stateOf().botRevisions = Array.isArray(stateOf().botRevisions) ? stateOf().botRevisions : []);
+
+  /** 只存「能教会它什么」的字段；status / mutedUntil 是操作状态，不进历史 */
+  function revisionSnapshot(bot) {
+    return {
+      name: bot.name, avatar: bot.avatar, avatarClass: bot.avatarClass,
+      persona: bot.persona || {}, capability: bot.capability, role: bot.role,
+      executorAgentId: bot.executorAgentId || null, model: bot.model || "", effort: bot.effort || "",
+      channels: bot.channels || ["local"], policy: bot.policy || {}, budget: bot.budget || {},
+    };
+  }
+
+  /** 改之前先把上一版存下来；同一次保存里旧值只存一次 */
+  function recordRevision(bot) {
+    if (!bot) return;
+    const list = revisionsOf();
+    list.push({
+      id: `rv${now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+      botId: bot.id, at: now(), by: "owner", data: revisionSnapshot(bot),
+    });
+    const mine = list.filter((r) => r.botId === bot.id).slice(-REVISION_LIMIT);
+    stateOf().botRevisions = [...list.filter((r) => r.botId !== bot.id), ...mine];
+  }
+
+  function revisions(botId = "") {
+    return revisionsOf()
+      .filter((r) => r.botId === String(botId || ""))
+      .sort((a, b) => (b.at || 0) - (a.at || 0))
+      .slice(0, REVISION_LIMIT)
+      .map((r) => ({
+        id: r.id, botId: r.botId, at: r.at, by: r.by || "owner",
+        name: r.data?.name || "", mission: r.data?.persona?.mission || "",
+      }));
+  }
+
+  /** 恢复 = 用旧快照再存一次（会先把当前版记成新历史，旧记录不删） */
+  function restore(botId, revisionId) {
+    const rev = revisionsOf().find((r) => r.id === String(revisionId || "") && r.botId === String(botId || ""));
+    if (!rev) throw new Error("这条历史不存在");
+    const bot = save({ id: String(botId), ...rev.data });
+    return { bot, revisionId: rev.id };
+  }
+
+  const DIFF_FIELDS = [
+    ["name", "名字"], ["capability", "能力"], ["role", "角色"], ["model", "模型"], ["effort", "思考档"],
+    ["persona.mission", "职责"], ["persona.tone", "语气"],
+    ["persona.duty.goal", "目标"], ["persona.duty.scope", "范围"], ["persona.duty.deliverable", "交付物"],
+    ["persona.duty.forbidden", "不做什么"], ["persona.duty.report", "汇报口径"],
+    ["policy.maxTurnsPerHour", "每小时上限"], ["policy.minGapMs", "最小间隔"],
+    ["budget.tokensPerTurn", "单轮 token"],
+  ];
+  const getPath = (obj, path) => path.split(".").reduce((acc, k) => (acc == null ? undefined : acc[k]), obj);
+
+  /** 对比「当前」与某一版历史，只列有变化的字段（不做行级 diff，够看人格/配额改了什么） */
+  function revisionDiff(botId, revisionId) {
+    const bot = bots().find((b) => b.id === String(botId || ""));
+    if (!bot) throw new Error("bot 不存在");
+    const rev = revisionsOf().find((r) => r.id === String(revisionId || "") && r.botId === String(botId || ""));
+    if (!rev) throw new Error("这条历史不存在");
+    const current = revisionSnapshot(bot);
+    return DIFF_FIELDS.map(([path, label]) => {
+      const from = getPath(rev.data, path);
+      const to = getPath(current, path);
+      if (JSON.stringify(from ?? "") === JSON.stringify(to ?? "")) return null;
+      return { path, label, from: from ?? "", to: to ?? "" };
+    }).filter(Boolean);
+  }
+
   function save(patch = {}) {
     const list = stateOf().bots;
     const id = String(patch.id || `bot-${now().toString(36)}`);
     const existing = list.find((b) => b.id === id);
+    // 并发：调用方带上自己看到的 updatedAt；对不上就拒绝，避免两个人（或两个页签）互相覆盖
+    if (existing && patch.expectedUpdatedAt !== undefined && Number(patch.expectedUpdatedAt) !== existing.updatedAt) {
+      const err = new Error("机器人已被别处修改，刷新后再试");
+      err.code = "stale";
+      throw err;
+    }
     const next = {
       id,
       name: String(patch.name || existing?.name || "新 bot").slice(0, 40),
@@ -486,7 +699,11 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       updatedAt: now(),
     };
     if (!existing) list.push(next);
-    else Object.assign(existing, next);
+    else {
+      // 没有实质变化（失焦保存同一句话）不造历史
+      if (JSON.stringify(revisionSnapshot(existing)) !== JSON.stringify(revisionSnapshot(next))) recordRevision(existing);
+      Object.assign(existing, next);
+    }
     store.persist();
     onChange();
     return next;
@@ -546,6 +763,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     stateOf().bots = bots().filter((b) => b.id !== String(id));
     stateOf().botTurns = turnsOf().filter((t) => t.botId !== String(id));
     stateOf().routines = routinesOf().filter((r) => r.botId !== String(id));
+    stateOf().botRevisions = revisionsOf().filter((r) => r.botId !== String(id));
     store.persist();
     onChange();
   }
@@ -582,26 +800,37 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
    * 记忆召回：bot 只看「共享 + 自己的」条目（owner=bot:<id>），注入按 2400 字符裁。
    * 传 runId 是为了落 inject_log 台账——bot 的注入也要能被归因，否则「它当时记得什么」无从查。
    */
-  function recall(bot, runId = "") {
+  function recall(bot, runId = "", { maxChars = INJECT_CHARS, query = "" } = {}) {
+    const budget = Math.max(800, Number(maxChars) || INJECT_CHARS);
     try {
-      const ctx = memory?.()?.inject?.({ maxChars: INJECT_CHARS, runId, owner: `bot:${bot.id}` }) || { items: [] };
+      const ctx = memory?.()?.inject?.({ maxChars: budget, runId, owner: `bot:${bot.id}`, query }) || { items: [] };
       let markdown = String(ctx.markdown || "");
       // 容量外显：只在这条注入已经装到 80% 以上时才说，避免每轮都念一遍预算
       try {
-        const use = memory?.()?.usage?.({ maxChars: INJECT_CHARS });
+        const use = memory?.()?.usage?.({ maxChars: budget });
         if (use && use.ratio >= 0.8) {
           markdown += `\n\n（记忆预算已用 ${use.chars}/${use.budget} 字符 · 条目 ${use.entries} · 观察 ${use.notes}${use.dropped ? ` · 被裁 ${use.dropped}` : ""}：满了先合并或删，不要一直追加）`;
         }
       } catch { /* usage 失败不影响注入 */ }
       return {
         markdown,
-        injected: (ctx.items || []).filter((i) => i.included).slice(0, 8)
+        chars: markdown.length,
+        dropped: Number(ctx.dropped) || 0,
+        injected: (ctx.items || []).filter((i) => i.included).slice(0, 12)
           .map((i) => ({ layer: i.layer, id: i.id, title: i.title })),
       };
     } catch (err) {
       log.warn?.(`[bot] ${bot.id} 记忆注入失败：${String(err?.message || err)}`);
-      return { markdown: "", injected: [] };
+      return { markdown: "", chars: 0, dropped: 0, injected: [] };
     }
+  }
+
+  /** 同僚目录：路由靠「名字 + 一句话职责」，不是靠把群聊记录塞进上下文 */
+  function teammatesOf(bot) {
+    return bots()
+      .filter((b) => b.id !== bot.id && b.status !== "paused")
+      .slice(0, 8)
+      .map((b) => ({ name: b.name, role: b.role, mission: b.persona?.mission || "" }));
   }
 
   /** 它最近主动说出口的话：进 system prompt，而不是拼进 history（会破坏 user/assistant 交替） */
@@ -622,7 +851,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
   async function speak(bot, candidate, memoryBlock, recent = []) {
     if (typeof chat !== "function" || !key?.()) return { reply: "", reason: "缺少模型 key，只记录沉默" };
     const system = buildSystemPrompt(bot, memoryBlock, { proactive: true, recentProactive: recent });
-    const user = `工作区事件：${candidate.title}（${candidate.kind}${candidate.key ? ` · ${candidate.key}` : ""}）`;
+    const user = `工作区事件：${candidate.title}（${candidate.kind}${candidate.key ? ` · ${candidate.key}` : ""}）${candidate.instruction ? `\n这次要做的：${candidate.instruction}` : ""}`;
     const res = await chat([
       { role: "system", content: system },
       { role: "user", content: user },
@@ -698,7 +927,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       if (due.routine.waitingSince) { due.routine.waitingSince = 0; store.persist(); }
     }
     const candidate = due
-      ? { kind: "routine", ref: `routine:${due.routine.id}`, title: due.routine.name || describeRoutine(due.routine), routineId: due.routine.id }
+      ? { kind: "routine", ref: `routine:${due.routine.id}`, title: due.routine.name || describeRoutine(due.routine), routineId: due.routine.id, instruction: due.routine.prompt || "" }
       : collectCandidates(stateOf(), { now: now(), recentTurns: turns, botId: bot.id })[0];
 
     // 日程是"已经判定该跑"，不参与事件打分（否则会被 0 分当成不值得说）
@@ -724,7 +953,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       });
     }
 
-    const { markdown, injected } = recall(bot, `bot:${bot.id}:${turnId}`);
+    const { markdown, injected } = recall(bot, `bot:${bot.id}:${turnId}`, { query: candidate?.title || "" });
     const started = now();
     let result;
     try {
@@ -810,22 +1039,33 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
    *  - 写操作（改文件、跑命令、起任务）不在工具表里，只能靠提议给人确认；
    *  - 最多 4 轮，防模型在两个工具之间来回问；网关不支持 tools 时自动退回纯对话。
    */
-  async function chatStreamWithTools(messages, bot, onDelta, signal, onTool) {
-    const tools = bot.capability === "read" || !runTool ? [] : [...BOT_READ_TOOLS, ...BOT_WRITE_TOOLS];
+  async function chatStreamWithTools(messages, bot, onDelta, signal, onTool, { turnId = "", groupId = "" } = {}) {
+    // read 档也发工具：只读工具 + 自己的记忆。能力档只决定有没有 task_create。
+    const tools = runTool ? botToolsFor(bot.capability) : [];
+    const allowed = new Set(tools.map((t) => t.function.name));
     const model = String(bot.model || "").trim() || undefined;
+    const maxTokens = Number(bot.budget?.tokensPerTurn) || DEFAULT_BUDGET.tokensPerTurn;
+    const policy = effortPolicy(bot.effort);
+    const maxRounds = Math.min(Math.max(Number(bot.budget?.maxRounds) || policy.rounds, 1), MAX_TOOL_ROUNDS_HARD);
     const trace = [];
     const events = [];
+    const seen = new Map();
     let conversation = messages;
     let text = "";
-    for (let round = 0; round < 4; round += 1) {
+    let toolCalls = 0;
+    let stopReason = "";
+    const rounds = { used: 0, max: maxRounds, calls: 0 };
+
+    for (let round = 0; round < maxRounds; round += 1) {
+      rounds.used = round + 1;
       const roundAt = now();
       let res;
       try {
         res = await chatStream(conversation, {
           key: key(),
           model,
-          maxTokens: Number(bot.budget?.tokensPerTurn) || DEFAULT_BUDGET.tokensPerTurn,
-          temperature: 0.7,
+          maxTokens,
+          temperature: tools.length ? policy.temperature : 0.7,
           onDelta,
           signal,
           tools: tools.length ? tools : null,
@@ -834,10 +1074,10 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
         // 部分网关不支持 function calling：第一轮就退回纯对话，不要让人看不到回复
         if (round === 0 && tools.length && /tools?|function|400/i.test(String(err?.message || ""))) {
           res = await chatStream(messages, {
-            key: key(), model, maxTokens: Number(bot.budget?.tokensPerTurn) || DEFAULT_BUDGET.tokensPerTurn,
-            temperature: 0.7, onDelta, signal,
+            key: key(), model, maxTokens,
+            temperature: temperatureFor(false), onDelta, signal,
           });
-          return { ...res, toolTrace: [] };
+          return { ...res, toolTrace: [], events, stopReason: "", toolFallback: true, rounds };
         }
         throw err;
       }
@@ -848,9 +1088,9 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       });
       text += String(res?.text || "");
       const calls = res?.toolCalls || [];
-      if (!calls.length) return { ...res, text, toolTrace: trace };
-      // 模型可能编出工具表里没有的名字（比如 memory_write）：照样回一条 tool 错误，
-      // 让它自己解释「这个要人来确认」，而不是整轮变成空答复。
+      if (!calls.length) return { ...res, text, toolTrace: trace, events, stopReason, rounds };
+
+      // 模型可能编出工具表里没有的名字：照样回一条 tool 错误，让它自己改口，不执行。
       conversation = [
         ...conversation,
         {
@@ -860,16 +1100,23 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
         },
       ];
       for (const call of calls) {
-        const allowed = BOT_READ_TOOL_NAMES.includes(call.name) || BOT_WRITE_TOOL_NAMES.includes(call.name);
+        toolCalls += 1;
+        rounds.calls = toolCalls;
+        if (toolCalls > MAX_TOOL_CALLS) { stopReason = `工具调用超过 ${MAX_TOOL_CALLS} 次`; break; }
+        const sig = toolSignature(call.name, call.args);
+        const repeats = (seen.get(sig) || 0) + 1;
+        seen.set(sig, repeats);
+        if (repeats > TOOL_REPEAT_LIMIT) { stopReason = `同一工具同参数调了 ${repeats} 次`; break; }
         let result;
-        if (allowed) {
+        if (allowed.has(call.name)) {
           const args = parseToolArgs(call.args);
           const startedAt = now();
           try { onTool?.({ name: call.name, phase: "start" }); } catch { /* 回调失败不影响查询 */ }
-          try { result = await runTool(call.name, args, { bot }); } catch (err) { result = { error: String(err?.message || err) }; }
+          try { result = await runTool(call.name, args, { bot, turnId, groupId }); } catch (err) { result = { error: String(err?.message || err) }; }
           try { onTool?.({ name: call.name, phase: "done" }); } catch { /* 忽略 */ }
           const failed = Boolean(result && typeof result === "object" && "error" in result);
-          const resultText = JSON.stringify(result).slice(0, 6000);
+          const cap = Number(BOT_TOOL_META[call.name]?.maxResultChars) || 6000;
+          const resultText = JSON.stringify(result).slice(0, cap);
           trace.push({
             name: call.name,
             args: JSON.stringify(args).slice(0, 240),
@@ -883,21 +1130,25 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
           events.push({ kind: "tool", name: call.name, argsRaw: JSON.stringify(args).slice(0, 6000), result: resultText, ms: Math.max(0, now() - startedAt), at: startedAt, ok: !failed });
         } else {
           const rejectedAt = now();
-          trace.push({ name: call.name, rejected: true, ok: false, at: rejectedAt, preview: "不在只读工具表里（写操作必须走提议 → 人确认）" });
-          events.push({ kind: "tool", name: call.name, argsRaw: String(call.args || "{}").slice(0, 6000), result: "不在只读工具表里（写操作必须走提议 → 人确认）", at: rejectedAt, ms: 0, ok: false, rejected: true });
-          result = { error: `工具 ${call.name} 不可用：你可以查，也可以建任务（task_create）；改文件 / 跑任意命令仍不允许。` };
+          trace.push({ name: call.name, rejected: true, ok: false, at: rejectedAt, preview: "不在工具表里" });
+          events.push({ kind: "tool", name: call.name, argsRaw: String(call.args || "{}").slice(0, 6000), result: "不在工具表里", at: rejectedAt, ms: 0, ok: false, rejected: true });
+          result = { error: `工具 ${call.name} 不可用：可用的工具是 ${[...allowed].join(" / ")}；改文件 / 跑任意命令 / 改设置仍不允许。` };
         }
         conversation = [...conversation, {
           role: "tool", tool_call_id: call.id || call.name,
           content: JSON.stringify(result).slice(0, 4000),
         }];
       }
+      if (stopReason) break;
     }
-    return { text, toolCalls: [], usage: {}, toolTrace: trace, events };
+    return {
+      text, toolCalls: [], usage: {}, toolTrace: trace, events, rounds,
+      stopReason: stopReason || `达到 ${maxRounds} 轮工具上限`,
+    };
   }
 
   /** 被动回复：同一个 bot、同一份记忆，流式吐字；落一条 decision=replied 的回合 */
-  async function reply(bot, text, { onDelta, onTool, signal, threadId = "", groupContext = "" } = {}) {
+  async function reply(bot, text, { onDelta, onTool, signal, threadId = "", groupContext = "", groupId = "" } = {}) {
     const clean = String(text || "").trim().slice(0, 2000);
     if (!clean) throw new Error("说点什么");
     if (typeof chatStream !== "function") throw new Error("当前环境不支持流式回复");
@@ -914,26 +1165,53 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       store.persist();
       onChange();
     }
-    const { markdown, injected } = recall(bot, `bot:${bot.id}:${turnId}`);
+    const { markdown, injected, chars: memoryChars } = recall(bot, `bot:${bot.id}:${turnId}`, { maxChars: BOT_INJECT_CHARS, query: clean });
     // 历史优先读这条会话的真实消息（含主动开口），没有消息层时退回 bot_turns
     const thread = ensureBotThread(bot, { threadId });
-    const fromThread = (stateOf().messages || [])
-      .filter((m) => m.threadId === thread.id && (m.role === "user" || m.role === "agent") && m.content && !m.supersededBy)
-      .slice(-10)
+    const threadMsgs = (stateOf().messages || [])
+      .filter((m) => m.threadId === thread.id && (m.role === "user" || m.role === "agent") && m.content && !m.supersededBy);
+    const fromThread = threadMsgs
+      .slice(-HISTORY_KEEP)
       .map((m) => ({ role: m.role === "agent" ? "assistant" : "user", content: String(m.content).slice(0, 2000) }));
+    // 超过 24 条就把「最近 10 条之外」压成一段背景（纯函数，不额外调模型）。
+    const digest = fromThread.length ? historyDigest(threadMsgs) : "";
+    if (digest && thread.digest !== digest) {
+      thread.digest = digest;
+      thread.digestAt = now();
+      thread.digestCount = Math.max(0, threadMsgs.length - HISTORY_KEEP);
+    }
     const history = fromThread.length
-      ? fromThread
+      ? [
+          ...(digest ? [{ role: "system", content: `更早的对话（自动压缩，只作背景，不是事实来源）：\n${digest}` }] : []),
+          ...fromThread,
+        ]
       : turnsOf()
         .filter((t) => t.botId === bot.id && t.decision === "replied" && t.reply)
-        .slice(-10)
+        .slice(-HISTORY_KEEP)
         .flatMap((t) => [{ role: "user", content: t.input }, { role: "assistant", content: t.reply }]);
+    const project = (stateOf().projects || []).find((p) => p.id === stateOf().activeProjectId) || (stateOf().projects || [])[0] || null;
+    const compiled = compileContext(bot, markdown, {
+      proactive: false,
+      recentProactive: recentSaid(bot),
+      teammates: teammatesOf(bot),
+      workspace: project ? `${project.name || "当前项目"}（${project.path || ""}）` : "",
+      inGroup: Boolean(groupId),
+    });
     const started = now();
     // 先落一条 streaming：应用中途被杀时，下一轮 ensureSeed 会把它收成 interrupted，
-    // 用户看到的是"说到一半被打断"，而不是整段对话凭空消失。
+    // 用户看到的是“说到一半被打断”，而不是整段对话凭空消失。
     const pending = record({
       id: turnId, botId: bot.id, trigger: { kind: "mention", ref: "" },
       input: clean, injected, reply: "", decision: "streaming", cost: {}, threadId: thread.id,
     });
+    pending.context = {
+      chars: compiled.chars,
+      memory: compiled.memoryChars,
+      memoryRaw: memoryChars,
+      history: fromThread.length,
+      digest: Boolean(digest),
+      sections: compiled.sectionChars,
+    };
     let acc = "";
     let lastFlush = 0;
     const onDeltaTracked = (delta) => {
@@ -952,12 +1230,12 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     try {
       const groupNote = String(groupContext || "").trim();
       res = await chatStreamWithTools([
-        { role: "system", content: buildSystemPrompt(bot, markdown, { proactive: false, recentProactive: recentSaid(bot) }) },
+        { role: "system", content: compiled.system },
         // 群聊里已经说过的话：让 SE 能看到 PM 的分配再讨论，而不是各说各的
         ...(groupNote ? [{ role: "system", content: `群聊里其他人这轮已经说的（只作讨论上下文，不要冒充他们，也不要重复他们的整段）：\n${groupNote}` }] : []),
         ...history,
         { role: "user", content: clean },
-      ], bot, onDeltaTracked, signal, onTool);
+      ], bot, onDeltaTracked, signal, onTool, { turnId, groupId });
     } catch (err) {
       // 取消：把已经吐出来的半截留下，标成 interrupted（界面上是「被打断」+ 半截）
       if (signal?.aborted) {
@@ -974,15 +1252,21 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       store.persist();
       throw err;
     }
-    const answer = String(res?.text || "").trim();
+    const answer = String(res?.text || "").trim()
+      || (res?.stopReason ? `我查到这里停下了：${res.stopReason}。要继续的话告诉我从哪一步接。` : "");
     if (!answer) {
       stateOf().botTurns = turnsOf().filter((t) => t.id !== pending.id);
       store.persist();
       throw new Error("模型没有返回内容");
     }
+    if (res?.stopReason) pending.stopReason = res.stopReason;
     Object.assign(pending, {
       reply: answer.slice(0, 4000), decision: "replied",
-      cost: { tokens: res?.usage?.total_tokens ?? null, ms: now() - started, ttftMs: res?.ttft ?? null, model: res?.model || "" },
+      cost: {
+        tokens: res?.usage?.total_tokens ?? null, ms: now() - started,
+        ttftMs: res?.ttft ?? null, model: res?.model || "",
+        rounds: res?.rounds?.used ?? null, toolCalls: res?.rounds?.calls ?? null,
+      },
     });
     // 新话题的第一句话就是标题：Chats 列表里不出现一排“新话题”
     if (thread.title === "新话题") {
@@ -1001,6 +1285,20 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       pending.todoId = pending.todoIds[0];
     }
     pending.trace = [...(res?.events || []), ...(res?.toolTrace || [])].slice(0, 200);
+    // 日程建议：工具只返回草稿，确认前不建；卡片挂在回合上（刷新不丢）
+    const routineProposal = (res?.toolTrace || [])
+      .filter((t) => t.name === "routine_propose" && t.ok && t.result)
+      .map((t) => { try { const r = JSON.parse(t.result); return r?.ok && r.routine ? r.routine : null; } catch { return null; } })
+      .filter(Boolean)
+      .at(-1);
+    if (routineProposal) pending.routineProposal = { ...routineProposal, proposedAt: now() };
+    // 群聊交接：工具只返回对象；真正写系统消息 / 唤醒目标由 botGroupSend 做
+    const handoff = (res?.toolTrace || [])
+      .filter((t) => t.name === "handoff_to_bot" && t.ok && t.result)
+      .map((t) => { try { const r = JSON.parse(t.result); return r?.ok && r.handoff ? r.handoff : null; } catch { return null; } })
+      .filter(Boolean)
+      .at(-1);
+    if (handoff) pending.handoff = handoff;
     // 成功后补镜像（streaming 阶段还不该进会话，否则 Chat 里会先出现一条空回复）
     try { mirror(pending); } catch (err) { log.warn?.(`[bot] 镜像到会话失败：${String(err?.message || err)}`); }
     store.persist();
@@ -1077,6 +1375,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     ensureSeed, list: bots, snapshot, turns: turnsOf, save, setStatus, remove, tick, reply,
     report, watch, unwatch,
     listRoutines, saveRoutine, removeRoutine, routineStatus,
+    revisions, restore, revisionDiff,
     openAsks,
     settleAsks,
     threadOf: (botId) => threadOf(String(botId || "")),

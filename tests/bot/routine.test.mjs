@@ -59,6 +59,35 @@ await test("日程真的会替 bot 开口，并记账 lastFiredAt", async () => 
   assert.equal(again.due, false);
 });
 
+await test("once：到点跑一次，跑过就不再跑；prompt 跟着日程走", () => {
+  const now = at(12).getTime();
+  const once = normalizeRoutine({ kind: "once", onceAt: now + HOUR, name: "提醒", prompt: "提醒我打电话" });
+  assert.equal(once.prompt, "提醒我打电话");
+  assert.equal(routineDue(once, { now }).due, false);
+  assert.equal(routineDue(once, { now: now + HOUR }).due, true);
+  assert.equal(routineDue({ ...once, lastFiredAt: now + HOUR + 1 }, { now: now + HOUR + 2 }).due, false);
+  assert.match(describeRoutine(once), /^一次 · /);
+  assert.equal(nextRunAt({ ...once, lastFiredAt: now + HOUR + 1 }), null);
+});
+
+await test("日程到点把 prompt 交给模型，而不是只念名字", async () => {
+  let seen = "";
+  const st = { state: { bots: [], botTurns: [], routines: [], todos: [] }, persist() {} };
+  const b = createBots({
+    store: st,
+    now: () => at(12).getTime(),
+    memory: () => ({ inject: () => ({ items: [], markdown: "" }), usage: () => ({ ratio: 0, chars: 0, budget: 8000, entries: 0, notes: 0, dropped: 0 }) }),
+    chat: async (messages) => { seen = messages.at(-1).content; return { text: "早报：两项待确认。" }; },
+    key: () => "k",
+  });
+  b.ensureSeed();
+  const bot = b.list()[0];
+  bot.intro = false;
+  b.saveRoutine({ botId: bot.id, kind: "daily", atHour: 9, name: "早报", prompt: "汇总今天的待确认任务" });
+  await b.tick({ botId: bot.id });
+  assert.match(seen, /这次要做的：汇总今天的待确认任务/);
+});
+
 function routineBots(extra = {}) {
   const st = { state: { bots: [], botTurns: [], routines: [], todos: [] }, persist() {}, ...extra };
   const b = createBots({

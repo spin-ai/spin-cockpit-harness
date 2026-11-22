@@ -21,7 +21,11 @@ const suites = [
   "./thread.test.mjs",    // 持续 chat：镜像 / 迁移
   "./resume.test.mjs",    // 半截落盘 / 重启收尾
   "./memory.test.mjs",    // 真实记忆库接线
-  "./tools.test.mjs",     // 只读工具循环 / 职责卡 / 写操作闸门
+  "./tools.test.mjs",     // 工具表 / 职责卡 / 工具循环上限与循环保护
+  "./workspace.test.mjs", // 工作区只读：路径 jail / 二进制 / 搜索跳过依赖
+  "./context.test.mjs",   // 上下文预算 / 长对话压缩 / 温度与工具签名
+  "./tidy.test.mjs",      // 记忆整理：80% 才给候选 / 只归档可恢复
+  "./templates.test.mjs",  // 内置模板：人格 / 职责 / 日程成品可用
 ];
 
 for (const file of suites) await import(file);

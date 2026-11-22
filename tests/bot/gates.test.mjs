@@ -105,3 +105,22 @@ await test("force 只放行静音时段与最小间隔，不放过配额", () =>
   const full = [0, 1, 2].map((i) => ({ botId: "b1", decision: "answered", createdAt: quietNow - i * MIN }));
   assert.equal(gatesFor(bot(), { now: quietNow, turns: full, force: true }).decision, "blocked", "配额满仍然 blocked");
 });
+
+test("候选：失败的运行也算事件，但同一任务不重复提", () => {
+  const now = at(12).getTime();
+  const state = {
+    todos: [{ id: "t1", key: "T-1", title: "构建", status: "todo", confirmed: true, lastRunFailed: true }],
+    runs: [
+      { id: "r1", todoId: "t1", status: "failed", endedAt: now - 5 * MIN },
+      { id: "r2", todoId: "t2", status: "failed", endedAt: now - 5 * MIN },
+      { id: "r3", todoId: "t3", status: "failed", endedAt: now - 3 * HOUR },
+    ],
+  };
+  const out = collectCandidates(state, { now });
+  assert.deepEqual(out.map((c) => c.kind).sort(), ["run.failed", "todo.failed"]);
+  assert.equal(out.some((c) => c.runId === "r1"), false, "todo 已经有失败候选，不再重复");
+  assert.equal(out.some((c) => c.runId === "r2"), true);
+  assert.equal(out.some((c) => c.runId === "r3"), false, "超过 2 小时的失败不再提醒");
+  const recent = [{ botId: "b1", runId: "r2", createdAt: now - 5 * MIN }];
+  assert.equal(collectCandidates(state, { now, recentTurns: recent, botId: "b1" }).some((c) => c.runId === "r2"), false, "已经汇报过的 run 不重复提");
+});

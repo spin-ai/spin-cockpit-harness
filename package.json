@@ -50,7 +50,9 @@
     "db:bench": "node scripts/db-bench.mjs",
     "preview:persona": "node scripts/preview-persona.mjs",
     "preview:bot": "node scripts/preview-bot.mjs",
-    "preview:memory": "node scripts/preview-memory.mjs"
+    "preview:memory": "node scripts/preview-memory.mjs",
+    "probe:ark-tools": "node scripts/probe-ark-tools.mjs",
+    "probe:bot": "node scripts/probe-bot-answers.mjs"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.76.0",

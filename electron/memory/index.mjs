@@ -777,7 +777,7 @@ export function createMemory({ dir }) {
       return rows("SELECT * FROM entries WHERE status='archived' OR invalid_at IS NOT NULL ORDER BY COALESCE(invalid_at, updated_at) DESC LIMIT ?", [limit]).map(entryRow);
     },
     /** 搜条目（标题 + 正文）。中文用 bigram 切分后 AND 匹配，整串 LIKE 查不到两字词 */
-    entrySearch({ query, limit = 30 } = {}) {
+    entrySearch({ query, limit = 30, owner = "" } = {}) {
       const q = String(query || "").trim();
       if (!q) return [];
       const toks = [...new Set(bigramTokens(q, { maxTokens: 8 }))];
@@ -787,8 +787,11 @@ export function createMemory({ dir }) {
       const params = toks.length
         ? toks.flatMap((t) => [`%${t}%`, `%${t}%`])
         : [`%${q}%`, `%${q}%`];
-      const sql = `SELECT * FROM entries WHERE status='active' AND invalid_at IS NULL AND ${where} ORDER BY updated_at DESC LIMIT ?`;
-      return rows(sql, [...params, limit]).map(entryRow);
+      // owner：和 inject 同一条口径（空 = 全库；传了 = 共享 + 自己的）
+      const own = String(owner || "");
+      const ownSql = own ? " AND (COALESCE(owner,'')='' OR owner=?)" : "";
+      const sql = `SELECT * FROM entries WHERE status='active' AND invalid_at IS NULL AND ${where}${ownSql} ORDER BY updated_at DESC LIMIT ?`;
+      return rows(sql, [...params, ...(own ? [own] : []), limit]).map(entryRow);
     },
     /**
      * 晋升高置信 note：写条目，并把 note 标 verified。
@@ -909,10 +912,13 @@ export function createMemory({ dir }) {
     },
 
     // ── 注入：按分数排序后自然截止，超预算做减法 ─────────────────
-    inject({ maxChars, runId = "", owner = "" } = {}) {
+    inject({ maxChars, runId = "", owner = "", query = "" } = {}) {
       const stored = Number(metaGet("injectBudget")) || 12000;
       const budget = Math.max(800, Number(maxChars) || stored);
       const now = Date.now();
+      // query：本轮问题相关的条目先上浮（不改变「谁被注入」的门槛，只改排序）
+      const q = String(query || "").trim().toLowerCase();
+      const hit = (text) => Boolean(q) && String(text || "").toLowerCase().includes(q);
       // owner：空 = 全库共享（默认）；传了 owner（如 bot:<id>）就只看「共享 + 自己的」
       const own = String(owner || "");
       const ownSql = own ? " AND (COALESCE(owner,'')='' OR owner=?)" : "";
@@ -923,7 +929,10 @@ export function createMemory({ dir }) {
         own ? [own] : [],
       )
         .map(entryRow)
-        .map((e) => ({ ...e, score: scoreEntry(e, now) }))
+        .map((e) => {
+          const matched = hit(e.title) || hit(e.body);
+          return { ...e, matched, score: scoreEntry(e, now) + (matched ? 4 : 0) };
+        })
         .sort((a, b) => b.score - a.score || (a.sortOrder ?? 1e12) - (b.sortOrder ?? 1e12) || b.updatedAt - a.updatedAt);
 
       // note 只取未过期的：verified 全取（有上限），new 只取高置信度
@@ -933,7 +942,10 @@ export function createMemory({ dir }) {
       )
         .map(noteRow)
         .filter((n) => n.status === "verified" || n.confidence >= 0.6)
-        .map((n) => ({ ...n, score: scoreNote(n, now) }))
+        .map((n) => {
+          const matched = hit(n.body);
+          return { ...n, matched, score: scoreNote(n, now) + (matched ? 3 : 0) };
+        })
         .sort((a, b) => b.score - a.score || b.updatedAt - a.updatedAt);
       const pickedNotes = [
         ...freshNotes.filter((n) => n.status === "verified").slice(0, INJECT.verifiedNotes),
@@ -941,8 +953,8 @@ export function createMemory({ dir }) {
       ];
 
       const items = [];
-      const push = (ref, layer, title, chars, included, reason, score) => items.push({
-        id: ref.id, layer, title, chars, included, reason, score: Math.round((score || 0) * 10) / 10,
+      const push = (ref, layer, title, chars, included, reason, score, extra = {}) => items.push({
+        id: ref.id, layer, title, chars, included, reason, score: Math.round((score || 0) * 10) / 10, ...extra,
       });
 
       const head = "## 记忆（L4 目录 / 结论）";
@@ -963,7 +975,7 @@ export function createMemory({ dir }) {
         notesOut += line;
         notesUsed += line.length;
         push(n, "note", clip(n.body, 24), line.length, true,
-          `${n.status === "verified" ? "已验证观察" : `置信度 ${n.confidence.toFixed(2)}，标注未验证后注入`} · score ${n.score.toFixed(1)}`,
+          `${n.status === "verified" ? "已验证观察" : `置信度 ${n.confidence.toFixed(2)}，标注未验证后注入`} · score ${n.score.toFixed(1)}${n.matched ? " · 命中本轮问题" : ""}`,
           n.score);
       }
 
@@ -988,13 +1000,15 @@ export function createMemory({ dir }) {
         if (used + line.length > entryBudget) {
           dropped += 1;
           push(e, e.layer, e.title, line.length, false,
-            `超出预算（条目可用 ${entryBudget} 字符，已用 ${used}；按 score ${e.score.toFixed(1)} 排序）`, e.score);
+            `超出预算（条目可用 ${entryBudget} 字符，已用 ${used}；按 score ${e.score.toFixed(1)} 排序）`, e.score,
+          { pinned: Boolean(e.pinned), updatedAt: e.updatedAt });
           continue;
         }
         out += line;
         used += line.length;
         push(e, e.layer, e.title, line.length, true,
-          `score ${e.score.toFixed(1)}${e.pinned ? " · 已置顶" : ""} · 按分数自然截止`, e.score);
+          `score ${e.score.toFixed(1)}${e.matched ? " · 命中本轮问题" : ""}${e.pinned ? " · 已置顶" : ""} · 按分数自然截止`, e.score,
+          { pinned: Boolean(e.pinned), updatedAt: e.updatedAt });
       }
       const includedEntries = items.filter((i) => i.included && i.layer !== "note").length;
       const includedNotes = items.filter((i) => i.included && i.layer === "note").length;
