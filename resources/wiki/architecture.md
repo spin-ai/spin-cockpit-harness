@@ -34,13 +34,32 @@
 | 表 | 内容 |
 |---|---|
 | `todos` | 任务、状态、项目、cwd、确认标记；Mission 复用 `kind` / `mission_state` |
-| `runs` | 每次执行、状态、耗时、worktree、错误分类 |
+| `runs` | 每次执行、状态、耗时、worktree、错误分类；`thread_id` 记消息宿主，`todo_id` 可为空（探索 / 纯聊天） |
 | `threads` | Chat 会话；消息宿主 |
+| `terminals` | 一条 pty 的生命周期（cwd / 状态 / exitCode / 输出尾部）；可承载 run，也可只是你的 shell |
 | `messages` | user / agent / tool / system，含投递回执与元素上下文 |
 | `delegations` / `mission_plans` | Mission 的委派合同与计划 revision |
 | `projects` / `hosts` / `agents` | 项目、主机、执行体 |
 | `settings` | 用户设置（主题、模型、dsh 路径、并发等） |
 | `events` | 审计事件 |
+
+### 六类对象各管什么
+
+```text
+Project        归属；projectId 与执行 cwd 分离
+├─ Todo       要验收的工作
+├─ Run        受管执行；从任务派活先有 Todo，探索 / 纯聊天可后挂
+├─ Thread     消息宿主；可纯聊天，也可后转任务
+└─ Terminal   一条 pty；可承载 Run，也可以只是手动 shell
+Tab / Pane     视图；不拥有进程、执行或任务的生命周期
+```
+
+四条硬约束：
+
+1. **从任务派活必须先有 Todo**；探索 Run / 纯聊天 Run 允许 `todoId = null`，之后关联时保留 runId、启动时间与输出。
+2. **手动终端不产生 Run**。手敲 `pi` 只记 Terminal；关联任务只改归属，不补一条假执行。
+3. **关闭视图 ≠ 结束进程**。关标签只 detach；停止 Run / 结束进程是另一个显式动作。
+4. **Run 的执行载体决定原生面**：ACP 只有对话面，pty 的原生面是终端（Chat 里的尾部摘要必须标 `pty_tail`）。
 
 ![数据模型](./wiki/data-model.png)
 

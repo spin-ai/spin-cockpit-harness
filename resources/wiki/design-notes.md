@@ -50,14 +50,19 @@ UI 最容易产生“进度感”，也最容易返工。Chat 曾因 thread 模�
 | 14 | 带 command 的标签重启 | 重复创建 Agent 记录；只有纯 shell 可重启 |
 | 15 | 重试新建 worktree | 文件预览跟随 run worktree，终端侧仍待补齐 |
 | 16 | pty 以 120×32 启动但 xterm 实际尺寸不同 | 创建前 `fit()`，把真实 cols/rows 传给 pty；attach 后再对齐 |
+| 17 | 把「关标签」当成「结束运行」 | 关视图只能 detach，pty 继续、输出回 buffer；杀进程走显式「结束进程…」，否则用户不敢关标签 |
+| 18 | 终端记录在 `broadcast` 之后才写 | 渲染层 `state.terminals` 永远缺新终端，「后台与最近」永不出现；**先落库再广播** |
+| 19 | 手敲的 `pi` 被“补”一条 running run | 不知道真实完成边界的进程不应变成受管执行；手动终端只记 Terminal，关联只改归属 |
+| 20 | 纯聊天为了守「run 必须挂任务」造隐藏 Todo | 改为无 Todo 的对话 run（`thread_id` 宿主），转任务时再挂上去 |
 
 ## 明确不做 / 还没做
 
 | 项 | 现状 |
 |---|---|
-| 任务与 Terminal 真正绑定 | 终端独立于 ACP run |
+| 任务与 Terminal 强绑定 | 任务可关联终端，但手动终端与受管 Run 仍是两种事实，不互相冒充 |
 | 终端内 Agent 完成后由 harness 捕获 | 需要 shell 集成 / 主动回写协议 |
 | 完成回写的强约束 | 当前以 ACP prompt 正常返回为完成 |
+| 应用退出后的 pty 守护 | 未做；重启会把残留终端标「已中断」，不假装续活 |
 | 全局自由对话 | 不绑任务的常驻 ACP 会话 |
 | Agent 主动提问 → 等待输入 | 目前只有 ACP 审批进入 `waiting_input` |
 | 非 dsh 的 Chat 执行适配器 | 终端可用，Chat 不可 |

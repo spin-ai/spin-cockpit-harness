@@ -29,10 +29,10 @@ export const WIKI_GROUPS = ["开始", "系统", "扩展", "发布"] as const;
 
 export const WIKI_PAGES: WikiPage[] = [
   { id: "home", title: "项目介绍", group: "开始", summary: "Cockpit Harness 是什么、解决什么问题，以及一条任务如何走完。", body: home },
-  { id: "workflow", title: "工作流", group: "开始", summary: "Chat 分派、run 生命周期、纠偏、worktree 与确认。", body: workflow },
+  { id: "workflow", title: "工作流", group: "开始", summary: "Chat 派活 / 纯聊天、五种来源的确认闸、run 生命周期、纠偏、worktree 与确认。", body: workflow },
   { id: "gallery", title: "界面与流程", group: "开始", summary: "工作台、ACP、调度、Mission 与打包的可视化流程图。", body: gallery },
   { id: "llm-wiki", title: "LLM Wiki", group: "开始", summary: "Source → Page → Citation → Review；Agent 可检索、人可审核的知识库。", body: llmWiki },
-  { id: "architecture", title: "架构", group: "系统", summary: "Electron 主进程、React 渲染层、SQLite、ACP 与 pty 的边界。", body: architecture },
+  { id: "architecture", title: "架构", group: "系统", summary: "四层边界、六类对象（Project / Todo / Run / Thread / Terminal / Tab）与四条硬约束。", body: architecture },
   { id: "agents", title: "Agent 与执行适配器", group: "系统", summary: "哪些 CLI 能从 Chat 派活，dsh ACP 如何驱动一次 run。", body: agents },
   { id: "super-agent", title: "Super Agent / Mission", group: "系统", summary: "Mission、Plan、Delegation、Supervisor 与 MCP 编排。", body: superAgent },
   { id: "office", title: "场景与办公室", group: "系统", summary: "真实运行状态的空间投影：状态映射、三套舞台、动效与明确未做。", body: office },
@@ -41,7 +41,7 @@ export const WIKI_PAGES: WikiPage[] = [
   { id: "tech", title: "五个技术难点", group: "系统", summary: "解析 / 编排 / 整理 / 记忆 / 画像：难在哪、做到什么算做到、现在到哪了。", body: tech },
   { id: "design-notes", title: "设计取舍与踩坑", group: "系统", summary: "关键决策、已踩的坑，以及明确没做的事。", body: designNotes },
   { id: "persona", title: "人物画像与记忆语义", group: "系统", summary: "四种「忘」、可观测特征与事实的分界、建模怎么跑才值。", body: persona },
-  { id: "terminal", title: "终端与预览", group: "系统", summary: "真实 pty、标签拆分、预览和元素拾取上下文。", body: terminal },
+  { id: "terminal", title: "终端与预览", group: "系统", summary: "真实 pty、关标签不等于杀进程、后台与最近、受管执行 vs 手动终端、预览与元素拾取。", body: terminal },
   { id: "themes", title: "主题系统", group: "扩展", summary: "13 套主题、深浅色结构与终端 ANSI 配色。", body: themes },
   { id: "plugins", title: "插件与 LLM Wiki", group: "扩展", summary: "插件宿主、Notes 原生 Wiki、MCP 工具与编辑器。", body: plugins },
   { id: "build", title: "构建与发布", group: "发布", summary: "开发、打包、内置 dsh、跨平台与 CI。", body: build },
