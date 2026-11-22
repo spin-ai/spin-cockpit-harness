@@ -860,6 +860,11 @@ function seed() {
   for (const t of state.threads) {
     if (!t.kind) t.kind = t.todoId && state.todos.find((x) => x.id === t.todoId)?.kind === "mission" ? "mission" : "chat";
   }
+  // pty 随上次应用退出消失：把还挂着 running 的终端记录标成 detached，
+  // 避免重启后「后台与最近」里出现永远可恢复的假活终端。
+  for (const t of state.terminals || []) {
+    if (t.status === "running") t.status = "detached";
+  }
   try {
     const cur = store.state.settings?.dshEnv;
     if (cur && !String(cur).startsWith("enc:")) store.state.settings.dshEnv = encSecret(cur);
@@ -6272,43 +6277,64 @@ const actions = {
     store.addMessage(threadForTodo(todo).id, null, "system", "system", `已撤销确认 · ${todo.key}`);
     store.addEvent(todo.kind === "mission" ? "mission.unconfirmed" : "todo.unconfirmed", `${todo.kind === "mission" ? "mission" : "todo"}.unconfirmed ${todo.key}`);
   },
-  attachTerminalToTask: ({ terminalId, todoId, keepCwd = true, branch: switchBranch = null } = {}) => {
-    const info = terminalUrls.get(terminalId);
-    if (!info) throw new Error("终端不存在或已关闭");
-    if (info.taskId) throw new Error("这个终端已经接入任务");
+  /**
+   * 探索 / 纯聊天的后挂：把一次已存在的 run 关联到任务。
+   * 不改 runId / startedAt / terminalId / 结果；Todo 状态按 run 真实状态投影。
+   */
+  attachRunToTodo: ({ runId, todoId } = {}) => {
+    const run = store.state.runs.find((r) => r.id === runId);
+    if (!run) throw new Error("run not found");
     const todo = store.state.todos.find((t) => t.id === todoId);
     if (!todo) throw new Error("todo not found");
-    const agent = info.agentId ? store.state.agents.find((a) => a.id === info.agentId) : null;
-    if (!agent) throw new Error("这个终端不是 Agent 终端；请先用「＋ Agent」启动");
-    // 手工终端接入：keepCwd=false 时切到该任务最近的 worktree（只影响后续 run，不改历史 run）
-    let adoptCwd = info.cwd;
-    let adoptBranch = info.branch || null;
-    if (!keepCwd) {
-      const wanted = switchBranch || "";
-      const candidate = [...store.state.runs].reverse().find((r) => r.todoId === todo.id && r.cwd && (!wanted || r.branch === wanted));
-      if (candidate && fsSync.existsSync(candidate.cwd)) { adoptCwd = candidate.cwd; adoptBranch = candidate.branch || adoptBranch; }
-    }
-    const run = {
-      id: store.nextId("r"), todoId: todo.id, agentId: agent.id, status: "running",
-      trigger: "terminal", kind: "worker", delegationId: null,
-      startedAt: Date.now(), endedAt: null, cost: 0, tokens: null, error: null, parentRunId: null,
-      cwd: adoptCwd, branch: adoptBranch, hostId: agent.hostId || null, createdAt: Date.now(),
-      tokensIn: null, tokensOut: null, usageSource: "unknown", errorClass: null, exitCode: null,
-      queueWaitMs: 0, durationMs: null, queueReason: null, terminalId, runtime: "terminal",
-    };
-    store.state.runs.push(run);
-    info.runId = run.id;
-    info.taskId = todo.id;
-    info.cwd = adoptCwd;
-    info.branch = adoptBranch;
-    syncTerminalRecord(terminalId, { todoId: todo.id, runId: run.id, status: "running", endedAt: null });
-    todo.status = "in_progress";
-    todo.agentId = agent.id;
-    todo.lastRunFailed = false;
-    todo.updatedAt = Date.now();
-    store.addEvent("run.started", `run.started terminal-attach todo=${todo.key} agent=${agent.name}`);
+    if (run.todoId && run.todoId !== todo.id) throw new Error("这个 run 已关联了任务；请先解除关联再改绑");
+    if (run.todoId === todo.id) return run;
+    run.todoId = todo.id;
+    const terminal = (store.state.terminals || []).find((t) => t.id === run.terminalId);
+    if (terminal) terminal.todoId = todo.id;
+    const info = terminalUrls.get(run.terminalId || "");
+    if (info) info.taskId = todo.id;
+    todo.agentId = run.agentId;
+    todo.lastRunFailed = run.status === "failed";
+    if (["running", "waiting_input"].includes(run.status)) todo.status = "in_progress";
+    else if (run.status === "completed") todo.status = "in_review";
+    else todo.status = "todo";
+    todo.updatedAt = now();
+    const agent = store.state.agents.find((a) => a.id === run.agentId);
+    store.addMessage(threadForTodo(todo).id, run.id, "system", "system",
+      `已关联任务 · run ${run.id}${agent ? ` · ${agent.name}` : ""}`);
+    store.addEvent("run.attached", `run.attached ${run.id} → ${todo.key}`);
     broadcast();
     return run;
+  },
+  /**
+   * 手动终端（自己敲 shell / pi）挂到任务：只改导航归属；不创建 run、不改任务状态。
+   * 「这是受管执行还是人手跑」永远诚实：受管看 runs，手动看关联终端。
+   */
+  linkTerminalToTodo: ({ terminalId, todoId } = {}) => {
+    const info = terminalUrls.get(terminalId);
+    if (!info) throw new Error("终端不存在或已关闭");
+    const todo = store.state.todos.find((t) => t.id === todoId);
+    if (!todo) throw new Error("todo not found");
+    info.taskId = todo.id;
+    syncTerminalRecord(terminalId, { todoId: todo.id });
+    store.addEvent("terminal.linked", `terminal.linked ${terminalId} → ${todo.key}`);
+    broadcast();
+    return store.state.terminals.find((t) => t.id === terminalId) || null;
+  },
+  /**
+   * 兼容入口：有未关联的探索 run 就原样关联；没有 run（手动终端）就只改归属。
+   * 不再补建 running run —— 那会把早已手动跑着的进程包装成受管执行（startedAt / 结算都不可信）。
+   */
+  attachTerminalToTask: ({ terminalId, todoId } = {}) => {
+    const info = terminalUrls.get(terminalId);
+    if (!info) throw new Error("终端不存在或已关闭");
+    const todo = store.state.todos.find((t) => t.id === todoId);
+    if (!todo) throw new Error("todo not found");
+    if (info.runId) {
+      const run = store.state.runs.find((r) => r.id === info.runId);
+      if (run && !run.todoId) return actions.attachRunToTodo({ runId: run.id, todoId: todo.id });
+    }
+    return actions.linkTerminalToTodo({ terminalId, todoId });
   },
   run: ({ id, agentId }) => {
     const todo = store.state.todos.find((t) => t.id === id);
@@ -7093,7 +7119,7 @@ function settleTerminalRun(info, status) {
   broadcast();
 }
 
-ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, agentId, branch, initialInput, cols, rows } = {}) => {
+ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, agentId, branch, initialInput, cols, rows, explore } = {}) => {
   const id = `term-${Date.now().toString(36)}`;
   const settings = store.state.settings || {};
   const shell = settings.shellPath || (process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/zsh");
@@ -7135,23 +7161,27 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
       store.state.agents.push(agent);
       store.addEvent("agent.started", `agent.started ${agent.name} @${agent.alias}`);
     }
-    // 绑定到选中的任务：TODO 列表才能显示「运行中」和计时，项目面板的并发/运行数也才有来源。
+    // 绑定到选中的任务：TODO 列表才能显示「运行中」和计时。
+    // explore=true（标签栏「打开 Agent 终端」）先不挂任务：创建无 todoId 的探索 run，
+    // 之后用 attachRunToTodo 关联（保留 runId / startedAt / 输出，不重跑）。
     const todo = todoId ? store.state.todos.find((t) => t.id === todoId) : null;
-    if (todo) {
+    if (todo || explore) {
       run = {
-        id: store.nextId("r"), todoId: todo.id, agentId: agent.id, status: "running",
-        trigger: "terminal", kind: "worker", delegationId: null,
+        id: store.nextId("r"), todoId: todo?.id || null, agentId: agent.id, status: "running",
+        trigger: todo ? "terminal" : "exploration", kind: "worker", delegationId: null,
         startedAt: Date.now(), endedAt: null, cost: 0, tokens: null, error: null, parentRunId: null,
         cwd: cwdResolved, branch: branch || null, hostId: agent.hostId || null, createdAt: Date.now(),
         tokensIn: null, tokensOut: null, usageSource: "unknown", errorClass: null, exitCode: null,
         queueWaitMs: 0, durationMs: null, queueReason: null, terminalId: id, runtime: "terminal",
       };
       store.state.runs.push(run);
-      todo.status = "in_progress";
-      todo.agentId = agent.id;
-      todo.lastRunFailed = false;
-      todo.updatedAt = Date.now();
-      store.addEvent("run.started", `run.started terminal todo=${todo.key} agent=${agent.name}`);
+      if (todo) {
+        todo.status = "in_progress";
+        todo.agentId = agent.id;
+        todo.lastRunFailed = false;
+        todo.updatedAt = Date.now();
+      }
+      store.addEvent("run.started", `run.started terminal${todo ? ` todo=${todo.key}` : " · 探索"} agent=${agent.name}`);
     }
     broadcast();
   }
@@ -7230,6 +7260,14 @@ ipcMain.handle("terminal:attach", (_e, { id } = {}) => {
   info.buffer = "";
   info.attached = true;
   return { data, url: info.url, exited: info.exited, exitCode: info.exitCode };
+});
+
+// 关闭视图 = detach：pty 继续跑，输出攒回 buffer；之后可以重新 attach（关标签 ≠ 结束进程）。
+ipcMain.handle("terminal:detach", (_e, { id } = {}) => {
+  const info = terminalUrls.get(id);
+  if (!info) return false;
+  info.attached = false;
+  return true;
 });
 
 ipcMain.handle("terminal:input", (_e, { id, data }) => {

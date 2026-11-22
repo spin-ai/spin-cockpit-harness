@@ -188,7 +188,7 @@ export interface RuntimeView {
   mode: "acp" | "terminal"; available: boolean; caps: string[]; agents: number;
 }
 export interface Run {
-  id: string; todoId: string; agentId: string; status: string; trigger: string;
+  id: string; todoId: string | null; agentId: string; status: string; trigger: string;
   startedAt: number | null; endedAt: number | null; cost: number;
   /** null = 执行器未上报，界面显示「未上报」而不是 0（见 docs/arch/ARCH-hosts-stats.md） */
   tokens: number | null;

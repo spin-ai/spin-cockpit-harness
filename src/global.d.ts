@@ -7,12 +7,16 @@ declare global {
     harness: {
       getState(): Promise<State>;
       action(type: string, payload?: unknown): Promise<{ ok: boolean; result?: unknown }>;
+      attachRunToTodo(opts: { runId: string; todoId: string }): Promise<{ ok: boolean; result?: unknown }>;
+      linkTerminalToTodo(opts: { terminalId: string; todoId: string }): Promise<{ ok: boolean; result?: unknown }>;
       onState(cb: (s: State) => void): () => void;
       chooseProject(): Promise<string | null>;
       switchProject(id: string): Promise<string>;
       pickProjectFolder(): Promise<string | null>;
-      createTerminal(cwd: string, opts?: { command?: string; projectId?: string; todoId?: string; agentId?: string; branch?: string | null; initialInput?: string; cols?: number; rows?: number }): Promise<{ id: string; cwd: string; agent?: unknown; run?: unknown }>;
+      createTerminal(cwd: string, opts?: { command?: string; projectId?: string; todoId?: string; agentId?: string; branch?: string | null; initialInput?: string; cols?: number; rows?: number; explore?: boolean }): Promise<{ id: string; cwd: string; agent?: unknown; run?: unknown }>;
       attachTerminal(id: string): Promise<{ data: string; url?: string | null; exited?: boolean; exitCode?: number | null; missing?: boolean }>;
+      /** 关闭视图：pty 继续跑，输出攒回主进程 buffer，之后可重新 attach */
+      detachTerminal(id: string): Promise<boolean>;
       terminalInput(id: string, data: string): Promise<void>;
       closeTerminal(id: string): Promise<void>;
       terminalResize(id: string, cols: number, rows: number): Promise<void>;

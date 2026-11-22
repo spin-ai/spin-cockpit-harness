@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("harness", {
   pickProjectFolder: () => ipcRenderer.invoke("harness:pickProjectFolder"),
   createTerminal: (cwd, opts = {}) => ipcRenderer.invoke("terminal:create", { cwd, ...opts }),
   attachTerminal: (id) => ipcRenderer.invoke("terminal:attach", { id }),
+  detachTerminal: (id) => ipcRenderer.invoke("terminal:detach", { id }),
   terminalInput: (id, data) => ipcRenderer.invoke("terminal:input", { id, data }),
   closeTerminal: (id) => ipcRenderer.invoke("terminal:close", { id }),
   terminalResize: (id, cols, rows) => ipcRenderer.invoke("terminal:resize", { id, cols, rows }),

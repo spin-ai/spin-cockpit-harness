@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { State, Todo, TodoStatus } from "../types";
-import { STATUS, activeRun, agentOf, duration, lastRun, timeAgo } from "../ui";
+import { STATUS, activeRun, agentOf, duration, lastRun } from "../ui";
 import { Splitter, useStoredSize } from "./Splitter";
 import {
   ChevronDownIcon, ChevronRightIcon, EllipsisIcon, FolderPlusIcon,
@@ -10,13 +10,10 @@ import {
 import { ListContextMenu } from "./ListContextMenu";
 import { RowMenu } from "./RowMenu";
 import { requestTerminalAt } from "../terminal-events";
-import { requestTerminalAdopt } from "../terminal-events";
 import { assignmentsForBot } from "../selectors/assignments";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 type Filter = "all" | "needs" | "active" | "review" | "confirmed";
-
-const basename = (value: string) => String(value || "").split("/").filter(Boolean).pop() || "终端";
 
 const GROUPS: { id: string; label: string; statuses: TodoStatus[] }[] = [
   { id: "todo", label: "待执行", statuses: ["todo"] },
@@ -94,10 +91,10 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
 
   /** 项目右键菜单：对话入口只留一条 —— 把项目交给机器人 */
   /** 项目面板的视图设置：分组 / 排序 / 显示 / 筛选（照 ORCA 的侧栏设置浮层） */
-  type ProjectView = { group: "project" | "flat"; sort: "manual" | "recent" | "name"; showTerminals: boolean; hideNoTask: boolean; hideNoTerminal: boolean };
+  type ProjectView = { sort: "manual" | "recent" | "name"; hideNoTask: boolean };
   const [projectView, setProjectView] = useState<ProjectView>(() => {
     // v2：默认「固定顺序」；旧 v1 的 recent 不再沿用（点一下项目整列就重排，体验很糟）
-    const base: ProjectView = { group: "project", sort: "manual", showTerminals: true, hideNoTask: false, hideNoTerminal: false };
+    const base: ProjectView = { sort: "manual", hideNoTask: false };
     try {
       const saved = JSON.parse(localStorage.getItem("cmh.projects.view.v2") || "{}") as Partial<ProjectView>;
       return { ...base, ...saved };
@@ -119,33 +116,14 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
     };
   }, [projectViewMenu]);
 
-  /** 项目树：每个项目可展开看到它的终端（照 ORCA 的 workspace → sessions） */
-  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
   const visibleProjects = state.projects
     .filter((p) => !projectView.hideNoTask || (projectCounts[p.id] ?? 0) > 0)
-    .filter((p) => !projectView.hideNoTerminal || sessionsOf(p.id).length > 0)
     .slice()
     .sort((a, b) => {
       if (projectView.sort === "name") return a.name.localeCompare(b.name);
       if (projectView.sort === "recent") return (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0) || a.name.localeCompare(b.name);
       return 0; // manual：沿用 state.projects 的顺序，点谁都不动
     });
-  const flatSessions = (state.terminals || [])
-    .filter((t) => t.status === "running")
-    .map((term) => ({ term, project: state.projects.find((p) => p.id === term.projectId) || null }))
-    .filter((row) => Boolean(row.project))
-    .filter((row) => !projectView.hideNoTask || (projectCounts[row.project!.id] ?? 0) > 0)
-    .slice(0, 40);
-
-  const sessionsOf = (projectId: string) => (state.terminals || [])
-    .filter((t) => t.projectId === projectId && t.status === "running")
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-    .slice(0, 8);
-
-  /** 未绑任务的运行中终端：跟着项目走，不把别的项目的 shell 列进来 */
-  const looseTerminals = (state.terminals || []).filter((t) =>
-    t.status === "running" && !t.todoId && (!t.projectId || t.projectId === state.activeProjectId),
-  );
   const [projectMenu, setProjectMenu] = useState<{ at: { x: number; y: number }; projectId: string } | null>(null);
   const menuProject = projectMenu ? state.projects.find((p) => p.id === projectMenu.projectId) ?? null : null;
   /** 交给谁：优先主管档机器人，其次第一个可用的；纯只读档也能"聊"，只是不能起任务 */
@@ -538,18 +516,6 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
             </section>
           );
         })}
-        {layout === "list" && looseTerminals.length > 0 && (
-          <section className="todo-group">
-            <div className="todo-group-head active"><span>终端 Agent（未绑任务）</span><span>{looseTerminals.length}</span></div>
-            {looseTerminals.map((term) => (
-              <button key={term.id} className="task-row task-terminal-live" onClick={() => requestTerminalAdopt({ terminalId: term.id, cwd: term.cwd, title: term.title })} title={term.cwd}>
-                <span className="row between gap6"><span className="mono tiny faint">{term.kind === "agent" ? "Agent" : "Shell"}</span><span className="pill status running">运行中</span></span>
-                <span className="task-row-title ellipsis">{term.title || term.cwd}</span>
-                <span className="tiny muted ellipsis">{agentOf(state.agents, term.agentId)?.name || "未绑定 Agent"} · {timeAgo(term.createdAt, now)}前</span>
-              </button>
-            ))}
-          </section>
-        )}
         {layout === "list" && visible.length === 0 && !creating && (
           <div className="inline-empty">
             {query.trim() ? "没有匹配的任务" : (
@@ -699,38 +665,11 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
           </button>
         </div>
         {!projectCollapsed && <div className="project-panel-list">
-          {projectView.group === "flat" && flatSessions.map(({ term, project }) => project && (
-            <button
-              key={term.id}
-              className="project-terminal flat"
-              title={term.cwd}
-              onClick={() => {
-                if (project.id !== state.activeProjectId) onSwitchProject(project.id);
-                requestTerminalAdopt({ terminalId: term.id, cwd: term.cwd, title: term.title, taskId: term.todoId || undefined });
-              }}
-            >
-              <span className={`dot ${term.status === "running" ? "green" : "slate"}`} />
-              <span className="ellipsis">{term.title || basename(term.cwd)}</span>
-              <span className="project-terminal-project">{project.name}</span>
-            </button>
-          ))}
-          {projectView.group === "flat" && flatSessions.length === 0 && <div className="inline-empty">没有运行中的终端</div>}
-          {projectView.group === "project" && visibleProjects.map((p) => {
-            const sessions = sessionsOf(p.id);
-            const expanded = expandedProjects[p.id] === true;
+          {visibleProjects.map((p) => {
             const isCurrent = p.id === state.activeProjectId;
             return (
               <div key={p.id} className="project-node">
                 <div className="project-node-row">
-                  <button
-                    className="tree-chev project-chev"
-                    aria-expanded={expanded}
-                    title={expanded ? "收起终端列表" : "展开终端列表"}
-                    aria-label={expanded ? `收起 ${p.name} 的终端` : `展开 ${p.name} 的终端`}
-                    onClick={() => setExpandedProjects((map) => ({ ...map, [p.id]: !expanded }))}
-                  >
-                    <ChevronRightIcon size={11} className={expanded ? "open" : ""} />
-                  </button>
                   <button
                     className={`project-compact ${isCurrent ? "on" : ""}`}
                     onClick={() => onSwitchProject(p.id)}
@@ -762,25 +701,6 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
                     >⋯</button>
                   </span>
                 </div>
-                {expanded && projectView.showTerminals && (
-                  <div className="project-terminals">
-                    {sessions.map((term) => (
-                      <button
-                        key={term.id}
-                        className="project-terminal"
-                        title={term.cwd}
-                        onClick={() => {
-                          if (!isCurrent) onSwitchProject(p.id);
-                          requestTerminalAdopt({ terminalId: term.id, cwd: term.cwd, title: term.title, taskId: term.todoId || undefined });
-                        }}
-                      >
-                        <span className={`dot ${term.status === "running" ? "green" : "slate"}`} />
-                        <span className="ellipsis">{term.title || basename(term.cwd)}</span>
-                        {term.kind === "agent" && <span className="project-terminal-tag">Agent</span>}
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
             );
           })}
@@ -825,13 +745,6 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
             <div className="pvp-row static"><span>项目</span><em>{visibleProjects.length} / {state.projects.length}</em><ChevronRightIcon size={12} /></div>
           </div>
           <div className="pvp-section">
-            <div className="pvp-label">分组依据</div>
-            <div className="pvp-seg">
-              <button className={projectView.group === "project" ? "on" : ""} aria-pressed={projectView.group === "project"} onClick={() => setProjectView((v) => ({ ...v, group: "project" }))}>项目</button>
-              <button className={projectView.group === "flat" ? "on" : ""} aria-pressed={projectView.group === "flat"} onClick={() => setProjectView((v) => ({ ...v, group: "flat" }))}>平铺</button>
-            </div>
-          </div>
-          <div className="pvp-section">
             <div className="pvp-label">排序方式</div>
             <div className="pvp-seg">
               <button className={projectView.sort === "manual" ? "on" : ""} aria-pressed={projectView.sort === "manual"} onClick={() => setProjectView((v) => ({ ...v, sort: "manual" }))}>固定</button>
@@ -840,18 +753,9 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
             </div>
           </div>
           <div className="pvp-section">
-            <div className="pvp-label">显示</div>
-            <button className="pvp-toggle" role="switch" aria-checked={projectView.showTerminals} onClick={() => setProjectView((v) => ({ ...v, showTerminals: !v.showTerminals }))}>
-              <span>显示终端列表</span><span className={`switch ${projectView.showTerminals ? "on" : ""}`}><i /></span>
-            </button>
-          </div>
-          <div className="pvp-section">
             <div className="pvp-label">筛选条件</div>
             <button className="pvp-toggle" role="switch" aria-checked={projectView.hideNoTask} onClick={() => setProjectView((v) => ({ ...v, hideNoTask: !v.hideNoTask }))}>
               <span>隐藏没有任务的项目</span><span className={`switch ${projectView.hideNoTask ? "on" : ""}`}><i /></span>
-            </button>
-            <button className="pvp-toggle" role="switch" aria-checked={projectView.hideNoTerminal} onClick={() => setProjectView((v) => ({ ...v, hideNoTerminal: !v.hideNoTerminal }))}>
-              <span>隐藏没有终端的项目</span><span className={`switch ${projectView.hideNoTerminal ? "on" : ""}`}><i /></span>
             </button>
           </div>
         </div>,

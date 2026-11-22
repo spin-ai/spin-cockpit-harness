@@ -4,6 +4,7 @@
 
 > 参考：常见终端实现的搜索、右键菜单、字号缩放与 pane 布局。
 > 本文记录 harness 在 `src/components/TerminalPanel.tsx` 里落地的终端易用性能力、IPC 变更与明确未做的部分。
+> 目标执行 / 视图模型见 [`ARCH-workbench-execution.md`](ARCH-workbench-execution.md)（部分落地）：Terminal 与 Chat 由 Carrier 决定原生面，关闭 Tab 只 detach 不再取消 Run；本文其余部分描述当前实现。
 
 ---
 
@@ -37,7 +38,7 @@ harness 的 Terminal 是「Agent 干活 + 人直接敲命令」的同一个 pane
 | 文件路径链接 | 输出里的 `src/foo.ts:12` 这类带目录的路径可点，**在文件预览标签里打开**（只认项目内路径，`..` 与项目外绝对路径直接忽略） | `term.registerLinkProvider`（正则 `路径(:行)?(:列)?`）+ `openFilePreviewTab`；hover 提示「在文件预览里打开」 |
 | 快捷命令 | 右键「快捷命令…」：一键把常用命令写进当前 pty；可编辑 / 删除；每条带**范围**（本项目 / 全部项目）与**发送后回车**开关（关掉只填命令行） | `src/components/TerminalQuickCommands.tsx`：`localStorage["harness.terminal.quickCommands.v1"]`（按项目路径分组，`*` 为全局），发送 = `terminalInput(id, content + (appendEnter ? "\r" : ""))`，不经过主进程、不新增 State 字段 |
 | 拆分窗格 | `⌘D` 向右、`⇧⌘D` 向下（递归嵌套）；拖拽分隔条调比例；`⌘⌥←/→/↑/↓` 按几何方向移动焦点；右键菜单 / 命令面板同入口 | `Tab.root` 二叉树 + `SplitSurface` 绝对定位布局；新窗格继承当前窗格 cwd；预览标签可拖入 pane 边缘 |
-| 关闭窗格 | `⌘W` 关闭当前窗格，最后一个窗格时关闭整个标签 | `closeFocusedPane` 删除叶子并折叠空的 split |
+| 关闭窗格 | `⌘W` 关闭当前窗格，最后一个窗格时关闭整个标签（只关视图：pty 继续，输出回 buffer，可从「后台与最近」恢复） | `closeFocusedPane` 删除叶子并折叠空的 split；卸载走 `terminal:detach` |
 | 预览标签 | 预览与终端共用一条标签栏，且**只有唯一一个预览标签**：打开文件 = 文件模式（渲染/源码），地址栏「URL」或 `打开预览 :PORT` = 地址模式（dev server / 远程页）；可双击重命名、`⌘W`/中键关闭；命令面板「打开预览（文件 / dev server / URL）」；**没有工具栏**：新建终端 / 新建预览页 / 任务详情 / 起 Agent 全部收进标签栏末尾的 `＋` 菜单 | `Tab.kind = "preview"`（`rel` 有值即文件模式）+ `PreviewSurface`（同一 webview 生命周期）；切到后台标签会自动取消拾取，避免挂在隐藏 webview 上 |
 | 文件预览（Markdown） | 双击即打开，**TipTap / ProseMirror 富文本编辑器**（对齐 ORCA，不再用 contentEditable+execCommand）：工具栏 H1–H3 / B / I / S / 行内代码 / 列表 / 引用 / 代码块 / 表格 / 分割线 / 链接 / 撤销重做、选中态高亮；**Markdown 输入规则**由 StarterKit 提供（`# ` `## ` `### ` 标题、`- ` 列表、`1. ` 有序、`> ` 引用、``` 代码块）；空段落输入 `/` 打开块插入菜单；`⌘S` 保存 → `getHTML()` + turndown+gfm 转 Markdown（表格用自定义规则转 pipe 表）；`⌘K` 链接、`⌘⇧M` 切源码；TOC 跟随实时内容更新；空文档有 placeholder 提示 |
 | 文件预览（HTML） | 三段「预览 / 可视化 / 源码」：① 预览=webview 只读；② **可视化=GrapesJS 画布**（懒加载，右/左面板可拖组件、改文字、调样式；保存时 `getHtml()/getCss()` 重新拼完整文档，`<head>` 里的 title/meta/script 原样保留，样式写进唯一的 `<style data-grapes>`，重复保存不会叠加）；③ 源码=textarea + ⌘S。离开可视化若有未保存修改会确认；其它文本/图片保持只读 |

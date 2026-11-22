@@ -89,8 +89,10 @@
 | [`product/COMPARE-chat-window.md`](product/COMPARE-chat-window.md) | 需求 | 记录 | 聊天窗口逐部件对照：vs DeepSeek Harness / Orca 的 transcript / 流式 / 跟随 / composer / 长会话，含 P0–P2 缺口与不照抄项 |
 | [`product/REQ-bot-chat.md`](product/REQ-bot-chat.md) | 需求 | 提案 | **Bot 聊天窗口规格**：13 条 User Story（带判据）+ 12 条 IR（界面）+ 14 条 SR（系统），含验收矩阵与 M1–M4 分期 |
 | [`product/REQ-bot-intelligence.md`](product/REQ-bot-intelligence.md) | 需求 | 提案 | **机器人智能度规格**：vs ORCA Bot / Rakazo Bot 的 12 条 User Story + 10 条 IR + 16 条 SR（观察面 / 上下文 / 循环 / 记忆 / 自主 / 协作 / 可学习），含 6 维矩阵与 M1–M4 验收 |
+| [`product/REQ-workbench-execution.md`](product/REQ-workbench-execution.md) | 需求 | 部分落地 | **工作台任务与执行体验**：任务派活、探索 Run、手动终端、纯聊天、五种来源授权与关闭视图语义的 8 条 User Story |
 | [`product/VERIFY-bot-intelligence.md`](product/VERIFY-bot-intelligence.md) | 需求 | 记录 | **机器人智能度验收**：日期 + 命令 + 问题 + 答成什么样；含网关 function calling 探针与三问端到端，以及被推翻的自评 |
 | [`arch/ARCH-key-tech.md`](arch/ARCH-key-tech.md) | 架构 | 部分落地 | **五件关键技术**：解析 / 编排 / 整理 / 记忆 / 画像的边界、现状、判据、风险与一句话应对 |
+| [`arch/ARCH-workbench-execution.md`](arch/ARCH-workbench-execution.md) | 架构 | 部分落地 | **工作台任务与执行模型**：六类对象、Carrier、探索后关联、视图与进程解耦、统一授权及 M0–M4 迁移（M1/M2 核心已落地） |
 | [`arch/ARCH-tech-landscape.md`](arch/ARCH-tech-landscape.md) | 架构 | 记录 | 五件关键技术的开源 / 闭源实现对照、可复用度、许可证红线 |
 | [`arch/ARCH-benchmark-landscape.md`](arch/ARCH-benchmark-landscape.md) | 架构 | 记录 | 五件关键技术的公开基准盘点：哪些真有数据集、哪些只有分类法、20–50 条本地闸门可抄什么 |
 | [`arch/ARCH-concepts.md`](arch/ARCH-concepts.md) | 架构 | 已落地 | **八个核心概念**：Chat / Super Agent / Bot / Terminal / Knowledge / Memory / Persona / Scene 的定义与关系 |

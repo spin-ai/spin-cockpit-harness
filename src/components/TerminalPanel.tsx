@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Terminal, type ILink } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import type { ElementContext, State, Todo } from "../types";
+import type { ElementContext, State, TerminalRecord, Todo } from "../types";
 import { FileVisual } from "./FileVisual";
 import { TaskDetail } from "./TaskDetail";
 import { PreviewSurface } from "./PreviewSurface";
@@ -89,6 +89,14 @@ function countPreviewPanes(node: PaneNode | undefined): number {
 
 function previewCount(tabs: Tab[]): number {
   return tabs.reduce((n, tab) => n + (tab.kind === "preview" || tab.kind === "file" ? 1 : countPreviewPanes(tab.root)), 0);
+}
+
+/** 后台与最近里已结束终端的状态文案 */
+function terminalEndLabel(t: { status?: string; exitCode?: number | null }) {
+  if (t.status === "detached") return "已中断";
+  if (t.status === "failed") return "失败";
+  if (t.status === "closed") return "已关闭";
+  return `已结束${typeof t.exitCode === "number" && t.exitCode !== 0 ? ` · exit ${t.exitCode}` : ""}`;
 }
 
 function findPreviewLocation(tabs: Tab[]): PreviewTarget | null {
@@ -267,6 +275,7 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
   const [qcMenu, setQcMenu] = useState<MenuPoint | null>(null);
   /** 工具栏 / 标签栏的「＋」共用一个新建菜单：终端 / 预览 / Agent 都在里面选 */
   const [newMenu, setNewMenu] = useState<MenuPoint | null>(null);
+  const [bgMenu, setBgMenu] = useState<MenuPoint | null>(null);
   const [qcEdit, setQcEdit] = useState<{ cmd?: TermQuickCommand } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [zoom, setZoom] = useState(readZoom);
@@ -594,38 +603,39 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
       const res = await window.harness.createTerminal(cwd, {
         agentId: agent.id,
         projectId: agent.projectId || state.activeProjectId || undefined,
+        // 探索：创建受管 run（todoId 空），之后可在右键「关联到任务」原样挂上去
+        explore: true,
         cols: 120,
         rows: 32,
       });
       if (res?.id) {
         addTab({ cwd: res.cwd || cwd, title: agent.name, terminalId: res.id });
-        window.dispatchEvent(new CustomEvent("harness:toast", { detail: `已启动 ${agent.name}（未绑任务）` }));
+        window.dispatchEvent(new CustomEvent("harness:toast", { detail: `已启动 ${agent.name} · 探索（右键可关联任务）` }));
       }
     } catch (err) {
       window.dispatchEvent(new CustomEvent("harness:toast", { detail: `启动 Agent 失败：${String((err as Error)?.message || err)}` }));
     }
   }, [state.agents, state.activeProjectId, state.projectPath, activePane?.cwd, todo?.cwd, addTab]);
 
-  const attachToTask = useCallback(async () => {
-    if (!activeTab || !activePane?.terminalId || !todo) return;
-    // 手工终端接入任务：默认保持当前目录；需要跟随 worktree 时再切过去（只影响后续 run）
-    const branch = [...state.runs].reverse().find((r) => r.todoId === todo.id && r.branch)?.branch || "";
-    const moveToWorktree = branch
-      ? window.confirm(`接入 ${todo.key} 后要切到它的 worktree 吗？\n\n确定 = 切换到 worktree（${branch}）\n取消 = 保持当前目录 ${activePane.cwd || ""}`)
-      : false;
+  /** 对象动作：把当前窗格的终端关联到选中任务（探索 run 原样关联；手动终端只改归属） */
+  const attachActivePaneTodo = useCallback(async () => {
+    const terminalId = activePane?.terminalId;
+    if (!terminalId || !todo || !activeTab) return;
     try {
-      await window.harness.action("attachTerminalToTask", {
-        terminalId: activePane.terminalId,
-        todoId: todo.id,
-        keepCwd: !moveToWorktree,
-        branch: moveToWorktree ? branch : null,
-      });
-      patchTab(activeTab.id, { taskId: todo.id, title: `${todo.key} ${todo.title}` });
-      window.dispatchEvent(new CustomEvent("harness:toast", { detail: `终端已接入 ${todo.key}${moveToWorktree ? ` · 切到 ${branch}` : " · 保持当前目录"}` }));
+      await window.harness.action("attachTerminalToTask", { terminalId, todoId: todo.id });
+      patchTab(activeTab.id, { taskId: todo.id });
+      window.dispatchEvent(new CustomEvent("harness:toast", { detail: `已关联到 ${todo.key}` }));
     } catch (err) {
       window.dispatchEvent(new CustomEvent("harness:toast", { detail: String((err as Error)?.message || err) }));
     }
-  }, [activeTab, activePane?.terminalId, activePane?.cwd, todo, patchTab]);
+  }, [activePane?.terminalId, activeTab, todo, patchTab]);
+
+  /** 对象动作：真的结束这条 pty（杀进程；有关联 run 会由主进程结算） */
+  const stopActivePaneTerminal = useCallback(() => {
+    const terminalId = activePane?.terminalId;
+    if (!terminalId) return;
+    void window.harness.closeTerminal(terminalId);
+  }, [activePane?.terminalId]);
 
   // 预览是终端的一个标签页：已存在就导航 + 激活，否则新建
   const openPreview = useCallback((url: string) => {
@@ -959,10 +969,64 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
     { label: "新建预览页", run: () => newPreviewTab() },
     { label: todo ? `任务详情（${todo.key}）` : "任务详情", disabled: !todo, run: openTaskTab },
     "sep",
-    { head: "起 Agent（不建任务）" },
+    { head: "打开 Agent 终端（探索，可后关联任务）" },
     ...(terminalAgents.length
       ? terminalAgents.map((a): MenuItem => ({ label: `${a.name} · ${a.cli}`, run: () => { void launchAgent(a.id); } }))
       : [{ label: "暂无终端 Agent", disabled: true, run: () => {} } as MenuItem]),
+  ];
+
+  // ── 后台与最近 ────────────────────────────────────────────────
+  // 当前项目里「没有打开视图」的终端记录：活着的可恢复（关标签 ≠ 结束进程），
+  // 已结束 / 已中断的可以重开看尾部。不显示数量，无常驻徽标（>0 才出现入口）。
+  const openTerminalIds = useMemo(() => {
+    const ids = new Set<string>();
+    const walk = (node?: PaneNode) => {
+      if (!node) return;
+      if (node.type === "pane") { if (node.pane.terminalId) ids.add(node.pane.terminalId); return; }
+      walk(node.a); walk(node.b);
+    };
+    for (const t of tabs) walk(t.root);
+    return ids;
+  }, [tabs]);
+  const hiddenTerminals = useMemo(() => (state.terminals || [])
+    .filter((t) => !openTerminalIds.has(t.id))
+    .filter((t) => !t.projectId || t.projectId === state.activeProjectId)
+    .filter((t) => Boolean(t.id)),
+  [openTerminalIds, state.terminals, state.activeProjectId]);
+  const runningHidden = hiddenTerminals
+    .filter((t) => t.status === "running")
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, 8);
+  const endedHidden = hiddenTerminals
+    .filter((t) => t.status !== "running")
+    .sort((a, b) => (b.endedAt || b.createdAt || 0) - (a.endedAt || a.createdAt || 0))
+    .slice(0, 8);
+  const restoreTerminal = useCallback((rec: TerminalRecord) => {
+    addTab({
+      cwd: rec.cwd || state.projectPath,
+      title: rec.title || basename(rec.cwd || state.projectPath),
+      terminalId: rec.id,
+      taskId: rec.todoId || undefined,
+      ownerKey: rec.projectId ?? state.activeProjectId ?? null,
+    });
+    setBgMenu(null);
+  }, [addTab, state.projectPath, state.activeProjectId]);
+  const openBgMenu = useCallback((el: HTMLElement) => {
+    const rect = el.getBoundingClientRect();
+    setBgMenu({ x: Math.max(8, rect.right - 208), y: rect.bottom + 6 });
+  }, []);
+  const bgMenuItems: MenuItem[] = [
+    ...(runningHidden.length ? [{ head: "仍在运行" }] : []),
+    ...runningHidden.map((t): MenuItem => ({
+      label: `${t.title || basename(t.cwd) || "终端"} · 运行中`,
+      run: () => restoreTerminal(t),
+    })),
+    ...(runningHidden.length && endedHidden.length ? ["sep" as const] : []),
+    ...(endedHidden.length ? [{ head: "最近结束" }] : []),
+    ...endedHidden.map((t): MenuItem => ({
+      label: `${t.title || basename(t.cwd) || "终端"} · ${terminalEndLabel(t)}`,
+      run: () => restoreTerminal(t),
+    })),
   ];
 
   return (
@@ -1041,11 +1105,18 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
         {activeUrl && (
           <button className="link" title={activeUrl} onClick={() => openPreview(activeUrl)}>预览 {portOf(activeUrl)}</button>
         )}
-        {activeTab?.kind === "terminal" && activePane?.terminalId && todo && activeTab.taskId !== todo.id && (
-          <button className="link" title="把当前终端接到选中的任务，接管后的运行会显示在 TODO" onClick={() => void attachToTask()}>接入 {todo.key}</button>
-        )}
         {activeTab?.kind === "terminal" && onContinueInChat && continueTaskId && (
           <button className="link" title="这条终端接着某个任务：在对话里看它的产出并继续" onClick={() => onContinueInChat(continueTaskId)}>在对话里继续</button>
+        )}
+        {(runningHidden.length > 0 || endedHidden.length > 0) && (
+          <button
+            className="pane-collapse dark"
+            title="后台与最近：查看未打开的终端视图"
+            aria-label="后台与最近"
+            aria-haspopup="menu"
+            aria-expanded={Boolean(bgMenu)}
+            onClick={(e) => openBgMenu(e.currentTarget)}
+          ><ChevronDownIcon size={13} /></button>
         )}
         <button
           className="term-tab add"
@@ -1166,6 +1237,10 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
                           onRename={() => setRenaming(t.id)}
                           onEqualize={() => patchTab(t.id, { root: t.root ? equalizeRatios(t.root) : t.root })}
                           onOpenPath={openPathFromTerminal}
+                          onAttachTodo={() => void attachActivePaneTodo()}
+                          attachDisabled={!todo || t.taskId === todo.id}
+                          attachLabel={todo ? `关联到 ${todo.key}` : "关联到当前任务"}
+                          onStopTerminal={pane.terminalId ? () => stopActivePaneTerminal() : undefined}
                         />
                   )}
                   onRatio={(splitId, delta) => changeRatio(t.id, splitId, delta)}
@@ -1191,6 +1266,9 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
       </div>
       {newMenu && (
         <TermMenu point={newMenu} items={newSurfaceItems} onClose={() => setNewMenu(null)} />
+      )}
+      {bgMenu && bgMenuItems.length > 0 && (
+        <TermMenu point={bgMenu} items={bgMenuItems} onClose={() => setBgMenu(null)} />
       )}
       {qcMenu && (
         <QuickCommandMenu
@@ -1452,9 +1530,15 @@ type TermTabProps = {
   onEqualize: () => void;
   /** 点终端里的文件路径（path:line） */
   onOpenPath: (target: string) => void;
+  /** 对象动作：把这条终端关联到选中任务（探索 run 原样关联；手动终端只改归属） */
+  onAttachTodo?: () => void;
+  attachDisabled?: boolean;
+  attachLabel?: string;
+  /** 对象动作：真的结束这条 pty（关标签不会走到这里） */
+  onStopTerminal?: () => void;
 };
 
-function TermTab({ projectId, pane, multi, visible, focused, focusToken, searchOpen, fontSize, scrollback, onOpenSearch, onCloseSearch, onNewTab, onClosePane, onSplit, onOpenPreview, onFocusDir, onFocus, onCycleTab, onGotoTab, onZoom, onTermId, onUrl, onTitle, onBell, controlBy, onToggleControl, onQuickCommands, onRename, onEqualize, onOpenPath }: TermTabProps) {
+function TermTab({ projectId, pane, multi, visible, focused, focusToken, searchOpen, fontSize, scrollback, onOpenSearch, onCloseSearch, onNewTab, onClosePane, onSplit, onOpenPreview, onFocusDir, onFocus, onCycleTab, onGotoTab, onZoom, onTermId, onUrl, onTitle, onBell, controlBy, onToggleControl, onQuickCommands, onRename, onEqualize, onOpenPath, onAttachTodo, attachDisabled, attachLabel, onStopTerminal }: TermTabProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -1574,6 +1658,13 @@ function TermTab({ projectId, pane, multi, visible, focused, focusToken, searchO
       onTermIdRef.current(id);
       void window.harness.attachTerminal(id).then((res) => {
         if (disposed) return;
+        if (res?.missing) {
+          // 应用重启后 pty 已不存在：不装作还能续跑，明说并给出口
+          term.write("\r\n\x1b[33m进程已随上次会话结束，输出不再可用；可关闭标签或新建终端。\x1b[0m\r\n");
+          setExited(true);
+          scheduleFit();
+          return;
+        }
         write(res?.data || "");
         if (res?.url) onUrlRef.current(res.url);
         ready = true;
@@ -1635,7 +1726,9 @@ function TermTab({ projectId, pane, multi, visible, focused, focusToken, searchO
         window.setTimeout(() => {
           if (terminalOwners.get(closeId) !== owner) return;
           terminalOwners.delete(closeId);
-          void window.harness.closeTerminal(closeId);
+          // 关视图 ≠ 结束进程：detach 让 pty 继续跑，输出攒回主进程 buffer，
+          // 之后可从「后台与最近」重新 attach。只有显式「结束进程」才 closeTerminal。
+          void window.harness.detachTerminal(closeId);
         }, 0);
       }
       term.dispose();
@@ -1814,11 +1907,19 @@ function TermTab({ projectId, pane, multi, visible, focused, focusToken, searchO
           run: onToggleControl,
         },
         "sep",
+        {
+          // 探索 run 原样关联（保留 runId / startedAt / 输出）；手动终端只改归属，不造 run
+          label: attachLabel || "关联到当前任务",
+          disabled: attachDisabled ?? true,
+          run: () => onAttachTodo?.(),
+        },
+        ...(onStopTerminal ? [{ label: "结束进程…", danger: true, run: onStopTerminal }] : []),
+        "sep",
         { label: "重命名标签", run: onRename },
         { label: "复制终端 ID", run: copyTerminalId },
         "sep",
         { label: "新建终端", hint: "⌘T", run: onNewTab },
-        { label: multi ? "关闭窗格" : "关闭标签", hint: "⌘W", run: onClosePane },
+        { label: multi ? "关闭窗格（不结束进程）" : "关闭标签（不结束进程）", hint: "⌘W", run: onClosePane },
       ];
 
   return (

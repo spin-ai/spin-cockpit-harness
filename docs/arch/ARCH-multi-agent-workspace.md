@@ -73,10 +73,15 @@ Host  1 ── n Agent 1 ── n Run n ── 1 Todo
 Todo  1 ── n Run 1 ── n Message / Artifact
 ```
 
+> 目标模型调整见 [`ARCH-workbench-execution.md`](ARCH-workbench-execution.md)（部分落地，M1/M2 核心已落地）：任务 Run 仍先绑定 Todo；探索 Run / 纯聊天 Run 允许创建时 `todoId=null`，之后再关联，避免隐藏 Todo 与假 Run。下文描述任务执行链路的不变量，探索 Run 是它的显式例外。
+
 - **Run 必须绑定** `todo + agent + host`，不漂移。
 - **状态机**：`queued → running → (waiting_input) → completed | failed | cancelled`；Todo 侧由用户/Agent 推进。
 - **回写**：Run 结束必须写 `结论 + artifact`，否则 Todo 标黄、不得进 `done`。
 - **同一 cwd 串行**：并发排队，原因可见（超并发 / 等待目录 / 依赖未完成）。
+- **排队原因必须落库**：`tick()` 改 `queueReason` 时同步广播 + persist，否则重启后界面上只剩一个没有原因的「排队」。
+- **调度是事件驱动的**：`tick()` 由 send / assign / retry / 设置变更 / run 结束触发；启动时（窗口起来 1.5s 后）补一次，并开 5s 兜底定时器——只在本进程确实有 `queued` run 时才扫。没有这层兜底，应用在「run 已入队、`startRun` 还没写 `running`」之间退出/崩溃，重启后那个 run 会永远排队且没有原因（2026-11-22 #1058 / r1924 就是这样卡住的）。
+- **启动失败的 run 要结算**：`startRun` 抛在 `status=running` 之前时按失败收尾（`failQueuedRun`），不能留在队列里让兜底 tick 每 5s 重试一次。
 - **Context 只做事件与快照**：不持久化数据实体；IDE 离线标 `stale`。
 
 ### 1.4 关键接口

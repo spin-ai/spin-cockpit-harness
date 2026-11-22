@@ -59,7 +59,7 @@ function RunFocusCard({ run, todo, onOpenTerminal, onClose }: {
           <button
             className="link tiny"
             title="这次运行绑定了终端：去终端里继续看 / 接着干"
-            onClick={() => onOpenTerminal({ terminalId: run.terminalId!, cwd: run.cwd || todo?.cwd || "", title: todo?.title || "终端", taskId: run.todoId })}
+            onClick={() => onOpenTerminal({ terminalId: run.terminalId!, cwd: run.cwd || todo?.cwd || "", title: todo?.title || "终端", taskId: run.todoId ?? undefined })}
           >在终端里继续</button>
         )}
         {long && (
@@ -592,7 +592,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     return true;
   };
   const progressRuns = (gs.runs || [])
-    .filter((r) => ["queued", "running", "waiting_input"].includes(r.status) && progressInScope(r.todoId))
+    .filter((r) => ["queued", "running", "waiting_input"].includes(r.status) && progressInScope(r.todoId ?? ""))
     .sort((a, b) => (b.startedAt || b.createdAt || 0) - (a.startedAt || a.createdAt || 0));
   const progressReview = (gs.todos || [])
     .filter((t) => t.kind !== "chat" && t.status === "in_review" && !t.confirmed && progressInScope(t.id))
@@ -747,13 +747,13 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
           </div>
           <div className="chat-progress-list">
             {progressRuns.slice(0, 8).map((run) => {
-              const t = progressTodo(run.todoId);
+              const t = run.todoId ? progressTodo(run.todoId) : null;
               const a = agentOf(gs.agents, run.agentId);
               return (
                 <div key={run.id} className="chat-progress-row">
-                  <button className="progress-main" onClick={() => openGlobalTodo(run.todoId)} title={t?.title || run.todoId}>
+                  <button className="progress-main" onClick={() => run.todoId && openGlobalTodo(run.todoId)} title={t?.title || run.todoId || "探索运行"}>
                     <span className={`dot ${run.status === "waiting_input" ? "amber" : run.status === "queued" ? "slate" : "green"}`} />
-                    <span className="ellipsis">{t?.key} {t?.title || run.todoId}</span>
+                    <span className="ellipsis">{t ? `${t.key} ${t.title}` : `探索 · ${run.id}`}</span>
                     <em>{a?.name || "Agent"} · {RUN_STATUS[run.status] || run.status} · {duration(run, now)}</em>
                   </button>
                   <span className="row gap4">
@@ -774,7 +774,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                   </button>
                   <span className="row gap4">
                     <button className="link tiny" onClick={() => openGlobalTerminal({ terminalId: term.id, cwd: term.cwd, title: term.title })}>打开</button>
-                    <button className="icon-btn" title="关闭终端" aria-label="关闭终端" onClick={() => void window.harness.closeTerminal(term.id)}><XIcon size={12} /></button>
+                    <button className="icon-btn" title="结束进程（不可恢复）" aria-label="结束进程" onClick={() => void window.harness.closeTerminal(term.id)}><XIcon size={12} /></button>
                   </span>
                 </div>
               );
