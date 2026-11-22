@@ -62,10 +62,10 @@
     "epub2": "^3.0.2",
     "mammoth": "^1.13.0",
     "node-pty": "^1.1.0",
-    "officeparser": "^8.4.1",
+    "officeparser": "^8.9.0",
     "pdfjs-dist": "^6.2.108",
     "qrcode": "^1.5.4",
-    "unpdf": "^2.1.0",
+    "unpdf": "^2.2.1",
     "xlsx": "npm:@e965/xlsx@^0.20.3"
   },
   "devDependencies": {
