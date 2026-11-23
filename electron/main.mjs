@@ -5010,6 +5010,8 @@ const actions = {
           onTool: (tool) => sendTool(base, tool),
         });
         flushDelta(base);
+        // 静默回合（NO_REPLY）：群里不留空消息，也不进未读；回合本身已经落库可审计
+        if (turn?.decision === "quiet") { out.push(turn); return; }
         const msg = push("bot", bot, turn?.reply || "", turn?.decision || "answered", {
           turnId: turn?.id || null, runId: turn?.runId || null, cost: turn?.cost || null,
         });

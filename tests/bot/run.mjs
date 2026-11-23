@@ -18,6 +18,7 @@ const suites = [
   "./dispatch.test.mjs",  // 能力档位：只产 proposal
   "./guard.test.mjs",     // 脱敏 / 防重复 / 敏感词
   "./notify.test.mjs",    // 通知节流
+  "./quiet.test.mjs",     // 静默标记：NO_REPLY 装饰 / 被点名保留正文 / 不通知
   "./routine.test.mjs",   // 日程判定 / 落点
   "./ask.test.mjs",       // 提问卡片
   "./thread.test.mjs",    // 持续 chat：镜像 / 迁移

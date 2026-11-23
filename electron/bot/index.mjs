@@ -11,6 +11,7 @@
 import { redactSecrets } from "../redact.mjs";
 import { suppressionReason } from "./guard.mjs";
 import { notifyDecision } from "./notify.mjs";
+import { QUIET_INSTRUCTION, quietOf } from "./quiet.mjs";
 import { WAIT_LIMIT_MS, describeRoutine, nextRunAt, normalizeRoutine, routineDue } from "./routine.mjs";
 import { BOT_TOOL_CATALOG, BOT_TOOL_META, botToolsFor, parseToolArgs, toolNamesFor } from "./tools.mjs";
 import { skillsFor } from "./skills.mjs";
@@ -356,7 +357,7 @@ function personaLines(bot, { proactive, recentProactive, inGroup = false }) {
     proactive
       ? "你会收到一条「工作区事件」和几条记忆。普通事件只输出你要说的一句话（最多两句）；日程到点（kind=routine）按它的要求回答，可以多几句。"
       : "现在有人在直接跟你说话。正常对话，别复述人格设定，别解释自己是 AI。",
-    proactive ? "如果这件事不值得现在开口，只输出 SILENT，不要解释。" : "",
+    proactive ? `如果这件事不值得现在开口，只输出 SILENT，不要解释。${QUIET_INSTRUCTION}` : "",
     inGroup && !proactive
       ? "你在群聊里：如果这件事明显属于另一个机器人，用 handoff_to_bot 交给它（一句话说明接什么、为什么），不要把活揽在自己身上；交接后不要再重复回答同一件事。"
       : "",
@@ -1041,6 +1042,12 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     const text = String(res?.text || "").trim();
     if (!text) return { reply: "", reason: "模型没有返回内容" };
     if (/^SILENT\b/i.test(text)) return { reply: "", reason: "模型判断不值得开口" };
+    // 静默标记：主动开口没有「被点名」这回事，标记一出现就是这一轮不说（正文只留审计）
+    const silent = quietOf(text);
+    if (silent.quiet) {
+      return { reply: "", quiet: true, body: silent.body, reason: "模型给了 NO_REPLY：这件事不值得说" };
+    }
+    if (silent.marker) return { reply: silent.text.slice(0, 400), usage: res?.usage || null };
     // `ASK: 你想让我先看哪一个？` → 落成一张可作答的卡片（正文只有问题本身）
     const ask = text.match(/^ASK\s*[:：]\s*(.+)$/is);
     if (ask) return { ask: ask[1].trim().slice(0, 300), reply: ask[1].trim().slice(0, 300), usage: res?.usage || null };
@@ -1145,6 +1152,23 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       return record({
         id: turnId, botId: bot.id, trigger: { kind: candidate.kind, ref: candidate.ref }, decision: "silent",
         reason: `模型调用失败：${String(err?.message || err).slice(0, 120)}`, injected, reply: "", cost: {},
+      });
+    }
+    // 4.1) 静默标记：它跑过了、看过上下文，判断这一刻不值得说。
+    //      不通知、不进未读；正文仍落库（audit），日程照样记账——否则每个 tick 都重问一次模型。
+    if (result.quiet) {
+      if (due?.routine) {
+        due.routine.lastFiredAt = now();
+        due.routine.waitingSince = 0;
+        if (due.verdict?.hash) due.routine.lastHash = due.verdict.hash;
+        due.routine.lastError = "";
+        due.routine.updatedAt = now();
+      }
+      return record({
+        id: turnId, botId: bot.id, trigger: { kind: candidate.kind, ref: candidate.ref },
+        input: candidate.title, injected, reply: String(result.body || "").slice(0, 400), decision: "quiet",
+        reason: result.reason || "没有值得说的事（NO_REPLY）",
+        cost: { tokens: result.usage?.totalTokens ?? null, ms: now() - started },
       });
     }
     if (!result.reply) {
@@ -1447,12 +1471,25 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       store.persist();
       throw err;
     }
-    const answer = String(res?.text || "").trim()
+    const rawAnswer = String(res?.text || "").trim()
       || (res?.stopReason ? `我查到这里停下了：${res.stopReason}。要继续的话告诉我从哪一步接。` : "");
-    if (!answer) {
+    if (!rawAnswer) {
       stateOf().botTurns = turnsOf().filter((t) => t.id !== pending.id);
       store.persist();
       throw new Error("模型没有返回内容");
+    }
+    // 被点名（人在直接说话）：标记前的正文照样发；只有光秃秃一个标记才算「没什么要说」
+    const spoken = quietOf(rawAnswer, { addressed: true });
+    const answer = spoken.quiet ? "" : spoken.text;
+    if (!answer) {
+      Object.assign(pending, {
+        reply: "", decision: "quiet",
+        reason: "模型给了 NO_REPLY：这一轮没有要补充的",
+        cost: { tokens: res?.usage?.total_tokens ?? null, ms: now() - started },
+        trace: [...(res?.events || []), ...(res?.toolTrace || [])].slice(0, 200),
+      });
+      store.persist();
+      return pending;
     }
     if (res?.stopReason) pending.stopReason = res.stopReason;
     Object.assign(pending, {

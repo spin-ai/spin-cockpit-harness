@@ -19,6 +19,7 @@ export const DEFAULT_NOTIFY = { proactive: true, needPermission: true, taskDone:
 /** 这个类别要不要通知：只读 policy，不碰节流（节流仍在 notifyDecision） */
 export function notifyAllowed(policy, kind = "") {
   const n = { ...DEFAULT_NOTIFY, ...(policy?.notify || {}) };
+  if (kind === "quiet") return false;
   if (kind === "asked" || kind === "escalated") return n.needPermission !== false;
   if (kind === "answered") return n.proactive !== false;
   if (kind === "reported" || kind === "run.finished") return n.taskDone !== false;
@@ -39,6 +40,8 @@ export function notifyAllowed(policy, kind = "") {
  */
 export function notifyDecision({ reply = "", kind = "", now = Date.now(), sentAt = [], mutedUntil = 0, unread = 0, quiet = false, maxPerHour = NOTIFY_MAX_PER_HOUR } = {}) {
   if (!reply) return { send: false, text: "", reason: "没有内容" };
+  // 静默回合（decision=quiet）：正文照旧落库可审计，但不弹、不进未读
+  if (kind === "quiet") return { send: false, text: "", reason: "这一轮静默（NO_REPLY）" };
   if (mutedUntil && mutedUntil > now) return { send: false, text: "", reason: "手动静音中" };
   if (quiet) return { send: false, text: "", reason: "静音时段（不弹通知）" };
 

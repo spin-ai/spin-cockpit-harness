@@ -53,7 +53,7 @@ type Turn = {
   id: string; botId: string; channel?: string;
   trigger?: { kind?: string; ref?: string }; input?: string;
   injected?: { layer: string; id: string; title: string }[];
-  reply?: string; decision?: "answered" | "replied" | "reported" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted" | "watching";
+  reply?: string; decision?: "answered" | "replied" | "reported" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted" | "watching" | "quiet";
   todoId?: string | null;
   runId?: string | null;
   proposal?: { title: string; desc: string; dismissed?: boolean; acceptedAt?: number } | null;
@@ -254,8 +254,9 @@ function trajectoryRecords(turns: Turn[], state?: State | null): TrajectoryRecor
         push({ id: `${turn.id}-assistant`, kind: "assistant", at: base + (turn.cost?.ms || 1), ms: turn.cost?.ms || 1, title: "助手", text: turn.reply });
       }
     }
-    if (!turn.reply && turn.decision !== "replied" && (turn.decision === "silent" || turn.decision === "blocked" || turn.decision === "interrupted")) {
-      push({ id: `${turn.id}-silent`, kind: "assistant", at: base + 1, ms: 1, title: turn.decision === "blocked" ? "被拦" : turn.decision === "interrupted" ? "被打断" : "沉默", text: turn.reason || "没有开口" });
+    if (!turn.reply && turn.decision !== "replied" && (turn.decision === "silent" || turn.decision === "blocked" || turn.decision === "interrupted" || turn.decision === "quiet")) {
+      const label = turn.decision === "blocked" ? "被拦" : turn.decision === "interrupted" ? "被打断" : turn.decision === "quiet" ? "没说什么" : "沉默";
+      push({ id: `${turn.id}-silent`, kind: "assistant", at: base + 1, ms: 1, title: label, text: turn.reason || "没有开口" });
     }
     const run = turn.runId ? state?.runs?.find((r) => r.id === turn.runId) : undefined;
     if (run?.terminalId) push({ id: `${turn.id}-terminal`, kind: "terminal", at: base + (turn.cost?.ms || 1), ms: 1, title: "终端", args: run.status });
@@ -551,7 +552,7 @@ type Snapshot = {
   botUi?: Record<string, { draft?: string; scroll?: { turnId?: string; offset?: number } | null; updatedAt?: number }>;
 };
 
-const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "汇报", watching: "监视中", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工" };
+const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "汇报", watching: "监视中", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工", quiet: "没说什么" };
 /** 工具名 → 「正在查 / 正在改」；标签来自主进程下发的工具目录，找不到再按家族兜底 */
 const toolLabel = (tool?: string, meta?: { label?: string; risk?: string }) => {
   const name = tool || "";
@@ -560,7 +561,7 @@ const toolLabel = (tool?: string, meta?: { label?: string; risk?: string }) => {
   const verb = family === "read" ? "读" : family === "edit" ? "改" : family === "run" ? "跑" : family === "net" ? "看网页" : family === "search" ? "查" : "用工具";
   return `正在${verb}${name ? ` · ${name}` : ""}`;
 };
-const GLYPH: Record<string, string> = { asked: "?", streaming: "…", interrupted: "⏸", silent: "·", blocked: "✕", escalated: "↗" };
+const GLYPH: Record<string, string> = { asked: "?", streaming: "…", interrupted: "⏸", silent: "·", blocked: "✕", escalated: "↗", quiet: "·" };
 const CAP_LABEL: Record<string, string> = { read: "只读", dispatch: "可起任务", work: "能执行" };
 const NOTIFY_ROWS = [
   ["proactive", "主动开口", "它自己觉得值得说时"],
@@ -2658,8 +2659,8 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 );
               }
               if (row.kind === "quiet") {
-                const allSilent = row.turns.every((t) => (t.decision || "silent") === "silent");
-                const noun = allSilent ? "沉默" : "没开口";
+                const allSilent = row.turns.every((t) => ["silent", "quiet"].includes(t.decision || "silent"));
+                const noun = allSilent ? (row.turns.every((t) => t.decision === "quiet") ? "没说什么" : "沉默") : "没开口";
                 const label = row.turns.length === 1 ? noun : `${noun} ${row.turns.length} 次`;
                 const first = row.turns[0];
                 const last = row.turns[row.turns.length - 1];
@@ -2681,6 +2682,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                             <b>{DECISION_LABEL[t.decision || "silent"] || t.decision}</b>
                             <span>{t.reason || "—"}</span>
                             {t.decision === "interrupted" && t.reply && <span className="ds-quiet-partial">「{t.reply}」</span>}
+                            {t.decision === "quiet" && t.reply && <span className="ds-quiet-partial">「{t.reply}」</span>}
                             <details className="bot-why">
                               <summary>为什么</summary>
                               <div className="bot-why-body">
