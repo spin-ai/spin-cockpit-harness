@@ -20,6 +20,7 @@ import { Notes } from "./components/Notes";
 import { Zhulong } from "./components/Zhulong";
 import { PluginMarket } from "./components/PluginMarket";
 import { BotConsole } from "./components/Bot";
+import { applyBotPatch } from "../electron/bot/patch.mjs";
 import { Bots } from "./components/Bots";
 import { Memory } from "./components/Memory";
 import { Persona } from "./components/Persona";
@@ -184,8 +185,12 @@ export default function App() {
       else if (dv === "stats" || dv === "hosts") { setView("settings"); setSettingsSection(dv); }
     });
     const off = window.harness.onState(setState);
+    // 作用域增量：只替换这个 bot 变了的切片，不再为一行字重渲染整个世界
+    const offPatch = window.harness.onBotPatch((patch) => {
+      setState((prev) => (prev ? applyBotPatch(prev, patch) : prev));
+    });
     const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => { off(); clearInterval(t); };
+    return () => { off(); offPatch(); clearInterval(t); };
   }, []);
 
   // 主题：data-theme 决定调色板，data-mode 决定深浅色下的结构覆盖

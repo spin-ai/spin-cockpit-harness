@@ -963,6 +963,9 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     setGroupLive([]); setGroupPhases({}); setPendingUser(null); setRenderBlocks(40);
   }, [botId]);
 
+  /** 增量通知：这个 bot 有新切片就重读快照；别的 bot 变了不打扰这一栏 */
+  const botPatchAt = state?.botChanged && state.botChanged.botId === botId ? state.botChanged.at : 0;
+
   const load = useCallback(async () => {
     try {
       const next = (await act("botSnapshot", {})) as Snapshot | null;
@@ -978,6 +981,8 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   }, [act, initialBotId]);
 
   useEffect(() => { void load(); }, [load]);
+  // 这个 bot 有新切片（回合 / 会话 / 台账）才重读快照；500ms 已由主进程合并
+  useEffect(() => { if (botPatchAt) void load(); }, [botPatchAt, load]);
 
   // 流式增量：主进程已经按 ~16ms 合并过；渲染层再按帧合并，一帧最多一次 setState。
   // 之前每个 token 都 setGroupStream，整个 BotConsole（整段历史）会跟着 reconcile，长会话必卡。
@@ -3276,7 +3281,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 botId={bot.id}
                 act={act}
                 notify={notify}
-                refresh={`${snapshot?.itemCounts?.[bot.id]?.open ?? 0}-${snapshot?.itemCounts?.[bot.id]?.needsYou ?? 0}`}
+                refresh={`${snapshot?.itemCounts?.[bot.id]?.open ?? 0}-${snapshot?.itemCounts?.[bot.id]?.needsYou ?? 0}-${botPatchAt}`}
               />
             )}
           </aside>

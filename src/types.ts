@@ -411,6 +411,10 @@ export interface BotGroupMessage {
   meta?: { turnId?: string | null; runId?: string | null; cost?: { tokens?: number | null; ms?: number } | null } | null;
 }
 
+export interface BotChatSummary {
+  id: string; title: string; createdAt: number; updatedAt: number; count: number; last: string; lastAt: number;
+}
+
 export interface State {
   hosts: Host[]; agents: Agent[]; todos: Todo[]; runs: Run[]; threads: Thread[]; messages: Message[];
   missionPlans?: MissionPlanRecord[]; delegations?: Delegation[];
@@ -431,6 +435,10 @@ export interface State {
   botGroupMessages?: BotGroupMessage[];
   /** Items 台账的计数（每个 bot 一份；明细走 botItemsList 分页读） */
   itemCounts?: Record<string, { open?: number; needsYou?: number }>;
+  /** 每个 bot 的会话摘要（增量推送用；老数据没有也不影响） */
+  botChats?: Record<string, BotChatSummary[]>;
+  /** 最近一次增量通知：渲染层据此决定「这个 bot 要不要重读」 */
+  botChanged?: { botId: string; kinds: string[]; at: number } | null;
   routines?: BotRoutine[];
   terminals?: TerminalRecord[];
   runtimes?: RuntimeView[];

@@ -1,4 +1,4 @@
-import type { BotGroupMessage, ElementContext, State } from "./types";
+import type { BotChatSummary, BotGroupMessage, BotTurn, ElementContext, State } from "./types";
 
 declare global {
   interface GitFile { path: string; index: string; worktree: string; staged: boolean; untracked: boolean; conflict: boolean; }
@@ -38,6 +38,8 @@ declare global {
       onBotPhase(cb: (p: { botId: string; phase: "thinking" | "tool" | "done"; groupId?: string; name?: string; tool?: string }) => void): () => void;
       onBotGroupMessage(cb: (p: { groupId: string; message: BotGroupMessage }) => void): () => void;
       onBotMessage(cb: (p: { botId: string; text: string; turnId: string }) => void): () => void;
+      /** 作用域增量：只带这个 bot 变了的切片（botTurns / botGroupMessages / botChats / itemCounts） */
+      onBotPatch(cb: (p: { botId: string; kinds: string[]; at: number; botTurns?: BotTurn[]; botGroupMessages?: BotGroupMessage[]; botChats?: BotChatSummary[]; itemCounts?: { open?: number; needsYou?: number } }) => void): () => void;
       onPluginChatDraft(cb: (p: { text: string; context?: unknown }) => void): () => void;
       onPluginNotify(cb: (p: { message: string; level?: string }) => void): () => void;
       onPluginOpenView(cb: (p: { id: string }) => void): () => void;

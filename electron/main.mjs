@@ -25,6 +25,7 @@ import { skillSummaries } from "./bot/skills.mjs";
 import { describeRoutine, nextRunAt, normalizeRoutine } from "./bot/routine.mjs";
 import { BOT_TOOL_META, matchBotRef, redactToolArgs, redactToolResult } from "./bot/tools.mjs";
 import { createItems } from "./bot/items.mjs";
+import { BOT_PATCH_MERGE_MS, buildBotPatch, mergeBotPatch } from "./bot/patch.mjs";
 import { clipChars, grepWorkspace, listWorkspace, readWorkspaceFile } from "./bot/workspace.mjs";
 import { redactSecrets } from "./redact.mjs";
 import { createPairing } from "./im/pairing.mjs";
@@ -772,6 +773,53 @@ function snapshot() {
 function broadcast() {
   if (win && !win.isDestroyed()) win.webContents.send("harness:state", snapshot());
   store.persist();
+}
+
+/**
+ * 作用域增量：只推这个 bot 变了的切片（500ms 合并），渲染层按 botId 替换。
+ * 全量 `harness:state` 保留作首帧与兜底——patch 只是把「为一行字重发整个世界」换掉。
+ */
+const botPatchQueue = new Map(); // botId -> patch
+let botPatchTimer = null;
+
+function botPatchFor(botId, kinds, extra = {}) {
+  const id = String(botId || "");
+  if (!id) return null;
+  const want = new Set(kinds || []);
+  const turns = want.has("turns") || want.has("bot")
+    ? (store.state.botTurns || []).filter((t) => t.botId === id)
+    : undefined;
+  let chats;
+  if (want.has("chats") && botStore) {
+    try { chats = botStore.chats(id); } catch { chats = undefined; }
+  }
+  let counts;
+  if (want.has("items") || extra.counts) {
+    try { counts = items().countsByBot()[id] || { open: 0, needsYou: 0 }; } catch { counts = undefined; }
+  }
+  return buildBotPatch({
+    botId: id, kinds: [...want], turns, chats, counts,
+    groupMessages: Array.isArray(extra.groupMessages) ? extra.groupMessages : undefined,
+    at: Date.now(),
+  });
+}
+
+/** 攒 500ms 再发：一轮回复可能同时动回合 / 会话 / 群消息，没必要一条一条推 */
+function broadcastBot(botId, kinds = [], extra = {}) {
+  const id = String(botId || "");
+  if (!id) return;
+  const patch = botPatchFor(id, kinds, extra);
+  if (!patch) return;
+  botPatchQueue.set(id, mergeBotPatch(botPatchQueue.get(id), patch));
+  if (botPatchTimer) return;
+  botPatchTimer = setTimeout(() => {
+    botPatchTimer = null;
+    const batch = [...botPatchQueue.values()];
+    botPatchQueue.clear();
+    if (!win || win.isDestroyed()) return;
+    for (const one of batch) win.webContents.send("harness:bot-patch", one);
+  }, BOT_PATCH_MERGE_MS);
+  botPatchTimer.unref?.();
 }
 
 function recoverMissions() {
@@ -3505,7 +3553,7 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
         waitingOn: args.waitingOn ?? args.waiting_on, ask: args.ask, links: args.links, stale: args.stale,
       });
       if (!res.ok) return { error: res.error, code: res.code };
-      broadcast();
+      broadcastBot(bot.id, ["items"], { counts: true });
       return { ok: true, item: { id: res.item.id, label: `#${res.item.seq}`, title: res.item.title, status: res.item.status }, links: res.links || [] };
     }
     case "item_set": {
@@ -3516,7 +3564,7 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
         waitingOn: args.waitingOn ?? args.waiting_on, snooze: args.snooze, stale: args.stale, links: args.links,
       });
       if (!res.ok) return { error: res.error, code: res.code };
-      broadcast();
+      broadcastBot(bot.id, ["items"], { counts: true });
       return { ok: true, item: { id: res.item.id, label: `#${res.item.seq}`, title: res.item.title, status: res.item.status }, changed: res.changed };
     }
     case "item_comment": {
@@ -3524,7 +3572,7 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
       if (!bot) return { error: "缺少 bot 上下文" };
       const res = items().comment({ botId: bot.id, item: args.item, text: args.text, kind: args.kind === "answer" ? "answer" : "comment" });
       if (!res.ok) return { error: res.error, code: res.code };
-      broadcast();
+      broadcastBot(bot.id, ["items"], { counts: true });
       return { ok: true, item: { id: res.item.id, label: `#${res.item.seq}`, title: res.item.title }, comment: res.event.text };
     }
     case "item_list": {
@@ -3915,6 +3963,7 @@ function startBotTick() {
   botTimer = setInterval(() => {
     bots().tick().then((out) => {
       for (const turn of out || []) {
+        broadcastBot(turn.botId, ["turns", "chats"]);
         if (turn.decision === "asked") {
           const askBot = bots().list().find((b) => b.id === turn.botId);
           if (!notifyAllowed(askBot?.policy, "asked")) continue;
@@ -4839,13 +4888,13 @@ const actions = {
   /** 人改台账（状态 / snooze / 标题）：和 bot 自己调 item_set 走同一套校验 */
   botItemSet: async ({ botId, item: ref, ...patch } = {}) => {
     const res = items().set({ botId: String(botId || ""), item: String(ref || ""), ...patch });
-    if (res.ok) broadcast();
+    if (res.ok) broadcastBot(String(botId || ""), ["items"], { counts: true });
     return res;
   },
   /** 人在台账上留言（答案就是一条普通评论） */
   botItemComment: async ({ botId, item: ref, text, kind } = {}) => {
     const res = items().comment({ botId: String(botId || ""), item: String(ref || ""), text, author: "owner", kind: kind === "answer" ? "answer" : "comment" });
-    if (res.ok) broadcast();
+    if (res.ok) broadcastBot(String(botId || ""), ["items"], { counts: true });
     return res;
   },
   botItemGet: async ({ botId, item: ref, events } = {}) => items().get({ botId: String(botId || ""), item: String(ref || ""), events: Number(events) || 20 }),
@@ -5103,6 +5152,7 @@ const actions = {
         });
         store.saveGroupMessage?.(msg);
         sendGroupMessage(gid, msg);
+        broadcastBot(bot.id, ["groups"], { groupMessages: msgs.filter((m) => m.groupId === gid) });
         out.push(msg);
         if (turn?.handoff?.to) {
           const line = push("system", null, `【交接】${bot.name} → ${turn.handoff.toName}：${turn.handoff.task}${turn.handoff.reason ? `（${turn.handoff.reason}）` : ""}`, "handoff");
@@ -5118,6 +5168,7 @@ const actions = {
           : push("bot", bot, `（没回：${String(err?.message || err)}）`, "blocked");
         store.saveGroupMessage?.(msg);
         sendGroupMessage(gid, msg);
+        broadcastBot(bot.id, ["groups"], { groupMessages: msgs.filter((m) => m.groupId === gid) });
         out.push(msg);
       } finally {
         botAborts.delete(bot.id);
@@ -5166,12 +5217,14 @@ const actions = {
     const base = { botId: bot.id, name: bot.name };
     sendPhase(base, "thinking");
     try {
-      return await bots().reply(bot, text, {
+      const turn = await bots().reply(bot, text, {
         threadId: String(threadId || ""),
         signal: controller.signal,
         onDelta: (delta) => sendDelta(base, delta),
         onTool: (tool) => sendTool(base, tool),
       });
+      broadcastBot(bot.id, ["turns", "chats"]);
+      return turn;
     } finally {
       flushDelta(base);
       botAborts.delete(bot.id);
