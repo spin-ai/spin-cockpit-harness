@@ -116,6 +116,7 @@
 | [`arch/ARCH-im-gateway.md`](arch/ARCH-im-gateway.md) | 架构 | 部分落地 | 即时通信网关：渠道范围只做飞书，飞书接入路径 / 现状 / 未做 |
 | [`arch/ARCH-zhulong-integration.md`](arch/ARCH-zhulong-integration.md) | 架构 | 部分落地 | 视觉解析插件：验证台 UI 改造、三种解析后端与插件设置项 |
 | [`arch/ARCH-bot.md`](arch/ARCH-bot.md) | 架构 | 部分落地 | 人格 bot：多 bot 档案、60s tick 与三道闸、回合审计；dispatch / 飞书未做 |
+| [`arch/ARCH-bot-borrow-from-orca.md`](arch/ARCH-bot-borrow-from-orca.md) | 架构 | 提案 | ORCA Bot 盘点（59f3122bc）：静默标记、Items 台账、记忆行模型、只读自查、通知作用域；P0/P1/P2 借鉴清单与第一批范围 |
 | [`arch/ARCH-office.md`](arch/ARCH-office.md) | 架构 | 部分落地 | 办公室舞台：状态映射 / 交互 / 协作场景边界 |
 | [`arch/ARCH-usability-pass.md`](arch/ARCH-usability-pass.md) | 架构 | 已落地 | 易用性一轮改动 |
 | [`arch/ARCH-package-size.md`](arch/ARCH-package-size.md) | 架构 | 已落地 | 打包体积与瘦身 |

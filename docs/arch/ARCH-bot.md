@@ -3,7 +3,7 @@
 # Arch · Bot（人格 bot）
 
 > 目标：让 Agent 以**固定人格**长期存在——本地 Chat 和 IM 是同一个身份、同一套记忆，且**以主动开口为主**。
-> 关联：[`ARCH-memory.md`](ARCH-memory.md)（四层记忆与注入预算）、[`ARCH-memory-persona-im.md`](ARCH-memory-persona-im.md)（画像数据模型）、[`ARCH-im-gateway.md`](ARCH-im-gateway.md)（飞书通道）、[`ARCH-super-agent.md`](ARCH-super-agent.md)（起任务）、[`ARCH-multi-agent-workspace.md`](ARCH-multi-agent-workspace.md)（thread/todo/run）、[`REQ-bot-intelligence.md`](../product/REQ-bot-intelligence.md)（vs ORCA / Rakazo 的智能度差距与 IR/SR）。
+> 关联：[`ARCH-memory.md`](ARCH-memory.md)（四层记忆与注入预算）、[`ARCH-memory-persona-im.md`](ARCH-memory-persona-im.md)（画像数据模型）、[`ARCH-im-gateway.md`](ARCH-im-gateway.md)（飞书通道）、[`ARCH-super-agent.md`](ARCH-super-agent.md)（起任务）、[`ARCH-multi-agent-workspace.md`](ARCH-multi-agent-workspace.md)（thread/todo/run）、[`REQ-bot-intelligence.md`](../product/REQ-bot-intelligence.md)（vs ORCA / Rakazo 的智能度差距与 IR/SR）、[`ARCH-bot-borrow-from-orca.md`](ARCH-bot-borrow-from-orca.md)（ORCA @ 59f3122bc 的盘点与 P0/P1/P2 借鉴清单）。
 
 ---
 
