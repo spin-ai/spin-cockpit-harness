@@ -628,7 +628,10 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
   const launchAgent = useCallback(async (agentId: string) => {
     const agent = state.agents.find((a) => a.id === agentId);
     if (!agent) return;
-    const cwd = activePane?.cwd || todo?.cwd || state.projectPath;
+    const remote = agent.hostId && agent.hostId !== "h-local";
+    const host = remote ? (state.hosts || []).find((h) => h.id === agent.hostId) : null;
+    // 远端 Agent 的 cwd 必须是远端路径：本地项目路径在目标机不存在
+    const cwd = remote ? (agent.cwd || host?.defaultCwd || "") : (activePane?.cwd || todo?.cwd || state.projectPath);
     try {
       const res = await window.harness.createTerminal(cwd, {
         agentId: agent.id,

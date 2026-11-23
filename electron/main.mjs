@@ -3131,18 +3131,19 @@ async function remoteEnsureAgentCli(host) {
   }
 }
 
-/** 在 remote host 上开一条反向隧道：远端的 127.0.0.1:<alloc> → 本机 agent bridge。 */
-async function remoteOpenTunnel(host) {
+/** 在 remote host 上开一条反向隧道：远端的 127.0.0.1:<port> → 本机 agent bridge。 */
+function spawnRemoteTunnel(host, remotePort, waitMs) {
   const localPort = (() => {
     try { return Number(new URL(agentBridgeUrl).port); } catch { return 0; }
   })();
-  if (!localPort) return null;
+  if (!localPort) return Promise.resolve(null);
   const proc = spawn("ssh", [
     ...remoteSshArgs(host).slice(0, -1),
-    "-N", "-R", `127.0.0.1:0:127.0.0.1:${localPort}`,
+    "-o", "ExitOnForwardFailure=yes",
+    "-N", "-R", `127.0.0.1:${remotePort}:127.0.0.1:${localPort}`,
     remoteTarget(host),
   ], { stdio: ["ignore", "ignore", "pipe"] });
-  const url = await new Promise((resolve) => {
+  return new Promise((resolve) => {
     let buf = "";
     let done = false;
     const finish = (value) => {
@@ -3150,23 +3151,40 @@ async function remoteOpenTunnel(host) {
       clearTimeout(timer);
       resolve(value);
     };
-    const timer = setTimeout(() => finish(null), 8000);
+    const timer = setTimeout(() => {
+      // 端口 0 靠 ssh 打印；固定端口只要进程还活着就当成功
+      finish(remotePort === 0 ? null : { proc, url: `http://127.0.0.1:${remotePort}` });
+    }, waitMs);
     proc.stderr?.on("data", (chunk) => {
       buf = (buf + String(chunk)).slice(-4000);
       const hit = buf.match(/Allocated port (\d+) for remote forward/);
-      if (hit) finish(`http://127.0.0.1:${hit[1]}`);
+      if (hit) finish({ proc, url: `http://127.0.0.1:${hit[1]}` });
+      else if (/remote port forwarding failed/i.test(buf)) finish(null);
     });
     proc.once("exit", () => finish(null));
     proc.once("error", () => finish(null));
   });
-  if (!url) {
-    try { proc.kill(); } catch { /* ignore */ }
-    return null;
+}
+
+async function remoteOpenTunnel(host) {
+  // OpenSSH 7.6+：让服务端分配端口；老版本退回到固定端口段
+  const first = await spawnRemoteTunnel(host, 0, 8000);
+  if (first) {
+    first.proc.once("exit", () => {
+      for (const [key, rec] of remoteTunnels) if (rec.proc === first.proc) remoteTunnels.delete(key);
+    });
+    return first;
   }
-  proc.once("exit", () => {
-    for (const [key, rec] of remoteTunnels) if (rec.proc === proc) remoteTunnels.delete(key);
-  });
-  return { proc, url };
+  for (let port = 49300; port < 49308; port += 1) {
+    const hit = await spawnRemoteTunnel(host, port, 700);
+    if (hit) {
+      hit.proc.once("exit", () => {
+        for (const [key, rec] of remoteTunnels) if (rec.proc === hit.proc) remoteTunnels.delete(key);
+      });
+      return hit;
+    }
+  }
+  return null;
 }
 
 /** 远端 run / 终端的 env 与隧道；失败返回 null（agent 仍能跑，只是没有 harness 回调）。 */
