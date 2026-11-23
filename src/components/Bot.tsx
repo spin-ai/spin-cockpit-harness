@@ -822,6 +822,11 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   const t = useT();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [memoryOverview, setMemoryOverview] = useState<{ byLayer?: Record<string, number>; notes?: number; injectable?: number } | null>(null);
+  /** 记忆行模型：行数 / 来源 / 装载截断（和 system 里同一份行） */
+  const [memLines, setMemLines] = useState<{
+    lines: string[]; total: number; loaded: number; dropped: number; cap: number; budget: number;
+    sources: { bot?: number; human?: number; shared?: number };
+  } | null>(null);
   const [skillCatalog, setSkillCatalog] = useState<{ id: string; name: string; description: string }[]>([]);
   const [webhook, setWebhook] = useState<{ running?: boolean; port?: number } | null>(null);
   /** 人格 / 职责 / 配额的历史（改坏了可恢复） */
@@ -975,6 +980,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
       }
       const ov = (await act("memoryOverview", {})) as { byLayer?: Record<string, number>; notes?: number; injectable?: number } | null;
       if (ov) setMemoryOverview(ov);
+
     } catch (err) {
       setError(String((err as Error)?.message || err));
     }
@@ -983,6 +989,16 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   useEffect(() => { void load(); }, [load]);
   // 这个 bot 有新切片（回合 / 会话 / 台账）才重读快照；500ms 已由主进程合并
   useEffect(() => { if (botPatchAt) void load(); }, [botPatchAt, load]);
+  // 记忆行模型：行数 / 来源 / 装载截断（和 system 里同一份行，切 bot 或增量后重读）
+  useEffect(() => {
+    if (!botId) return;
+    let cancelled = false;
+    void (async () => {
+      const ml = (await act("botMemoryLines", { botId })) as typeof memLines;
+      if (!cancelled) setMemLines(ml);
+    })();
+    return () => { cancelled = true; };
+  }, [act, botId, botPatchAt]);
 
   // 流式增量：主进程已经按 ~16ms 合并过；渲染层再按帧合并，一帧最多一次 setState。
   // 之前每个 token 都 setGroupStream，整个 BotConsole（整段历史）会跟着 reconcile，长会话必卡。
@@ -1934,6 +1950,25 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                   </div>
                 ))}
                 <p className="bot-note">注入按预算裁剪；被裁掉的条目在记忆页能看到原因。可注入字符数：{memoryOverview?.injectable ?? 0}。</p>
+                <div className="bot-label" style={{ marginTop: 14 }}>镜像的行（与 system 同一份）</div>
+                <div className="bot-kv">
+                  <span>事实行</span>
+                  <b>
+                    {memLines ? `${memLines.total} 行` : "—"}
+                    {memLines && memLines.dropped > 0 ? ` · 未载入 ${memLines.dropped} 行` : ""}
+                  </b>
+                  <span>装载上限</span><b>{memLines ? `${Math.min(memLines.loaded, memLines.cap)}/${memLines.cap} 行` : "—"}</b>
+                  <span>来源</span>
+                  <b>{memLines ? `bot ${memLines.sources?.bot ?? 0} · 人 ${memLines.sources?.human ?? 0} · 共享 ${memLines.sources?.shared ?? 0}` : "—"}</b>
+                </div>
+                {memLines && memLines.dropped > 0 && (
+                  <p className="bot-note">超上限的 {memLines.dropped} 行这轮没进 system；system 里也会明说「未载入 N 行」，不是静默裁掉。</p>
+                )}
+                {memLines?.lines.length ? memLines.lines.slice(0, 5).map((line, i) => (
+                  <div className="bot-mem-row" key={`ml-${i}`}>
+                    <span className="ellipsis" title={line}>{line.replace(/^[-*]\s+/, "")}</span>
+                  </div>
+                )) : <p className="bot-note">这个 bot 还没有记忆行。</p>}
                 <div className="bot-kv">
                   <span>本轮注入</span><b>{lastInjected.length} 条</b>
                   <span>上下文</span><b>{lastContext ? `${lastContext.chars ?? 0} 字符 · 记忆 ${lastContext.memory ?? 0}${lastContext.digest ? " · 含摘要" : ""}` : "还没有记录"}</b>

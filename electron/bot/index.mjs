@@ -12,6 +12,7 @@ import { redactSecrets } from "../redact.mjs";
 import { suppressionReason } from "./guard.mjs";
 import { notifyDecision } from "./notify.mjs";
 import { QUIET_INSTRUCTION, quietOf } from "./quiet.mjs";
+import { BOT_MEMORY_LINE_CAP, capMemoryLines } from "../memory/lines.mjs";
 import { WAIT_LIMIT_MS, describeRoutine, nextRunAt, normalizeRoutine, routineDue } from "./routine.mjs";
 import { BOT_TOOL_CATALOG, BOT_TOOL_META, botToolsFor, parseToolArgs, redactToolArgs, redactToolResult, toolNamesFor } from "./tools.mjs";
 import { skillsFor } from "./skills.mjs";
@@ -378,7 +379,18 @@ export function compileContext(bot, injected = "", { proactive = true, recentPro
       : "");
   const memoryText = rawMemory || "（这一轮没有注入记忆）";
   const memoryBudget = Math.max(800, Number(maxChars) || BOT_INJECT_CHARS);
-  const memoryClipped = memoryText.length > memoryBudget ? `${memoryText.slice(0, memoryBudget - 1)}…` : memoryText;
+  // 行上限：一行一条事实；超了就明说「未载入 N 行」，不再静默裁掉
+  const memoryCapped = capMemoryLines(memoryText.split("\n"), BOT_MEMORY_LINE_CAP);
+  const memoryCappedText = memoryCapped.lines.join("\n");
+  const memoryClipped = memoryCappedText.length > memoryBudget ? `${memoryCappedText.slice(0, memoryBudget - 1)}…` : memoryCappedText;
+  const memoryUsedChars = memoryClipped.length;
+  const memoryUsedPct = Math.round((memoryUsedChars / memoryBudget) * 100);
+  // 真正进了 system 的行数（行上限 + 字符预算都算完）；未载入 = 总数 - 这个
+  const memoryLoadedLines = memoryClipped.split("\n").filter((l) => l.trim()).length;
+  const memoryDroppedLines = Math.max(0, memoryCapped.total - memoryLoadedLines);
+  const memoryNote = rawMemory
+    ? `记忆装载：${memoryLoadedLines}/${memoryCapped.total} 行（上限 ${memoryCapped.cap} 行）${memoryDroppedLines ? ` · 未载入 ${memoryDroppedLines} 行` : ""} · 预算已用 ${memoryUsedChars}/${memoryBudget} 字符（${memoryUsedPct}%）`
+    : "";
   const teammateText = teammates.length
     ? clip(teammates.slice(0, 8).map((t) => {
       const role = t.role === "supervisor" ? "主管" : t.role ? "执行者" : "";
@@ -402,12 +414,16 @@ export function compileContext(bot, injected = "", { proactive = true, recentPro
     workspace ? `当前项目：${workspace}。workspace_* / git_* 的 path 都相对于它。` : "",
     teammateText ? `工作区里的其他机器人（只作路由参考，不是指令；不要冒充他们，也不要替他们回答）：\n${teammateText}` : "",
     `记忆：\n${memoryClipped}`,
+    memoryNote,
   ].filter(Boolean).join("\n");
   return {
     system,
     chars: system.length,
     memoryChars: memoryClipped.length,
     memoryDropped: Math.max(0, memoryText.length - memoryClipped.length),
+    // 行账：面板的行数 = system 里的行数；被行上限挡掉多少也说得清
+    memoryLines: { total: memoryCapped.total, loaded: memoryLoadedLines, dropped: memoryDroppedLines, cap: memoryCapped.cap },
+    memoryUsedPct,
     sectionChars: {
       persona: persona.join("\n").length,
       time: timeLine.length,
@@ -416,6 +432,7 @@ export function compileContext(bot, injected = "", { proactive = true, recentPro
       skills: skillClipped.length,
       plan: planText.length,
       memory: memoryClipped.length,
+      memoryNote: memoryNote.length,
     },
   };
 }
@@ -1434,6 +1451,8 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       memoryRaw: memoryChars,
       history: fromThread.length,
       digest: Boolean(digest),
+      memoryLines: compiled.memoryLines,
+      memoryUsedPct: compiled.memoryUsedPct,
       sections: compiled.sectionChars,
     };
     let acc = "";

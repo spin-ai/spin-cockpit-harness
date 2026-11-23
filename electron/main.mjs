@@ -4986,6 +4986,22 @@ const actions = {
       url: enabled && webhookPort ? `http://127.0.0.1:${webhookPort}/hook/${token}` : "",
     };
   },
+  /** 记忆行模型：面板与 system 用同一份行（行数 / 来源 / 截断） */
+  botMemoryLines: async ({ botId } = {}) => {
+    const id = String(botId || "");
+    if (!bots().list().some((b) => b.id === id)) throw new Error("bot 不存在");
+    const res = memory().botMemoryLines({ owner: `bot:${id}` });
+    const cap = Number(res.cap) || 200;
+    return {
+      lines: res.lines.slice(0, cap),
+      total: res.stats.lines,
+      sources: res.stats.sources,
+      cap,
+      loaded: Math.min(res.stats.lines, cap),
+      dropped: Math.max(0, res.stats.lines - cap),
+      budget: BOT_INJECT_CHARS,
+    };
+  },
   botMemoryFile: async ({ botId } = {}) => {
     const res = botMemoryFile(String(botId || ""));
     return { ok: true, path: res.path };

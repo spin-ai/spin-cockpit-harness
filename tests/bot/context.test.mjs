@@ -52,8 +52,9 @@ await test("上下文：记忆按预算硬裁，同僚目录只给名字+职责"
 });
 
 await test("上下文：默认预算允许 8KB 记忆，不再只给目录", () => {
-  const body = "结论：发票统一放 finance/ 目录。\n";
-  const markdown = body.repeat(300); // ~6.6KB
+  // 注意行数：装载上限是 200 行（P0-5），这条用例量的是字符预算，所以每行长一点、行数少一点
+  const body = "结论：发票统一放 finance/ 目录，报销单放报销目录，两者都不进项目仓库。\n";
+  const markdown = body.repeat(170); // ~7KB / 170 行（<200 行上限，量的是字符预算）
   const out = compileContext({ name: "PM", capability: "work", persona: {} }, markdown, { proactive: false });
   assert.ok(out.memoryChars > 6000, `6.6KB 记忆不应被裁，实际 ${out.memoryChars}`);
   assert.ok(out.memoryChars <= BOT_INJECT_CHARS);

@@ -35,6 +35,7 @@ const suites = [
   "./redact.test.mjs",     // 密钥封口：入参 / 结果 / 链接三类，trace 命中 0
   "./items.test.mjs",      // Items 台账：状态机 / ask / snooze / stale / 分页 / 编号
   "./patch.test.mjs",      // 作用域增量：patch < 全量 5% / 500ms 合并 / 按 id 合并
+  "./memory-lines.test.mjs", // 记忆行模型：一行一条 / from / 200 行上限 / 未载入提示
 ];
 
 for (const file of suites) await import(file);

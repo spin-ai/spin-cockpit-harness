@@ -15,6 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { tokens as bigramTokens } from "../knowledge/bigram.mjs";
+import { BOT_MEMORY_LINE_CAP, capMemoryLines, formatMemoryLine, memoryLineStats, memorySourceLabel } from "./lines.mjs";
 
 const LAYERS = ["L1", "L2", "L3", "L4"];
 const ACTIONS = ["fix", "build", "fill", "promote", "prune", "merge", "correct", "rewrite"];
@@ -869,7 +870,11 @@ export function createMemory({ dir }) {
      * 单个 bot 视角的 MEMORY.md：共享 + 自己的条目 / 观察。
      * 只读镜像，DB 仍是事实源；给「打开 MEMORY.md」用，不参与注入。
      */
-    botMarkdown({ owner = "", maxChars = 60000 } = {}) {
+    /**
+     * 这个 owner 眼里的事实行（一行一条，行尾带 ` · from: <来源>`）。
+     * 面板与注入引用同一份：面板行数 = system 行数，来源也能对上。
+     */
+    botMemoryLines({ owner = "" } = {}) {
       const own = String(owner || "");
       const ownSql = own ? " AND (COALESCE(owner,'')='' OR owner=?)" : "";
       const entries = rows(
@@ -880,30 +885,48 @@ export function createMemory({ dir }) {
         `SELECT * FROM notes WHERE status IN ('verified','new') AND (expires_at IS NULL OR expires_at > ?)${ownSql} ORDER BY updated_at DESC`,
         own ? [Date.now(), own] : [Date.now()],
       ).map(noteRow);
-      const lines = [
+      const facts = [];
+      for (const e of entries) {
+        const body = e.body ? `：${String(e.body).replace(/\s+/g, " ").slice(0, 240)}` : "";
+        facts.push({
+          layer: e.layer,
+          line: formatMemoryLine({ text: `${e.title}${body}`, at: e.validFrom || e.updatedAt, from: memorySourceLabel(e.owner) }),
+        });
+      }
+      for (const n of notes) {
+        facts.push({
+          layer: "note",
+          line: formatMemoryLine({ text: `${n.status === "verified" ? "" : "未验证 · "}${String(n.body || "").replace(/\s+/g, " ").slice(0, 240)}`, at: n.updatedAt || n.createdAt, from: memorySourceLabel(n.owner) }),
+        });
+      }
+      const lines = facts.map((f) => f.line).filter(Boolean);
+      const capped = capMemoryLines(lines, BOT_MEMORY_LINE_CAP);
+      return { lines, facts, stats: memoryLineStats(lines), cap: capped.cap };
+    },
+
+    /**
+     * MEMORY.md（只读镜像）：**一行一条事实**，行尾由我们（不是模型）写 ` · from: <来源>`。
+     * DB 才是事实源——手改这个文件不会自动回写（见 ARCH-bot.md §4）。
+     */
+    botMarkdown({ owner = "", maxChars = 60000 } = {}) {
+      const own = String(owner || "");
+      const { facts, lines, stats } = this.botMemoryLines({ owner: own });
+      const out = [
         "# MEMORY.md",
         "",
         `> 由记忆库生成的只读镜像（${own || "全局"}）；DB 才是事实源，手改不会自动回写。`,
+        `> 一行一条事实，行尾 \`· from: <来源>\`；共 ${stats.lines} 行（bot ${stats.sources.bot} · 人 ${stats.sources.human} · 共享 ${stats.sources.shared}），装载上限 ${BOT_MEMORY_LINE_CAP} 行。`,
         "",
       ];
-      const layerNames = { L4: "结论", L3: "项目", L2: "事实" };
-      for (const layer of ["L4", "L3", "L2"]) {
-        const list = entries.filter((e) => e.layer === layer);
-        if (!list.length) continue;
-        lines.push(`## ${layer} · ${layerNames[layer]}`);
-        for (const e of list) {
-          lines.push(`- ${e.title}${e.body ? `：${String(e.body).replace(/\s+/g, " ").slice(0, 240)}` : ""}`);
-        }
-        lines.push("");
+      const layerNames = { L4: "结论", L3: "项目", L2: "事实", note: "未验证观察" };
+      for (const layer of ["L4", "L3", "L2", "note"]) {
+        const group = facts.filter((f) => f.layer === layer);
+        if (!group.length) continue;
+        out.push(`## ${layer === "note" ? layerNames.note : `${layer} · ${layerNames[layer]}`}`);
+        for (const f of group) out.push(f.line);
+        out.push("");
       }
-      if (notes.length) {
-        lines.push("## 未验证观察");
-        for (const n of notes) {
-          lines.push(`- ${n.status === "verified" ? "" : "未验证 · "}${String(n.body || "").replace(/\s+/g, " ").slice(0, 240)}`);
-        }
-        lines.push("");
-      }
-      const text = lines.join("\n").trimEnd() + "\n";
+      const text = out.join("\n").trimEnd() + "\n";
       return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
     },
 
