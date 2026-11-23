@@ -110,7 +110,7 @@
 - **我们的差距**：`broadcast()` 每次推整份 `snapshot()`（`electron/main.mjs:772`）；`REQ-bot-chat.md` 的 SR-Chat-12 明确标 ✗。Bot 页回合变多后，每次增量都全量重渲染，长会话直接卡（US-Chat-04 实测 36 轮 2415 节点）。
 - **抄**：`harness:bot-patch` 只推 bot 切片（`botTurns` 尾部、`botGroupMessages` 尾部、`botChats` 摘要、`botChanged={botId,kinds}`）；渲染层按 `botId` + `openThreadId` 过滤；保留全量 `harness:state` 作首帧与兜底。
 - **不抄**：`kindBots` / `receivedGroupIds` 这类为多端与配对电脑准备的兼容字段；`namesItems` 协商。
-- **落点**：`electron/main.mjs` 的 `broadcast()` 拆成 `broadcastBot(botId, kinds, payload)`；`electron/preload.mjs` 增 `onBotPatch`；`src/App.tsx` 订阅并只替换对应切片；`src/components/Bot.tsx` 用 `threadId` 判断是否要重读。
+- **落点**：`electron/main.mjs` 的 `broadcast()` 拆成 `broadcastBot(botId, kinds, payload)`；`electron/preload.cjs` 增 `onBotPatch`（真正被 `main.mjs` 加载的那个；`preload.mjs` 残留文件已删）；`src/App.tsx` 订阅并只替换对应切片；`src/components/Bot.tsx` 用 `threadId` 判断是否要重读。
 - **判据**：`REQ-bot-chat.md` §4 的 SR-Chat-12 用例——一次广播的 patch 体积 < 全量的 5%，消息不乱序；200 轮会话滚动 p95 帧 ≤16ms。
 
 ### P0-5 记忆的「行」：可装载、可标注、可解释
@@ -258,7 +258,7 @@
 |---|---|---|---|
 | **1** | 静默标记 + 空跑不通知（P0-1） | `electron/bot/quiet.mjs`（新）、`electron/bot/index.mjs`（`speak` / `reply` 收口）、`electron/bot/notify.mjs`、`Bot.tsx` 回合行 | 日程空跑 0 通知；`**NO_REPLY**` / `NO_REPLY.` / `> NO_REPLY` 三种装饰全中；被点名时前半句保留 |
 | **2** | Items 最小台账（P0-3） | `electron/db.mjs`（3 张表 + 显式列名迁移）、`electron/bot/items.mjs`（新）、`electron/bot/tools.mjs`（`item_add/set/comment/list`）、`Bot.tsx` 右栏「待办」、`Bots.tsx` 行尾计数 | 一条真实任务能在台账里看到状态 + 链接 + 结论；`needs_you > 0` 才上 chrome；50 条/页、翻页不重排 |
-| **3** | 作用域增量通知（P0-4） | `electron/main.mjs` 的 `broadcast()` 拆 `broadcastBot()`、`electron/preload.mjs`、`src/App.tsx`、`Bot.tsx` | patch 体积 < 全量 5%；200 轮会话滚动 p95 ≤16ms；全量 `harness:state` 仍可兜底 |
+| **3** | 作用域增量通知（P0-4） | `electron/main.mjs` 的 `broadcast()` 拆 `broadcastBot()`、`electron/preload.cjs`、`src/App.tsx`、`Bot.tsx` | patch 体积 < 全量 5%；200 轮会话滚动 p95 ≤16ms；全量 `harness:state` 仍可兜底 |
 | **4** | 密钥封口统一（P0-2） | `electron/redact.mjs`、`electron/bot/tools.mjs` 统一出口、`electron/bot/webhook.mjs` / `github.mjs` | 工具入参 / 工具结果 / 链接三类用例全绿；`bot_turns.trace` 与 `bot_events.url` 命中数为 0 |
 | **5** | 记忆行模型与装载上限（P0-5） | `electron/memory/index.mjs` 的 `botMarkdown()`、`electron/bot/index.mjs` 的 `compileContext()`、`Bot.tsx` 记忆面板 | 面板行数 = system 行数；300 行镜像出现「N 行未载入」；每条可看来源 |
 

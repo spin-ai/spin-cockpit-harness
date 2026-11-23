@@ -66,6 +66,10 @@
 - **空白 bot 建出来就带 `intro`**：第一轮先问「你想让我干什么」，答案落成 `persona.mission`；从模板建的已有职责，不再问一遍
 - 用例改成自己建 bot（`tests/bot/_harness.mjs` 的 `makeBot()`），不再依赖种子
 
+### Fixed（preload 单一来源 + 忽略软链的 node_modules）
+- **删掉 `electron/preload.mjs`**：`main.mjs` 的 `webPreferences.preload` 指的是 `preload.cjs`，`preload.mjs` 是没人加载的 20 行残留副本。P0-4 把 `onBotPatch` 加在了那份死文件里，`App.tsx` 一订阅就抛 `TypeError: window.harness.onBotPatch is not a function`，渲染树整棵挂掉、首屏全白。现在 preload 只剩 `electron/preload.cjs` 一个来源
+- **`.gitignore` 的 `node_modules/` 改成 `node_modules`**：带斜杠只匹配目录，worktree 里软链的 `node_modules` 不匹配、会被 `git add -A` 收进提交（本次合并时踩到过）
+
 ### Fixed（空态字号：只修漏掉的那一处，不改 Chat 自己的字号）
 - **回滚窄 Chat 的字号下调整块**：终端页左栏里的 Chat 恢复到照搬 DeepSeek 的 14/24、空态标题 20px；窄了就收内容列与间距，不另开一套字号（`@container` 下调整块已删除）
 - **只保留一处真实 bug 修复**：`.chat-pane .chat-scroll > .chat-empty b` → `> b`（`p` 同理）。之前 20px 的空态标题字号漏到了建议卡片的 `b` 上，所以「实现功能 / 审查改动」比卡片说明大一圈；修正后建议卡回到 12.5 / 11
