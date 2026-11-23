@@ -18,6 +18,7 @@
 - **ACP harness MCP**：本地 ACP run 额外挂 `cockpit_harness`（stdio MCP），`harness_whoami` / `harness_note` / `harness_report` 走同一个 token 服务；远端 run 不挂
 - **`harness ask` 审批回传**：终端 agent 用 `harness ask --text "…" [--timeout 300]` 发起桌面审批（允许 / 拒绝），CLI 等到决定才继续；超时 30–900 秒自动收掉；不能自批、不会自动执行
 - **远端 agent bridge**：SSH 主机上用 `ssh -R 127.0.0.1:0:...` 反向隧道 + 远端 POSIX shim（curl/base64），pty run 本地 pty 包 `ssh -tt`，ACP run 走 `AcpClient.sshEnv`；隧道 / token 按 run 关闭，shim 缺失时明说不可用
+- **手动远端 shell**：终端「＋」菜单按主机列出「新建终端 · <host>」；`terminal:create` 接受 `hostId`，远端 `cd defaultCwd && exec "$SHELL" -l`；`terminals.host_id` + Pane 落盘恢复，重启仍回同一台
 - **群内同事消息（peer mail）**：`ask_bot` / `handoff_to_bot` 先落 `bot_peer_mail` pending；对方下一次在同一话题开口时带进 prompt，答完销账（`answered` + `answerTurnId`）；Bot 页「工作」能看到等它下一轮的消息；删 bot 一起清
 - **其他**：`harness report` 之后 pty 尾部不覆盖结论；`ask_bot` / `work_list` 进工具表；删除 / 撤销 / 清种子覆盖新增的 workspaces / 群话题草稿 / peer mail
 

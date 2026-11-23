@@ -13,7 +13,7 @@ declare global {
       chooseProject(): Promise<string | null>;
       switchProject(id: string): Promise<string>;
       pickProjectFolder(): Promise<string | null>;
-      createTerminal(cwd: string, opts?: { command?: string; projectId?: string; todoId?: string; agentId?: string; branch?: string | null; initialInput?: string; cols?: number; rows?: number; explore?: boolean }): Promise<{ id: string; cwd: string; agent?: unknown; run?: unknown }>;
+      createTerminal(cwd: string, opts?: { command?: string; projectId?: string; todoId?: string; agentId?: string; hostId?: string; branch?: string | null; initialInput?: string; cols?: number; rows?: number; explore?: boolean }): Promise<{ id: string; cwd: string; hostId?: string | null; agent?: unknown; run?: unknown }>;
       attachTerminal(id: string): Promise<{ data: string; url?: string | null; exited?: boolean; exitCode?: number | null; missing?: boolean }>;
       /** 关闭视图：pty 继续跑，输出攒回主进程 buffer，之后可重新 attach */
       detachTerminal(id: string): Promise<boolean>;

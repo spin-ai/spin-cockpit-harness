@@ -15,6 +15,8 @@ import { QuickCommandDialog, QuickCommandMenu, useQuickCommands, type TermQuickC
 /** 一个终端窗格 = 一个 pty（重启会新建 pty） */
 type PaneState = {
   id: string; cwd: string; title: string;
+  /** 远端主机：空 = 本机；重启恢复 / ssh -tt 都靠它 */
+  hostId?: string | null;
   /** terminal = pty；preview/file = 同标签内的预览窗格 */
   kind?: "terminal" | "preview" | "file";
   terminalId?: string;
@@ -63,6 +65,7 @@ const CHAT_TAB_ID = "chat";
 const TABS_STORE_KEY = "cmh.terminal.tabs.v1";
 type PersistedPane = {
   cwd: string; title: string; kind?: "terminal" | "preview" | "file";
+  hostId?: string | null;
   branch?: string | null; url?: string; rel?: string; rootDir?: string;
 };
 type PersistedNode =
@@ -140,7 +143,7 @@ function serializeNode(node: PaneNode): PersistedNode {
     return { type: "split", dir: node.dir, ratio: node.ratio, a: serializeNode(node.a), b: serializeNode(node.b) };
   }
   const p = node.pane;
-  return { type: "pane", pane: { cwd: p.cwd, title: p.title, kind: p.kind === "preview" || p.kind === "file" ? p.kind : "terminal", branch: p.branch ?? null, url: p.url, rel: p.rel, rootDir: p.rootDir } };
+  return { type: "pane", pane: { cwd: p.cwd, title: p.title, hostId: p.hostId ?? null, kind: p.kind === "preview" || p.kind === "file" ? p.kind : "terminal", branch: p.branch ?? null, url: p.url, rel: p.rel, rootDir: p.rootDir } };
 }
 
 function firstPane(node: PaneNode): PaneState {
@@ -353,7 +356,7 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
     return {
       type: "pane",
       pane: {
-        id: `p${seq.current++}`, cwd: p.cwd, title: p.title || basename(p.cwd),
+        id: `p${seq.current++}`, cwd: p.cwd, title: p.title || basename(p.cwd), hostId: p.hostId ?? null,
         kind: p.kind, branch: p.branch ?? null, url: p.url, rel: p.rel, rootDir: p.rootDir,
       },
     };
@@ -468,15 +471,16 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
   // 切标签 / 切窗格时关闭查找，避免搜索栏留在别的终端上
   useEffect(() => { setSearchPaneId(null); }, [active, activeFocusedId]);
 
-  const makePane = useCallback((init: { cwd: string; title?: string; terminalId?: string; branch?: string | null }): PaneState => ({
+  const makePane = useCallback((init: { cwd: string; title?: string; terminalId?: string; hostId?: string | null; branch?: string | null }): PaneState => ({
     id: `p${seq.current++}`,
     cwd: init.cwd,
-    title: init.title || basename(init.cwd),
+    title: init.title || (init.hostId ? "远端 shell" : basename(init.cwd)),
+    hostId: init.hostId ?? null,
     terminalId: init.terminalId,
     branch: init.branch || null,
   }), []);
 
-  const addTab = useCallback((init: { cwd: string; title?: string; taskId?: string; terminalId?: string; branch?: string | null; ownerKey?: string | null }) => {
+  const addTab = useCallback((init: { cwd: string; title?: string; taskId?: string; terminalId?: string; hostId?: string | null; branch?: string | null; ownerKey?: string | null }) => {
     const pane = makePane(init);
     const tab: Tab = {
       id: `t${seq.current++}`,
@@ -607,12 +611,18 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
     setFocusToken((n) => n + 1);
   }, []);
 
-  const newTerminal = useCallback(() => {
+  const newTerminal = useCallback((hostId?: string) => {
+    const host = hostId ? (state.hosts || []).find((h) => h.id === hostId) : null;
+    if (host) {
+      const cwd = String(host.defaultCwd || "").trim();
+      addTab({ cwd, title: `${host.name} · shell`, hostId: host.id });
+      return;
+    }
     // 当前标签属于别的项目时，别拿它的 cwd：新终端落在当前项目路径
     const sameProject = activeTab ? tabBelongs(activeTab) : false;
     const cwd = (sameProject && activePane?.cwd) || state.projectPath;
     addTab({ cwd, title: basename(cwd) });
-  }, [activePane?.cwd, activeTab, state.activeProjectId, state.projectPath, addTab]);
+  }, [activePane?.cwd, activeTab, state.activeProjectId, state.projectPath, addTab, state.hosts]);
 
   // 终端优先：不先建任务，直接在当前 cwd 起一个原生 CLI Agent（dsh 走 ACP，不在这里）
   const launchAgent = useCallback(async (agentId: string) => {
@@ -622,6 +632,7 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
     try {
       const res = await window.harness.createTerminal(cwd, {
         agentId: agent.id,
+        hostId: agent.hostId && agent.hostId !== "h-local" ? agent.hostId : undefined,
         projectId: agent.projectId || state.activeProjectId || undefined,
         // 探索：创建受管 run（todoId 空），之后可在右键「关联到任务」原样挂上去
         explore: true,
@@ -629,7 +640,7 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
         rows: 32,
       });
       if (res?.id) {
-        addTab({ cwd: res.cwd || cwd, title: agent.name, terminalId: res.id });
+        addTab({ cwd: res.cwd || cwd, title: agent.name, terminalId: res.id, hostId: res.hostId || null });
         window.dispatchEvent(new CustomEvent("harness:toast", { detail: `已启动 ${agent.name} · 探索（右键可关联任务）` }));
       }
     } catch (err) {
@@ -983,9 +994,16 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
     setNewMenu({ x: Math.max(8, rect.right - 208), y: rect.bottom + 6 });
   }, []);
 
+  const remoteHosts = (state.hosts || []).filter((h) => h.kind !== "local");
   const newSurfaceItems: MenuItem[] = [
     { label: "对话（派活 / 纠偏）", hint: "⌘J", disabled: !chat, run: openChatTab },
-    { label: "新建终端", hint: "⌘T", run: newTerminal },
+    { label: "新建终端", hint: "⌘T", run: () => newTerminal() },
+    ...(remoteHosts.length
+      ? [
+          { head: "远端 shell（新建标签）" } as MenuItem,
+          ...remoteHosts.map((h): MenuItem => ({ label: `新建终端 · ${h.name}`, run: () => newTerminal(h.id) })),
+        ]
+      : []),
     { label: "新建预览页", run: () => newPreviewTab() },
     { label: todo ? `任务详情（${todo.key}）` : "任务详情", disabled: !todo, run: openTaskTab },
     "sep",
@@ -1026,6 +1044,7 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
       cwd: rec.cwd || state.projectPath,
       title: rec.title || basename(rec.cwd || state.projectPath),
       terminalId: rec.id,
+      hostId: rec.hostId || null,
       taskId: rec.todoId || undefined,
       ownerKey: rec.projectId ?? state.activeProjectId ?? null,
     });
@@ -1723,7 +1742,7 @@ function TermTab({ projectId, pane, multi, visible, focused, focusToken, searchO
     if (pane.terminalId && incarnation === 0) {
       attach(pane.terminalId);
     } else {
-      window.harness.createTerminal(pane.cwd, { cols: term.cols, rows: term.rows, projectId: projectId || undefined }).then(({ id }) => {
+      window.harness.createTerminal(pane.cwd, { cols: term.cols, rows: term.rows, hostId: pane.hostId || undefined, projectId: projectId || undefined }).then(({ id }) => {
         if (disposed) { void window.harness.closeTerminal(id); return; }
         attach(id);
       }).catch((err) => {

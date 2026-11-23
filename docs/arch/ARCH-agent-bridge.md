@@ -121,6 +121,7 @@ harness_whoami / harness_note / harness_report
 
 - **远端 shim**：POSIX shell，只依赖 `curl` + `base64`；正文用 base64 传，避免 shell 拼 JSON。首次在主机上安装到 `$HOME/.cockpit-harness/bin/harness`（`ssh` + base64 写入，不落本机脚本）。
 - **远端 pty run**：本地 pty 包 `ssh -tt`，远端命令 `cd <cwd> && env <bridge env> <agent cli>`；输出、停止、结算仍走现有 pty 路径。
+- **手动远端 shell**：终端「＋」菜单按主机列出「新建终端 · <host>」；`terminal:create` 接受 `hostId`，远端命令 `cd <defaultCwd> && exec "$SHELL" -l`；`terminals.host_id` 落库，Pane / 标签落盘恢复都带它，重启仍回同一台。
 - **远端 ACP run**：`AcpClient` 支持 `sshEnv`，ssh 远端命令变成 `env <assignments> dsh --profile acp`；本地 MCP 仍不挂远端（远端够不到本机进程）。
 - 没有 `curl` / `base64` / 反向隧道失败：agent 仍能跑，只是没有 `harness`；事件与提示不假装成功。
 - token 仍按 run 下发、run 结束 / 终端退出即撤销；隧道进程按 run / 终端关闭。

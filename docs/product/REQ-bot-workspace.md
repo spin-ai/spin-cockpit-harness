@@ -47,7 +47,8 @@
 | US-W17 | 它的主目录能看，但不靠手改 | `userData/bots/<id>/` 有 SOUL.md + MEMORY.md 只读镜像；「主目录」按钮能打开；手改不回写 DB | ✅ SOUL.md 镜像 2026-11-23（home 文件夹仍只这两份） |
 | US-W18 | 终端里的 agent 能回一句 | 受管 pty 里有 `harness` 命令：`whoami` / `note --text` / `report --text`；note 进当前任务会话，report 进这次 run 的结果；token 只覆盖这次 run，不能调别的动作 | ✅ 2026-11-23 |
 | US-W19 | 终端 agent 能请人确认 | `harness ask --text "…" [--timeout]` 弹桌面审批（允许 / 拒绝）；CLI 等到决定才继续；超时自动收掉；不能自批 | ✅ 2026-11-23 |
-| US-W20 | 远端主机的 agent 也能回一句 | SSH 主机上的 pty / ACP run 通过反向隧道 + 远端 shim 用 `harness note / report / ask`；没有 curl / base64 时明说不可用，不假装成功 | ✅ 2026-11-23（远端 pty run；手动远程 shell 未接） |
+| US-W20 | 远端主机的 agent 也能回一句 | SSH 主机上的 pty / ACP run 通过反向隧道 + 远端 shim 用 `harness note / report / ask`；没有 curl / base64 时明说不可用，不假装成功 | ✅ 2026-11-23 |
+| US-W21 | 我能直接开一条远端 shell | 终端「＋」菜单按主机列「新建终端 · <host>」；标签记住 host，重启恢复仍连同一台；远端默认目录由 host.defaultCwd | ✅ 2026-11-23 |
 
 ---
 
@@ -64,6 +65,7 @@
 | IR-W07 | 交回后工作区从「手上」消失；「已交回 N」可展开看历史、打开终端或再交给它 | 交回不解绑别的 worktree 的项目绑定 | US-W07/14/16 |
 | IR-W08 | 终端里 `harness whoami` 能说清 run / 任务 / agent；`note` 在会话里是「〔agent〕…」系统行；`report` 在 run 结果与轨迹里可见；`ask` 进桌面审批 | 没有 token 时 CLI 明说「这条终端不在受管 run 里」，不假装成功 | US-W18/19 |
 | IR-W09 | 远端 run 的事件 / 提示同时说明「远端 bridge 可用 / 不可用」；远端审批同样进桌面弹窗 | 隧道或 shim 失败时不阻塞 agent，也不显示「已连接」 | US-W20 |
+| IR-W10 | 终端「＋」菜单里按主机列出「新建终端 · <host>」；远端标签标题带主机名；`host_id` 落库，重启恢复回同一台 | 主机离线 / SSH 失败时终端显示错误，不回落到本地 shell | US-W21 |
 
 ---
 
@@ -83,6 +85,7 @@
 | SR-W10 | 审计：交接写 `bot_turns`（`decision=watching`）与 `bot_events`；交回写 released + updatedAt | 任意交接可追到人、时间、路径 |
 | SR-W11 | 终端 Agent 窄通道：pty 走 `harness` 垫片（PATH + token）；ACP 走 `cockpit_harness` MCP；命令 whoami / note / report / ask；note 写当前任务会话，report 只写 run 结果；ask 建桌面审批，人决定后 CLI 取走（不自批、不自动执行）；run / 终端结束即撤销 token | `electron/agent-bridge.mjs` / `agent-cli.mjs` / `harness-mcp-bridge.mjs` / 主进程 token 服务 |
 | SR-W12 | 远端：`ssh -R 127.0.0.1:0:...` 反向隧道 + 远端 POSIX shim（curl/base64）；pty 用本地 pty 包 `ssh -tt`；ACP 用 `AcpClient.sshEnv`；隧道 / token 按 run 关闭；shim 缺失时不假装可用 | `startRemoteBridge` / `remoteAgentCliShimContent` / `AcpClient.sshEnv` |
+| SR-W13 | 手动远端 shell：`terminal:create` 接受 `hostId`；远端命令 `cd <defaultCwd> && exec "$SHELL" -l`；`terminals.host_id` 落库；PaneState / 落盘恢复带 hostId；新建菜单按主机列出 | `terminal:create` / `terminals.host_id` / `TerminalPanel` |
 
 ---
 
@@ -120,6 +123,6 @@
 | W02 / W03 / W13 | IR-W02 / IR-W03 / IR-W06 | SR-W01 / SR-W03 / SR-W09 |
 | W04 / W05 / W09 | IR-W06 | SR-W05 / SR-W06 / SR-W07 / SR-W08 |
 | W07 / W08 / W14 / W16 | IR-W07 | SR-W04 / SR-W09 / SR-W10 |
-| W11 / W12 / W17 / W18 / W19 / W20 | IR-W02 / IR-W03 / IR-W08 / IR-W09 | `worker_send` / `soulMarkdown` / 终端窄通道（SR-W11） / 远端隧道（SR-W12）；异步回复回流未做 |
+| W11 / W12 / W17 / W18 / W19 / W20 / W21 | IR-W02 / IR-W03 / IR-W08 / IR-W09 / IR-W10 | `worker_send` / `soulMarkdown` / 终端窄通道（SR-W11） / 远端隧道（SR-W12） / 手动远端 shell（SR-W13）；异步回复回流未做 |
 
 **已知差距**：交接后的**主动确认**与**追问活着的 agent**是下一步最值钱的两刀；前者便宜（条件触发），后者要动 ACP 投递面。

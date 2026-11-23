@@ -165,6 +165,9 @@ try {
     threads: [{ id: "gth-rt", title: "发布检查", createdAt: 1700000000003 }], memo: "本周只修 P0",
     reads: { main: 1700000000005, "gth-rt": 1700000000006 },
     sessions: { main: { "bot-rt": "th-group-rt" } } });
+  rt.state.terminals.push({ id: "term-rt", projectId: "p1", todoId: null, runId: null, agentId: null,
+    hostId: "h-remote", cwd: "/srv/app", kind: "shell", title: "远端 shell", status: "exited",
+    exitCode: 0, tail: "", createdAt: 1700000000008, endedAt: 1700000000009 });
   rt.state.botPeerMails.push({ id: "pm-rt", fromBotId: "bot-a", toBotId: "bot-rt", groupId: "grp-rt",
     threadId: "gth-rt", kind: "question", body: "CI 为什么红", status: "pending",
     createdAt: 1700000000007, deliveredAt: null, answeredAt: null, answerTurnId: null });
@@ -204,6 +207,8 @@ try {
   assert.equal(grp?.memo, "本周只修 P0", "群共识要能往返");
   assert.equal(grp?.reads?.["gth-rt"], 1700000000006, "按话题已读要能往返");
   assert.equal(grp?.sessions?.main?.["bot-rt"], "th-group-rt", "群话题会话映射要能往返");
+  const tr = (rt2.state.terminals || []).find((t) => t.id === "term-rt");
+  assert.equal(tr?.hostId, "h-remote", "terminals.host_id 要能往返（远端终端重启后回到同一台）");
   const pm = (rt2.state.botPeerMails || []).find((m) => m.id === "pm-rt");
   assert.equal(pm?.body, "CI 为什么红", "peer mail 正文要能往返");
   assert.equal(pm?.status, "pending");

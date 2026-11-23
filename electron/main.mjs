@@ -8569,7 +8569,7 @@ function syncTerminalRecord(id, patch = {}) {
   let record = (store.state.terminals || []).find((t) => t.id === id);
   if (!record) {
     record = {
-      id, projectId: null, todoId: null, runId: null, agentId: null, cwd: "",
+      id, projectId: null, todoId: null, runId: null, agentId: null, hostId: null, cwd: "",
       kind: "shell", title: "终端", status: "running", exitCode: null, tail: "",
       createdAt: Date.now(), endedAt: null,
     };
@@ -8640,31 +8640,50 @@ function settleTerminalRun(info, status) {
   broadcast();
 }
 
-ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, agentId, branch, initialInput, cols, rows, explore } = {}) => {
+ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, agentId, branch, initialInput, cols, rows, explore, hostId } = {}) => {
   const id = `term-${Date.now().toString(36)}`;
   const settings = store.state.settings || {};
+  const remoteHost = hostId ? (store.state.hosts || []).find((h) => h.id === String(hostId)) : null;
+  const isRemote = Boolean(remoteHost && remoteHost.kind !== "local");
   const shell = settings.shellPath || (process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/zsh");
   const fallbackShell = process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/zsh";
   const cwdResolved = cwd || activeProjectPath();
   const existingAgent = agentId ? store.state.agents.find((a) => a.id === agentId) || null : null;
   const commandToRun = String(command || existingAgent?.cli || "").trim();
+  const remoteCwd = isRemote ? String(cwd || remoteHost.defaultCwd || "").trim() : cwdResolved;
   // 受管 agent 终端：PATH 里放 harness，token 只指向这条终端；纯 shell 不发
-  const agentEnv = commandToRun
+  const remoteBridge = isRemote && commandToRun
+    ? await startRemoteBridge(remoteHost, { terminalId: id, todoId: todoId || null, cwd: remoteCwd })
+    : null;
+  const agentEnv = commandToRun && !isRemote
     ? await agentBridgeEnv({ terminalId: id, todoId: todoId || null, cwd: cwdResolved })
     : {};
   const spawnOptions = {
     name: "xterm-256color",
     cols: Math.max(20, Math.min(500, Number(cols) || 120)),
     rows: Math.max(2, Math.min(300, Number(rows) || 32)),
-    cwd: cwdResolved,
+    cwd: isRemote ? workspaceRoot : cwdResolved,
     env: { ...process.env, TERM: "xterm-256color", ...agentEnv },
   };
   const spawnArgs = commandToRun ? [] : (process.platform === "win32" ? [] : ["-l"]);
   let term;
   try {
-    term = pty.spawn(commandToRun || shell, spawnArgs, spawnOptions);
+    if (isRemote) {
+      const assignments = remoteBridge?.assignments?.join(" ") || "";
+      const remoteCommand = commandToRun
+        ? `${remoteCwd ? `cd ${shellQuote(remoteCwd)} && ` : ""}${assignments ? `env ${assignments} ` : ""}${shellQuote(commandToRun)}`
+        : `${remoteCwd ? `cd ${shellQuote(remoteCwd)} && ` : ""}exec "\${SHELL:-/bin/sh}" -l`;
+      const sshArgs = ["-tt", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15"];
+      if (remoteHost.port) sshArgs.push("-p", String(remoteHost.port));
+      sshArgs.push(remoteTarget(remoteHost), remoteCommand);
+      term = pty.spawn("ssh", sshArgs, spawnOptions);
+    } else {
+      term = pty.spawn(commandToRun || shell, spawnArgs, spawnOptions);
+    }
   } catch (err) {
-    if (commandToRun) throw err;
+    releaseRemoteBridge({ terminalId: id });
+    releaseAgentTokens({ terminalId: id });
+    if (commandToRun || isRemote) throw err;
     store.addEvent("terminal.shell_fallback", `terminal.shell_fallback ${shell} → ${fallbackShell}: ${String(err?.message || err).slice(0, 120)}`);
     // cwd 可能已被删除（worktree 清理等）：回落到项目根目录，避免终端直接起不来
     let safeCwd = cwdResolved;
@@ -8678,7 +8697,7 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
     const project = store.state.projects.find((p) => p.id === pid) || activeProject();
     if (!agent) {
       agent = {
-        id: store.nextId("ag"), name: `${project?.name || "project"} · ${commandToRun}`, hostId: "h-local",
+        id: store.nextId("ag"), name: `${project?.name || "project"} · ${commandToRun}`, hostId: isRemote ? remoteHost.id : "h-local",
         cli: commandToRun, cwd: cwdResolved, max: 1, approval: "ask", skills: [], color: "teal",
         alias: uniqueAgentAlias(commandToRun, pid), projectId: pid, terminalId: id,
         role: "worker", chatRuntime: commandToRun === "dsh" ? "acp" : "terminal",
@@ -8727,7 +8746,8 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
     agentId: agent?.id || null,
     cwd: cwdResolved,
     kind: commandToRun ? "agent" : "shell",
-    title: commandToRun ? `${agent?.name || commandToRun}` : path.basename(cwdResolved) || "shell",
+    hostId: isRemote ? remoteHost.id : null,
+    title: commandToRun ? `${agent?.name || commandToRun}` : (isRemote ? `${remoteHost.name} · shell` : path.basename(cwdResolved) || "shell"),
     status: "running",
     exitCode: null,
     tail: "",
@@ -8754,6 +8774,7 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
   term.onExit(({ exitCode, signal } = {}) => {
     terminals.delete(id);
     releaseAgentTokens({ terminalId: id });
+    releaseRemoteBridge({ terminalId: id });
     info.exited = true;
     info.exitCode = typeof exitCode === "number" ? exitCode : null;
     info.exitSignal = signal ?? null;
@@ -8779,7 +8800,7 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
       try { live.write(payload.endsWith("\r") ? payload : `${payload}\r`); } catch { /* ignore */ }
     }, 1500);
   }
-  return { id, cwd: cwdResolved, agent, run, branch: branch || null };
+  return { id, cwd: isRemote ? (remoteCwd || remoteHost.defaultCwd || "") : cwdResolved, hostId: isRemote ? remoteHost.id : null, agent, run, branch: branch || null };
 });
 
 // 渲染进程挂载后调用：返回挂载前的输出，并切换为实时推送（之后的输出只走 terminal:data）
@@ -8810,6 +8831,7 @@ ipcMain.handle("terminal:resize", (_e, { id, cols, rows }) => {
 
 ipcMain.handle("terminal:close", (_e, { id }) => {
   releaseAgentTokens({ terminalId: String(id || "") });
+  releaseRemoteBridge({ terminalId: String(id || "") });
   const info = terminalUrls.get(id);
   if (info) {
     // 用户主动关标签 = 取消这次终端运行；先结算，避免 onExit 再判成 failed。

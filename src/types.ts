@@ -205,6 +205,8 @@ export interface CoordinationScene {
 }
 export interface TerminalRecord {
   id: string; projectId: string | null; todoId: string | null; runId: string | null; agentId: string | null;
+  /** 远端主机；空 = 本机。重启后恢复远端 shell / agent 终端靠它 */
+  hostId?: string | null;
   cwd: string; kind: "agent" | "shell"; title: string;
   status: "running" | "exited" | "closed" | "detached" | "failed";
   exitCode: number | null; tail: string; createdAt: number; endedAt: number | null;

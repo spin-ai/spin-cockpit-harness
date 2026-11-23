@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS plugin_kv (plugin_id TEXT, key TEXT, value TEXT, upda
 CREATE TABLE IF NOT EXISTS todo_links (id TEXT PRIMARY KEY, todo_id TEXT, plugin_id TEXT, kind TEXT, ref TEXT, title TEXT, created_at INTEGER);
 CREATE TABLE IF NOT EXISTS scenes (project_id TEXT PRIMARY KEY, text TEXT, config TEXT, updated_at INTEGER);
 CREATE TABLE IF NOT EXISTS coordination_scenes (id TEXT PRIMARY KEY, name TEXT, project_id TEXT, template TEXT, config TEXT, created_at INTEGER, updated_at INTEGER);
-CREATE TABLE IF NOT EXISTS terminals (id TEXT PRIMARY KEY, project_id TEXT, todo_id TEXT, run_id TEXT, agent_id TEXT, cwd TEXT, kind TEXT, title TEXT, status TEXT, exit_code INTEGER, output_tail TEXT, created_at INTEGER, ended_at INTEGER);
+CREATE TABLE IF NOT EXISTS terminals (id TEXT PRIMARY KEY, project_id TEXT, todo_id TEXT, run_id TEXT, agent_id TEXT, cwd TEXT, kind TEXT, title TEXT, status TEXT, exit_code INTEGER, output_tail TEXT, created_at INTEGER, ended_at INTEGER, host_id TEXT);
 -- 人格 bot：身份（人格卡）/ 策略 / 配额都存在档案里；回合另表，便于按时间查与清理
 CREATE TABLE IF NOT EXISTS bots (id TEXT PRIMARY KEY, name TEXT, avatar TEXT, avatar_class TEXT, persona TEXT, capability TEXT, channels TEXT, policy TEXT, budget TEXT, status TEXT, muted_until INTEGER, created_at INTEGER, updated_at INTEGER, skills TEXT, project_id TEXT, host_id TEXT, team TEXT);
 CREATE TABLE IF NOT EXISTS bot_turns (id TEXT PRIMARY KEY, bot_id TEXT, channel TEXT, trigger TEXT, input TEXT, injected TEXT, reply TEXT, decision TEXT, reason TEXT, run_id TEXT, cost TEXT, created_at INTEGER, thread_id TEXT, trace TEXT);
@@ -207,6 +207,8 @@ export async function openDb(dir, { onTranscript } = {}) {
     "ALTER TABLE bot_groups ADD COLUMN reads TEXT",
     // 每个「群 + 话题」里，各成员用哪条 bot thread（群会话与 1:1 分开）
     "ALTER TABLE bot_groups ADD COLUMN sessions TEXT",
+    // 终端归属主机：远端 shell / 远端 agent 终端重启后仍回到同一台
+    "ALTER TABLE terminals ADD COLUMN host_id TEXT",
     // 主机：能力矩阵 / 探测时间 / 负载上限 / 默认远端目录（见 docs/arch/ARCH-hosts-stats.md）
     "ALTER TABLE hosts ADD COLUMN caps TEXT",
     "ALTER TABLE hosts ADD COLUMN last_probe INTEGER",
@@ -410,7 +412,7 @@ export async function openDb(dir, { onTranscript } = {}) {
   }));
   state.terminals = rows("SELECT * FROM terminals").map((r) => ({
     id: r.id, projectId: r.project_id || null, todoId: r.todo_id || null, runId: r.run_id || null,
-    agentId: r.agent_id || null, cwd: r.cwd || "", kind: r.kind || "shell", title: r.title || "",
+    agentId: r.agent_id || null, hostId: r.host_id || null, cwd: r.cwd || "", kind: r.kind || "shell", title: r.title || "",
     // pty 随进程退出而消失：历史记录不能继续显示 running
     status: r.status === "running" ? "detached" : (r.status || "detached"),
     exitCode: num(r.exit_code), tail: r.output_tail || "",
@@ -534,7 +536,10 @@ export async function openDb(dir, { onTranscript } = {}) {
       [m.id, m.fromBotId, m.toBotId, m.groupId || "", m.threadId || null, m.kind || "question", m.body || "",
         m.status || "pending", m.createdAt || Date.now(), m.deliveredAt ?? null, m.answeredAt ?? null, m.answerTurnId || null],
     );
-    for (const tm of state.terminals || []) run("INSERT INTO terminals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [tm.id, tm.projectId || null, tm.todoId || null, tm.runId || null, tm.agentId || null, tm.cwd || "", tm.kind || "shell", tm.title || "", tm.status || "exited", tm.exitCode ?? null, tm.tail || "", tm.createdAt || Date.now(), tm.endedAt ?? null]);
+    for (const tm of state.terminals || []) run(
+      "INSERT INTO terminals (id,project_id,todo_id,run_id,agent_id,cwd,kind,title,status,exit_code,output_tail,created_at,ended_at,host_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [tm.id, tm.projectId || null, tm.todoId || null, tm.runId || null, tm.agentId || null, tm.cwd || "", tm.kind || "shell", tm.title || "", tm.status || "exited", tm.exitCode ?? null, tm.tail || "", tm.createdAt || Date.now(), tm.endedAt ?? null, tm.hostId || null],
+    );
     run("INSERT INTO context VALUES ('current', ?)", [JSON.stringify(state.context)]);
     run("INSERT INTO settings VALUES ('app', ?)", [JSON.stringify(state.settings || {})]);
     run("INSERT INTO meta VALUES ('seq', ?)", [String(state.seq)]);
