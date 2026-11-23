@@ -1,4 +1,4 @@
-import type { BotChatSummary, BotGroupMessage, BotTurn, ElementContext, State } from "./types";
+import type { BotChatSummary, BotGroupMessage, BotItemCount, BotTurn, ElementContext, State } from "./types";
 
 declare global {
   interface GitFile { path: string; index: string; worktree: string; staged: boolean; untracked: boolean; conflict: boolean; }

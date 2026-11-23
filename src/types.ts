@@ -411,6 +411,15 @@ export interface BotGroupMessage {
   meta?: { turnId?: string | null; runId?: string | null; cost?: { tokens?: number | null; ms?: number } | null } | null;
 }
 
+/** Items 台账的计数：每个 bot 一份（needsYou > 0 才出现在行尾 / chrome 上） */
+export interface BotItemCount {
+  open: number;
+  needsYou: number;
+}
+
+/** botId → 计数。全量 snapshot 与 P0-4 的增量 patch 用同一份形状 */
+export type BotItemCounts = Record<string, BotItemCount>;
+
 export interface BotChatSummary {
   id: string; title: string; createdAt: number; updatedAt: number; count: number; last: string; lastAt: number;
 }
@@ -434,7 +443,7 @@ export interface State {
   botGroups?: BotGroup[];
   botGroupMessages?: BotGroupMessage[];
   /** Items 台账的计数（每个 bot 一份；明细走 botItemsList 分页读） */
-  itemCounts?: Record<string, { open?: number; needsYou?: number }>;
+  itemCounts?: BotItemCounts;
   /** 每个 bot 的会话摘要（增量推送用；老数据没有也不影响） */
   botChats?: Record<string, BotChatSummary[]>;
   /** 最近一次增量通知：渲染层据此决定「这个 bot 要不要重读」 */

@@ -16,7 +16,7 @@ import { RichText, MissionOverview } from "./TaskChat";
 import { relTime } from "../ui";
 import { assignmentsForBot } from "../selectors/assignments";
 import { requestTerminalAdopt } from "../terminal-events";
-import type { BotGroupMessage, State } from "../types";
+import type { BotGroupMessage, BotItemCounts, State } from "../types";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
@@ -730,6 +730,8 @@ type Snapshot = {
   toolCatalog?: { name: string; label: string; risk: string; requiresCapability: string[] | null }[];
   /** 聊天面的小状态：草稿与阅读位置（key = botId:threadId / group:groupId） */
   botUi?: Record<string, { draft?: string; scroll?: { turnId?: string; offset?: number } | null; updatedAt?: number }>;
+  /** Items 台账计数：botSnapshot 全量下发，P0-4 的 patch 只带那一个 bot 的一格 */
+  itemCounts?: BotItemCounts;
 };
 
 const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "汇报", watching: "监视中", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工", quiet: "没说什么" };
