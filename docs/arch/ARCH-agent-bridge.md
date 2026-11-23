@@ -71,6 +71,7 @@ pty agent ── harness whoami / note / report ──> 主进程 token 服务
 | `harness whoami` | 当前 run / 任务 / agent / cwd | 只读 | — |
 | `harness note --text "…"` | 中途进度、疑问、需要人看的信息 | 当前任务会话里一条 `〔agent〕…` system 行 | 不能改 run 状态、不能改任务、不能给别的 run 写 |
 | `harness report --text "…"` | 这次运行的结论 | `run.result`（`resultSource = agent_cli`）+ 一条「agent 汇报」；pty 退出时的尾部**不会覆盖**它 | 不能把 run 标完成 / 失败；结算仍由 pty 退出 / ACP 结束做 |
+| `harness ask --text "…" [--timeout 300]` | 需要人确认时发起审批 | 桌面 `ApprovalModal`（允许 / 拒绝）；CLI 轮询到决定后返回 | 不能自批；超时（30–900 秒）自动收掉并告知；run 回 `running` |
 
 `--text-file <path>` 用于多行文本；超过 4000 字截断，末尾标省略号。没有 token 时 CLI 明确报「这条终端不在受管 run 里」，不假装成功。
 
@@ -120,7 +121,7 @@ harness_whoami / harness_note / harness_report
 | ~~ACP 侧 harness MCP~~ | 已做：`harness_whoami / note / report`（本地 run；远端不挂） |
 | **双向 peer mail / inbox** | 现在 `note` 只是「写给当前任务会话」，不是给某个 bot 的收件箱；跨 run、离线的消息还没有 |
 | **远端终端** | token 只在本机回环；SSH 终端需要隧道或远端 serve |
-| **审批类回传** | agent 不能通过 CLI 请求批准 / 选方案；仍走 UI 审批 |
+| **多选项 / 带上下文的审批** | 现在只有允许 / 拒绝；还没有多方案选择、附件、审批历史页。ACP 原生 permission 仍更完整 |
 | **CLI 子命令扩展** | 故意只保留 3 条；每加一条都要重新判断是否可用 `actions` 里的安全子集 |
 
 ---

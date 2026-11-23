@@ -16,14 +16,17 @@ import {
 } from "../electron/agent-bridge.mjs";
 
 await test("CLI 参数：whoami 不需要正文；note / report 接受 --text 或 --text-file", () => {
-  assert.deepEqual(AGENT_CLI_COMMANDS, ["whoami", "note", "report"]);
-  assert.deepEqual(parseAgentCliArgs(["whoami"]), { command: "whoami", text: "", textFile: "", json: false });
+  assert.deepEqual(AGENT_CLI_COMMANDS, ["whoami", "note", "report", "ask"]);
+  assert.deepEqual(parseAgentCliArgs(["whoami"]), { command: "whoami", text: "", textFile: "", timeout: "", json: false });
   const note = parseAgentCliArgs(["note", "--text", "跑起来了"]);
   assert.equal(note.command, "note");
   assert.equal(note.text, "跑起来了");
   const file = parseAgentCliArgs(["report", "--text-file", "/tmp/out.txt", "--json"]);
   assert.equal(file.textFile, "/tmp/out.txt");
   assert.equal(file.json, true);
+  const ask = parseAgentCliArgs(["ask", "--text", "能删临时目录吗", "--timeout", "120"]);
+  assert.equal(ask.command, "ask");
+  assert.equal(ask.timeout, "120");
 });
 
 await test("CLI 参数：未知命令 / 缺值 / note 没正文都要报错，不静默", () => {
@@ -31,6 +34,8 @@ await test("CLI 参数：未知命令 / 缺值 / note 没正文都要报错，�
   assert.match(parseAgentCliArgs(["run"]).error, /用法/);
   assert.match(parseAgentCliArgs(["note", "--text"]).error, /需要一个值/);
   assert.match(parseAgentCliArgs(["note"]).error, /需要 --text/);
+  assert.match(parseAgentCliArgs(["ask"]).error, /需要 --text/);
+  assert.match(parseAgentCliArgs(["ask", "--text", "x", "--timeout", "0"]).error, /正数/);
   assert.match(parseAgentCliArgs(["note", "--bogus", "x"]).error, /不认识参数/);
 });
 

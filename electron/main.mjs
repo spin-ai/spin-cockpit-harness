@@ -441,6 +441,8 @@ let agentBridgeServer = null;
 let agentBridgeUrl = "";
 let agentBridgeReady = null;
 const agentTokens = new Map();
+/** agent 通过 harness ask 发起的审批：id → 状态；人决定后 CLI 轮询取结果 */
+const agentAsks = new Map();
 const AGENT_CLI_PATH = app.isPackaged
   ? path.join(process.resourcesPath, "app.asar.unpacked", "electron", "agent-cli.mjs")
   : path.join(__dirname, "agent-cli.mjs");
@@ -1203,7 +1205,7 @@ async function startRun(run, todo, agent) {
       todo.desc ? `背景：${todo.desc}` : "",
       (todo.acceptance || []).length ? `验收：${todo.acceptance.join("；")}` : "",
       delegation?.brief ? `子任务说明：${delegation.brief}` : "",
-      agentBridgeUrl ? `进度 / 结论也可以用 \`harness note --text "…"\` / \`harness report --text "…"\` 汇报（可选；终端尾部仍会收走）。` : "",
+      agentBridgeUrl ? `进度 / 结论可以用 \`harness note --text "…"\` / \`harness report --text "…"\` 汇报；需要人确认时 \`harness ask --text "…"\`（会等人批）。` : "",
       "完成后请在终端里说明改动与验证结果。",
     ].filter(Boolean).join("\n");
     window.setTimeout(() => {
@@ -2928,6 +2930,13 @@ function releaseAgentTokens({ terminalId = "", runId = "" } = {}) {
   for (const [token, rec] of agentTokens) {
     if ((terminalId && rec.terminalId === terminalId) || (runId && rec.runId === runId)) agentTokens.delete(token);
   }
+  // 运行结束：还挂着的 CLI 审批一起收掉，不让卡片悬空
+  for (const [id, ask] of agentAsks) {
+    if (!runId || ask.runId !== runId) continue;
+    if (ask.timer) clearTimeout(ask.timer);
+    approvals.delete(id);
+    agentAsks.delete(id);
+  }
 }
 
 function resolveAgentScope(rec = {}) {
@@ -2963,6 +2972,45 @@ function startAgentBridge() {
         const payload = await readRequestBody(req);
         const command = String(payload.command || "");
         const { run, todo, agent } = resolveAgentScope(rec);
+        if (command === "ask") {
+          if (!run) return send(400, { ok: false, error: "这次终端没有对应的运行，不能请求审批" });
+          const text = clipAgentText(payload.text, 800).trim();
+          if (!text) return send(400, { ok: false, error: "text 不能为空：说清要确认什么" });
+          const seconds = Math.max(30, Math.min(900, Number(payload.timeout) || 300));
+          const id = `aa${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+          const approval = {
+            id, requestId: "", runId: run.id, todoId: todo?.id || "", source: "agent_cli",
+            title: "agent 请求确认", description: redactSecrets(text).text,
+            options: [
+              { id: "", name: "允许", kind: "allow_once" },
+              { id: "", name: "拒绝", kind: "reject_once" },
+            ],
+          };
+          approvals.set(id, approval);
+          const ask = { runId: run.id, status: "pending", allow: null, label: "", timer: null };
+          agentAsks.set(id, ask);
+          ask.timer = setTimeout(() => {
+            if (ask.status !== "pending") return;
+            ask.status = "expired";
+            approvals.delete(id);
+            if (run.status === "waiting_input") run.status = "running";
+            const thread = todo ? threadForTodo(todo) : (run.threadId ? store.state.threads.find((t) => t.id === run.threadId) : null);
+            if (thread) store.addMessage(thread.id, run.id, "system", "system", "审批超时：agent 的确认请求没有等到人决定");
+            store.addEvent("run.approval_timeout", `run.approval_timeout ${run.id}`);
+            store.persist(); broadcast();
+          }, seconds * 1000);
+          if (run.status === "running") run.status = "waiting_input";
+          const thread = todo ? threadForTodo(todo) : (run.threadId ? store.state.threads.find((t) => t.id === run.threadId) : null);
+          if (thread) store.addMessage(thread.id, run.id, "system", "system", `等待审批：${text.slice(0, 200)}`);
+          store.addEvent("run.approval", `run.approval agent_cli waiting`);
+          store.persist(); broadcast();
+          return send(200, { ok: true, id, timeoutMs: seconds * 1000 });
+        }
+        if (command === "ask_status") {
+          const ask = agentAsks.get(String(payload.id || ""));
+          if (!ask) return send(404, { ok: false, error: "审批不存在" });
+          return send(200, { ok: true, status: ask.status, allow: ask.allow, label: ask.label });
+        }
         if (command === "whoami") {
           return send(200, { ok: true, runId: run?.id || null, todoId: todo?.id || null, todoKey: todo?.key || null, agent: agent?.name || null, cwd: rec.cwd || run?.cwd || null });
         }
@@ -7787,11 +7835,30 @@ const actions = {
     const handle = active.get(approval.runId);
     const option = approval.options.find((o) => o.id === optionId);
     const allowIt = option ? option.kind.startsWith("allow") : Boolean(allow);
+    const label = option?.name || (allowIt ? "允许" : "拒绝");
+    // harness ask：没有 ACP handle，决定写回 agentAsks 让 CLI 轮询取走
+    if (approval.source === "agent_cli") {
+      const ask = agentAsks.get(id);
+      if (ask) {
+        if (ask.timer) clearTimeout(ask.timer);
+        ask.status = "answered";
+        ask.allow = allowIt;
+        ask.label = label;
+      }
+      approvals.delete(id);
+      const cliRun = store.state.runs.find((r) => r.id === approval.runId);
+      if (cliRun && cliRun.status === "waiting_input") cliRun.status = "running";
+      const cliTodo = store.state.todos.find((t) => t.id === approval.todoId);
+      const cliThread = cliTodo ? threadForTodo(cliTodo) : (cliRun?.threadId ? store.state.threads.find((t) => t.id === cliRun.threadId) : null);
+      if (cliThread) store.addMessage(cliThread.id, approval.runId, "system", "approval", `审批：${label} · ${approval.description || approval.title}`);
+      store.addEvent("run.approval", `run.approval agent_cli ${label}`);
+      store.persist(); broadcast();
+      return { ok: true, allow: allowIt };
+    }
     const ok = handle?.client.respondPermission(approval.requestId, allowIt, optionId);
     approvals.delete(id);
     const run = store.state.runs.find((r) => r.id === approval.runId);
     if (run && run.status === "waiting_input") run.status = "running";
-    const label = option?.name || (allowIt ? "允许" : "拒绝");
     store.addEvent("run.approval", `run.approval ${approval.title} ${label} ok=${ok}`);
     const approvalTodo = store.state.todos.find((t) => t.id === approval.todoId);
     // 审批关掉之后要能在会话里回看：命令原文 / 谁批的 / 批了什么

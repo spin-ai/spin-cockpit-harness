@@ -6,9 +6,9 @@
  * 写一条进度、写一次结论的最小入口；不暴露任意 action、不绕过审批。
  */
 
-export const AGENT_CLI_COMMANDS = ["whoami", "note", "report"];
+export const AGENT_CLI_COMMANDS = ["whoami", "note", "report", "ask"];
 
-const VALUE_FLAGS = new Set(["--text", "--text-file"]);
+const VALUE_FLAGS = new Set(["--text", "--text-file", "--timeout"]);
 
 /** argv → { command, text, textFile, json, error }。不做 I/O，单测直接覆盖。 */
 export function parseAgentCliArgs(argv = []) {
@@ -19,6 +19,7 @@ export function parseAgentCliArgs(argv = []) {
   }
   let text = "";
   let textFile = "";
+  let timeout = "";
   let json = false;
   for (let i = 1; i < args.length; i += 1) {
     const arg = args[i];
@@ -27,13 +28,18 @@ export function parseAgentCliArgs(argv = []) {
     const value = args[i + 1];
     if (value === undefined || value === "" || VALUE_FLAGS.has(value)) return { error: `${arg} 需要一个值` };
     if (arg === "--text") text = value;
-    else textFile = value;
+    else if (arg === "--text-file") textFile = value;
+    else {
+      const seconds = Number(value);
+      if (!Number.isFinite(seconds) || seconds <= 0) return { error: "--timeout 需要正数秒" };
+      timeout = String(Math.round(seconds));
+    }
     i += 1;
   }
-  if ((command === "note" || command === "report") && !text && !textFile) {
+  if (["note", "report", "ask"].includes(command) && !text && !textFile) {
     return { error: `${command} 需要 --text "..." 或 --text-file <path>` };
   }
-  return { command, text, textFile, json };
+  return { command, text, textFile, timeout, json };
 }
 
 /** 主进程 / CLI 共用的截断口径 */

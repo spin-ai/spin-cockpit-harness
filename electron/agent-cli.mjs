@@ -25,7 +25,7 @@ if (parsed.textFile) {
     process.exit(2);
   }
 }
-const body = JSON.stringify({ command: parsed.command, text: clipAgentText(text, 4000) });
+const body = JSON.stringify({ command: parsed.command, text: clipAgentText(text, 4000), timeout: parsed.timeout || "" });
 let res;
 try {
   res = await fetch(`${url}/call`, {
@@ -41,6 +41,30 @@ const data = await res.json().catch(() => null);
 if (!res.ok || !data?.ok) {
   console.error(data?.error || `HTTP ${res.status}`);
   process.exit(1);
+}
+if (parsed.command === "ask") {
+  // ask 的服务端只建审批，不阻塞；CLI 轮询到人决定或超时
+  const id = String(data.id || "");
+  const limit = (Number(parsed.timeout) || 300) * 1000;
+  const started = Date.now();
+  while (Date.now() - started < limit) {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    const poll = await fetch(`${url}/call`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ command: "ask_status", id }),
+    });
+    const st = await poll.json().catch(() => null);
+    if (!st?.ok) break;
+    if (st.status === "answered") {
+      if (parsed.json) console.log(JSON.stringify(st));
+      else console.log(st.allow ? "✓ 允许" : "✗ 拒绝");
+      process.exit(st.allow ? 0 : 1);
+    }
+    if (st.status === "expired") { console.error("审批超时，没有等到人决定"); process.exit(2); }
+  }
+  console.error("审批超时，没有等到人决定");
+  process.exit(2);
 }
 if (parsed.json || parsed.command === "whoami") console.log(JSON.stringify(data));
 else if (parsed.command === "note") console.log("✓ 已记录");
