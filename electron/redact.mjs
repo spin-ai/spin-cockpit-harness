@@ -78,8 +78,91 @@ export function redact(text) {
 }
 
 /**
+ * 「像密钥」的单一判定：链接、入参、外部事件三处共用。
+ *
+ * 和 `hasSecret` 的区别：**不吃裸十六进制**——commit sha / 内容哈希是正常的，
+ * 把它们当密钥会把 legit 链接和工具结果涂成不可读。其余形态与 `PATTERNS` 同源。
+ */
+const STRONG_PATTERNS = PATTERNS.slice(0, 6);
+
+export function containsSecretLike(text) {
+  const s = String(text ?? "");
+  if (!s) return false;
+  if (STRONG_PATTERNS.some((re) => {
+    re.lastIndex = 0;
+    return re.test(s);
+  })) return true;
+  // key=value 形态（key 名本身足够像凭据）也算
+  const kv = PATTERNS[7];
+  kv.lastIndex = 0;
+  return kv.test(s);
+}
+
+/**
+ * 对象的**深层**脱敏：工具入参 / 工具结果这类模型可控的任意 JSON 用这个。
+ * 返回 `{ value, hits }`；命中一律 `[redacted]`，不保留长度。
+ * 深度与数组长度都封顶：宁可丢一半，也不要因为一个大结果把主进程卡住。
+ */
+export function redactDeep(value, { maxDepth = 8, maxItems = 200 } = {}) {
+  let hits = 0;
+  const walk = (v, depth) => {
+    if (typeof v === "string") {
+      const res = redactSecrets(v);
+      hits += res.hits;
+      return res.text;
+    }
+    if (v == null || typeof v !== "object") return v;
+    if (v instanceof Date) return v.toISOString();
+    if (depth >= maxDepth) return REDACTED;
+    if (Array.isArray(v)) return v.slice(0, maxItems).map((x) => walk(x, depth + 1));
+    if (typeof Buffer !== "undefined" && Buffer.isBuffer(v)) return REDACTED;
+    const out = {};
+    for (const [k, inner] of Object.entries(v)) out[k] = walk(inner, depth + 1);
+    return out;
+  };
+  return { value: walk(value, 0), hits };
+}
+
+/** 链接里带凭据形状的参数名：token / secret / passw / api_key / signature / auth / session */
+const CREDENTIAL_KEY = /token|secret|passw|api[_-]?key|apikey|signature|auth|session/i;
+
+/**
+ * 这条链接会不会把凭据发出去（query 或 fragment 里带 token 之类的参数名 / 密钥形态的值）。
+ * 命中就足够判「拒收」——不要发出去再删。
+ */
+export function linkCarriesCredential(url) {
+  const s = String(url ?? "").trim();
+  if (!s) return false;
+  const cut = s.search(/[?#]/);
+  const path = cut < 0 ? s : s.slice(0, cut);
+  if (cut < 0) return containsSecretLike(path);
+  const params = s.slice(cut + 1).split(/[&#;]/).map((p) => p.trim()).filter(Boolean);
+  for (const raw of params) {
+    const eq = raw.indexOf("=");
+    const rawKey = eq < 0 ? raw : raw.slice(0, eq);
+    const rawValue = eq < 0 ? "" : raw.slice(eq + 1);
+    const decode = (x) => { try { return decodeURIComponent(x); } catch { return x; } };
+    if (CREDENTIAL_KEY.test(decode(rawKey))) return true;
+    if (rawValue && containsSecretLike(decode(rawValue))) return true;
+  }
+  return containsSecretLike(path);
+}
+
+/**
+ * 要落库的链接：凭据形状直接拒收（空串），其余顺手脱敏。
+ * `bot_events.url` 走这一个出口，两个入站（webhook / github）就不会各写一份判定。
+ */
+export function safeLink(url) {
+  const s = String(url ?? "").trim();
+  if (!s) return "";
+  if (linkCarriesCredential(s)) return "";
+  return redactSecrets(s).text;
+}
+
+/**
  * 对象的浅层脱敏：bot 回合这类「几个已知字符串字段」的结构，逐字段过一遍即可。
  * 不做深拷贝遍历——宁可让调用方显式列出要涂的字段，也不要偷偷改掉别的数据。
+ * （模型可控的任意 JSON 用 `redactDeep`。）
  */
 export function redactFields(obj, fields) {
   const out = { ...obj };

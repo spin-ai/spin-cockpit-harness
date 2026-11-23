@@ -23,7 +23,7 @@ import { eventRowsFromGh, parseGhJson } from "./bot/github.mjs";
 import { newWebhookToken, webhookEvent } from "./bot/webhook.mjs";
 import { skillSummaries } from "./bot/skills.mjs";
 import { describeRoutine, nextRunAt, normalizeRoutine } from "./bot/routine.mjs";
-import { BOT_TOOL_META, matchBotRef } from "./bot/tools.mjs";
+import { BOT_TOOL_META, matchBotRef, redactToolArgs, redactToolResult } from "./bot/tools.mjs";
 import { clipChars, grepWorkspace, listWorkspace, readWorkspaceFile } from "./bot/workspace.mjs";
 import { redactSecrets } from "./redact.mjs";
 import { createPairing } from "./im/pairing.mjs";
@@ -3169,7 +3169,15 @@ async function botReadTool(name, args = {}, ctx = {}) {
   const meta = BOT_TOOL_META[name];
   if (!meta) return { error: `未知工具 ${name}` };
   try {
-    return await withTimeout(botReadToolNow(name, args, ctx), Number(meta.timeoutMs) || 0, `工具 ${name}`);
+    // 统一出口的入参封口：模型把 key 当参数传时，不执行也不落库（没有远程 HTTP 工具，它本来也用不上）
+    const cleanArgs = redactToolArgs(args);
+    const out = await withTimeout(botReadToolNow(name, cleanArgs.args, ctx), Number(meta.timeoutMs) || 0, `工具 ${name}`);
+    // 结果封口：读到的配置文件 / git 内容里可能就写着 token；命中一律 [redacted]
+    const cleanOut = redactToolResult(out);
+    if (cleanArgs.hits || cleanOut.hits) {
+      console.log(`[bot] 工具 ${name} 命中密钥形态 ${cleanArgs.hits + cleanOut.hits} 处，已涂成 [redacted]`);
+    }
+    return cleanOut.result;
   } catch (err) {
     return { error: String(err?.message || err) };
   }

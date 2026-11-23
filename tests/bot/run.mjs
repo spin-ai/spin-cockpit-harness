@@ -32,6 +32,7 @@ const suites = [
   "./skills.test.mjs",     // 技能包：id / 正文 / 注入上限 / 未知 id
   "./github.test.mjs",     // GitHub 事件：解析 / 去重 / TTL
   "./webhook.test.mjs",    // Webhook 入站：token / 事件 / 去重键
+  "./redact.test.mjs",     // 密钥封口：入参 / 结果 / 链接三类，trace 命中 0
 ];
 
 for (const file of suites) await import(file);

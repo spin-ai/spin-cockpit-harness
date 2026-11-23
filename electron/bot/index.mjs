@@ -13,7 +13,7 @@ import { suppressionReason } from "./guard.mjs";
 import { notifyDecision } from "./notify.mjs";
 import { QUIET_INSTRUCTION, quietOf } from "./quiet.mjs";
 import { WAIT_LIMIT_MS, describeRoutine, nextRunAt, normalizeRoutine, routineDue } from "./routine.mjs";
-import { BOT_TOOL_CATALOG, BOT_TOOL_META, botToolsFor, parseToolArgs, toolNamesFor } from "./tools.mjs";
+import { BOT_TOOL_CATALOG, BOT_TOOL_META, botToolsFor, parseToolArgs, redactToolArgs, redactToolResult, toolNamesFor } from "./tools.mjs";
 import { skillsFor } from "./skills.mjs";
 import { isFreshEvent } from "./github.mjs";
 import { normalizeToolStatus, toolFamily } from "../tool-format.mjs";
@@ -1315,11 +1315,16 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
         if (repeats > TOOL_REPEAT_LIMIT) { stopReason = `同一工具同参数调了 ${repeats} 次`; break; }
         let result;
         if (allowed.has(call.name)) {
-          const args = parseToolArgs(call.args);
+          const parsedArgs = parseToolArgs(call.args);
+          // 入参先封口：模型可能把一个 Bearer token 当参数传进来，它既没地方用也不该落库
+          const cleanArgs = redactToolArgs(parsedArgs);
+          const args = cleanArgs.args;
           const startedAt = now();
           try { onTool?.({ name: call.name, phase: "start" }); } catch { /* 回调失败不影响查询 */ }
           try { result = await runTool(call.name, args, { bot, turnId, groupId }); } catch (err) { result = { error: String(err?.message || err) }; }
           try { onTool?.({ name: call.name, phase: "done" }); } catch { /* 忽略 */ }
+          // 结果同样封口：文件 / git / 运行内容里可能就写着 token
+          result = redactToolResult(result).result;
           const failed = Boolean(result && typeof result === "object" && "error" in result);
           const cap = Number(BOT_TOOL_META[call.name]?.maxResultChars) || 6000;
           const resultText = JSON.stringify(result).slice(0, cap);

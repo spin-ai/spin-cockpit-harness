@@ -3,7 +3,10 @@
  *
  * 不引 OAuth、不开 webhook：登录态沿用你已经在 `gh` 里配好的账号；
  * 没装/没登录就静默跳过，不假装有事件。
+ * 链接过 `safeLink`：gh 返回的 URL 一般干净，但带 token 的 URL 直接拒收（凭据不外泄）。
  */
+
+import { safeLink } from "../redact.mjs";
 
 export const GITHUB_EVENT_TTL = 12 * 60 * 60 * 1000;
 
@@ -33,7 +36,7 @@ export function eventRowsFromGh({ botId, prs = [], runs = [], now = Date.now() }
       source: "github",
       key: `pr:${number}`,
       title: `PR #${number} 等你 review：${String(pr.title || "").slice(0, 120)}`,
-      url: String(pr.url || ""),
+      url: safeLink(pr.url),
       at: now,
       seen: false,
     });
@@ -47,7 +50,7 @@ export function eventRowsFromGh({ botId, prs = [], runs = [], now = Date.now() }
       source: "github",
       key: `ci:${runId}`,
       title: `CI 失败：${String(run.workflowName || "workflow").slice(0, 60)} · ${String(run.displayTitle || "").slice(0, 100)}`,
-      url: String(run.url || ""),
+      url: safeLink(run.url),
       at: now,
       seen: false,
     });

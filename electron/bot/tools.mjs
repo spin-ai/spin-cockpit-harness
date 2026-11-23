@@ -14,6 +14,8 @@
  * schema 用 OpenAI / Ark 的 function calling 格式；执行在 electron/main.mjs（它才拿得到 store / memory / fs）。
  */
 
+import { redactDeep } from "../redact.mjs";
+
 const fn = (name, description, properties = {}, required = []) => ({
   type: "function",
   function: {
@@ -207,6 +209,24 @@ export function parseToolArgs(raw) {
   if (!raw) return {};
   if (typeof raw === "object") return raw;
   try { return JSON.parse(String(raw)); } catch { return {}; }
+}
+
+/**
+ * 工具入参 / 结果的**统一出口**：命中密钥形态一律 `[redacted]`，不保留长度。
+ *
+ * 为什么在工具层再封一次（回合落库前已经过滤过正文）：
+ *  - 入参是模型自己写的（它可能把一个 `Authorization: Bearer …` 当参数传进来）；
+ *  - 结果是文件 / git / 运行内容（配置文件里就写着 token，`.env` 只是被 workspace 拒了）；
+ *  - `bot_turns.trace` 会把这两样原样存下来，所以存之前必须是干净的。
+ */
+export function redactToolArgs(args = {}) {
+  const res = redactDeep(args);
+  return { args: res.value, hits: res.hits };
+}
+
+export function redactToolResult(result) {
+  const res = redactDeep(result);
+  return { result: res.value, hits: res.hits };
 }
 
 /**
