@@ -24,6 +24,7 @@ import { newWebhookToken, webhookEvent } from "./bot/webhook.mjs";
 import { skillSummaries } from "./bot/skills.mjs";
 import { describeRoutine, nextRunAt, normalizeRoutine } from "./bot/routine.mjs";
 import { BOT_TOOL_META, matchBotRef, redactToolArgs, redactToolResult } from "./bot/tools.mjs";
+import { createItems } from "./bot/items.mjs";
 import { clipChars, grepWorkspace, listWorkspace, readWorkspaceFile } from "./bot/workspace.mjs";
 import { redactSecrets } from "./redact.mjs";
 import { createPairing } from "./im/pairing.mjs";
@@ -3495,6 +3496,55 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
         });
       return { running: rows.filter((r) => active.includes(r.status)).length, rows };
     }
+    case "item_add": {
+      const bot = ctx?.bot;
+      if (!bot) return { error: "缺少 bot 上下文" };
+      const res = items().add({
+        botId: bot.id,
+        title: args.title, body: args.body, status: args.status,
+        waitingOn: args.waitingOn ?? args.waiting_on, ask: args.ask, links: args.links, stale: args.stale,
+      });
+      if (!res.ok) return { error: res.error, code: res.code };
+      broadcast();
+      return { ok: true, item: { id: res.item.id, label: `#${res.item.seq}`, title: res.item.title, status: res.item.status }, links: res.links || [] };
+    }
+    case "item_set": {
+      const bot = ctx?.bot;
+      if (!bot) return { error: "缺少 bot 上下文" };
+      const res = items().set({
+        botId: bot.id, item: args.item, status: args.status, title: args.title, body: args.body,
+        waitingOn: args.waitingOn ?? args.waiting_on, snooze: args.snooze, stale: args.stale, links: args.links,
+      });
+      if (!res.ok) return { error: res.error, code: res.code };
+      broadcast();
+      return { ok: true, item: { id: res.item.id, label: `#${res.item.seq}`, title: res.item.title, status: res.item.status }, changed: res.changed };
+    }
+    case "item_comment": {
+      const bot = ctx?.bot;
+      if (!bot) return { error: "缺少 bot 上下文" };
+      const res = items().comment({ botId: bot.id, item: args.item, text: args.text, kind: args.kind === "answer" ? "answer" : "comment" });
+      if (!res.ok) return { error: res.error, code: res.code };
+      broadcast();
+      return { ok: true, item: { id: res.item.id, label: `#${res.item.seq}`, title: res.item.title }, comment: res.event.text };
+    }
+    case "item_list": {
+      const bot = ctx?.bot;
+      if (!bot) return { error: "缺少 bot 上下文" };
+      const paged = items().list({
+        botId: bot.id,
+        status: String(args.status || ""),
+        page: Number(args.page) || 1,
+        includeDone: args.include_done === true || args.includeDone === true,
+      });
+      return {
+        total: paged.total, page: paged.page, pages: paged.pages, size: paged.size,
+        counts: paged.counts,
+        rows: paged.rows.map((it) => ({
+          label: it.label, title: it.title, status: it.status, waitingOn: it.waitingOn || "",
+          stale: it.staleNow, snoozed: it.snoozed, links: it.linkCount,
+        })),
+      };
+    }
     case "workspace_list":
       return listWorkspace({
         root,
@@ -3704,6 +3754,13 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
     default:
       return { error: `未知工具 ${name}` };
   }
+}
+
+/** Items 台账：读写都在 store.state.botItems / botItemLinks / botItemEvents 上（见 electron/bot/items.mjs） */
+let itemsStore = null;
+function items() {
+  if (!itemsStore) itemsStore = createItems({ store });
+  return itemsStore;
 }
 
 function bots() {
@@ -4770,15 +4827,35 @@ const actions = {
       .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
       .slice(0, 200)
       .map((t) => ({ id: t.id, key: t.key, title: t.title, status: t.status, missionState: t.missionState || null }));
+    // Items 台账的计数（Bots 列表行尾只显示 needs-you，>0 才渲染）；明细走 botItemsList 分页读
+    snap.itemCounts = items().countsByBot();
     return snap;
   },
+  /** Items 台账：50 条一页（right rail「待办」tab 与 item_list 工具同源） */
+  botItemsList: async ({ botId, status, page, size, includeDone } = {}) => items().list({
+    botId: String(botId || ""), status: String(status || ""), page: Number(page) || 1,
+    size: Number(size) || undefined, includeDone: Boolean(includeDone),
+  }),
+  /** 人改台账（状态 / snooze / 标题）：和 bot 自己调 item_set 走同一套校验 */
+  botItemSet: async ({ botId, item: ref, ...patch } = {}) => {
+    const res = items().set({ botId: String(botId || ""), item: String(ref || ""), ...patch });
+    if (res.ok) broadcast();
+    return res;
+  },
+  /** 人在台账上留言（答案就是一条普通评论） */
+  botItemComment: async ({ botId, item: ref, text, kind } = {}) => {
+    const res = items().comment({ botId: String(botId || ""), item: String(ref || ""), text, author: "owner", kind: kind === "answer" ? "answer" : "comment" });
+    if (res.ok) broadcast();
+    return res;
+  },
+  botItemGet: async ({ botId, item: ref, events } = {}) => items().get({ botId: String(botId || ""), item: String(ref || ""), events: Number(events) || 20 }),
   /** 清理 bot 回合记录：decision 省略 = 只清沉默/被拦；"all" = 清空该 bot 全部 */
   botTurnsClear: async ({ botId, decision } = {}) => {
     const before = (store.state.botTurns || []).length;
     store.state.botTurns = (store.state.botTurns || []).filter((t) => {
       if (String(t.botId) !== String(botId || "")) return true;
       if (decision === "all") return false;
-      return !["silent", "blocked"].includes(t.decision);
+      return !["silent", "blocked", "quiet"].includes(t.decision);
     });
     store.persist();
     broadcast();
@@ -4892,6 +4969,7 @@ const actions = {
   botStatus: async ({ id, status, mutedUntil } = {}) => bots().setStatus(String(id || ""), { status, mutedUntil }),
   botRemove: async ({ id } = {}) => {
     const res = bots().remove(String(id || ""));
+    try { items().removeBot(String(id || "")); } catch { /* 台账清理失败不挡删除 */ }
     broadcast();
     return res;
   },

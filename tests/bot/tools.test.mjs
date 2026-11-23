@@ -24,7 +24,7 @@ const EXPECTED_READ = [
 
 await test("工具表：只读含工作区；写世界的一个都没有", () => {
   assert.deepEqual([...BOT_READ_TOOL_NAMES].sort(), EXPECTED_READ);
-  assert.deepEqual([...BOT_SELF_TOOL_NAMES].sort(), ["handoff_to_bot", "memory_forget", "memory_write", "plan_set", "plan_update", "routine_propose"]);
+  assert.deepEqual([...BOT_SELF_TOOL_NAMES].sort(), ["handoff_to_bot", "item_add", "item_comment", "item_list", "item_set", "memory_forget", "memory_write", "plan_set", "plan_update", "routine_propose"]);
   assert.deepEqual([...BOT_WRITE_TOOL_NAMES].sort(), ["run_start", "task_create", "todo_update"]);
   for (const t of botToolsFor("work")) {
     assert.equal(t.type, "function");

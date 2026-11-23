@@ -107,6 +107,7 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
       muted,
       paused,
       next: nextRoutineOf(bot.id),
+      items: (state.itemCounts || {})[bot.id] || {},
       mine: routines.filter((r: BotRoutine) => r.botId === bot.id),
       turnsThisHour: turnsThisHour(bot.id),
       state: paused ? t("bots.statePaused", "已暂停") : muted ? t("bots.stateMuted", "静音中") : executor ? t("bots.stateReady", "待命") : t("bots.stateUnbound", "未绑定执行体"),
@@ -371,7 +372,10 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
                 </div>
 
                 <footer className="bot-card-foot">
-                  <span className="tiny faint">本小时 {e.turnsThisHour} 条 · 最近 {timeAgo(e.last?.createdAt, now)}前</span>
+                  <span className="tiny faint">
+                    本小时 {e.turnsThisHour} 条 · 最近 {timeAgo(e.last?.createdAt, now)}前
+                    {Number(e.items.needsYou) > 0 ? ` · 待你决定 ${e.items.needsYou}` : ""}
+                  </span>
                   <div className="project-actions">{actionsFor(e)}</div>
                 </footer>
               </article>
@@ -398,6 +402,9 @@ export function Bots({ state, act, notify, now, onOpenBot }: {
                   <span><b>{e.mine.length}</b>日程</span>
                   <span><b>{e.executor ? 1 : 0}</b>执行体</span>
                 </div>
+                {Number(e.items.needsYou) > 0 && (
+                  <span className="tiny faint">待你决定 {e.items.needsYou}</span>
+                )}
                 <span className="list-time tiny faint">最近 {timeAgo(e.last?.createdAt, now)}前</span>
                 <div className="project-actions">{actionsFor(e)}</div>
               </div>

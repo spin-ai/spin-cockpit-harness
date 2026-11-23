@@ -429,6 +429,8 @@ export interface State {
   botTurns?: BotTurn[];
   botGroups?: BotGroup[];
   botGroupMessages?: BotGroupMessage[];
+  /** Items 台账的计数（每个 bot 一份；明细走 botItemsList 分页读） */
+  itemCounts?: Record<string, { open?: number; needsYou?: number }>;
   routines?: BotRoutine[];
   terminals?: TerminalRecord[];
   runtimes?: RuntimeView[];

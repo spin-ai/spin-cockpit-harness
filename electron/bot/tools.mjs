@@ -118,6 +118,35 @@ export const BOT_SELF_TOOLS = [
     watchCmd: str("watch：或盯这条命令的输出"),
     mode: str("alongside（到点就跑，默认）/ in-chat（等这一轮说完）"),
   }, ["name", "instruction"]),
+  fn("item_add", "在**你自己的台账**里记一条待办（不是聊天记录）。一件活一行，带状态；需要他拍板时带 ask（问题 + 选项）。重复的劳动先 item_list 看有没有现成的。", {
+    title: str("一句话说清这条活（≤120 字）"),
+    body: str("背景 / 结论 / 做到什么算完"),
+    status: str("planned / working / waiting / needs_you / done / canceled，默认 planned"),
+    waiting_on: str("status=waiting 时必填：在等什么（CI / review / 配额）"),
+    ask: { type: "object", description: "需要他决定时：{ context, questions: [{ text, options: [{ label, recommended }], multi }] }（≤5 问 × 8 选项）" },
+    links: { type: "array", items: { type: "object" }, description: "链接：[{ kind: pr|url|file|dispatch, ref, title }]；带 token 的链接会被拒收" },
+    stale: str("几天没动就标陈旧：3 / 5 / 7 / 14 / never，默认不标"),
+  }, ["title"]),
+  fn("item_set", "改台账里的一条：状态 / 标题 / 正文 / 在等什么 / snooze / 陈旧天数 / 链接。完成与取消记的是你自己的活，不改变任何人的审批。", {
+    item: str("item 编号（#3）或 id"),
+    status: str("planned / working / waiting / needs_you / done / canceled"),
+    title: str("新标题"),
+    body: str("新正文"),
+    waiting_on: str("waiting 时在等什么"),
+    snooze: str("later / tomorrow / monday / week，或 YYYY-MM-DD HH:mm"),
+    stale: str("3 / 5 / 7 / 14 / never"),
+    links: { type: "array", items: { type: "object" }, description: "替换链接列表" },
+  }, ["item"]),
+  fn("item_comment", "在台账的一条上留一句（结论 / 证据 / 答案）。答案是普通评论，不再开新的状态机。", {
+    item: str("item 编号（#3）或 id"),
+    text: str("一句话，带证据（path:line / 链接 / 命令输出）"),
+    kind: str("comment（默认）/ answer（回答它挂着的问题）"),
+  }, ["item", "text"]),
+  fn("item_list", "看自己台账里的活（默认只看未结束的，50 条一页）。回答「我手上还有什么 / 哪些在等人」。", {
+    status: str("按状态过滤：planned / working / waiting / needs_you / done / canceled"),
+    page: int("第几页，默认 1"),
+    include_done: bool("true = 连已完成 / 已取消一起看"),
+  }),
 ];
 
 /** 会改变世界的工具：只有 dispatch / work 档下发，而且起 run 仍要人点 */
@@ -168,6 +197,10 @@ export const BOT_TOOL_META = Object.freeze({
   plan_set: { risk: "self", label: "写计划", timeoutMs: 3000, maxResultChars: 4000 },
   plan_update: { risk: "self", label: "更新计划", timeoutMs: 3000, maxResultChars: 2000 },
   routine_propose: { risk: "self", label: "提日程", timeoutMs: 3000, maxResultChars: 4000 },
+  item_add: { risk: "self", label: "记一条台账", timeoutMs: 3000, maxResultChars: 4000 },
+  item_set: { risk: "self", label: "改台账", timeoutMs: 3000, maxResultChars: 4000 },
+  item_comment: { risk: "self", label: "台账留言", timeoutMs: 3000, maxResultChars: 4000 },
+  item_list: { risk: "self", label: "看台账", timeoutMs: 3000, maxResultChars: 8000 },
   task_create: { risk: "write", label: "建任务", timeoutMs: 10000, maxResultChars: 4000, requiresCapability: ["work", "dispatch"] },
   todo_update: { risk: "write", label: "改任务", timeoutMs: 5000, maxResultChars: 4000, requiresCapability: ["work", "dispatch"] },
   run_start: { risk: "write", label: "起运行", timeoutMs: 10000, maxResultChars: 2000, requiresCapability: ["work"] },

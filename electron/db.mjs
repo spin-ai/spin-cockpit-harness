@@ -37,6 +37,13 @@ CREATE TABLE IF NOT EXISTS bot_events (id TEXT PRIMARY KEY, bot_id TEXT, source 
 CREATE TABLE IF NOT EXISTS bot_ui (k TEXT PRIMARY KEY, draft TEXT, scroll TEXT, updated_at INTEGER);
 -- 人格 / 职责 / 配额的历史：每次改存上一版，恢复 = 生成新一版（不删旧记录）
 CREATE TABLE IF NOT EXISTS bot_revisions (id TEXT PRIMARY KEY, bot_id TEXT, at INTEGER, by TEXT, data TEXT);
+-- Items（P0-3）：机器人自己的工作台账。显式列名，按 persist() 的整表重写规则落盘。
+-- 状态机 planned / working / waiting / needs_you / done / canceled；ask 存 JSON（问题 + 选项）。
+CREATE TABLE IF NOT EXISTS bot_items (id TEXT PRIMARY KEY, bot_id TEXT, seq INTEGER, title TEXT, body TEXT, status TEXT, waiting_on TEXT, ask TEXT, snooze_until INTEGER, stale INTEGER, created_at INTEGER, updated_at INTEGER, closed_at INTEGER);
+-- 一条 item 可以挂链接：dispatch / pr / url / file（凭据形状的 URL 在写入前被拒收）
+CREATE TABLE IF NOT EXISTS bot_item_links (id TEXT PRIMARY KEY, item_id TEXT, kind TEXT, ref TEXT, title TEXT, created_at INTEGER);
+-- 一次写只发一条通知：created / status / comment / owner / snooze / link
+CREATE TABLE IF NOT EXISTS bot_item_events (id TEXT PRIMARY KEY, item_id TEXT, bot_id TEXT, kind TEXT, text TEXT, author TEXT, at INTEGER);
 `;
 
 /** 应用设置默认值。缺失的键一律从这里补齐。 */
@@ -364,6 +371,19 @@ export async function openDb(dir, { onTranscript } = {}) {
     threadId: r.thread_id || null, stopReason: r.stop_reason || "", context: J(r.context, {}), routineProposal: J(r.routine_proposal, null), handoff: J(r.handoff, null),
     cost: J(r.cost, {}), createdAt: r.created_at || 0,
   })).reverse();
+  state.botItems = rows("SELECT * FROM bot_items ORDER BY created_at").map((r) => ({
+    id: r.id, botId: r.bot_id, seq: r.seq || 0, title: r.title || "", body: r.body || "",
+    status: r.status || "planned", waitingOn: r.waiting_on || "", ask: J(r.ask, null),
+    snoozeUntil: r.snooze_until || 0, stale: r.stale || 0,
+    createdAt: r.created_at || 0, updatedAt: r.updated_at || r.created_at || 0, closedAt: r.closed_at || 0,
+  }));
+  state.botItemLinks = rows("SELECT * FROM bot_item_links ORDER BY created_at").map((r) => ({
+    id: r.id, itemId: r.item_id, kind: r.kind || "url", ref: r.ref || "", title: r.title || "", createdAt: r.created_at || 0,
+  }));
+  state.botItemEvents = rows("SELECT * FROM bot_item_events ORDER BY at DESC, rowid DESC LIMIT 2000").map((r) => ({
+    id: r.id, itemId: r.item_id, botId: r.bot_id || "", kind: r.kind || "comment",
+    text: r.text || "", author: r.author || "bot", at: r.at || 0,
+  })).reverse();
   state.botEvents = rows("SELECT * FROM bot_events ORDER BY at DESC LIMIT 500").map((r) => ({
     id: r.id, botId: r.bot_id, source: r.source || "github", key: r.key || "",
     title: r.title || "", url: r.url || "", at: r.at || 0, seen: !!r.seen,
@@ -432,7 +452,7 @@ export async function openDb(dir, { onTranscript } = {}) {
     if (closed) return;
     db.exec("BEGIN IMMEDIATE");
     try {
-    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "coordination_scenes", "terminals", "context", "settings", "meta", "bots", "bot_turns", "routines", "bot_events", "bot_groups", "bot_group_members", "bot_group_messages", "bot_revisions"]) run(`DELETE FROM ${t}`);
+    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "coordination_scenes", "terminals", "context", "settings", "meta", "bots", "bot_turns", "routines", "bot_events", "bot_groups", "bot_group_members", "bot_group_messages", "bot_revisions", "bot_items", "bot_item_links", "bot_item_events"]) run(`DELETE FROM ${t}`);
     for (const h of state.hosts) run(
       "INSERT INTO hosts (id,name,kind,addr,status,heartbeat,version,port,user,caps,last_probe,latency_ms,max_concurrency,default_cwd,probe_error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [h.id, h.name, h.kind, h.addr, h.status, h.heartbeat || 0, h.version || "—", h.port || 22, h.user || "",
@@ -475,6 +495,20 @@ export async function openDb(dir, { onTranscript } = {}) {
     for (const g of state.botGroups || []) run("INSERT INTO bot_groups VALUES (?,?,?,?,?)", [g.id, g.name || "群聊", JSON.stringify(g.replyMode || { kind: "mentions" }), g.createdAt || Date.now(), g.updatedAt || Date.now()]);
     for (const g of state.botGroups || []) for (const botId of g.memberIds || []) run("INSERT INTO bot_group_members VALUES (?,?)", [g.id, botId]);
     for (const rv of state.botRevisions || []) run("INSERT INTO bot_revisions VALUES (?,?,?,?,?)", [rv.id, rv.botId, rv.at || Date.now(), rv.by || "owner", JSON.stringify(rv.data || {})]);
+    for (const it of state.botItems || []) run(
+      "INSERT INTO bot_items (id,bot_id,seq,title,body,status,waiting_on,ask,snooze_until,stale,created_at,updated_at,closed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [it.id, it.botId, it.seq || 0, it.title || "", it.body || "", it.status || "planned", it.waitingOn || "",
+        it.ask ? JSON.stringify(it.ask) : null, it.snoozeUntil || 0, it.stale || 0,
+        it.createdAt || Date.now(), it.updatedAt || it.createdAt || Date.now(), it.closedAt || 0],
+    );
+    for (const l of state.botItemLinks || []) run(
+      "INSERT INTO bot_item_links (id,item_id,kind,ref,title,created_at) VALUES (?,?,?,?,?,?)",
+      [l.id, l.itemId, l.kind || "url", l.ref || "", l.title || "", l.createdAt || 0],
+    );
+    for (const ev of state.botItemEvents || []) run(
+      "INSERT INTO bot_item_events (id,item_id,bot_id,kind,text,author,at) VALUES (?,?,?,?,?,?,?)",
+      [ev.id, ev.itemId, ev.botId || "", ev.kind || "comment", ev.text || "", ev.author || "bot", ev.at || Date.now()],
+    );
     for (const m of state.botGroupMessages || []) run(
       "INSERT INTO bot_group_messages (id,group_id,seq,author,bot_id,bot_name,text,decision,created_at,meta) VALUES (?,?,?,?,?,?,?,?,?,?)",
       [m.id, m.groupId, m.seq || 0, m.author || "owner", m.botId || null, m.botName || "", m.text || "", m.decision || "answered", m.createdAt || Date.now(), m.meta ? JSON.stringify(m.meta) : null],

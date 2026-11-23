@@ -117,13 +117,14 @@ type TraceStep = {
   agentId?: string | null;
 };
 
-type RailTab = "messages" | "schedule" | "settings";
+type RailTab = "messages" | "items" | "schedule" | "settings";
 
 function BotRailTabs({ tab, onTab }: { tab: RailTab; onTab: (t: RailTab) => void }) {
   const t = useT();
   return (
     <div className="bot-rail-tabs">
       <button className={tab === "messages" ? "on" : ""} onClick={() => onTab("messages")}>{t("bot.messages", "消息")}</button>
+      <button className={tab === "items" ? "on" : ""} onClick={() => onTab("items")}>{t("bot.items", "待办")}</button>
       <button className={tab === "schedule" ? "on" : ""} onClick={() => onTab("schedule")}>{t("bot.schedule", "调度")}</button>
       <button className={tab === "settings" ? "on" : ""} onClick={() => onTab("settings")}>{t("bot.settings", "设置")}</button>
     </div>
@@ -181,6 +182,185 @@ function SchedulePanel({ state, act, onOpenThread }: { state?: State | null; act
 }
 
 
+
+
+/* ---------------------------------------------------------------- Items 台账 */
+
+type ItemStatus = "planned" | "working" | "waiting" | "needs_you" | "done" | "canceled";
+type ItemAsk = {
+  context?: string;
+  status?: string;
+  answer?: string;
+  questions?: { text: string; multi?: boolean; options?: { label: string; recommended?: boolean }[] }[];
+} | null;
+type ItemRow = {
+  id: string; label: string; title: string; status: ItemStatus; body?: string;
+  waitingOn?: string; staleNow?: boolean; snoozed?: boolean; linkCount?: number; ask?: ItemAsk;
+  createdAt?: number; updatedAt?: number;
+};
+type ItemsPage = { rows: ItemRow[]; total: number; page: number; size: number; pages: number; counts: Record<string, number> };
+type ItemDetail = ItemRow & {
+  links?: { id: string; kind: string; ref: string; title?: string }[];
+  events?: { id: string; kind: string; text: string; author?: string; at: number }[];
+};
+
+const ITEM_STATUS_LABEL: Record<string, string> = {
+  planned: "计划中", working: "在做", waiting: "等外部", needs_you: "等你决定", done: "已完成", canceled: "已取消",
+};
+
+/**
+ * 待办（台账）：一张表回答「它在干什么 / 需要我决定什么」。
+ * 一页 50 条、翻页不重排（AGENTS.md 第 19 条）；点开一条只在原位展开，不改列表顺序。
+ */
+function ItemsPanel({ botId, act, notify, refresh }: { botId: string; act: Act; notify: (m: string) => void; refresh: string }) {
+  const t = useT();
+  const [page, setPage] = useState(1);
+  const [filter, setFilter] = useState("");
+  const [data, setData] = useState<ItemsPage | null>(null);
+  const [openId, setOpenId] = useState("");
+  const [detail, setDetail] = useState<ItemDetail | null>(null);
+  const [busy, setBusy] = useState("");
+  const [comment, setComment] = useState("");
+  const load = useCallback(async () => {
+    const res = (await act("botItemsList", { botId, status: filter, page })) as ItemsPage | null;
+    if (res) setData(res);
+  }, [act, botId, filter, page]);
+  useEffect(() => { if (botId) void load(); }, [load, refresh, botId]);
+
+  const openDetail = async (id: string) => {
+    if (openId === id) { setOpenId(""); setDetail(null); return; }
+    setOpenId(id);
+    setDetail(null);
+    const res = (await act("botItemGet", { botId, item: id })) as ItemDetail | null;
+    setDetail(res);
+  };
+  const patch = (id: string, p: Record<string, unknown>) => {
+    setBusy(id);
+    void (async () => {
+      const res = (await act("botItemSet", { botId, item: id, ...p })) as { ok?: boolean; error?: string } | null;
+      if (res && res.ok === false) notify(res.error || "没改成");
+      await load();
+      if (openId === id) setDetail((await act("botItemGet", { botId, item: id })) as ItemDetail | null);
+      setBusy("");
+    })();
+  };
+  const say = (id: string, text: string, kind = "comment") => {
+    const body = text.trim();
+    if (!body) return;
+    setBusy(id);
+    void (async () => {
+      const res = (await act("botItemComment", { botId, item: id, text: body, kind })) as { ok?: boolean; error?: string } | null;
+      if (res && res.ok === false) notify(res.error || "没写上");
+      setComment("");
+      await load();
+      setDetail((await act("botItemGet", { botId, item: id })) as ItemDetail | null);
+      setBusy("");
+    })();
+  };
+
+  return (
+    <div className="bot-items">
+      <div className="row gap6 wrap">
+        <select className="project-filter" aria-label={t("bot.itemsFilter", "按状态筛选")} value={filter} onChange={(e) => { setPage(1); setFilter(e.target.value); }}>
+          <option value="">{t("bot.itemsOpen", "未结束")}</option>
+          <option value="needs_you">{ITEM_STATUS_LABEL.needs_you}</option>
+          <option value="working">{ITEM_STATUS_LABEL.working}</option>
+          <option value="waiting">{ITEM_STATUS_LABEL.waiting}</option>
+          <option value="planned">{ITEM_STATUS_LABEL.planned}</option>
+          <option value="done">{ITEM_STATUS_LABEL.done}</option>
+          <option value="canceled">{ITEM_STATUS_LABEL.canceled}</option>
+        </select>
+        <span className="tiny faint">
+          {data ? `${data.total} 条 · ${data.page}/${data.pages} 页` : "…"}
+          {data && data.counts?.needsYou ? ` · 待你决定 ${data.counts.needsYou}` : ""}
+        </span>
+      </div>
+      {data && data.rows.length === 0 && (
+        <p className="bot-note">{filter ? "这个状态下没有。" : "台账还是空的：它在干活时会用 item_add 记一条（状态 + 链接 + 结论）。"}</p>
+      )}
+      {data?.rows.map((it) => (
+        <div className="bot-item-row" key={it.id}>
+          <div className="bot-item-head">
+            <button className="bot-item-open" onClick={() => void openDetail(it.id)} aria-expanded={openId === it.id} title="展开这一条">
+              <span className="mono tiny faint">{it.label}</span>
+              <b className="ellipsis">{it.title}</b>
+              <span className="tag">{ITEM_STATUS_LABEL[it.status] || it.status}</span>
+            </button>
+            <RowMenu title="这条待办">
+              <button disabled={busy === it.id} onClick={() => patch(it.id, { status: "working" })}>标成「在做」</button>
+              <button disabled={busy === it.id} onClick={() => patch(it.id, { status: "needs_you" })}>标成「等你决定」</button>
+              <button disabled={busy === it.id} onClick={() => patch(it.id, { status: "done" })}>标完成</button>
+              <button disabled={busy === it.id} onClick={() => patch(it.id, { status: "canceled" })}>取消这条</button>
+              <button disabled={busy === it.id} onClick={() => patch(it.id, { snooze: "tomorrow" })}>明天 9 点再提醒</button>
+              <button disabled={busy === it.id} onClick={() => patch(it.id, { snooze: "week" })}>一周后再提醒</button>
+            </RowMenu>
+          </div>
+          {(it.waitingOn || it.snoozed || it.staleNow || it.linkCount) ? (
+            <div className="bot-item-sub tiny faint">
+              {it.waitingOn ? `等：${it.waitingOn}` : ""}
+              {it.snoozed ? `${it.waitingOn ? " · " : ""}snooze 中` : ""}
+              {it.staleNow ? `${it.waitingOn || it.snoozed ? " · " : ""}好几天没动` : ""}
+              {it.linkCount ? `${it.waitingOn || it.snoozed || it.staleNow ? " · " : ""}${it.linkCount} 个链接` : ""}
+            </div>
+          ) : null}
+          {openId === it.id && detail?.id === it.id && (
+            <div className="bot-item-detail">
+              {detail.body && <p className="bot-item-body">{detail.body}</p>}
+              {detail.ask?.questions?.map((q, qi) => (
+                <div className="bot-item-ask" key={`${it.id}-q${qi}`}>
+                  {qi === 0 && detail.ask?.context && <p className="tiny faint">{detail.ask.context}</p>}
+                  <b>{q.text}</b>
+                  <div className="row gap6 wrap">
+                    {(q.options || []).map((o) => (
+                      <button
+                        key={o.label}
+                        className={`btn tiny${o.recommended ? " primary" : ""}`}
+                        disabled={busy === it.id || detail.ask?.status === "answered"}
+                        onClick={() => say(it.id, o.label, "answer")}
+                        title={o.recommended ? "它建议这个" : ""}
+                      >{o.label}{o.recommended ? " · 建议" : ""}</button>
+                    ))}
+                  </div>
+                  {detail.ask?.status === "answered" && <span className="tiny faint">已答：{detail.ask.answer}</span>}
+                </div>
+              ))}
+              {(detail.links || []).length > 0 && (
+                <div className="bot-item-links">
+                  {(detail.links || []).map((l) => (
+                    <span className="tag" key={l.id} title={l.ref}>{l.kind} · {l.title || l.ref}</span>
+                  ))}
+                </div>
+              )}
+              <div className="bot-item-actions">
+                <input
+                  className="bot-chat-search"
+                  value={comment}
+                  placeholder="留一句（结论 / 证据）…"
+                  aria-label="台账留言"
+                  onChange={(e) => setComment(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); say(it.id, comment); } }}
+                />
+                <button className="btn tiny" disabled={busy === it.id || !comment.trim()} onClick={() => say(it.id, comment)}>记一句</button>
+              </div>
+              {(detail.events || []).slice(-4).map((ev) => (
+                <div className="bot-item-event tiny faint" key={ev.id}>
+                  <span className="mono">{hm(ev.at)}</span>
+                  <span>{ev.author === "owner" ? "你" : "它"}：{ev.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+      {data && data.pages > 1 && (
+        <div className="row gap6">
+          <button className="btn tiny" disabled={data.page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>上一页</button>
+          <button className="btn tiny" disabled={data.page >= data.pages} onClick={() => setPage((p) => p + 1)}>下一页</button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** 把一轮轮回合拆成轨迹记录：输入 / 思考 / 工具 / 回复 / 终端 */
 function trajectoryRecords(turns: Turn[], state?: State | null): TrajectoryRecord[] {
@@ -669,7 +849,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   /** 会话（ORCA 的 Chats）：null = 看列表，有值 = 在那条会话里 */
   const [openThreadId, setOpenThreadId] = useState<string | null>(null);
   /** 右栏：消息（会话列表）或设置（人格 / 日程 / 配额） */
-  const [railTab, setRailTab] = useState<"messages" | "schedule" | "settings">("messages");
+  const [railTab, setRailTab] = useState<RailTab>("messages");
   /** 中栏：对话 / 轨迹 */
   const [chatView, setChatView] = useState<"chat" | "trajectory">("chat");
   /** 从某一轮的动作进轨迹时定位到那一轮（null = 看全部） */
@@ -3087,6 +3267,19 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
             <button className="btn tiny danger" style={{ marginTop: 8 }} onClick={() => void deleteGroup()}>{t("bot.groupDelete", "删除群聊")}</button>
           </div>
         </aside>
+        )}
+        {!isGroup && chatView === "chat" && railTab === "items" && (
+          <aside className="bot-aside">
+            <BotRailTabs tab={railTab} onTab={setRailTab} />
+            {bot?.id && (
+              <ItemsPanel
+                botId={bot.id}
+                act={act}
+                notify={notify}
+                refresh={`${snapshot?.itemCounts?.[bot.id]?.open ?? 0}-${snapshot?.itemCounts?.[bot.id]?.needsYou ?? 0}`}
+              />
+            )}
+          </aside>
         )}
         {!isGroup && chatView === "chat" && railTab === "schedule" && (
           <aside className="bot-aside">
