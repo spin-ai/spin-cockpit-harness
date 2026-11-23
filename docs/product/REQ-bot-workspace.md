@@ -84,7 +84,7 @@
 | SR-W09 | 删除 / 撤销：`collectBotData` / `dropBotData` 带上 workspaces | 删 bot 不留孤儿 |
 | SR-W10 | 审计：交接写 `bot_turns`（`decision=watching`）与 `bot_events`；交回写 released + updatedAt | 任意交接可追到人、时间、路径 |
 | SR-W11 | 终端 Agent 窄通道：pty 走 `harness` 垫片（PATH + token）；ACP 走 `cockpit_harness` MCP；命令 whoami / note / report / ask；note 写当前任务会话，report 只写 run 结果；ask 建桌面审批，人决定后 CLI 取走（不自批、不自动执行）；run / 终端结束即撤销 token | `electron/agent-bridge.mjs` / `agent-cli.mjs` / `harness-mcp-bridge.mjs` / 主进程 token 服务 |
-| SR-W12 | 远端：`ssh -R 127.0.0.1:0:...` 反向隧道 + 远端 POSIX shim（curl/base64）；pty 用本地 pty 包 `ssh -tt`；ACP 用 `AcpClient.sshEnv`；隧道 / token 按 run 关闭；shim 缺失时不假装可用 | `startRemoteBridge` / `remoteAgentCliShimContent` / `AcpClient.sshEnv` |
+| SR-W12 | 远端：`ssh -R 127.0.0.1:0:...` 反向隧道 + 远端 POSIX shim（curl/base64）；pty 用本地 pty 包 `ssh -tt`；ACP 用 `AcpClient.sshEnv`，远端有 node 时挂远端 harness MCP；隧道 / token 按 run 关闭；shim 缺失时不假装可用 | `startRemoteBridge` / `remoteAgentCliShimContent` / `AcpClient.sshEnv` / 远端 MCP 安装 |
 | SR-W13 | 手动远端 shell：`terminal:create` 接受 `hostId`；远端命令 `cd <defaultCwd> && exec "$SHELL" -l`；`terminals.host_id` 落库；PaneState / 落盘恢复带 hostId；新建菜单按主机列出 | `terminal:create` / `terminals.host_id` / `TerminalPanel` |
 
 ---

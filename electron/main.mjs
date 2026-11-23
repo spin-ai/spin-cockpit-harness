@@ -1228,9 +1228,9 @@ async function startRun(run, todo, agent) {
   const extraEnv = parseEnvText(decSecret(store.state.settings?.dshEnv || ""));
   // 浏览器 / harness 工具只在本地 run 可用：远端机器连不到本机回环端点
   const browserMcp = isRemote ? [] : await browserMcpServers(run);
-  const harnessMcp = isRemote ? [] : await harnessMcpServers(run);
-  // 远端：装远端 shim + 反向隧道，把本机 bridge 暴露成远端 127.0.0.1
+  // 远端：装远端 shim / MCP + 反向隧道，把本机 bridge 暴露成远端 127.0.0.1
   const remoteBridge = isRemote ? await startRemoteBridge(host, { runId: run.id, todoId: todo?.id || null, cwd }) : null;
+  const harnessMcp = isRemote ? (remoteBridge?.mcp ? [remoteBridge.mcp] : []) : await harnessMcpServers(run);
   const client = new AcpClient({
     cwd,
     env: isRemote ? null : extraEnv, // 远端请在目标机自己配置（env 不会随 ssh 过去）
@@ -3112,22 +3112,32 @@ async function remoteEnsureAgentCli(host) {
   const key = `${host?.id || ""}:${host?.addr || ""}`;
   if (remoteBridgeCache.has(key)) return remoteBridgeCache.get(key);
   try {
-    const script = remoteAgentCliShimContent();
-    const encoded = Buffer.from(script, "utf8").toString("base64");
+    const shim = Buffer.from(remoteAgentCliShimContent(), "utf8").toString("base64");
+    const mcp = fs.existsSync(HARNESS_MCP_BRIDGE_PATH)
+      ? Buffer.from(fs.readFileSync(HARNESS_MCP_BRIDGE_PATH, "utf8"), "utf8").toString("base64")
+      : "";
     const command = [
       "set -e",
       "command -v curl >/dev/null 2>&1",
       "command -v base64 >/dev/null 2>&1",
       'mkdir -p "$HOME/.cockpit-harness/bin"',
-      `printf '%s' '${encoded}' | base64 -d > "$HOME/.cockpit-harness/bin/harness"`,
+      `printf '%s' '${shim}' | base64 -d > "$HOME/.cockpit-harness/bin/harness"`,
       'chmod 755 "$HOME/.cockpit-harness/bin/harness"',
-    ].join(" && ");
-    await execFileAsync("ssh", [...remoteSshArgs(host), command], { timeout: 15000 });
-    remoteBridgeCache.set(key, true);
-    return true;
+      // MCP 需要远端 node；没有 node 就只装 CLI，不装 MCP
+      "if command -v node >/dev/null 2>&1; then",
+      `  printf '%s' '${mcp}' | base64 -d > "$HOME/.cockpit-harness/bin/harness-mcp.mjs"`,
+      "  echo mcp_ok",
+      "else",
+      "  echo no_node",
+      "fi",
+    ].join("\n");
+    const { stdout } = await execFileAsync("ssh", [...remoteSshArgs(host), `sh -lc ${shellQuote(command)}`], { timeout: 15000 });
+    const info = { shim: true, mcp: /mcp_ok/.test(String(stdout || "")) };
+    remoteBridgeCache.set(key, info);
+    return info;
   } catch (err) {
     console.warn(`[agent.remote] shim failed ${host?.name || host?.addr}: ${String(err?.message || err).slice(0, 180)}`);
-    return false;
+    return { shim: false, mcp: false };
   }
 }
 
@@ -3192,23 +3202,26 @@ async function startRemoteBridge(host, scope = {}) {
   try {
     await startAgentBridge();
     if (!agentBridgeUrl) return null;
-    const ok = await remoteEnsureAgentCli(host);
-    if (!ok) return null;
+    const info = await remoteEnsureAgentCli(host);
+    if (!info.shim) return null;
     const tunnel = await remoteOpenTunnel(host);
     if (!tunnel) return null;
     const key = scope.runId || scope.terminalId || "";
     if (key) remoteTunnels.set(key, tunnel);
     const token = issueAgentToken({ ...scope, at: Date.now() });
-    return {
-      key,
-      url: tunnel.url,
-      assignments: [
-        `COCKPIT_AGENT_URL=${shellQuote(tunnel.url)}`,
-        `COCKPIT_AGENT_TOKEN=${shellQuote(token)}`,
-        "COCKPIT_CLI=harness",
-        'PATH="$HOME/.cockpit-harness/bin:$PATH"',
-      ],
-    };
+    const assignments = [
+      `COCKPIT_AGENT_URL=${shellQuote(tunnel.url)}`,
+      `COCKPIT_AGENT_TOKEN=${shellQuote(token)}`,
+      "COCKPIT_CLI=harness",
+      'PATH="$HOME/.cockpit-harness/bin:$PATH"',
+    ];
+    const mcp = info.mcp ? {
+      name: "cockpit_harness",
+      command: "sh",
+      args: ["-lc", `COCKPIT_AGENT_URL=${shellQuote(tunnel.url)} COCKPIT_AGENT_TOKEN=${shellQuote(token)} node "$HOME/.cockpit-harness/bin/harness-mcp.mjs"`],
+      env: [],
+    } : null;
+    return { key, url: tunnel.url, assignments, mcp };
   } catch (err) {
     console.warn(`[agent.remote] bridge failed: ${String(err?.message || err).slice(0, 180)}`);
     return null;
