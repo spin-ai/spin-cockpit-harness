@@ -33,9 +33,9 @@ declare global {
       onTerminalUrl(cb: (p: { id: string; url: string }) => void): () => void;
       onTerminalExit(cb: (p: { id: string; exitCode: number | null; signal: string | null }) => void): () => void;
       onImPaired(cb: (p: { appId: string; allowIds?: string }) => void): () => void;
-      onBotDelta(cb: (p: { botId: string; delta: string; groupId?: string; name?: string }) => void): () => void;
-      onBotTool(cb: (p: { botId: string; name: string; phase: "start" | "done"; groupId?: string; botName?: string }) => void): () => void;
-      onBotPhase(cb: (p: { botId: string; phase: "thinking" | "tool" | "done"; groupId?: string; name?: string; tool?: string }) => void): () => void;
+      onBotDelta(cb: (p: { botId: string; delta: string; groupId?: string; threadId?: string; name?: string }) => void): () => void;
+      onBotTool(cb: (p: { botId: string; name: string; phase: "start" | "done"; groupId?: string; threadId?: string; botName?: string }) => void): () => void;
+      onBotPhase(cb: (p: { botId: string; phase: "thinking" | "tool" | "done"; groupId?: string; threadId?: string; name?: string; tool?: string }) => void): () => void;
       onBotGroupMessage(cb: (p: { groupId: string; message: BotGroupMessage }) => void): () => void;
       onBotMessage(cb: (p: { botId: string; text: string; turnId: string }) => void): () => void;
       onPluginChatDraft(cb: (p: { text: string; context?: unknown }) => void): () => void;

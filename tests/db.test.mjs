@@ -160,6 +160,16 @@ try {
     handoff: { to: "b2", toName: "小B", task: "查部署" } });
   rt.state.botRevisions.push({ id: "rev-rt", botId: "bot-rt", at: 1700000000000, by: "owner", data: { name: "旧名字", persona: { mission: "旧职责" } } });
   rt.state.botEvents.push({ id: "ev-rt", botId: "bot-rt", source: "github", key: "pr:1", title: "PR #1", url: "https://x", at: 1700000000000, seen: false });
+  rt.state.botGroups.push({ id: "grp-rt", name: "发布群", replyMode: { kind: "mentions", pace: "serial" }, memberIds: ["bot-rt"],
+    createdAt: 1700000000000, updatedAt: 1700000000001, lastReadAt: 1700000000002,
+    threads: [{ id: "gth-rt", title: "发布检查", createdAt: 1700000000003 }], memo: "本周只修 P0",
+    reads: { main: 1700000000005, "gth-rt": 1700000000006 },
+    sessions: { main: { "bot-rt": "th-group-rt" } } });
+  rt.state.botGroupMessages.push({ id: "gm-rt", groupId: "grp-rt", threadId: "gth-rt", seq: 1, author: "owner",
+    botId: null, botName: "", text: "查一下发布", decision: "answered", createdAt: 1700000000004, meta: { runId: "r-rt" } });
+  rt.state.botWorkspaces.push({ id: "ws-rt", botId: "bot-rt", projectId: "p1", path: dir, branch: "feat/handoff",
+    title: "交出去的工作区", kind: "worktree", terminalId: "term-rt", goal: "修登录并回一句", status: "open",
+    createdAt: 1700000000000, updatedAt: 1700000000001 });
   rt.state.bots.push({ id: "bot-rt", name: "技能 bot", avatar: "", avatarClass: "a", persona: {}, capability: "work", role: "worker", executorAgentId: null, model: "", effort: "", skills: ["status-brief", "pr-review"], projectId: "p1", hostId: "h1", team: "产品组", plan: { goal: "修登录", steps: [{ text: "看日志", status: "doing" }] }, channels: ["local"], policy: {}, budget: {}, status: "active", mutedUntil: 0, createdAt: 1, updatedAt: 2 });
   rt.persist(); rt.flush(); rt.close();
   const rt2 = await openDb(dir);
@@ -183,6 +193,22 @@ try {
   const ev = (rt2.state.botEvents || []).find((e) => e.id === "ev-rt");
   assert.equal(ev?.key, "pr:1", "bot_events 要能往返");
   assert.equal(ev?.seen, false);
+  const grp = (rt2.state.botGroups || []).find((g) => g.id === "grp-rt");
+  assert.equal(grp?.lastReadAt, 1700000000002, "bot_groups.last_read_at 要能往返（左栏未读点）");
+  assert.deepEqual(grp?.memberIds, ["bot-rt"], "群成员要能往返");
+  assert.equal(grp?.replyMode?.pace, "serial", "群回复节奏（replyMode.pace）要能往返");
+  assert.deepEqual(grp?.threads?.map((t) => t.id), ["gth-rt"], "群内话题要能往返");
+  assert.equal(grp?.memo, "本周只修 P0", "群共识要能往返");
+  assert.equal(grp?.reads?.["gth-rt"], 1700000000006, "按话题已读要能往返");
+  assert.equal(grp?.sessions?.main?.["bot-rt"], "th-group-rt", "群话题会话映射要能往返");
+  const gm = (rt2.state.botGroupMessages || []).find((m) => m.id === "gm-rt");
+  assert.equal(gm?.threadId, "gth-rt", "群消息归属的话题要能往返");
+  const ws = (rt2.state.botWorkspaces || []).find((w) => w.id === "ws-rt");
+  assert.equal(ws?.path, dir, "bot_workspaces.path 要能往返（工作区交接不依赖 pty）");
+  assert.equal(ws?.branch, "feat/handoff", "bot_workspaces.branch 要能往返");
+  assert.equal(ws?.terminalId, "term-rt", "bot_workspaces.terminal_id 要能往返");
+  assert.equal(ws?.goal, "修登录并回一句");
+  assert.equal(ws?.status, "open");
   const rev = (rt2.state.botRevisions || []).find((r) => r.id === "rev-rt");
   assert.equal(rev?.data?.name, "旧名字", "bot_revisions 要能往返（人格历史）");
   assert.equal(th?.kind, "bot", "threads.kind 不能与 bot_id 写反");
@@ -190,6 +216,7 @@ try {
   assert.match(th?.digest || "", /更早的对话/, "threads.digest 要能往返（长对话靠它）");
   rt2.close();
   ok("bot_turns / threads 列序", "todo_id / proposal / cost / created_at / thread_id 与 kind / bot_id 往返一致");
+  ok("bot_workspaces", "path / branch / terminal_id / goal / status 往返一致（交出去的 worktree 是长期关系）");
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\nDB selftest: ${results.length - failed.length}/${results.length} passed`);

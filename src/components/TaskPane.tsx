@@ -127,6 +127,24 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
       ?? bots.find((b) => b.status !== "paused")
       ?? null;
   }, [state.bots]);
+  /** 可选的机器人：默认的先给一条，其余进「交给 <名字>」，最多 4 个入口 */
+  const handoffChoices = useMemo(() => {
+    const bots = (state.bots ?? []).filter((b) => b.status !== "paused");
+    if (!handoffBot) return [];
+    return [handoffBot, ...bots.filter((b) => b.id !== handoffBot.id)].slice(0, 4);
+  }, [state.bots, handoffBot]);
+  const handoffTo = (botId: string, name: string) => {
+    if (!menuProject) return;
+    // 真交接：写 bots.project_id + 一条工作区关系；不切当前项目、不抢视图
+    void act("botHandOffWorkspace", {
+      botId, projectId: menuProject.id, path: menuProject.path,
+      title: menuProject.name, kind: "project", projectRoot: true,
+    }).then((r) => {
+      window.dispatchEvent(new CustomEvent("harness:toast", { detail: { message: r?.ok ? `${name} 接手了「${menuProject.name}」` : "交接失败" } }));
+    }).catch((err) => {
+      window.dispatchEvent(new CustomEvent("harness:toast", { detail: { message: `交接失败：${String((err as Error)?.message || err)}` } }));
+    });
+  };
 
   const [query, setQuery] = useState("");
   /** 一个搜索框同时管「项目」和「任务」（DESIGN-SYSTEM §5 一行 chrome） */
@@ -739,15 +757,13 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
                 requestTerminalAt(menuProject.path);
               },
             },
-            {
-              label: handoffBot ? `交给机器人 · ${handoffBot.name}` : "交给机器人（还没有机器人）",
-              disabled: !handoffBot,
-              onSelect: () => {
-                onSwitchProject(menuProject.id);
-                if (handoffBot) onOpenBot?.(handoffBot.id);
-              },
-            },
-            { label: "换一个机器人…", onSelect: () => onManageBots?.() , disabled: !onManageBots },
+            ...(handoffBot
+              ? handoffChoices.map((b, i) => ({
+                  label: i === 0 ? `交给机器人 · ${b.name}` : `交给 ${b.name}`,
+                  onSelect: () => handoffTo(b.id, b.name),
+                }))
+              : [{ label: "交给机器人（还没有机器人）", disabled: true, onSelect: () => {} }]),
+            { label: "管理机器人…", onSelect: () => onManageBots?.() , disabled: !onManageBots },
             { label: "设为当前项目", disabled: menuProject.id === state.activeProjectId, onSelect: () => onSwitchProject(menuProject.id) },
             { label: "在 Finder 中显示", onSelect: () => void act("revealProject", { id: menuProject.id }) },
           ] : []}

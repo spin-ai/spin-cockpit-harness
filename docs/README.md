@@ -63,6 +63,8 @@
 | [`product/REQ-multi-agent-workspace.md`](product/REQ-multi-agent-workspace.md)（76 条） | `ARCH-multi-agent-workspace`、`ARCH-hosts-stats`、`ARCH-ui-context`、`ARCH-super-agent` | 同上 |
 | [`product/REQ-modules-original.md`](product/REQ-modules-original.md)（按模块） | `ARCH-knowledge`、`ARCH-memory`、`ARCH-wiki-retrieval`、`ARCH-memory-persona-im`、`ARCH-plugins`、`PLUGIN-notes` | 同上；用例见 [`product/TEST-REQ-modules-original.md`](product/TEST-REQ-modules-original.md) |
 | 跨模块（§1/§2/§3/§4 的能力总览） | `ARCH-key-tech`（五件关键技术：解析 / 编排 / 整理 / 记忆 / 画像） | 同上 |
+| [`product/REQ-bot-workspace.md`](product/REQ-bot-workspace.md)（15 条） | `ARCH-bot-workspace`、`ARCH-agent-bridge`、`ARCH-bot`、`ARCH-workbench-execution` | 见该 REQ §5「明确不做」 |
+| [`product/REQ-bot-group.md`](product/REQ-bot-group.md)（18 条） | `ARCH-bot-group`、`ARCH-bot` | 见该 REQ §4 |
 | **（缺）Super Agent / Mission** | `ARCH-super-agent` + `USAGE-super-agent` | — |
 
 **已确认的两个编排缺口：**
@@ -89,6 +91,8 @@
 | [`product/COMPARE-chat-window.md`](product/COMPARE-chat-window.md) | 需求 | 记录 | 聊天窗口逐部件对照：vs DeepSeek Harness / Orca 的 transcript / 流式 / 跟随 / composer / 长会话，含 P0–P2 缺口与不照抄项 |
 | [`product/REQ-bot-chat.md`](product/REQ-bot-chat.md) | 需求 | 提案 | **Bot 聊天窗口规格**：13 条 User Story（带判据）+ 12 条 IR（界面）+ 14 条 SR（系统），含验收矩阵与 M1–M4 分期 |
 | [`product/REQ-bot-intelligence.md`](product/REQ-bot-intelligence.md) | 需求 | 提案 | **机器人智能度规格**：vs ORCA Bot / Rakazo Bot 的 12 条 User Story + 10 条 IR + 16 条 SR（观察面 / 上下文 / 循环 / 记忆 / 自主 / 协作 / 可学习），含 6 维矩阵与 M1–M4 验收 |
+| [`product/REQ-bot-workspace.md`](product/REQ-bot-workspace.md) | 需求 | 部分落地 | **机器人工作区交接**：把项目 / worktree / 终端交给 bot 的 15 条 User Story + 8 条 IR + 11 条 SR，参照 ORCA 的 hand-over / work list；含终端 agent 窄通道 |
+| [`product/REQ-bot-group.md`](product/REQ-bot-group.md) | 需求 | 部分落地 | **机器人群聊**：@ 解析 / 投递规则 / 成员接力 / 共享上下文 / 未读的 13 条 User Story + 6 条 IR + 8 条 SR，先纠正「ORCA 没有群聊」的前提 |
 | [`product/REQ-workbench-execution.md`](product/REQ-workbench-execution.md) | 需求 | 部分落地 | **工作台任务与执行体验**：任务派活、探索 Run、手动终端、纯聊天、五种来源授权与关闭视图语义的 8 条 User Story |
 | [`product/VERIFY-bot-intelligence.md`](product/VERIFY-bot-intelligence.md) | 需求 | 记录 | **机器人智能度验收**：日期 + 命令 + 问题 + 答成什么样；含网关 function calling 探针与三问端到端，以及被推翻的自评 |
 | [`arch/ARCH-key-tech.md`](arch/ARCH-key-tech.md) | 架构 | 部分落地 | **五件关键技术**：解析 / 编排 / 整理 / 记忆 / 画像的边界、现状、判据、风险与一句话应对 |
@@ -116,6 +120,9 @@
 | [`arch/ARCH-im-gateway.md`](arch/ARCH-im-gateway.md) | 架构 | 部分落地 | 即时通信网关：渠道范围只做飞书，飞书接入路径 / 现状 / 未做 |
 | [`arch/ARCH-zhulong-integration.md`](arch/ARCH-zhulong-integration.md) | 架构 | 部分落地 | 视觉解析插件：验证台 UI 改造、三种解析后端与插件设置项 |
 | [`arch/ARCH-bot.md`](arch/ARCH-bot.md) | 架构 | 部分落地 | 人格 bot：多 bot 档案、60s tick 与三道闸、回合审计；dispatch / 飞书未做 |
+| [`arch/ARCH-bot-workspace.md`](arch/ARCH-bot-workspace.md) | 架构 | 部分落地 | **工作区交接**：`bot_workspaces` 长期关系、`work_list`、`workspace=<id>` 观察面、原地起 run、交回与删除边界（参照 ORCA bot-work / hand-over） |
+| [`arch/ARCH-bot-group.md`](arch/ARCH-bot-group.md) | 架构 | 部分落地 | **群聊路由**：房间 / 成员 / 投递规则、@ 解析（代码与路径不算）、回复接力、共享上下文、未读；对照 ORCA `BotGroup` 的 rooms / remote / mail 差距 |
+| [`arch/ARCH-agent-bridge.md`](arch/ARCH-agent-bridge.md) | 架构 | 部分落地 | **为什么不照搬 ORCA CLI**：内置 bot 走主进程工具表；只给受管终端 agent 一条 whoami / note / report 的窄通道，token 绑定 run |
 | [`arch/ARCH-office.md`](arch/ARCH-office.md) | 架构 | 部分落地 | 办公室舞台：状态映射 / 交互 / 协作场景边界 |
 | [`arch/ARCH-usability-pass.md`](arch/ARCH-usability-pass.md) | 架构 | 已落地 | 易用性一轮改动 |
 | [`arch/ARCH-package-size.md`](arch/ARCH-package-size.md) | 架构 | 已落地 | 打包体积与瘦身 |

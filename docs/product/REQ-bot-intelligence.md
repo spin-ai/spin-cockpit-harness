@@ -263,7 +263,7 @@
 | 项 | 状态 |
 |---|---|
 | ORCA bot 的模型与思考档由 agent CLI 决定到什么粒度（是否 per-bot 可覆盖） | 未逐项验证；只确认 bot 有 `agent` 字段并跑该 CLI |
-| ORCA `bot items` 的完整状态机与 worker 回流细节 | 只读了 preamble 的规则文案，未读状态机 |
+| ORCA `bot items` 的完整状态机与 worker 回流细节 | 状态机已读到：`planned / working / waiting / needs_you / done / canceled`（`third-part/orca @ 1ab037e`，`src/shared/bots/bot-items.ts:6`，`waiting` 等外部、`needs_you` 等人）；worker 回流的完整时序仍未逐项追 |
 | Rakazo 长对话摘要的触发阈值与保真度 | 文档提到"摘要留在我方"，源码未追 |
 | 我们能否把 dsh / ACP 会话复用为 bot 的只读工具执行器 | 未验证；若可行，SR-B02 可少写一套文件/git 封装 |
 | 700 → 2048 后火山 plan 网关的实际吞吐与成本 | 未压测；上线前要按 `tokensPerHour` 重算配额 |

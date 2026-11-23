@@ -55,6 +55,7 @@ await test("老库清理：四个种子 bot 连数据一起删，人建的 bot �
       "bot-xiaoz:default": { draft: "x" },
       "bot-mine:th-mine": { draft: "y" },
       "group:g2": { draft: "z" },
+      "group:g2:gth2": { draft: "话题草稿" },
     },
   };
   const { store, bots } = makeBots(state);
@@ -72,6 +73,7 @@ await test("老库清理：四个种子 bot 连数据一起删，人建的 bot �
   assert.deepEqual(store.state.botGroupMessages.map((m) => m.id), ["gm2"]);
   assert.equal(store.state.botUi["bot-xiaoz:default"], undefined);
   assert.equal(store.state.botUi["group:g2"], undefined, "删掉的群聊的草稿也跟着走");
+  assert.equal(store.state.botUi["group:g2:gth2"], undefined, "群内话题的草稿也要跟着走");
   assert.ok(store.state.botUi["bot-mine:th-mine"], "别的 bot 的草稿不能跟着删");
 
   // 幂等：再跑一次什么都不用做

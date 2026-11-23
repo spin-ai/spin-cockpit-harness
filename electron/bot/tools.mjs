@@ -46,33 +46,41 @@ export const BOT_READ_TOOLS = [
   fn("bot_list", "列出工作区里的机器人：名字、角色、职责、能力档位、绑定的执行体、手里还有几条没完的活。分派前用它看谁合适、谁忙。", {
     busy_only: bool("true = 只看手里有活的"),
   }),
+  fn("work_list", "看**交给你的工作区**：项目根 / worktree / 终端目录，以及它们上面的终端、运行和未完成任务。接着在那里干活前先用它；workspace=<id> 后面能传给 workspace_* / git_* / task_create。", {}),
   fn("run_status", "看正在跑 / 排队的运行（Agent、任务、状态、耗时），用来回答“现在在忙什么、卡在哪”。默认只列未结束的。", {
     limit: int("默认 10，最多 30"),
     include_done: bool("true = 连已结束的运行一起看（默认 false）"),
   }),
   fn("workspace_list", "列当前项目的目录（只读）。先用它确认路径，再用 workspace_read / workspace_grep；跳过 .git、node_modules、dist 等。", {
-    path: str("相对项目根的路径，空 = 根目录"),
+    path: str("相对 root 的路径，空 = 根目录"),
     depth: int("1 或 2 层，默认 1"),
+    workspace: str("可选：work_list 里的 workspace=<id>；空 = 当前项目根"),
   }),
   fn("workspace_read", "读当前项目里的文本文件（只读，按行分页）。回答“某文件第几行是什么”必须用它，不要猜。", {
-    path: str("相对项目根的路径，例如 src/App.tsx"),
+    path: str("相对 root 的路径，例如 src/App.tsx"),
     offset: int("从第几行开始，默认 0"),
     limit: int("读多少行，默认 200，最多 400"),
+    workspace: str("可选：work_list 里的 workspace=<id>；空 = 当前项目根"),
   }, ["path"]),
   fn("workspace_grep", "在当前项目里按子串搜索（只读），返回 path:line:text。找定义、找调用、找报错原文时先搜再读。", {
     query: str("要搜的子串，短比长好"),
     path: str("限定目录或文件，空 = 整个项目"),
     limit: int("最多返回多少条命中，默认 40"),
+    workspace: str("可选：work_list 里的 workspace=<id>；空 = 当前项目根"),
   }, ["query"]),
-  fn("git_status", "看当前项目的 git 状态（分支 + 改动文件）。只读，不会暂存或提交。", {}),
+  fn("git_status", "看当前项目的 git 状态（分支 + 改动文件）。只读，不会暂存或提交。", {
+    workspace: str("可选：work_list 里的 workspace=<id>；空 = 当前项目根"),
+  }),
   fn("git_log", "看当前项目的最近提交（一行一条）。只读。", {
     limit: int("提交条数，默认 10，最多 30"),
     path: str("只看某个路径的历史，可空"),
+    workspace: str("可选：work_list 里的 workspace=<id>；空 = 当前项目根"),
   }),
   fn("git_diff", "看当前项目的未提交改动。默认只看统计；要具体改动时传 stat=false。只读。", {
     path: str("只看某个路径，可空"),
     staged: bool("true = 只看已暂存；默认 false"),
     stat: bool("true = 只看统计（默认）；false = 看完整 diff"),
+    workspace: str("可选：work_list 里的 workspace=<id>；空 = 当前项目根"),
   }),
   fn("run_log", "读一次运行的结果：状态、错误、产出、最近消息和终端尾部。用来回答“这次为什么失败 / 跑出了什么”。", {
     runId: str("运行 id；空 = 最近一次运行"),
@@ -97,6 +105,11 @@ export const BOT_SELF_TOOLS = [
     task: str("要它接什么，一句话"),
     reason: str("为什么交给它（可选）"),
   }, ["to", "task"]),
+  fn("ask_bot", "在群里问另一个机器人一句（只在群聊里可用）。问题留在群消息里，它回完你再用 run_log / 群记录看；不要用它代替自己回答问题。", {
+    to: str("目标机器人的名字或 id"),
+    question: str("要问什么，一句话；越具体越好"),
+    reason: str("为什么问它（可选）"),
+  }, ["to", "question"]),
   fn("plan_set", "把当前任务拆成一个可续的计划（目标 + 步骤）。重开应用后它还在，下一步从这里接着做。", {
     goal: str("这次要完成什么，一句话"),
     steps: { type: "array", items: { type: "string" }, description: "3–8 步，按顺序" },
@@ -132,11 +145,17 @@ export const BOT_WRITE_TOOLS = [
     acceptance: { type: "array", items: { type: "string" }, description: "替换验收口径，1–5 条" },
     comment: str("给这条任务留一句备注（写在它的会话里）"),
   }, ["todo"]),
+  fn("worker_send", "给正在跑的 worker 发一句话（纠偏 / 追问 / 补约束）。它会在当前 run 里收到；它接下来的回复用 run_log 读，不要连发。", {
+    text: str("一句话，短；说清楚改哪里 / 要它回答什么"),
+    run: str("run id；空 = 这条工作区 / 你名下正在跑的 run"),
+    workspace: str("可选：work_list 里的 workspace=<id>；空 = 当前项目"),
+  }, ["text"]),
   fn("task_create", "创建一个任务并指派给某个 worker 执行体，或派给另一个机器人（bot）。只建 todo；默认不起 run。用于把一句话目标拆成可验收的子任务。", {
     title: str("任务标题，短且可验收"),
     brief: str("背景 / 做到什么算完成"),
     agent: str("派给哪个执行体：Agent 的 alias 或名字（如 SE / DE-A / DE-B）"),
     bot: str("派给哪个机器人（名字或 id）：用它的执行体、任务归它，跑完它自己汇报；与 agent 二选一"),
+    workspace: str("可选：work_list 里的 workspace=<id>；在这条工作区里起活，不再另建 worktree"),
     acceptance: { type: "array", items: { type: "string" }, description: "验收口径，1–3 条" },
     start: bool("只有用户明确说「开跑 / 开始 / 直接干」时才传 true；默认 false"),
   }, ["title"]),
@@ -153,6 +172,7 @@ export const BOT_TOOL_META = Object.freeze({
   todo_get: { risk: "read", label: "任务详情", timeoutMs: 3000, maxResultChars: 8000 },
   bot_list: { risk: "read", label: "看同事", timeoutMs: 3000, maxResultChars: 8000 },
   run_status: { risk: "read", label: "看运行", timeoutMs: 3000, maxResultChars: 8000 },
+  work_list: { risk: "read", label: "看工作区", timeoutMs: 5000, maxResultChars: 12000 },
   workspace_list: { risk: "read", label: "看目录", timeoutMs: 5000, maxResultChars: 12000 },
   workspace_read: { risk: "read", label: "读文件", timeoutMs: 5000, maxResultChars: 12000 },
   workspace_grep: { risk: "read", label: "搜代码", timeoutMs: 10000, maxResultChars: 12000 },
@@ -163,10 +183,12 @@ export const BOT_TOOL_META = Object.freeze({
   memory_write: { risk: "self", label: "记一条", timeoutMs: 3000, maxResultChars: 2000 },
   memory_forget: { risk: "self", label: "忘一条", timeoutMs: 3000, maxResultChars: 2000 },
   handoff_to_bot: { risk: "self", label: "交给同事", timeoutMs: 3000, maxResultChars: 2000 },
+  ask_bot: { risk: "self", label: "问同事", timeoutMs: 3000, maxResultChars: 2000 },
   plan_set: { risk: "self", label: "写计划", timeoutMs: 3000, maxResultChars: 4000 },
   plan_update: { risk: "self", label: "更新计划", timeoutMs: 3000, maxResultChars: 2000 },
   routine_propose: { risk: "self", label: "提日程", timeoutMs: 3000, maxResultChars: 4000 },
   task_create: { risk: "write", label: "建任务", timeoutMs: 10000, maxResultChars: 4000, requiresCapability: ["work", "dispatch"] },
+  worker_send: { risk: "write", label: "给 worker 发话", timeoutMs: 5000, maxResultChars: 2000, requiresCapability: ["work", "dispatch"] },
   todo_update: { risk: "write", label: "改任务", timeoutMs: 5000, maxResultChars: 4000, requiresCapability: ["work", "dispatch"] },
   run_start: { risk: "write", label: "起运行", timeoutMs: 10000, maxResultChars: 2000, requiresCapability: ["work"] },
 });

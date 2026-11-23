@@ -284,6 +284,26 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
   const seq = useRef(1);
   const tabsRef = useRef<HTMLDivElement>(null);
 
+  /** 交给谁：和项目右键同一套口径——优先主管档，其次第一个可用的 */
+  const handOffBots = useMemo(() => {
+    const bots = (state.bots ?? []).filter((b) => b.status !== "paused");
+    const lead = bots.find((b) => b.role === "supervisor") ?? bots[0];
+    if (!lead) return [];
+    return [lead, ...bots.filter((b) => b.id !== lead.id)].slice(0, 4)
+      .map((b) => ({ id: b.id, name: b.name }));
+  }, [state.bots]);
+  const handOffWorkspace = (botId: string, term: { cwd: string; title: string; branch?: string | null; terminalId: string }) => {
+    const bot = handOffBots.find((b) => b.id === botId);
+    if (!act || !bot) return;
+    void act("botHandOffWorkspace", {
+      botId: bot.id, path: term.cwd, title: term.title,
+      branch: term.branch || "", terminalId: term.terminalId, kind: "terminal",
+    }).then((r) => {
+      window.dispatchEvent(new CustomEvent("harness:toast", { detail: { message: r?.ok ? `${bot.name} 接手了「${term.title}」` : "交接失败" } }));
+    }).catch((err) => {
+      window.dispatchEvent(new CustomEvent("harness:toast", { detail: { message: `交接失败：${String((err as Error)?.message || err)}` } }));
+    });
+  };
   const fontSize = Math.max(MIN_FONT, Math.min(MAX_FONT, Math.round(terminalFontSize + zoom)));
   const quick = useQuickCommands(state.projectPath || "");
   /**
@@ -1241,6 +1261,18 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
                           attachDisabled={!todo || t.taskId === todo.id}
                           attachLabel={todo ? `关联到 ${todo.key}` : "关联到当前任务"}
                           onStopTerminal={pane.terminalId ? () => stopActivePaneTerminal() : undefined}
+                          onHandOffWorkspace={pane.terminalId && handOffBots.length
+                            ? (botId: string) => {
+                                const rec = (state.terminals || []).find((x) => x.id === pane.terminalId);
+                                handOffWorkspace(botId, {
+                                  cwd: rec?.cwd || state.workspacePath || "",
+                                  title: rec?.title || pane.title || "终端",
+                                  branch: pane.branch || null,
+                                  terminalId: pane.terminalId!,
+                                });
+                              }
+                            : undefined}
+                          handOffBots={handOffBots}
                         />
                   )}
                   onRatio={(splitId, delta) => changeRatio(t.id, splitId, delta)}
@@ -1536,9 +1568,13 @@ type TermTabProps = {
   attachLabel?: string;
   /** 对象动作：真的结束这条 pty（关标签不会走到这里） */
   onStopTerminal?: () => void;
+  /** 对象动作：把这条终端的工作目录交给机器人（长期关系，pty 退出不影响） */
+  onHandOffWorkspace?: (botId: string) => void;
+  /** 交给谁：默认的在第一行，其余用「交给 <名字>」 */
+  handOffBots?: { id: string; name: string }[];
 };
 
-function TermTab({ projectId, pane, multi, visible, focused, focusToken, searchOpen, fontSize, scrollback, onOpenSearch, onCloseSearch, onNewTab, onClosePane, onSplit, onOpenPreview, onFocusDir, onFocus, onCycleTab, onGotoTab, onZoom, onTermId, onUrl, onTitle, onBell, controlBy, onToggleControl, onQuickCommands, onRename, onEqualize, onOpenPath, onAttachTodo, attachDisabled, attachLabel, onStopTerminal }: TermTabProps) {
+function TermTab({ projectId, pane, multi, visible, focused, focusToken, searchOpen, fontSize, scrollback, onOpenSearch, onCloseSearch, onNewTab, onClosePane, onSplit, onOpenPreview, onFocusDir, onFocus, onCycleTab, onGotoTab, onZoom, onTermId, onUrl, onTitle, onBell, controlBy, onToggleControl, onQuickCommands, onRename, onEqualize, onOpenPath, onAttachTodo, attachDisabled, attachLabel, onStopTerminal, onHandOffWorkspace, handOffBots = [] }: TermTabProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -1882,6 +1918,10 @@ function TermTab({ projectId, pane, multi, visible, focused, focusToken, searchO
         { label: "重置终端显示", run: resetTerminal },
         "sep",
         { label: "快捷命令…", run: () => onQuickCommands({ x: menu!.x, y: menu!.y }) },
+        ...(onHandOffWorkspace ? handOffBots.map((b, i) => ({
+          label: i === 0 ? `交给机器人 · ${b.name}` : `交给 ${b.name}`,
+          run: () => onHandOffWorkspace(b.id),
+        } as MenuItem)) : []),
         { label: "复制终端 ID", run: copyTerminalId },
         "sep",
         { label: "关闭窗格", hint: "⌘W", danger: true, run: onClosePane },
@@ -1913,6 +1953,10 @@ function TermTab({ projectId, pane, multi, visible, focused, focusToken, searchO
           disabled: attachDisabled ?? true,
           run: () => onAttachTodo?.(),
         },
+        ...(onHandOffWorkspace ? handOffBots.map((b, i) => ({
+          label: i === 0 ? `交给机器人 · ${b.name}` : `交给 ${b.name}`,
+          run: () => onHandOffWorkspace(b.id),
+        } as MenuItem)) : []),
         ...(onStopTerminal ? [{ label: "结束进程…", danger: true, run: onStopTerminal }] : []),
         "sep",
         { label: "重命名标签", run: onRename },
