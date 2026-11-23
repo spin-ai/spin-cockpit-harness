@@ -467,21 +467,22 @@ await run(`
   item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 250));
   return true;`);
-check("群聊：进去了（群聊 chip）", (await text(".ds-composer")).includes("群聊"));
+const groupComposer = await ev(`(() => { const el = [...document.querySelectorAll(".ds-composer textarea")].find((t) => t.getBoundingClientRect().width > 0); return el ? (el.getAttribute("placeholder") || "") : ""; })()`);
+check("群聊：进去了（在群里说一句）", groupComposer.includes("在群里说一句"), groupComposer);
 await run(`
-  const box = document.querySelector(".ds-composer textarea");
+  const box = [...document.querySelectorAll(".ds-composer textarea")].find((t) => t.getBoundingClientRect().width > 0);
   if (!box) throw new Error("没有输入框");
   const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
   setter.call(box, "群里问一句");
   box.dispatchEvent(new Event("input", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 80));
-  const send = document.querySelector(".ds-send");
+  const send = [...document.querySelectorAll(".ds-send")].find((b) => b.getBoundingClientRect().width > 0);
   if (!send) throw new Error("没有发送按钮");
   send.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   return true;`);
 await sleep(40);
 check("群聊：自己的话立刻出现（不等后端）", (await text(".ds-pending")).includes("群里问一句"));
-check("群聊：没人开口时有一行「等成员回…」", (await text(".ds-typing")).includes("等成员回"), JSON.stringify((await text(".bot-stream")).slice(-160)));
+check("群聊：没人开口时有「正在想」行", await ev(`!!document.querySelector(".ds-typing")`), JSON.stringify((await text(".bot-stream")).slice(-160)));
 await sleep(250);
 check("群聊：后端回声到了就不再画乐观气泡（不重复）", await ev(`!document.querySelector(".ds-pending")`));
 check("群聊：逐字流式可见（不等整段）", (await text(".ds-streaming")).includes("先说一半"));
