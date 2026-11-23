@@ -6,6 +6,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+import os from "node:os";
 import { test, report } from "./bot/_harness.mjs";
 import {
   AGENT_CLI_COMMANDS,
@@ -13,6 +15,7 @@ import {
   agentCliShimContent,
   clipAgentText,
   parseAgentCliArgs,
+  remoteAgentCliShimContent,
 } from "../electron/agent-bridge.mjs";
 
 await test("CLI 参数：whoami 不需要正文；note / report 接受 --text 或 --text-file", () => {
@@ -61,6 +64,22 @@ await test("PATH 垫片：Windows 生成 .cmd，保留 %*", () => {
   assert.match(shim, /ELECTRON_RUN_AS_NODE=1/);
   assert.match(shim, /%\\*/);
   assert.equal(agentCliBinName("win32"), "harness.cmd");
+});
+
+await test("远端 shim：POSIX 语法可过，正文走 base64，命令齐全", () => {
+  const text = remoteAgentCliShimContent();
+  assert.match(text, /textB64/);
+  assert.match(text, /ask_status/);
+  assert.match(text, /COCKPIT_AGENT_URL/);
+  assert.match(text, /whomai|whoami/);
+  if (process.platform !== "win32") {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-remote-"));
+    const file = path.join(dir, "harness");
+    fs.writeFileSync(file, text, "utf8");
+    fs.chmodSync(file, 0o755);
+    execFileSync("sh", ["-n", file]);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 await test("CLI / MCP 脚本存在，主进程按 unpacked 路径能跑到", () => {

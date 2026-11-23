@@ -39,11 +39,12 @@ export function dshPathEnv(base = process.env) {
 }
 
 export class AcpClient extends EventEmitter {
-  constructor({ cwd, ssh, bin, home, model, effort, env: extraEnv = null, mcpServers = [], patches = [] }) {
+  constructor({ cwd, ssh, bin, home, model, effort, env: extraEnv = null, mcpServers = [], patches = [], sshEnv = null }) {
     super();
     this.cwd = cwd;
     this.mcpServers = Array.isArray(mcpServers) ? mcpServers : [];
     this.patches = Array.isArray(patches) ? patches : [];
+    this.sshEnv = Array.isArray(sshEnv) ? sshEnv : [];
     this.bin = bin || DSH_BIN;
     this.home = home || DSH_HOME;
     this.model = model || process.env.DSH_MODEL || "";
@@ -64,7 +65,11 @@ export class AcpClient extends EventEmitter {
       const target = ssh.user ? `${ssh.user}@${ssh.host}` : ssh.host;
       const args = ["-o", "BatchMode=yes", "-o", "ServerAliveInterval=15"];
       if (ssh.port) args.push("-p", String(ssh.port));
-      args.push(target, `${this.bin} --profile acp`);
+      // 远端环境变量作为 shell assignment 词表：sshEnv 由主进程生成（已引号化）
+      const remote = this.sshEnv.length
+        ? `env ${this.sshEnv.join(" ")} ${this.bin} --profile acp`
+        : `${this.bin} --profile acp`;
+      args.push(target, remote);
       this.proc = spawn("ssh", args, { env, stdio: ["pipe", "pipe", "pipe"] });
     } else {
       const args = ["--profile", "acp"];

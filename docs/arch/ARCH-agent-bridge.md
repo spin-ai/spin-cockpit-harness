@@ -108,7 +108,27 @@ harness_whoami / harness_note / harness_report
 - token 仍然按 run 下发，run 结束（`finally`）撤销。
 - 与 pty 的三条 CLI 命令共用同一个主进程服务，不复制权限逻辑。
 
-### 4.4 与内置 bot 的关系
+### 4.4 远端（SSH 主机）
+
+远端不能直接访问本机 `127.0.0.1`，所以用**反向隧道 + 远端 shim**：
+
+```text
+本机 bridge 127.0.0.1:<localPort>
+  └─ ssh -N -R 127.0.0.1:0:127.0.0.1:<localPort> <host>   # 拿 remotePort
+       └─ 远端 env: COCKPIT_AGENT_URL=http://127.0.0.1:<remotePort>
+                    PATH 前置 $HOME/.cockpit-harness/bin
+```
+
+- **远端 shim**：POSIX shell，只依赖 `curl` + `base64`；正文用 base64 传，避免 shell 拼 JSON。首次在主机上安装到 `$HOME/.cockpit-harness/bin/harness`（`ssh` + base64 写入，不落本机脚本）。
+- **远端 pty run**：本地 pty 包 `ssh -tt`，远端命令 `cd <cwd> && env <bridge env> <agent cli>`；输出、停止、结算仍走现有 pty 路径。
+- **远端 ACP run**：`AcpClient` 支持 `sshEnv`，ssh 远端命令变成 `env <assignments> dsh --profile acp`；本地 MCP 仍不挂远端（远端够不到本机进程）。
+- 没有 `curl` / `base64` / 反向隧道失败：agent 仍能跑，只是没有 `harness`；事件与提示不假装成功。
+- token 仍按 run 下发、run 结束 / 终端退出即撤销；隧道进程按 run / 终端关闭。
+- 同一 SSH 主机首次安装 shim 会缓存；主机改名 / 换地址会重新安装。
+
+**安全边界**：远端 agent 与本地 agent 处在同一个「受管 run」信任层；token 只存在内存，且会出现在远端进程环境 / 参数中（同机同用户可见）。不接受远端 agent 发任意 action；`ask` 仍只能请人决定。
+
+### 4.5 与内置 bot 的关系
 
 内置 bot 的工具表**不含** `harness` / `exec` / `terminal`；它仍然通过 `worker_send`、`task_create`、`run_start` 和 `run_log` 和终端交互。窄通道只给 pty 里的 agent，不反向扩大 bot 的能力面。
 
@@ -119,6 +139,7 @@ harness_whoami / harness_note / harness_report
 | 缺口 | 说明 |
 |---|---|
 | ~~ACP 侧 harness MCP~~ | 已做：`harness_whoami / note / report`（本地 run；远端不挂） |
+| ~~远端终端~~ | 已做：远端 pty run + SSH 反向隧道 + 远端 shim；远端 ACP 走 `sshEnv`。手动远程 shell 仍未接到 TerminalPanel 的「新建」 |
 | **双向 peer mail / inbox** | 现在 `note` 只是「写给当前任务会话」，不是给某个 bot 的收件箱；跨 run、离线的消息还没有 |
 | **远端终端** | token 只在本机回环；SSH 终端需要隧道或远端 serve |
 | **多选项 / 带上下文的审批** | 现在只有允许 / 拒绝；还没有多方案选择、附件、审批历史页。ACP 原生 permission 仍更完整 |

@@ -28,7 +28,7 @@ import { describeRoutine, nextRunAt, normalizeRoutine } from "./bot/routine.mjs"
 import { BOT_TOOL_META, matchBotRef } from "./bot/tools.mjs";
 import { clipChars, grepWorkspace, listWorkspace, readWorkspaceFile } from "./bot/workspace.mjs";
 import { redactSecrets } from "./redact.mjs";
-import { agentCliBinName, agentCliShimContent, clipAgentText } from "./agent-bridge.mjs";
+import { agentCliBinName, agentCliShimContent, clipAgentText, remoteAgentCliShimContent } from "./agent-bridge.mjs";
 import { createPairing } from "./im/pairing.mjs";
 import { createFeishu, createDedup, parseFeishuSetup } from "./im/feishu.mjs";
 import { createFeishuWs } from "./im/feishu-ws.mjs";
@@ -1135,24 +1135,31 @@ async function startRun(run, todo, agent) {
 
   // 终端 Agent 走 pty（普通多 Agent / Mission child 都适用），并把标签推给渲染层
   if (chatRuntimeOf(agent) === "terminal") {
-    if (isRemote) {
-      const message = "终端 Agent 暂不支持远端主机；请使用本机 Agent 或 ACP";
-      run.status = "failed"; run.endedAt = Date.now(); run.error = message; run.errorClass = "terminal_required";
-      setRunResult(run, message, "error");
-      todo.status = "todo"; todo.lastRunFailed = true;
-      store.addMessage(thread.id, run.id, "system", "error", message);
-      store.addEvent("run.failed", `run.failed todo=${todo.key} ${message}`);
-      broadcast(); tick(); return;
-    }
     const terminalId = `term-${Date.now().toString(36)}`;
-    const agentEnv = await agentBridgeEnv({ terminalId, runId: run.id, todoId: todo?.id || null, cwd });
+    // 远端：本地 pty 包一层 ssh -tt；bridge 走反向隧道，agent 的 PATH 里有远端 harness
+    const remoteBridge = isRemote ? await startRemoteBridge(host, { terminalId, runId: run.id, todoId: todo?.id || null, cwd }) : null;
+    const agentEnv = isRemote ? {} : await agentBridgeEnv({ terminalId, runId: run.id, todoId: todo?.id || null, cwd });
     let term;
     try {
-      term = pty.spawn(agent.cli, [], {
-        name: "xterm-256color", cols: 120, rows: 32, cwd,
-        env: { ...process.env, TERM: "xterm-256color", ...agentEnv },
-      });
+      if (isRemote) {
+        const assignments = remoteBridge?.assignments?.join(" ") || "";
+        const remoteCommand = `cd ${shellQuote(cwd)} && ${assignments ? `env ${assignments} ` : ""}${shellQuote(agent.cli)}`;
+        const sshArgs = ["-tt", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15"];
+        if (host.port) sshArgs.push("-p", String(host.port));
+        sshArgs.push(remoteTarget(host), remoteCommand);
+        term = pty.spawn("ssh", sshArgs, {
+          name: "xterm-256color", cols: 120, rows: 32, cwd: workspaceRoot,
+          env: { ...process.env, TERM: "xterm-256color" },
+        });
+      } else {
+        term = pty.spawn(agent.cli, [], {
+          name: "xterm-256color", cols: 120, rows: 32, cwd,
+          env: { ...process.env, TERM: "xterm-256color", ...agentEnv },
+        });
+      }
     } catch (err) {
+      releaseRemoteBridge({ terminalId });
+      releaseAgentTokens({ terminalId, runId: run.id });
       const message = `终端 Agent 启动失败：${String(err?.message || err)}`;
       run.status = "failed"; run.endedAt = Date.now(); run.error = message; run.errorClass = "terminal_required";
       setRunResult(run, message, "error");
@@ -1183,6 +1190,7 @@ async function startRun(run, todo, agent) {
     term.onExit(({ exitCode, signal } = {}) => {
       terminals.delete(terminalId);
       releaseAgentTokens({ terminalId, runId: run.id });
+      releaseRemoteBridge({ terminalId, runId: run.id });
       info.exited = true;
       info.exitCode = typeof exitCode === "number" ? exitCode : null;
       info.exitSignal = signal ?? null;
@@ -1205,7 +1213,7 @@ async function startRun(run, todo, agent) {
       todo.desc ? `背景：${todo.desc}` : "",
       (todo.acceptance || []).length ? `验收：${todo.acceptance.join("；")}` : "",
       delegation?.brief ? `子任务说明：${delegation.brief}` : "",
-      agentBridgeUrl ? `进度 / 结论可以用 \`harness note --text "…"\` / \`harness report --text "…"\` 汇报；需要人确认时 \`harness ask --text "…"\`（会等人批）。` : "",
+      (agentBridgeUrl || remoteBridge) ? `进度 / 结论可以用 \`harness note --text "…"\` / \`harness report --text "…"\` 汇报；需要人确认时 \`harness ask --text "…"\`（会等人批）。` : "",
       "完成后请在终端里说明改动与验证结果。",
     ].filter(Boolean).join("\n");
     window.setTimeout(() => {
@@ -1221,10 +1229,13 @@ async function startRun(run, todo, agent) {
   // 浏览器 / harness 工具只在本地 run 可用：远端机器连不到本机回环端点
   const browserMcp = isRemote ? [] : await browserMcpServers(run);
   const harnessMcp = isRemote ? [] : await harnessMcpServers(run);
+  // 远端：装远端 shim + 反向隧道，把本机 bridge 暴露成远端 127.0.0.1
+  const remoteBridge = isRemote ? await startRemoteBridge(host, { runId: run.id, todoId: todo?.id || null, cwd }) : null;
   const client = new AcpClient({
     cwd,
     env: isRemote ? null : extraEnv, // 远端请在目标机自己配置（env 不会随 ssh 过去）
     ssh: isRemote ? { host: host.addr, port: host.port, user: host.user } : null,
+    sshEnv: isRemote ? remoteBridge?.assignments || null : null,
     // 本地：设置覆盖 > 内置单文件运行时 > PATH 里的 dsh
     bin: isRemote ? remoteDshBin() : (store.state.settings?.dshBinary || bundledDshPath() || undefined),
     home: store.state.settings?.dshHome || undefined,
@@ -1357,6 +1368,7 @@ async function startRun(run, todo, agent) {
         ].join("\n")
         : "",
       resumed ? "这是中断后的续跑：先看一眼当前工作区状态（文件改到哪、有没有半成品），再继续没做完的部分，不要从头重做。" : "",
+      remoteBridge ? "进度 / 结论可用 `harness note --text \"…\"` / `harness report --text \"…\"` 汇报；需要人确认时 `harness ask --text \"…\"`（会等人批）。" : "",
       "完成后给出结论；如需改文件请直接修改。",
     ].filter(Boolean).join("\n");
     const res = await client.prompt(prompt);
@@ -1444,6 +1456,7 @@ async function startRun(run, todo, agent) {
     settlePendingSteers(run.id);
     releaseWikiToken(run.id);
     releaseAgentTokens({ runId: run.id });
+    releaseRemoteBridge({ runId: run.id });
     active.delete(run.id);
     broadcast();
     tick();
@@ -2970,11 +2983,12 @@ function startAgentBridge() {
           return send(403, { ok: false, error: "agent token expired" });
         }
         const payload = await readRequestBody(req);
+        const textOf = (p) => String(p.text || (p.textB64 ? Buffer.from(String(p.textB64), "base64").toString("utf8") : "") || "");
         const command = String(payload.command || "");
         const { run, todo, agent } = resolveAgentScope(rec);
         if (command === "ask") {
           if (!run) return send(400, { ok: false, error: "这次终端没有对应的运行，不能请求审批" });
-          const text = clipAgentText(payload.text, 800).trim();
+          const text = clipAgentText(textOf(payload), 800).trim();
           if (!text) return send(400, { ok: false, error: "text 不能为空：说清要确认什么" });
           const seconds = Math.max(30, Math.min(900, Number(payload.timeout) || 300));
           const id = `aa${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
@@ -3015,7 +3029,7 @@ function startAgentBridge() {
           return send(200, { ok: true, runId: run?.id || null, todoId: todo?.id || null, todoKey: todo?.key || null, agent: agent?.name || null, cwd: rec.cwd || run?.cwd || null });
         }
         if (command === "note") {
-          const text = clipAgentText(payload.text, 2000).trim();
+          const text = clipAgentText(textOf(payload), 2000).trim();
           if (!text) return send(400, { ok: false, error: "text 不能为空" });
           const thread = todo ? threadForTodo(todo) : (run?.threadId ? store.state.threads.find((t) => t.id === run.threadId) : null);
           if (!thread) return send(400, { ok: false, error: "这条终端没有关联任务 / 会话，记不进去" });
@@ -3030,7 +3044,7 @@ function startAgentBridge() {
           if (!["queued", "running", "waiting_input"].includes(run.status)) {
             return send(400, { ok: false, error: `这次运行已经是 ${run.status}，不能再汇报` });
           }
-          const text = clipAgentText(payload.text, 8000).trim();
+          const text = clipAgentText(textOf(payload), 8000).trim();
           if (!text) return send(400, { ok: false, error: "text 不能为空" });
           const clean = redactSecrets(text).text;
           setRunResult(run, clean, "agent_cli");
@@ -3074,6 +3088,122 @@ async function agentBridgeEnv(scope = {}) {
   } catch (err) {
     console.warn(`[agent.cli] env failed: ${String(err?.message || err)}`);
     return {};
+  }
+}
+
+/* ------------------------------------------------------------ 远端 agent bridge（SSH 反向隧道） */
+
+const remoteBridgeCache = new Map();
+const remoteTunnels = new Map();
+
+function remoteTarget(host) {
+  return host?.user ? `${host.user}@${host.addr}` : String(host?.addr || "");
+}
+
+function remoteSshArgs(host) {
+  const target = remoteTarget(host);
+  const args = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8"];
+  if (host?.port) args.push("-p", String(host.port));
+  args.push(target);
+  return args;
+}
+
+async function remoteEnsureAgentCli(host) {
+  const key = `${host?.id || ""}:${host?.addr || ""}`;
+  if (remoteBridgeCache.has(key)) return remoteBridgeCache.get(key);
+  try {
+    const script = remoteAgentCliShimContent();
+    const encoded = Buffer.from(script, "utf8").toString("base64");
+    const command = [
+      "set -e",
+      "command -v curl >/dev/null 2>&1",
+      "command -v base64 >/dev/null 2>&1",
+      'mkdir -p "$HOME/.cockpit-harness/bin"',
+      `printf '%s' '${encoded}' | base64 -d > "$HOME/.cockpit-harness/bin/harness"`,
+      'chmod 755 "$HOME/.cockpit-harness/bin/harness"',
+    ].join(" && ");
+    await execFileAsync("ssh", [...remoteSshArgs(host), command], { timeout: 15000 });
+    remoteBridgeCache.set(key, true);
+    return true;
+  } catch (err) {
+    console.warn(`[agent.remote] shim failed ${host?.name || host?.addr}: ${String(err?.message || err).slice(0, 180)}`);
+    return false;
+  }
+}
+
+/** 在 remote host 上开一条反向隧道：远端的 127.0.0.1:<alloc> → 本机 agent bridge。 */
+async function remoteOpenTunnel(host) {
+  const localPort = (() => {
+    try { return Number(new URL(agentBridgeUrl).port); } catch { return 0; }
+  })();
+  if (!localPort) return null;
+  const proc = spawn("ssh", [
+    ...remoteSshArgs(host).slice(0, -1),
+    "-N", "-R", `127.0.0.1:0:127.0.0.1:${localPort}`,
+    remoteTarget(host),
+  ], { stdio: ["ignore", "ignore", "pipe"] });
+  const url = await new Promise((resolve) => {
+    let buf = "";
+    let done = false;
+    const finish = (value) => {
+      if (done) return; done = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), 8000);
+    proc.stderr?.on("data", (chunk) => {
+      buf = (buf + String(chunk)).slice(-4000);
+      const hit = buf.match(/Allocated port (\d+) for remote forward/);
+      if (hit) finish(`http://127.0.0.1:${hit[1]}`);
+    });
+    proc.once("exit", () => finish(null));
+    proc.once("error", () => finish(null));
+  });
+  if (!url) {
+    try { proc.kill(); } catch { /* ignore */ }
+    return null;
+  }
+  proc.once("exit", () => {
+    for (const [key, rec] of remoteTunnels) if (rec.proc === proc) remoteTunnels.delete(key);
+  });
+  return { proc, url };
+}
+
+/** 远端 run / 终端的 env 与隧道；失败返回 null（agent 仍能跑，只是没有 harness 回调）。 */
+async function startRemoteBridge(host, scope = {}) {
+  try {
+    await startAgentBridge();
+    if (!agentBridgeUrl) return null;
+    const ok = await remoteEnsureAgentCli(host);
+    if (!ok) return null;
+    const tunnel = await remoteOpenTunnel(host);
+    if (!tunnel) return null;
+    const key = scope.runId || scope.terminalId || "";
+    if (key) remoteTunnels.set(key, tunnel);
+    const token = issueAgentToken({ ...scope, at: Date.now() });
+    return {
+      key,
+      url: tunnel.url,
+      assignments: [
+        `COCKPIT_AGENT_URL=${shellQuote(tunnel.url)}`,
+        `COCKPIT_AGENT_TOKEN=${shellQuote(token)}`,
+        "COCKPIT_CLI=harness",
+        'PATH="$HOME/.cockpit-harness/bin:$PATH"',
+      ],
+    };
+  } catch (err) {
+    console.warn(`[agent.remote] bridge failed: ${String(err?.message || err).slice(0, 180)}`);
+    return null;
+  }
+}
+
+function releaseRemoteBridge(scope = {}) {
+  const keys = [scope.runId, scope.terminalId].filter(Boolean);
+  for (const key of keys) {
+    const rec = remoteTunnels.get(key);
+    if (!rec) continue;
+    remoteTunnels.delete(key);
+    try { rec.proc.kill(); } catch { /* ignore */ }
   }
 }
 

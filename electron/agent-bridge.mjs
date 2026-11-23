@@ -71,3 +71,80 @@ export function agentCliShimContent({ platform = process.platform, electronPath 
 export function agentCliBinName(platform = process.platform) {
   return platform === "win32" ? "harness.cmd" : "harness";
 }
+
+/**
+ * 远端 host 的 PATH 垫片（POSIX shell，只依赖 curl + base64）。
+ * 为什么不是 Node：远端只保证有 shell；CLI 正文用 base64 传，避免 shell 里拼 JSON 的引号地狱。
+ * 这是 pty / ACP 远端 agent 的最小回调；和本机 `harness` 共用同一个 token 服务。
+ */
+export function remoteAgentCliShimContent() {
+  // String.raw：保留 sh 的反斜杠；脚本里不要用 ${...}（JS 会当成插值）
+  return String.raw`#!/bin/sh
+set -e
+url="$COCKPIT_AGENT_URL"
+token="$COCKPIT_AGENT_TOKEN"
+if [ -z "$url" ] || [ -z "$token" ]; then
+  echo "这条终端不在受管 run 里（没有 COCKPIT_AGENT_URL / TOKEN）" >&2
+  exit 2
+fi
+cmd="$1"
+if [ -z "$cmd" ]; then
+  echo "用法：harness whoami | note --text ... | report --text ... | ask --text ..." >&2
+  exit 2
+fi
+shift || true
+text=""
+timeout=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --text) text="$2"; shift 2 ;;
+    --text-file) text=$(cat "$2"); shift 2 ;;
+    --timeout) timeout="$2"; shift 2 ;;
+    --json) shift ;;
+    *) echo "不认识参数：$1" >&2; exit 2 ;;
+  esac
+done
+b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+call() {
+  curl -sS -X POST "$url/call" \
+    -H "Authorization: Bearer $token" \
+    -H "content-type: application/json" \
+    --data "$1"
+}
+case "$cmd" in
+  whoami)
+    call '{"command":"whoami"}'
+    ;;
+  note|report)
+    if [ -z "$text" ]; then echo "$cmd 需要 --text 或 --text-file" >&2; exit 2; fi
+    body=$(printf '{"command":"%s","textB64":"%s"}' "$cmd" "$(b64 "$text")")
+    out=$(call "$body")
+    echo "$out"
+    case "$out" in *'"ok":true'*) exit 0 ;; *) exit 1 ;; esac
+    ;;
+  ask)
+    if [ -z "$text" ]; then echo "ask 需要 --text 或 --text-file" >&2; exit 2; fi
+    if [ -z "$timeout" ]; then timeout=300; fi
+    body=$(printf '{"command":"ask","textB64":"%s","timeout":"%s"}' "$(b64 "$text")" "$timeout")
+    out=$(call "$body")
+    id=$(printf '%s' "$out" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+    echo "$out"
+    if [ -z "$id" ]; then exit 1; fi
+    start=$(date +%s)
+    while :; do
+      now=$(date +%s)
+      if [ $((now - start)) -ge "$timeout" ]; then echo "审批超时" >&2; exit 2; fi
+      sleep 1
+      poll=$(call "{\"command\":\"ask_status\",\"id\":\"$id\"}")
+      case "$poll" in
+        *'"status":"answered"'*)
+          case "$poll" in *'"allow":true'*) echo "✓ 允许"; exit 0 ;; *) echo "✗ 拒绝"; exit 1 ;; esac
+          ;;
+        *'"status":"expired"'*) echo "审批超时" >&2; exit 2 ;;
+      esac
+    done
+    ;;
+  *) echo "不认识命令：$cmd" >&2; exit 2 ;;
+esac
+`;
+}
