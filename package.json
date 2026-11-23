@@ -169,7 +169,9 @@
       "electron/mcp-bridge.mjs",
       "electron/browser-mcp-bridge.mjs",
       "electron/plugins/runtime.mjs",
-      "electron/wiki-mcp-bridge.mjs"
+      "electron/wiki-mcp-bridge.mjs",
+      "electron/agent-cli.mjs",
+      "electron/harness-mcp-bridge.mjs"
     ],
     "mac": {
       "target": [

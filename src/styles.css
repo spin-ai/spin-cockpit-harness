@@ -4569,7 +4569,7 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
   flex:none;
   display:flex;flex-direction:column;gap:2px;
   padding-top:6px;
-  border:0;border-radius:var(--radius-lg);
+  border:0;border-radius:var(--radius-chat-composer);
   background:var(--surface);
   box-shadow:var(--shadow-float);
   transition:box-shadow .12s;
@@ -4636,7 +4636,7 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
 .ds-composer .chat-toggle:hover{background:var(--surface-hover);color:var(--fg-2)}
 .ds-composer .chat-toggle.on{color:var(--fg-2);background:var(--surface-hover);box-shadow:none}
 .ds-send{
-  width:26px;height:26px;flex:none;display:grid;place-items:center;padding:0;
+  width:34px;height:34px;flex:none;display:grid;place-items:center;padding:0;
   border:0;border-radius:999px;background:var(--ds-send-bg);color:var(--ds-send-ink);
   cursor:pointer;transition:background-color .1s,opacity .1s;
 }

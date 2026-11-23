@@ -15,7 +15,9 @@ import { safeStorage } from "electron";
 import { AcpClient, dshPathEnv } from "./acp.mjs";
 import { createKnowledge } from "./knowledge/index.mjs";
 import { CHAT_MODEL_CATALOG, chat as arkChat, chatStream as arkChatStream, resolveArkKey as resolveArkKeyFor } from "./knowledge/ark.mjs";
-import { BOT_INJECT_CHARS, createBots } from "./bot/index.mjs";
+import { BOT_INJECT_CHARS, createBots, soulMarkdown } from "./bot/index.mjs";
+import { crossTopicDigest, groupAudience, groupContextLines, groupMarkdown, replyMentions } from "./bot/group.mjs";
+import { mailPrompt, pendingMailsFor } from "./bot/mail.mjs";
 import { notifyAllowed, notifyDecision } from "./bot/notify.mjs";
 import { TIDY_MAX_ARCHIVE, planTidy } from "./bot/tidy.mjs";
 import { botTemplate, templateSummaries } from "./bot/templates.mjs";
@@ -28,6 +30,7 @@ import { createItems } from "./bot/items.mjs";
 import { BOT_PATCH_MERGE_MS, buildBotPatch, mergeBotPatch } from "./bot/patch.mjs";
 import { clipChars, grepWorkspace, listWorkspace, readWorkspaceFile } from "./bot/workspace.mjs";
 import { redactSecrets } from "./redact.mjs";
+import { agentCliBinName, agentCliShimContent, clipAgentText, remoteAgentCliShimContent } from "./agent-bridge.mjs";
 import { createPairing } from "./im/pairing.mjs";
 import { createFeishu, createDedup, parseFeishuSetup } from "./im/feishu.mjs";
 import { createFeishuWs } from "./im/feishu-ws.mjs";
@@ -384,6 +387,10 @@ function coordinationSceneOf(id) {
 }
 
 function prepareRunWorktree(todo, cwd, runId) {
+  // 人把这条工作区交给机器人：就在那里干，不再从它派生一个新的 worktree
+  const handed = (store.state.botWorkspaces || []).find((w) => w.status !== "released"
+    && todo?.botId && w.botId === todo.botId && w.path === cwd);
+  if (handed) return { cwd, branch: handed.branch || null, repo: repoRoot(cwd), created: false, skipped: "handed-workspace" };
   const projectId = todo?.projectId || store.state.activeProjectId;
   const mode = sceneOf(projectId).config.worktree || store.state.settings?.worktreeMode || "auto";
   return prepareWorktree({ cwd, todoKey: todo?.key || "todo", runId, mode });
@@ -431,6 +438,19 @@ let mcpServerUrl = "";
 let wikiMcpServer = null;
 let wikiMcpUrl = "";
 const wikiTokens = new Map();
+/** 终端 Agent 窄通道：一次性 token（按 run / 终端）+ 本地 HTTP */
+let agentBridgeServer = null;
+let agentBridgeUrl = "";
+let agentBridgeReady = null;
+const agentTokens = new Map();
+/** agent 通过 harness ask 发起的审批：id → 状态；人决定后 CLI 轮询取结果 */
+const agentAsks = new Map();
+const AGENT_CLI_PATH = app.isPackaged
+  ? path.join(process.resourcesPath, "app.asar.unpacked", "electron", "agent-cli.mjs")
+  : path.join(__dirname, "agent-cli.mjs");
+const HARNESS_MCP_BRIDGE_PATH = app.isPackaged
+  ? path.join(process.resourcesPath, "app.asar.unpacked", "electron", "harness-mcp-bridge.mjs")
+  : path.join(__dirname, "harness-mcp-bridge.mjs");
 const WIKI_MCP_BRIDGE_PATH = app.isPackaged
   ? path.join(process.resourcesPath, "app.asar.unpacked", "electron", "wiki-mcp-bridge.mjs")
   : path.join(__dirname, "wiki-mcp-bridge.mjs");
@@ -1164,23 +1184,31 @@ async function startRun(run, todo, agent) {
 
   // 终端 Agent 走 pty（普通多 Agent / Mission child 都适用），并把标签推给渲染层
   if (chatRuntimeOf(agent) === "terminal") {
-    if (isRemote) {
-      const message = "终端 Agent 暂不支持远端主机；请使用本机 Agent 或 ACP";
-      run.status = "failed"; run.endedAt = Date.now(); run.error = message; run.errorClass = "terminal_required";
-      setRunResult(run, message, "error");
-      todo.status = "todo"; todo.lastRunFailed = true;
-      store.addMessage(thread.id, run.id, "system", "error", message);
-      store.addEvent("run.failed", `run.failed todo=${todo.key} ${message}`);
-      broadcast(); tick(); return;
-    }
     const terminalId = `term-${Date.now().toString(36)}`;
+    // 远端：本地 pty 包一层 ssh -tt；bridge 走反向隧道，agent 的 PATH 里有远端 harness
+    const remoteBridge = isRemote ? await startRemoteBridge(host, { terminalId, runId: run.id, todoId: todo?.id || null, cwd }) : null;
+    const agentEnv = isRemote ? {} : await agentBridgeEnv({ terminalId, runId: run.id, todoId: todo?.id || null, cwd });
     let term;
     try {
-      term = pty.spawn(agent.cli, [], {
-        name: "xterm-256color", cols: 120, rows: 32, cwd,
-        env: { ...process.env, TERM: "xterm-256color" },
-      });
+      if (isRemote) {
+        const assignments = remoteBridge?.assignments?.join(" ") || "";
+        const remoteCommand = `cd ${shellQuote(cwd)} && ${assignments ? `env ${assignments} ` : ""}${shellQuote(agent.cli)}`;
+        const sshArgs = ["-tt", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15"];
+        if (host.port) sshArgs.push("-p", String(host.port));
+        sshArgs.push(remoteTarget(host), remoteCommand);
+        term = pty.spawn("ssh", sshArgs, {
+          name: "xterm-256color", cols: 120, rows: 32, cwd: workspaceRoot,
+          env: { ...process.env, TERM: "xterm-256color" },
+        });
+      } else {
+        term = pty.spawn(agent.cli, [], {
+          name: "xterm-256color", cols: 120, rows: 32, cwd,
+          env: { ...process.env, TERM: "xterm-256color", ...agentEnv },
+        });
+      }
     } catch (err) {
+      releaseRemoteBridge({ terminalId });
+      releaseAgentTokens({ terminalId, runId: run.id });
       const message = `终端 Agent 启动失败：${String(err?.message || err)}`;
       run.status = "failed"; run.endedAt = Date.now(); run.error = message; run.errorClass = "terminal_required";
       setRunResult(run, message, "error");
@@ -1210,6 +1238,8 @@ async function startRun(run, todo, agent) {
     });
     term.onExit(({ exitCode, signal } = {}) => {
       terminals.delete(terminalId);
+      releaseAgentTokens({ terminalId, runId: run.id });
+      releaseRemoteBridge({ terminalId, runId: run.id });
       info.exited = true;
       info.exitCode = typeof exitCode === "number" ? exitCode : null;
       info.exitSignal = signal ?? null;
@@ -1232,6 +1262,7 @@ async function startRun(run, todo, agent) {
       todo.desc ? `背景：${todo.desc}` : "",
       (todo.acceptance || []).length ? `验收：${todo.acceptance.join("；")}` : "",
       delegation?.brief ? `子任务说明：${delegation.brief}` : "",
+      (agentBridgeUrl || remoteBridge) ? `进度 / 结论可以用 \`harness note --text "…"\` / \`harness report --text "…"\` 汇报；需要人确认时 \`harness ask --text "…"\`（会等人批）。` : "",
       "完成后请在终端里说明改动与验证结果。",
     ].filter(Boolean).join("\n");
     window.setTimeout(() => {
@@ -1244,12 +1275,16 @@ async function startRun(run, todo, agent) {
   }
 
   const extraEnv = parseEnvText(decSecret(store.state.settings?.dshEnv || ""));
-  // 浏览器工具只在本地 run 可用：远端机器连不到本机回环端点
+  // 浏览器 / harness 工具只在本地 run 可用：远端机器连不到本机回环端点
   const browserMcp = isRemote ? [] : await browserMcpServers(run);
+  // 远端：装远端 shim / MCP + 反向隧道，把本机 bridge 暴露成远端 127.0.0.1
+  const remoteBridge = isRemote ? await startRemoteBridge(host, { runId: run.id, todoId: todo?.id || null, cwd }) : null;
+  const harnessMcp = isRemote ? (remoteBridge?.mcp ? [remoteBridge.mcp] : []) : await harnessMcpServers(run);
   const client = new AcpClient({
     cwd,
     env: isRemote ? null : extraEnv, // 远端请在目标机自己配置（env 不会随 ssh 过去）
     ssh: isRemote ? { host: host.addr, port: host.port, user: host.user } : null,
+    sshEnv: isRemote ? remoteBridge?.assignments || null : null,
     // 本地：设置覆盖 > 内置单文件运行时 > PATH 里的 dsh
     bin: isRemote ? remoteDshBin() : (store.state.settings?.dshBinary || bundledDshPath() || undefined),
     home: store.state.settings?.dshHome || undefined,
@@ -1257,7 +1292,7 @@ async function startRun(run, todo, agent) {
     model: thread.model || store.state.settings?.model || undefined,
     effort: thread.effort || store.state.settings?.effort || undefined,
     patches: process.env.COCKPIT_TEST_DSH_PATCH ? [process.env.COCKPIT_TEST_DSH_PATCH] : [],
-    mcpServers: [...wikiMcpServers(run.id), ...browserMcp, ...desktopMcpServers()],
+    mcpServers: [...wikiMcpServers(run.id), ...browserMcp, ...desktopMcpServers(), ...harnessMcp],
   });
   const handle = { client, threadId: thread.id, streamId: null, thoughtId: null, tools: new Map(), toolMeta: new Map(), done: false, stderr: "" };
   active.set(run.id, handle);
@@ -1382,6 +1417,7 @@ async function startRun(run, todo, agent) {
         ].join("\n")
         : "",
       resumed ? "这是中断后的续跑：先看一眼当前工作区状态（文件改到哪、有没有半成品），再继续没做完的部分，不要从头重做。" : "",
+      remoteBridge ? "进度 / 结论可用 `harness note --text \"…\"` / `harness report --text \"…\"` 汇报；需要人确认时 `harness ask --text \"…\"`（会等人批）。" : "",
       "完成后给出结论；如需改文件请直接修改。",
     ].filter(Boolean).join("\n");
     const res = await client.prompt(prompt);
@@ -1468,6 +1504,8 @@ async function startRun(run, todo, agent) {
     if (run.endedAt && run.startedAt) run.durationMs = Math.max(0, run.endedAt - run.startedAt);
     settlePendingSteers(run.id);
     releaseWikiToken(run.id);
+    releaseAgentTokens({ runId: run.id });
+    releaseRemoteBridge({ runId: run.id });
     active.delete(run.id);
     broadcast();
     tick();
@@ -2923,6 +2961,354 @@ async function readRequestBody(req) {
   return raw ? JSON.parse(raw) : {};
 }
 
+/* ------------------------------------------------------------ 终端 Agent 窄通道 */
+
+function agentBinDir() {
+  return path.join(app.getPath("userData"), "bin");
+}
+
+let agentCliReady = false;
+/** PATH 里放一个 `harness`：Electron 以 node 模式跑 agent-cli.mjs（mac/linux sh，Windows cmd）。 */
+function ensureAgentCliShim() {
+  const dir = agentBinDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, agentCliBinName());
+  const content = agentCliShimContent({ platform: process.platform, electronPath: process.execPath, scriptPath: AGENT_CLI_PATH });
+  if (!agentCliReady || !fs.existsSync(file)) {
+    fs.writeFileSync(file, content, "utf8");
+    if (process.platform !== "win32") fs.chmodSync(file, 0o755);
+    agentCliReady = true;
+  }
+  return dir;
+}
+
+function issueAgentToken(scope = {}) {
+  const token = crypto.randomBytes(20).toString("hex");
+  agentTokens.set(token, { ...scope, at: Date.now() });
+  return token;
+}
+
+function releaseAgentTokens({ terminalId = "", runId = "" } = {}) {
+  for (const [token, rec] of agentTokens) {
+    if ((terminalId && rec.terminalId === terminalId) || (runId && rec.runId === runId)) agentTokens.delete(token);
+  }
+  // 运行结束：还挂着的 CLI 审批一起收掉，不让卡片悬空
+  for (const [id, ask] of agentAsks) {
+    if (!runId || ask.runId !== runId) continue;
+    if (ask.timer) clearTimeout(ask.timer);
+    approvals.delete(id);
+    agentAsks.delete(id);
+  }
+}
+
+function resolveAgentScope(rec = {}) {
+  const st = store?.state || {};
+  const run = (rec.runId ? (st.runs || []).find((r) => r.id === rec.runId) : null)
+    || (rec.terminalId ? (st.runs || []).find((r) => r.terminalId === rec.terminalId && ["queued", "running", "waiting_input"].includes(r.status)) : null)
+    || null;
+  const todo = (run?.todoId ? (st.todos || []).find((t) => t.id === run.todoId) : null)
+    || (rec.todoId ? (st.todos || []).find((t) => t.id === rec.todoId) : null)
+    || null;
+  const agent = run?.agentId ? (st.agents || []).find((a) => a.id === run.agentId) : null;
+  return { run, todo, agent };
+}
+
+function startAgentBridge() {
+  if (agentBridgeReady) return agentBridgeReady;
+  agentBridgeReady = new Promise((resolve) => {
+    agentBridgeServer = http.createServer(async (req, res) => {
+      const send = (status, payload) => {
+        res.writeHead(status, { "content-type": "application/json" });
+        res.end(JSON.stringify(payload));
+      };
+      if (req.method !== "POST" || req.url !== "/call") return send(404, { ok: false, error: "not found" });
+      try {
+        const auth = String(req.headers.authorization || "");
+        const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+        const rec = agentTokens.get(token);
+        if (!rec) return send(403, { ok: false, error: "invalid agent token" });
+        if (Date.now() - (rec.at || 0) > 24 * 60 * 60 * 1000) {
+          agentTokens.delete(token);
+          return send(403, { ok: false, error: "agent token expired" });
+        }
+        const payload = await readRequestBody(req);
+        const textOf = (p) => String(p.text || (p.textB64 ? Buffer.from(String(p.textB64), "base64").toString("utf8") : "") || "");
+        const command = String(payload.command || "");
+        const { run, todo, agent } = resolveAgentScope(rec);
+        if (command === "ask") {
+          if (!run) return send(400, { ok: false, error: "这次终端没有对应的运行，不能请求审批" });
+          const text = clipAgentText(textOf(payload), 800).trim();
+          if (!text) return send(400, { ok: false, error: "text 不能为空：说清要确认什么" });
+          const seconds = Math.max(30, Math.min(900, Number(payload.timeout) || 300));
+          const id = `aa${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+          const approval = {
+            id, requestId: "", runId: run.id, todoId: todo?.id || "", source: "agent_cli",
+            title: "agent 请求确认", description: redactSecrets(text).text,
+            options: [
+              { id: "", name: "允许", kind: "allow_once" },
+              { id: "", name: "拒绝", kind: "reject_once" },
+            ],
+          };
+          approvals.set(id, approval);
+          const ask = { runId: run.id, status: "pending", allow: null, label: "", timer: null };
+          agentAsks.set(id, ask);
+          ask.timer = setTimeout(() => {
+            if (ask.status !== "pending") return;
+            ask.status = "expired";
+            approvals.delete(id);
+            if (run.status === "waiting_input") run.status = "running";
+            const thread = todo ? threadForTodo(todo) : (run.threadId ? store.state.threads.find((t) => t.id === run.threadId) : null);
+            if (thread) store.addMessage(thread.id, run.id, "system", "system", "审批超时：agent 的确认请求没有等到人决定");
+            store.addEvent("run.approval_timeout", `run.approval_timeout ${run.id}`);
+            store.persist(); broadcast();
+          }, seconds * 1000);
+          if (run.status === "running") run.status = "waiting_input";
+          const thread = todo ? threadForTodo(todo) : (run.threadId ? store.state.threads.find((t) => t.id === run.threadId) : null);
+          if (thread) store.addMessage(thread.id, run.id, "system", "system", `等待审批：${text.slice(0, 200)}`);
+          store.addEvent("run.approval", `run.approval agent_cli waiting`);
+          store.persist(); broadcast();
+          return send(200, { ok: true, id, timeoutMs: seconds * 1000 });
+        }
+        if (command === "ask_status") {
+          const ask = agentAsks.get(String(payload.id || ""));
+          if (!ask) return send(404, { ok: false, error: "审批不存在" });
+          return send(200, { ok: true, status: ask.status, allow: ask.allow, label: ask.label });
+        }
+        if (command === "whoami") {
+          return send(200, { ok: true, runId: run?.id || null, todoId: todo?.id || null, todoKey: todo?.key || null, agent: agent?.name || null, cwd: rec.cwd || run?.cwd || null });
+        }
+        if (command === "note") {
+          const text = clipAgentText(textOf(payload), 2000).trim();
+          if (!text) return send(400, { ok: false, error: "text 不能为空" });
+          const thread = todo ? threadForTodo(todo) : (run?.threadId ? store.state.threads.find((t) => t.id === run.threadId) : null);
+          if (!thread) return send(400, { ok: false, error: "这条终端没有关联任务 / 会话，记不进去" });
+          const clean = redactSecrets(text).text;
+          store.addMessage(thread.id, run?.id || null, "system", "system", `〔${agent?.alias || agent?.name || "agent"}〕${clean}`);
+          store.addEvent("run.agent_note", `run.agent_note ${run?.id || todo?.key || "terminal"}`);
+          store.persist(); broadcast();
+          return send(200, { ok: true, runId: run?.id || null, threadId: thread.id });
+        }
+        if (command === "report") {
+          if (!run) return send(400, { ok: false, error: "这次终端没有对应的运行，不能 report" });
+          if (!["queued", "running", "waiting_input"].includes(run.status)) {
+            return send(400, { ok: false, error: `这次运行已经是 ${run.status}，不能再汇报` });
+          }
+          const text = clipAgentText(textOf(payload), 8000).trim();
+          if (!text) return send(400, { ok: false, error: "text 不能为空" });
+          const clean = redactSecrets(text).text;
+          setRunResult(run, clean, "agent_cli");
+          const thread = todo ? threadForTodo(todo) : (run.threadId ? store.state.threads.find((t) => t.id === run.threadId) : null);
+          if (thread) store.addMessage(thread.id, run.id, "system", "system", `agent 汇报：${clean.slice(0, 400)}`);
+          store.addEvent("run.agent_report", `run.agent_report ${run.id}`);
+          store.persist(); broadcast();
+          return send(200, { ok: true, runId: run.id });
+        }
+        return send(400, { ok: false, error: `不认识 command：${command}` });
+      } catch (err) {
+        return send(400, { ok: false, error: String(err?.message || err).slice(0, 1000) });
+      }
+    });
+    agentBridgeServer.on("error", (err) => {
+      console.warn(`[agent.cli] ${String(err?.message || err)}`);
+      resolve("");
+    });
+    agentBridgeServer.listen(0, "127.0.0.1", () => {
+      agentBridgeUrl = `http://127.0.0.1:${agentBridgeServer.address().port}`;
+      resolve(agentBridgeUrl);
+    });
+  });
+  return agentBridgeReady;
+}
+
+/** 给一条 pty 的 env：PATH 里放 harness，token 只指向这次 run / 终端。 */
+async function agentBridgeEnv(scope = {}) {
+  try {
+    await startAgentBridge();
+    const dir = ensureAgentCliShim();
+    if (!agentBridgeUrl) return {};
+    const token = issueAgentToken(scope);
+    return {
+      COCKPIT_AGENT_URL: agentBridgeUrl,
+      COCKPIT_AGENT_TOKEN: token,
+      COCKPIT_CLI: "harness",
+      PATH: `${dir}${path.delimiter}${process.env.PATH || ""}`,
+      Path: `${dir}${path.delimiter}${process.env.Path || process.env.PATH || ""}`,
+    };
+  } catch (err) {
+    console.warn(`[agent.cli] env failed: ${String(err?.message || err)}`);
+    return {};
+  }
+}
+
+/* ------------------------------------------------------------ 远端 agent bridge（SSH 反向隧道） */
+
+const remoteBridgeCache = new Map();
+const remoteTunnels = new Map();
+
+function remoteTarget(host) {
+  return host?.user ? `${host.user}@${host.addr}` : String(host?.addr || "");
+}
+
+function remoteSshArgs(host) {
+  const target = remoteTarget(host);
+  const args = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8"];
+  if (host?.port) args.push("-p", String(host.port));
+  args.push(target);
+  return args;
+}
+
+async function remoteEnsureAgentCli(host) {
+  const key = `${host?.id || ""}:${host?.addr || ""}`;
+  if (remoteBridgeCache.has(key)) return remoteBridgeCache.get(key);
+  try {
+    const shim = Buffer.from(remoteAgentCliShimContent(), "utf8").toString("base64");
+    const mcp = fs.existsSync(HARNESS_MCP_BRIDGE_PATH)
+      ? Buffer.from(fs.readFileSync(HARNESS_MCP_BRIDGE_PATH, "utf8"), "utf8").toString("base64")
+      : "";
+    const command = [
+      "set -e",
+      "command -v curl >/dev/null 2>&1",
+      "command -v base64 >/dev/null 2>&1",
+      'mkdir -p "$HOME/.cockpit-harness/bin"',
+      `printf '%s' '${shim}' | base64 -d > "$HOME/.cockpit-harness/bin/harness"`,
+      'chmod 755 "$HOME/.cockpit-harness/bin/harness"',
+      // MCP 需要远端 node；没有 node 就只装 CLI，不装 MCP
+      "if command -v node >/dev/null 2>&1; then",
+      `  printf '%s' '${mcp}' | base64 -d > "$HOME/.cockpit-harness/bin/harness-mcp.mjs"`,
+      "  echo mcp_ok",
+      "else",
+      "  echo no_node",
+      "fi",
+    ].join("\n");
+    const { stdout } = await execFileAsync("ssh", [...remoteSshArgs(host), `sh -lc ${shellQuote(command)}`], { timeout: 15000 });
+    const info = { shim: true, mcp: /mcp_ok/.test(String(stdout || "")) };
+    remoteBridgeCache.set(key, info);
+    return info;
+  } catch (err) {
+    console.warn(`[agent.remote] shim failed ${host?.name || host?.addr}: ${String(err?.message || err).slice(0, 180)}`);
+    return { shim: false, mcp: false };
+  }
+}
+
+/** 在 remote host 上开一条反向隧道：远端的 127.0.0.1:<port> → 本机 agent bridge。 */
+function spawnRemoteTunnel(host, remotePort, waitMs) {
+  const localPort = (() => {
+    try { return Number(new URL(agentBridgeUrl).port); } catch { return 0; }
+  })();
+  if (!localPort) return Promise.resolve(null);
+  const proc = spawn("ssh", [
+    ...remoteSshArgs(host).slice(0, -1),
+    "-o", "ExitOnForwardFailure=yes",
+    "-N", "-R", `127.0.0.1:${remotePort}:127.0.0.1:${localPort}`,
+    remoteTarget(host),
+  ], { stdio: ["ignore", "ignore", "pipe"] });
+  return new Promise((resolve) => {
+    let buf = "";
+    let done = false;
+    const finish = (value) => {
+      if (done) return; done = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      // 端口 0 靠 ssh 打印；固定端口只要进程还活着就当成功
+      finish(remotePort === 0 ? null : { proc, url: `http://127.0.0.1:${remotePort}` });
+    }, waitMs);
+    proc.stderr?.on("data", (chunk) => {
+      buf = (buf + String(chunk)).slice(-4000);
+      const hit = buf.match(/Allocated port (\d+) for remote forward/);
+      if (hit) finish({ proc, url: `http://127.0.0.1:${hit[1]}` });
+      else if (/remote port forwarding failed/i.test(buf)) finish(null);
+    });
+    proc.once("exit", () => finish(null));
+    proc.once("error", () => finish(null));
+  });
+}
+
+async function remoteOpenTunnel(host) {
+  // OpenSSH 7.6+：让服务端分配端口；老版本退回到固定端口段
+  const first = await spawnRemoteTunnel(host, 0, 8000);
+  if (first) {
+    first.proc.once("exit", () => {
+      for (const [key, rec] of remoteTunnels) if (rec.proc === first.proc) remoteTunnels.delete(key);
+    });
+    return first;
+  }
+  for (let port = 49300; port < 49308; port += 1) {
+    const hit = await spawnRemoteTunnel(host, port, 700);
+    if (hit) {
+      hit.proc.once("exit", () => {
+        for (const [key, rec] of remoteTunnels) if (rec.proc === hit.proc) remoteTunnels.delete(key);
+      });
+      return hit;
+    }
+  }
+  return null;
+}
+
+/** 远端 run / 终端的 env 与隧道；失败返回 null（agent 仍能跑，只是没有 harness 回调）。 */
+async function startRemoteBridge(host, scope = {}) {
+  try {
+    await startAgentBridge();
+    if (!agentBridgeUrl) return null;
+    const info = await remoteEnsureAgentCli(host);
+    if (!info.shim) return null;
+    const tunnel = await remoteOpenTunnel(host);
+    if (!tunnel) return null;
+    const key = scope.runId || scope.terminalId || "";
+    if (key) remoteTunnels.set(key, tunnel);
+    const token = issueAgentToken({ ...scope, at: Date.now() });
+    const assignments = [
+      `COCKPIT_AGENT_URL=${shellQuote(tunnel.url)}`,
+      `COCKPIT_AGENT_TOKEN=${shellQuote(token)}`,
+      "COCKPIT_CLI=harness",
+      'PATH="$HOME/.cockpit-harness/bin:$PATH"',
+    ];
+    const mcp = info.mcp ? {
+      name: "cockpit_harness",
+      command: "sh",
+      args: ["-lc", `COCKPIT_AGENT_URL=${shellQuote(tunnel.url)} COCKPIT_AGENT_TOKEN=${shellQuote(token)} node "$HOME/.cockpit-harness/bin/harness-mcp.mjs"`],
+      env: [],
+    } : null;
+    return { key, url: tunnel.url, assignments, mcp };
+  } catch (err) {
+    console.warn(`[agent.remote] bridge failed: ${String(err?.message || err).slice(0, 180)}`);
+    return null;
+  }
+}
+
+function releaseRemoteBridge(scope = {}) {
+  const keys = [scope.runId, scope.terminalId].filter(Boolean);
+  for (const key of keys) {
+    const rec = remoteTunnels.get(key);
+    if (!rec) continue;
+    remoteTunnels.delete(key);
+    try { rec.proc.kill(); } catch { /* ignore */ }
+  }
+}
+
+/** ACP agent 的 harness MCP：不用 shell，也能 whoami / note / report。token 同样只覆盖这次 run。 */
+async function harnessMcpServers(run) {
+  try {
+    await startAgentBridge();
+    if (!agentBridgeUrl) return [];
+    const token = issueAgentToken({ runId: run.id, todoId: run.todoId || null, cwd: run.cwd || "" });
+    return [{
+      name: "cockpit_harness",
+      command: process.execPath,
+      args: [HARNESS_MCP_BRIDGE_PATH],
+      env: [
+        { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+        { name: "COCKPIT_AGENT_URL", value: agentBridgeUrl },
+        { name: "COCKPIT_AGENT_TOKEN", value: token },
+      ],
+    }];
+  } catch (err) {
+    console.warn(`[agent.mcp] ${String(err?.message || err)}`);
+    return [];
+  }
+}
+
 function startMissionMcpServer() {
   if (mcpServer) return;
   mcpServer = http.createServer(async (req, res) => {
@@ -3180,6 +3566,51 @@ function botMemoryFile(botId = "") {
   return { path: file, text };
 }
 
+function botHomeDir(botId = "") {
+  const id = String(botId || "");
+  if (!(store.state.bots || []).some((b) => b.id === id)) throw new Error("bot 不存在");
+  const dir = path.join(app.getPath("userData"), "bots", id);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/** 把 SOUL.md / MEMORY.md 一起刷成最新（只读镜像；失败不挡任何业务动作） */
+function syncBotFiles(botId = "") {
+  const id = String(botId || "");
+  const bot = (store.state.bots || []).find((b) => b.id === id);
+  if (!bot) return null;
+  try {
+    const dir = botHomeDir(id);
+    fs.writeFileSync(path.join(dir, "SOUL.md"), soulMarkdown(bot), "utf8");
+    return { dir };
+  } catch { return null; }
+  finally { try { botMemoryFile(id); } catch { /* 镜像失败不影响业务 */ } }
+}
+
+function botGroupHomeDir(groupId = "") {
+  const id = String(groupId || "");
+  if (!(store.state.botGroups || []).some((g) => g.id === id)) throw new Error("群不存在");
+  const dir = path.join(app.getPath("userData"), "bot-groups", id);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/** 群档案镜像：GROUP.md 跟着群名 / 共识 / 成员 / 话题 / 回复规则走；失败不挡业务 */
+function syncGroupFile(groupId = "") {
+  const id = String(groupId || "");
+  try {
+    const group = (store.state.botGroups || []).find((g) => g.id === id);
+    if (!group) return null;
+    const members = (group.memberIds || []).map((botId) => {
+      const bot = (store.state.bots || []).find((b) => b.id === botId);
+      return { id: botId, name: bot?.name || botId, duty: bot?.persona?.mission || "" };
+    });
+    const dir = botGroupHomeDir(id);
+    fs.writeFileSync(path.join(dir, "GROUP.md"), groupMarkdown(group, members), "utf8");
+    return { dir };
+  } catch { return null; }
+}
+
 function botMemoryTidyPlan(botId = "") {
   const id = String(botId || "");
   if (!bots().list().some((b) => b.id === id)) throw new Error("bot 不存在");
@@ -3250,8 +3681,15 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
   // bot 绑了默认项目就用它；没绑才回退当前项目。workspace_* / git_* 的根都按这个走。
   const boundProject = ctx?.bot?.projectId ? st.projects.find((p) => p.id === ctx.bot.projectId) : null;
   const project = boundProject || st.projects.find((p) => p.id === st.activeProjectId) || st.projects[0] || null;
-  const projectId = project?.id || null;
-  const root = project?.path || activeProjectPath();
+  // 交到它手上的工作区：显式传 workspace=<id|标题|路径> 时才换 root，没传仍用绑定项目。
+  const handedRef = String(args.workspace || "").trim();
+  const handed = handedRef && ctx?.bot
+    ? (st.botWorkspaces || []).find((w) => w.botId === ctx.bot.id && w.status !== "released"
+      && (w.id === handedRef || w.title === handedRef || w.path === handedRef)) || null
+    : null;
+  if (handedRef && !handed) return { error: `找不到工作区「${handedRef}」：先用 work_list 看交给你的是哪几个` };
+  const projectId = handed?.projectId || project?.id || null;
+  const root = handed?.path || project?.path || activeProjectPath();
   switch (name) {
     case "memory_search": {
       const query = String(args.query || "").trim();
@@ -3297,12 +3735,14 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
       if (!bot) return { error: "缺少 bot 上下文" };
       if (bot.capability !== "work") return { error: "只有 work 档能自己起 run" };
       if (!bot.policy?.standing?.enabled) return { error: "这个 bot 没打开「无人值守」：先到 设置 → 规则 打开" };
-      if (!bot.projectId) return { error: "无人值守要求先绑定默认项目（设置 → 能力）" };
       if (!bot.executorAgentId) return { error: "无人值守要求先绑定执行体" };
       const ref = String(args.todo || "").trim();
       const todo = st.todos.find((t) => t.id === ref || t.key === ref || t.key === ref.replace(/^#/, ""));
       if (!todo) return { error: `找不到任务 ${ref || "（空）"}` };
-      if (todo.projectId !== bot.projectId) return { error: "这条任务不在 bot 绑定的项目里" };
+      // 交接工作区里的任务不受「绑定项目」限制：人已经把那个树交过来了
+      const handedTask = (st.botWorkspaces || []).find((w) => w.botId === bot.id && w.status !== "released" && w.path === todo.cwd);
+      if (!bot.projectId && !handedTask) return { error: "无人值守要求先绑定默认项目（设置 → 能力）" };
+      if (todo.projectId !== bot.projectId && !handedTask) return { error: "这条任务不在 bot 绑定的项目里" };
       if (todo.status !== "todo" && todo.status !== "failed") return { error: `任务当前是 ${todo.status}，不能起` };
       const active = ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"];
       if (st.runs.some((r) => r.todoId === todo.id && active.includes(r.status))) return { error: "这条任务已经在跑" };
@@ -3402,6 +3842,40 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
         agent: agentNow ? (agentNow.alias || agentNow.name) : null, bot: botNow?.name || null, changed,
       };
     }
+    case "worker_send": {
+      const bot = ctx?.bot;
+      if (!bot || !["work", "dispatch"].includes(bot.capability || "")) {
+        return { error: "当前能力档不能给 worker 发话（只读档只能看）" };
+      }
+      const text = String(args.text || "").trim().slice(0, 800);
+      if (!text) return { error: "text 不能为空" };
+      const activeStatus = ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"];
+      let run = null;
+      if (String(args.run || "").trim()) {
+        run = st.runs.find((r) => r.id === String(args.run).trim() && activeStatus.includes(r.status)) || null;
+        if (!run) return { error: `找不到正在跑的 run ${args.run}` };
+      } else {
+        // 没有 run id：优先这条工作区上的活，其次它自己名下的活
+        const wsPath = handed?.path || "";
+        run = [...st.runs].reverse().find((r) => {
+          if (!activeStatus.includes(r.status)) return false;
+          if (wsPath) return r.cwd === wsPath;
+          const todo = r.todoId ? st.todos.find((t2) => t2.id === r.todoId) : null;
+          return Boolean(todo && todo.botId === bot.id);
+        }) || null;
+        if (!run) return { error: "这条工作区 / 你名下没有正在跑的 run；先用 work_list 看" };
+      }
+      const todo = run.todoId ? st.todos.find((t2) => t2.id === run.todoId) : null;
+      const owned = (todo && todo.botId === bot.id) || (handed && run.cwd === handed.path);
+      if (!owned) return { error: "这条 run 不在你手上（只能给自己或交接工作区里的活发话）" };
+      const thread = todo ? threadForTodo(todo) : (run.threadId ? st.threads.find((t2) => t2.id === run.threadId) : null);
+      if (!thread) return { error: "这条 run 没有会话，发不进去" };
+      const msg = store.addMessage(thread.id, run.id, "system", "system", `〔${bot.name}〕${text}`);
+      const delivery = deliverSteer({ thread, todo, run, messageId: msg.id, text });
+      store.persist();
+      broadcast();
+      return { ok: delivery !== "failed", runId: run.id, todoId: todo?.id || null, delivered: delivery, threadId: thread.id };
+    }
     case "task_create": {
       const bot = ctx?.bot;
       if (!bot || !["work", "dispatch"].includes(bot.capability || "")) {
@@ -3436,8 +3910,10 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
         return { error: `这个 bot 绑定在主机 ${st.hosts.find((h) => h.id === bot.hostId)?.name || bot.hostId}，${agent.name} 在另一台主机上` };
       }
       const ownerId = targetBot ? targetBot.id : bot.id;
-      const cwd = project?.path || agent.cwd || workspaceRoot;
-      const existed = st.todos.find((t) => t.status === "todo" && t.title === title && t.agentId === agent.id && t.botId === ownerId);
+      // 在工作区里起活：cwd = 那条工作区；否则项目根 / 执行体默认目录
+      const cwd = handed?.path || project?.path || agent.cwd || workspaceRoot;
+      const existed = st.todos.find((t) => t.status === "todo" && t.title === title && t.agentId === agent.id
+        && t.botId === ownerId && (!handed || t.cwd === handed.path));
       if (existed) {
         watchDelegation(existed, targetBot, bot);
         // 同一轮重复建 / 用户改口说「开跑」：任务已存在时，start=true 就把这次当成启动
@@ -3457,7 +3933,7 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
         store.persist(); broadcast();
         return { ok: true, existed: true, key: existed.key, todoId: existed.id, agent: agent.alias || agent.name, bot: targetBot?.name || null, started: Boolean(runId), runId };
       }
-      const todo = actions.createTodo({ title, desc: brief, agentId: agent.id, cwd, priority: "P1", botId: ownerId, projectId: project?.id || null });
+      const todo = actions.createTodo({ title, desc: brief, agentId: agent.id, cwd, priority: "P1", botId: ownerId, projectId: handed?.projectId || project?.id || null });
       if (Array.isArray(args.acceptance) && args.acceptance.length) {
         todo.acceptance = args.acceptance.map((x) => String(x).trim()).filter(Boolean).slice(0, 5);
       }
@@ -3519,6 +3995,54 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
         };
       }).filter((r) => !wantBusy || r.open > 0 || r.running > 0);
       return { total: rows.length, bots: rows };
+    }
+    case "work_list": {
+      const bot = ctx?.bot;
+      if (!bot) return { error: "缺少 bot 上下文" };
+      const terms = terminalSnapshot();
+      const activeRun = ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"];
+      const mine = (st.botWorkspaces || []).filter((w) => w.botId === bot.id && w.status !== "released");
+      const rows = await Promise.all(mine.map(async (w) => {
+        // 一眼看到分支与脏文件数；不是 git 仓库就返回 null，不塞错误
+        let git = null;
+        try {
+          const res = await gitRun(w.path, ["status", "--porcelain=v1", "-b"], { timeout: 5000 });
+          if (res.ok) {
+            const lines = String(res.stdout || "").trim().split("\n").filter(Boolean);
+            const head = lines[0] || "";
+            git = { branch: head.replace(/^##\s*/, "").split("...")[0].split(" ")[0] || null, dirty: Math.max(0, lines.length - 1) };
+          }
+        } catch { /* 不是仓库 / 路径没了：保持 null */ }
+        const terminal = terms.find((t) => (w.terminalId && t.id === w.terminalId) || (!w.terminalId && t.cwd === w.path))
+          || st.terminals.find((t) => t.cwd === w.path) || null;
+        const runs = st.runs
+          .filter((r) => r.cwd === w.path || (r.todoId && st.todos.find((t2) => t2.id === r.todoId)?.cwd === w.path))
+          .slice(-3)
+          .map((r) => {
+            const todo = st.todos.find((t2) => t2.id === r.todoId);
+            return {
+              runId: r.id, task: todo ? `${todo.key} ${todo.title}` : null,
+              status: r.status, active: activeRun.includes(r.status),
+              elapsedMs: r.startedAt ? ((r.endedAt || Date.now()) - r.startedAt) : null,
+              hasResult: Boolean(r.result),
+            };
+          });
+        const tasks = st.todos
+          .filter((t2) => t2.cwd === w.path && !t2.confirmed && !["done", "cancelled"].includes(t2.status))
+          .slice(0, 5)
+          .map((t2) => ({ key: t2.key, title: t2.title, status: t2.status }));
+        return {
+          workspace: w.id, title: w.title || w.path, path: w.path, branch: w.branch || git?.branch || null,
+          kind: w.kind || "worktree", goal: w.goal || null, git,
+          terminal: terminal ? {
+            id: terminal.id, status: terminal.status, title: terminal.title || null,
+            // 终端尾巴可能打印过 key：进上下文前先脱敏
+            tail: redactSecrets(String(terminal.tail || "").slice(-600)).text, stalled: Boolean(terminal.stalled),
+          } : null,
+          runs, tasks,
+        };
+      }));
+      return { total: rows.length, workspaces: rows, note: rows.length ? "传 workspace=<id> 就能在里面读文件 / 起任务" : "还没有交到你手上的工作区" };
     }
     case "run_status": {
       const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 30);
@@ -4561,6 +5085,68 @@ function knowledge() {
   return knowledgeStore;
 }
 
+/**
+ * 交接后开一轮：把「刚接手什么 + 目标」交给 bot，让它先说打算怎么做。
+ * 只在这次交接带了新目标时发生（重复交同一目录不烧 token）；没有 key / 还在 intro 就静默跳过。
+ */
+function kickoffHandoff(bot, ws) {
+  if (!bot || bot.intro || !ws?.goal) return;
+  // 正在跟它聊 / 已暂停：只记交接，不插一轮（避免两条流互相打断）
+  if (bot.status !== "active" || botAborts.has(bot.id)) return;
+  const base = { botId: bot.id, name: bot.name };
+  const controller = new AbortController();
+  botAborts.set(bot.id, controller);
+  sendPhase(base, "thinking");
+  const prompt = [
+    `〔交接〕${ws.title}（${ws.path}${ws.branch ? ` · ${ws.branch}` : ""}）交给了你。`,
+    `目标：${ws.goal}`,
+    `先用 work_list 看这条工作区的终端、运行和未完成任务，然后回一句你打算怎么做。`,
+    `能动手就建任务（task_create 传 workspace=${ws.id}）或在这条工作区里起已建好的任务；不要声称已经完成。`,
+  ].join("\n");
+  void bots().reply(bot, prompt, {
+    threadId: bots().threadOf(bot.id)?.id || "",
+    signal: controller.signal,
+    trigger: { kind: "handoff", ref: ws.id },
+    inputRole: "none",
+    onDelta: (delta) => sendDelta(base, delta),
+    onTool: (tool) => sendTool(base, tool),
+  }).then(() => {
+    broadcast();
+  }).catch((err) => {
+    if (!controller.signal.aborted) console.warn(`[bot] handoff kickoff failed: ${String(err?.message || err)}`);
+  }).finally(() => {
+    flushDelta(base);
+    botAborts.delete(bot.id);
+    sendPhase(base, "done");
+  });
+}
+
+/** 群内同事消息：立即唤醒失败也不能丢；等对方下一次在这个话题里开口时带进 prompt。 */
+function createPeerMail({ fromBotId, toBotId, groupId, threadId = "", kind = "question", body = "" } = {}) {
+  const list = store.state.botPeerMails || (store.state.botPeerMails = []);
+  const mail = {
+    id: `pm${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+    fromBotId: String(fromBotId || ""), toBotId: String(toBotId || ""),
+    groupId: String(groupId || ""), threadId: String(threadId || "") || null,
+    kind: ["question", "handoff", "status"].includes(kind) ? kind : "question",
+    body: String(body || "").slice(0, 600), status: "pending", createdAt: Date.now(),
+    deliveredAt: null, answeredAt: null, answerTurnId: null,
+  };
+  list.push(mail);
+  if (list.length > 500) store.state.botPeerMails = list.slice(-500);
+  store.persist();
+  return mail;
+}
+
+function markPeerMail(id, status, turnId = null) {
+  const mail = (store.state.botPeerMails || []).find((m) => m.id === String(id || ""));
+  if (!mail) return null;
+  mail.status = status;
+  if (status === "answered") { mail.answeredAt = Date.now(); mail.answerTurnId = turnId || null; }
+  if (status === "delivered" && !mail.deliveredAt) mail.deliveredAt = Date.now();
+  return mail;
+}
+
 const actions = {
   /** 人接管这条终端：接管期间 Agent 的写入被拒绝（不排队），避免两边交错 */
   terminalTakeControl: ({ id } = {}) => {
@@ -4925,6 +5511,70 @@ const actions = {
     broadcast();
     return r;
   },
+  /**
+   * 把项目根 / worktree / 终端目录交给机器人：写一条长期关系（pty 退出不影响它），
+   * 项目根同时绑 bots.project_id，卡片上的「X 接手」才不是装饰。
+   */
+  botHandOffWorkspace: async ({ botId, projectId = null, path: target, title, branch, kind, terminalId, goal, projectRoot } = {}) => {
+    const bot = (store.state.bots || []).find((b) => b.id === String(botId || ""));
+    if (!bot) throw new Error("机器人不存在");
+    const raw = String(target || "").trim();
+    if (!raw) throw new Error("缺少工作区路径");
+    let real = raw;
+    try { real = fs.realpathSync(raw); } catch { throw new Error(`路径不存在：${raw}`); }
+    if (!fs.statSync(real).isDirectory()) throw new Error("工作区必须是目录");
+    const explicitProject = projectId ? (store.state.projects || []).find((p) => p.id === String(projectId)) : null;
+    // 从终端交过来时没有 projectId：按路径反查，任务与记忆仍能归到正确的项目
+    const project = explicitProject || (store.state.projects || []).find((p) => {
+      try { return real === fs.realpathSync(p.path) || real.startsWith(fs.realpathSync(p.path) + path.sep); } catch { return false; }
+    }) || null;
+    let projectPath = "";
+    try { projectPath = project ? fs.realpathSync(project.path) : ""; } catch { projectPath = ""; }
+    const isProjectRoot = Boolean(projectPath && projectPath === real);
+    if (project && !isProjectRoot) {
+      // 只允许交项目目录内的路径或它自己的 worktree（git 里登记过的不一定在项目目录下）
+      const inside = Boolean(projectPath) && real.startsWith(projectPath + path.sep);
+      if (!inside && !fs.existsSync(path.join(real, ".git"))) {
+        throw new Error("这个目录既不在项目里，也不是一个 git 工作树");
+      }
+    }
+    const res = bots().handOff({
+      botId: bot.id, projectId: project?.id || null, path: real,
+      title: String(title || ""), branch: String(branch || ""),
+      kind: kind || (isProjectRoot ? "project" : "worktree"),
+      terminalId: terminalId ? String(terminalId) : null,
+      goal: String(goal || ""), projectRoot: Boolean(projectRoot ?? isProjectRoot),
+    });
+    // 交过来时如果这条终端 / 目录上正有活：机器人接手监视与汇报（执行体不变）
+    const activeRun = (store.state.runs || []).find((r) => ["queued", "running", "waiting_input"].includes(r.status)
+      && (terminalId ? r.terminalId === String(terminalId) : r.cwd === real));
+    if (activeRun?.todoId) {
+      const todo = (store.state.todos || []).find((t) => t.id === activeRun.todoId);
+      if (todo) {
+        todo.botId = bot.id;
+        todo.updatedAt = now();
+        try { bots().watch({ botId: bot.id, todoId: todo.id, title: `${todo.key} ${todo.title}` }); } catch { /* 监视失败不挡交接 */ }
+        store.addMessage(threadForTodo(todo).id, activeRun.id, "system", "system", `${bot.name} 接手了这条工作区里的活（执行体不变）`);
+      }
+    }
+    syncBotFiles(bot.id);
+    store.addEvent("bot.workspace.handed", `bot.workspace.handed ${bot.name} ← ${real} (${res.workspace.kind})`);
+    broadcast();
+    // 带新目标才自动开一轮：它先说打算怎么做，人不用再补一句
+    if (res.goalChanged) kickoffHandoff(bot, res.workspace);
+    return { ok: true, workspaceId: res.workspace.id, workspace: res.workspace, line: res.line, botId: bot.id };
+  },
+  botWorkspaceGoal: async ({ id, goal } = {}) => {
+    const res = bots().setWorkspaceGoal({ id: String(id || ""), goal: String(goal || "") });
+    broadcast();
+    return res;
+  },
+  botWorkspaceRelease: async ({ id } = {}) => {
+    const res = bots().releaseWorkspace({ id: String(id || "") });
+    syncBotFiles(res.workspace?.botId || "");
+    broadcast();
+    return res;
+  },
   botRoutineSave: async (patch = {}) => bots().saveRoutine(patch || {}),
   botRoutineRemove: async ({ id } = {}) => { bots().removeRoutine(String(id || "")); return { ok: true }; },
   botRoutineStatus: async ({ botId } = {}) => bots().routineStatus(String(botId || "")),
@@ -4943,7 +5593,11 @@ const actions = {
     if (!res.dryRun) { store.addEvent("bot.thread.migrated", `bot.thread.migrated bots=${res.bots} turns=${res.turns} messages=${res.messages}`); broadcast(); }
     return res;
   },
-  botSave: async (patch = {}) => bots().save(patch || {}),
+  botSave: async (patch = {}) => {
+    const bot = bots().save(patch || {});
+    syncBotFiles(bot.id);
+    return bot;
+  },
   botTemplates: async () => templateSummaries(),
   botSkills: async () => skillSummaries(),
   /** 从模板新建：人格 / 职责 / 能力深拷贝；预置日程默认停用，等人打开 */
@@ -4957,6 +5611,7 @@ const actions = {
     });
     let routine = null;
     if (tpl.routine) routine = bots().saveRoutine({ botId: bot.id, ...tpl.routine, enabled: false });
+    syncBotFiles(bot.id);
     broadcast();
     return { bot, routine };
   },
@@ -4965,6 +5620,7 @@ const actions = {
   botRevisionDiff: async ({ botId, revisionId } = {}) => bots().revisionDiff(String(botId || ""), String(revisionId || "")),
   botRestoreRevision: async ({ botId, revisionId } = {}) => {
     const res = bots().restore(String(botId || ""), String(revisionId || ""));
+    syncBotFiles(res.bot?.id || String(botId || ""));
     broadcast();
     return { ok: true, ...res };
   },
@@ -5005,6 +5661,13 @@ const actions = {
   botMemoryFile: async ({ botId } = {}) => {
     const res = botMemoryFile(String(botId || ""));
     return { ok: true, path: res.path };
+  },
+  /** 打开 bot 主目录（SOUL.md / MEMORY.md 都在这里；finder 里看最直观） */
+  botHomeOpen: async ({ botId } = {}) => {
+    const dir = botHomeDir(String(botId || ""));
+    syncBotFiles(String(botId || ""));
+    const error = await shell.openPath(dir);
+    return { ok: !error, path: dir, error };
   },
   botMemoryOpenFile: async ({ botId } = {}) => {
     const res = botMemoryFile(String(botId || ""));
@@ -5071,107 +5734,259 @@ const actions = {
   /** 被动回复：流式把增量推给渲染层（harness:bot-delta），结束返回完整回合 */
   /** 群聊：列表 / 新建或更新 / 删除 / 发一句（按 replyMode 决定发给谁） */
   botGroups: async () => (store.state.botGroups || []).map((g) => ({ ...g })),
-  botGroupSave: async ({ id, name, memberIds, replyMode } = {}) => {
+  botGroupSave: async ({ id, name, memberIds, replyMode, memo } = {}) => {
     const list = store.state.botGroups || (store.state.botGroups = []);
     let g = id ? list.find((x) => x.id === String(id)) : null;
     if (!g) {
-      g = { id: store.nextId("grp"), name: "群聊", replyMode: { kind: "mentions" }, memberIds: [], createdAt: Date.now() };
+      g = { id: store.nextId("grp"), name: "群聊", replyMode: { kind: "mentions" }, memberIds: [], createdAt: Date.now(), lastReadAt: 0, threads: [], memo: "", reads: {} };
       list.push(g);
     }
     if (typeof name === "string" && name.trim()) g.name = name.trim().slice(0, 40);
     if (Array.isArray(memberIds)) g.memberIds = memberIds.map(String).filter(Boolean);
     if (replyMode && typeof replyMode === "object") g.replyMode = replyMode;
+    if (typeof memo === "string") g.memo = memo.trim().slice(0, 600);
     g.updatedAt = Date.now();
-    store.persist(); broadcast();
+    store.persist();
+    syncGroupFile(g.id);
+    broadcast();
     return { ...g };
+  },
+  /** 群内多话题：新建 / 改名 / 删除。默认话题（threadId 为空）不在这里管 */
+  botGroupThreadNew: async ({ groupId, title } = {}) => {
+    const g = (store.state.botGroups || []).find((x) => x.id === String(groupId || ""));
+    if (!g) throw new Error("群不存在");
+    const at = Date.now();
+    const thread = { id: `gth${at.toString(36)}${Math.random().toString(36).slice(2, 4)}`, title: String(title || "新话题").slice(0, 60), createdAt: at };
+    g.threads = [...(g.threads || []), thread];
+    g.updatedAt = at;
+    store.persist();
+    syncGroupFile(g.id);
+    broadcast();
+    return { ok: true, thread };
+  },
+  botGroupThreadRename: async ({ groupId, threadId, title } = {}) => {
+    const g = (store.state.botGroups || []).find((x) => x.id === String(groupId || ""));
+    const thread = g?.threads?.find((x) => x.id === String(threadId || ""));
+    if (!g || !thread) throw new Error("话题不存在");
+    const next = String(title || "").trim().slice(0, 60);
+    if (!next) throw new Error("话题名不能为空");
+    thread.title = next;
+    g.updatedAt = Date.now();
+    store.persist();
+    syncGroupFile(g.id);
+    broadcast();
+    return { ok: true, thread };
+  },
+  botGroupThreadRemove: async ({ groupId, threadId } = {}) => {
+    const g = (store.state.botGroups || []).find((x) => x.id === String(groupId || ""));
+    const tid = String(threadId || "");
+    if (!g || !tid) throw new Error("默认话题不能删除");
+    const exists = (g.threads || []).some((x) => x.id === tid);
+    if (!exists) throw new Error("话题不存在");
+    g.threads = (g.threads || []).filter((x) => x.id !== tid);
+    g.updatedAt = Date.now();
+    store.state.botGroupMessages = (store.state.botGroupMessages || []).filter((m) => !(m.groupId === g.id && m.threadId === tid));
+    // 这一条话题的草稿一起清，避免下次打开幽灵草稿
+    if (g.reads) delete g.reads[tid];
+    for (const threadId of Object.values(g.sessions?.[tid] || {})) {
+      try { bots().removeChat({ threadId }); } catch { /* 会话可能已经不在了 */ }
+    }
+    if (g.sessions) delete g.sessions[tid];
+    for (const k of Object.keys(store.state.botUi || {})) {
+      if (k === `group:${g.id}:${tid}`) delete store.state.botUi[k];
+    }
+    store.persist();
+    syncGroupFile(g.id);
+    broadcast();
+    return { ok: true };
+  },
+  /** 打开群主目录（GROUP.md 只读镜像就在这里） */
+  botGroupHomeOpen: async ({ id } = {}) => {
+    const dir = botGroupHomeDir(String(id || ""));
+    syncGroupFile(String(id || ""));
+    const error = await shell.openPath(dir);
+    return { ok: !error, path: dir, error };
+  },
+  /** 正在看某个话题：只清这条话题的未读（按最新一条消息时间比，不依赖 seq） */
+  botGroupSeen: async ({ id, threadId } = {}) => {
+    const g = (store.state.botGroups || []).find((x) => x.id === String(id || ""));
+    if (!g) return { ok: false };
+    const key = String(threadId || "main");
+    const latest = (store.state.botGroupMessages || [])
+      .filter((m) => m.groupId === g.id && (m.threadId || "main") === key)
+      .reduce((max, m) => Math.max(max, m.createdAt || 0), 0);
+    g.reads = { ...(g.reads || {}) };
+    if (latest > (g.reads[key] || 0)) g.reads[key] = Date.now();
+    else if (latest === 0 && !g.reads[key]) g.reads[key] = g.createdAt || Date.now();
+    // 群级时间只做兼容展示：取所有话题里最新的已读时间
+    g.lastReadAt = Math.max(g.lastReadAt || 0, ...Object.values(g.reads));
+    store.persist();
+    broadcast();
+    return { ok: true, readAt: g.reads[key], reads: g.reads };
   },
   botGroupRemove: async ({ id } = {}) => {
     const gid = String(id || "");
+    const group = (store.state.botGroups || []).find((g) => g.id === gid);
+    for (const sessions of Object.values(group?.sessions || {})) {
+      for (const threadId of Object.values(sessions || {})) {
+        try { bots().removeChat({ threadId }); } catch { /* 会话可能已经不在了 */ }
+      }
+    }
     store.state.botGroups = (store.state.botGroups || []).filter((g) => g.id !== gid);
     store.state.botGroupMessages = (store.state.botGroupMessages || []).filter((m) => m.groupId !== gid);
+    for (const k of Object.keys(store.state.botUi || {})) {
+      if (k === `group:${gid}` || k.startsWith(`group:${gid}:`)) delete store.state.botUi[k];
+    }
+    try { fs.rmSync(path.join(app.getPath("userData"), "bot-groups", gid), { recursive: true, force: true }); } catch { /* 删不掉不影响群删除 */ }
     store.persist(); broadcast();
     return { ok: true };
   },
   /** 发一句：先落「你」的消息，再按 replyMode / @提及 逐个 bot 生成回复并落库 */
-  botGroupSend: async ({ id, text } = {}) => {
+  botGroupSend: async ({ id, text, threadId, attachments } = {}) => {
     const gid = String(id || "");
     const group = (store.state.botGroups || []).find((g) => g.id === gid);
     if (!group) throw new Error("群不存在");
+    const tid = String(threadId || "");
+    if (tid && !(group.threads || []).some((x) => x.id === tid)) throw new Error("话题不存在或已被删除");
+    // 群附件：只带文本文件，最多 3 个、每个 4000 字；内容只进本轮 prompt，落库只留文件名
+    const files = (Array.isArray(attachments) ? attachments : [])
+      .filter((a) => a && a.text)
+      .slice(0, 3)
+      .map((a) => ({ name: String(a.name || "附件").slice(0, 120), path: String(a.path || ""), text: String(a.text).slice(0, 4000) }));
+    const fileBlock = files.length
+      ? `\n\n${files.map((a) => `附件 ${a.name}（${a.path}）\n\`\`\`\n${a.text}\n\`\`\``).join("\n\n")}`
+      : "";
+    const topicKey = tid || "main";
+    const topicTitle = tid ? (group.threads || []).find((x) => x.id === tid)?.title || "话题" : "主话题";
+    /** 这个群话题里，某个成员用哪条 bot thread：群会话与 1:1 的家分开，历史不会互相污染 */
+    const sessionFor = (bot) => {
+      const key = topicKey;
+      const existing = group.sessions?.[key]?.[bot.id];
+      if (existing && store.state.threads.some((t) => t.id === existing && t.kind === "bot" && t.botId === bot.id)) return existing;
+      const thread = bots().newChat({ botId: bot.id, title: `${group.name} · ${topicTitle}`.slice(0, 60), separate: true });
+      group.sessions = {
+        ...(group.sessions || {}),
+        [key]: { ...(group.sessions?.[key] || {}), [bot.id]: thread.id },
+      };
+      group.updatedAt = Date.now();
+      store.persist();
+      return thread.id;
+    };
     const value = String(text || "").trim();
-    if (!value) return { messages: [] };
+    if (!value && !files.length) return { messages: [] };
     const all = bots().list().filter((b) => (group.memberIds || []).includes(b.id));
     if (!all.length) throw new Error("群里还没有成员");
     const mode = group.replyMode || { kind: "mentions" };
-    const escape = (v) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // bot 名字通常是「PM · 项目经理」：@ 到短名（@PM）或全名都算，和 UI 的提示一致
-    const handleOf = (b) => String(b.name || "").split("·")[0].trim();
-    const named = all.filter((b) => [b.name, handleOf(b)].filter(Boolean)
-      .some((h) => new RegExp(`@${escape(h)}(?![\\p{L}\\p{N}_])`, "iu").test(value)));
-    const everyone = /@everyone\b/iu.test(value);
-    const targets = (mode.kind === "all" || everyone
-      ? all
-      : mode.kind === "bot"
-        ? all.filter((b) => b.id === mode.botId)
-        : named.length
-          ? named
-          : all.filter((b) => b.role === "supervisor").slice(0, 1).concat(all.filter((b) => b.role !== "supervisor").slice(0, 1)))
-      // 谁能找它 = owner 的 bot 不进群聊：它只在 1:1 里说话
-      .filter((b) => (b.policy?.whoCanAsk ?? "group") !== "owner");
+    // 地址解析 / 投递策略在纯函数里（代码块、引用、路径里的 @ 不算；mentions 没 @ 到人 = 0 人回）
+    const members = all.map((b) => ({
+      id: b.id, name: b.name, role: b.role || "worker",
+      whoCanAsk: b.policy?.whoCanAsk ?? "group",
+    }));
+    const audience = groupAudience({ text: value, members, mode });
+    if (audience.ambiguous) throw new Error("有多个成员都能叫这个名字，写全名再发");
+    if (audience.unknown.length) {
+      throw new Error(`群里没有「${audience.unknown.join(" / ")}」：可用 ${members.map((m) => m.name).join(" / ")}`);
+    }
+    if (audience.replierMissing) throw new Error("固定回复的成员不在群里了，换一个或改成 @ 谁谁回");
+    const targets = all.filter((b) => audience.ids.includes(b.id));
     const msgs = store.state.botGroupMessages || (store.state.botGroupMessages = []);
+    /** 当前话题的消息视图：默认话题是 threadId 为空的老消息 */
+    const roomMsgs = () => msgs.filter((m) => (m.threadId || "") === tid);
     const nextSeq = () => (msgs.length ? Math.max(...msgs.map((m) => m.seq || 0)) + 1 : 0);
     const push = (author, bot, body, decision = "answered", meta = null) => {
       const msg = {
         id: `gmsg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        groupId: gid, seq: nextSeq(), author, botId: bot?.id || null, botName: bot?.name || "",
+        groupId: gid, threadId: tid || null, seq: nextSeq(), author, botId: bot?.id || null, botName: bot?.name || "",
         text: String(body || ""), decision, createdAt: Date.now(), meta,
       };
       msgs.push(msg);
       return msg;
     };
-    const ownerMsg = push("owner", null, value);
+    const botValue = `${value || `（附件：${files.map((a) => a.name).join("、")}）`}${fileBlock}`;
+    const ownerMsg = push("owner", null, value, "answered", files.length ? { attachments: files.map(({ name, path }) => ({ name, path })) } : null);
+    // 话题的第一句就是标题：不出现一排「新话题」
+    if (tid && roomMsgs().filter((m) => m.author === "owner").length === 1) {
+      const thread = (group.threads || []).find((x) => x.id === tid);
+      if (thread && (!thread.title || thread.title === "新话题")) {
+        thread.title = (value || files[0]?.name || "附件").replace(/\s+/g, " ").slice(0, 40);
+        group.updatedAt = Date.now();
+      }
+    }
     // 先把「你说的这句」落盘 + 广播：群里多个 bot 可能各想十几秒，不能等全跑完才出现
-    store.persist(); broadcast();
+    store.persist();
+    syncGroupFile(gid);
+    broadcast();
     const out = [];
-    /** 这一轮 owner 之后其他人说的：主管先回，下面的成员就能看到分配再讨论 */
-    const contextOf = (bot) => msgs
-      .filter((m) => (m.seq || 0) > (ownerMsg.seq || 0) && m.botId !== bot.id && m.author === "bot")
-      .map((m) => `${m.botName || "成员"}：${String(m.text || "").slice(0, 400)}`)
-      .join("\n")
-      .slice(-2000);
+    if (!targets.length) {
+      const hint = mode.kind === "mentions"
+        ? "没有 @ 到成员：这个群设成「@ 谁谁回」。@名字，或把回复模式改成全体。"
+        : "群里没有可回复的成员（可能都被设成 owner-only 或已暂停）。";
+      const note = push("system", null, hint, "routed");
+      store.saveGroupMessage?.(note);
+      sendGroupMessage(gid, note);
+      store.persist(); broadcast();
+      return { messages: [note] };
+    }
+    /** 群里共享的上下文：上一轮 / 更早别人说过的话 + 本轮前面已经说的（不含自己的） */
+    const contextOf = (bot) => groupContextLines(roomMsgs(), { ownerSeq: ownerMsg.seq || 0, botId: bot.id });
     /** 一个成员：开跑前先发 thinking，回完只落这一行 + 增量下发，不整包广播 */
     const repliedIds = new Set();
     const handoffs = [];
+    /** 成员回复里 @ 到的人：与工具交接合并，本轮结束只唤醒一跳 */
+    const mentionWakes = [];
     const respond = async (bot, { handoff = null, depth = 0 } = {}) => {
       repliedIds.add(bot.id);
-      const base = { botId: bot.id, groupId: gid, name: bot.name };
+      const base = { botId: bot.id, groupId: gid, threadId: tid, name: bot.name };
       // 每个成员各自一个 abort：客户端「停止」能掐正在说话的那一个
       const controller = new AbortController();
       botAborts.set(bot.id, controller);
       sendPhase(base, "thinking");
       try {
-        // 被交接的目标：把“原话 + 交接待办”一起给它，但不伪装成 owner 又发了一遍
+        // 被交接 / 被问的目标：把“原话 + 待办”一起给它，但不伪装成 owner 又发了一遍
         const input = handoff
-          ? `${value}\n\n[${handoff.fromName} 把这件事交给你]：${handoff.task}${handoff.reason ? `；原因：${handoff.reason}` : ""}`
-          : value;
-        const turn = await bots().reply(bot, input, {
+          ? handoff.kind === "question"
+            ? `${botValue}\n\n[${handoff.fromName} 问你]：${handoff.task}${handoff.reason ? `；原因：${handoff.reason}` : ""}\necho 一句回答就够，不要重复整段群聊。`
+            : `${botValue}\n\n[${handoff.fromName} 把这件事交给你]：${handoff.task}${handoff.reason ? `；原因：${handoff.reason}` : ""}`
+          : botValue;
+        const sessionId = sessionFor(bot);
+        // 以前没送达的同事消息：这次在这个话题里开口就带上，答完销账
+        const waiting = pendingMailsFor(store.state.botPeerMails || [], {
+          groupId: gid, threadId: tid, toBotId: bot.id,
+          excludeIds: handoff?.mailId ? [handoff.mailId] : [],
+        });
+        const waitingText = mailPrompt(waiting, Object.fromEntries(all.map((b) => [b.id, b.name])));
+        const turn = await bots().reply(bot, waitingText ? `${input}\n\n${waitingText}` : input, {
+          threadId: sessionId,
           signal: controller.signal,
           groupContext: contextOf(bot),
           groupId: gid,
+          groupThreadId: tid,
+          groupMemo: String(group.memo || ""),
+          groupDigest: crossTopicDigest(group, msgs.filter((m) => m.groupId === gid), topicKey),
           onDelta: (delta) => sendDelta(base, delta),
           onTool: (tool) => sendTool(base, tool),
         });
         flushDelta(base);
+        // 这次答了就销账；失败的公开回复不销账，留给下一轮
+        for (const mail of waiting) markPeerMail(mail.id, "answered", turn?.id || null);
+        if (handoff?.mailId) markPeerMail(handoff.mailId, "answered", turn?.id || null);
         // 静默回合（NO_REPLY）：群里不留空消息，也不进未读；回合本身已经落库可审计
         if (turn?.decision === "quiet") { out.push(turn); return; }
         const msg = push("bot", bot, turn?.reply || "", turn?.decision || "answered", {
-          turnId: turn?.id || null, runId: turn?.runId || null, cost: turn?.cost || null,
+          turnId: turn?.id || null, runId: turn?.runId || null, cost: turn?.cost || null, sessionId,
         });
         store.saveGroupMessage?.(msg);
         sendGroupMessage(gid, msg);
         broadcastBot(bot.id, ["groups"], { groupMessages: msgs.filter((m) => m.groupId === gid) });
         out.push(msg);
+        // 回复里的 @Name 也是一次唤醒（跳过自己 / 已回过的人 / @everyone）
+        for (const to of replyMentions(turn?.reply || "", members, bot.id)) {
+          if (repliedIds.has(to) || mentionWakes.some((w) => w.to === to)) continue;
+          mentionWakes.push({ to, fromId: bot.id, fromName: bot.name, task: `@你：${String(turn?.reply || "").slice(0, 300)}`, reason: "群聊里 @ 到你" });
+        }
         if (turn?.handoff?.to) {
-          const line = push("system", null, `【交接】${bot.name} → ${turn.handoff.toName}：${turn.handoff.task}${turn.handoff.reason ? `（${turn.handoff.reason}）` : ""}`, "handoff");
+          const isAsk = turn.handoff.kind === "question";
+          const line = push("system", null, `${isAsk ? "【问】" : "【交接】"}${bot.name} → ${turn.handoff.toName}：${turn.handoff.task}${turn.handoff.reason ? `（${turn.handoff.reason}）` : ""}`, isAsk ? "question" : "handoff");
           store.saveGroupMessage?.(line);
           sendGroupMessage(gid, line);
           // 只跟一跳：被交接的人再交回去也不继续唤醒，避免两个 bot 来回踢皮球
@@ -5196,16 +6011,27 @@ const actions = {
     const lead = targets.find((b) => b.role === "supervisor");
     if (lead) await respond(lead);
     const rest = targets.filter((b) => b.id !== lead?.id);
-    const PARALLEL = 3;
-    for (let i = 0; i < rest.length; i += PARALLEL) {
-      await Promise.all(rest.slice(i, i + PARALLEL).map((b) => respond(b)));
+    // 回复节奏：并行（默认，快）或依次（后说的能看到前面刚说的，讨论更连贯）
+    if (mode.pace === "serial") {
+      for (const b of rest) await respond(b);
+    } else {
+      const PARALLEL = 3;
+      for (let i = 0; i < rest.length; i += PARALLEL) {
+        await Promise.all(rest.slice(i, i + PARALLEL).map((b) => respond(b)));
+      }
     }
-    // 交接：等本轮都说完了再叫目标，避免“被交接的人已经在队列里”变成双答
+    // 交接 / @ 唤醒：等本轮都说完了再叫目标，避免“被叫的人已经在队列里”变成双答
     const woken = new Set();
-    for (const h of handoffs.slice(0, 2)) {
+    const wakeAll = [...handoffs.map((h) => ({ ...h, __kind: "handoff" })), ...mentionWakes.map((w) => ({ ...w, __kind: "mention" }))];
+    for (const h of wakeAll.slice(0, 2)) {
       const target = all.find((b) => b.id === h.to);
       if (!target || repliedIds.has(target.id) || woken.has(target.id)) continue;
       woken.add(target.id);
+      if (h.__kind === "mention") {
+        const line = push("system", null, `【@】${h.fromName} → ${target.name}`, "mention");
+        store.saveGroupMessage?.(line);
+        sendGroupMessage(gid, line);
+      }
       await respond(target, { handoff: h, depth: 1 });
     }
     store.persist(); broadcast();
@@ -7327,11 +8153,30 @@ const actions = {
     const handle = active.get(approval.runId);
     const option = approval.options.find((o) => o.id === optionId);
     const allowIt = option ? option.kind.startsWith("allow") : Boolean(allow);
+    const label = option?.name || (allowIt ? "允许" : "拒绝");
+    // harness ask：没有 ACP handle，决定写回 agentAsks 让 CLI 轮询取走
+    if (approval.source === "agent_cli") {
+      const ask = agentAsks.get(id);
+      if (ask) {
+        if (ask.timer) clearTimeout(ask.timer);
+        ask.status = "answered";
+        ask.allow = allowIt;
+        ask.label = label;
+      }
+      approvals.delete(id);
+      const cliRun = store.state.runs.find((r) => r.id === approval.runId);
+      if (cliRun && cliRun.status === "waiting_input") cliRun.status = "running";
+      const cliTodo = store.state.todos.find((t) => t.id === approval.todoId);
+      const cliThread = cliTodo ? threadForTodo(cliTodo) : (cliRun?.threadId ? store.state.threads.find((t) => t.id === cliRun.threadId) : null);
+      if (cliThread) store.addMessage(cliThread.id, approval.runId, "system", "approval", `审批：${label} · ${approval.description || approval.title}`);
+      store.addEvent("run.approval", `run.approval agent_cli ${label}`);
+      store.persist(); broadcast();
+      return { ok: true, allow: allowIt };
+    }
     const ok = handle?.client.respondPermission(approval.requestId, allowIt, optionId);
     approvals.delete(id);
     const run = store.state.runs.find((r) => r.id === approval.runId);
     if (run && run.status === "waiting_input") run.status = "running";
-    const label = option?.name || (allowIt ? "允许" : "拒绝");
     store.addEvent("run.approval", `run.approval ${approval.title} ${label} ok=${ok}`);
     const approvalTodo = store.state.todos.find((t) => t.id === approval.todoId);
     // 审批关掉之后要能在会话里回看：命令原文 / 谁批的 / 批了什么
@@ -7912,7 +8757,7 @@ function syncTerminalRecord(id, patch = {}) {
   let record = (store.state.terminals || []).find((t) => t.id === id);
   if (!record) {
     record = {
-      id, projectId: null, todoId: null, runId: null, agentId: null, cwd: "",
+      id, projectId: null, todoId: null, runId: null, agentId: null, hostId: null, cwd: "",
       kind: "shell", title: "终端", status: "running", exitCode: null, tail: "",
       createdAt: Date.now(), endedAt: null,
     };
@@ -7948,8 +8793,9 @@ function settleTerminalRun(info, status) {
   run.endedAt = now();
   if (run.startedAt) run.durationMs = Math.max(0, run.endedAt - run.startedAt);
   run.exitCode = typeof info.exitCode === "number" ? info.exitCode : null;
-  // pty 跑出来的没有「结论段」，只有尾巴：存下来并标清来源，别让它冒充成报告的正文
-  setRunResult(run, info.recent, "pty_tail");
+  // pty 跑出来的没有「结论段」，只有尾巴：存下来并标清来源，别让它冒充成报告的正文。
+  // agent 用 harness report 明确报过结论的，尾巴不能覆盖它。
+  if (run.resultSource !== "agent_cli") setRunResult(run, info.recent, "pty_tail");
   const delegation = run.delegationId ? store.state.delegations.find((d) => d.id === run.delegationId) : null;
   if (delegation) {
     if (status === "completed") {
@@ -7982,27 +8828,50 @@ function settleTerminalRun(info, status) {
   broadcast();
 }
 
-ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, agentId, branch, initialInput, cols, rows, explore } = {}) => {
+ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, agentId, branch, initialInput, cols, rows, explore, hostId } = {}) => {
   const id = `term-${Date.now().toString(36)}`;
   const settings = store.state.settings || {};
+  const remoteHost = hostId ? (store.state.hosts || []).find((h) => h.id === String(hostId)) : null;
+  const isRemote = Boolean(remoteHost && remoteHost.kind !== "local");
   const shell = settings.shellPath || (process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/zsh");
   const fallbackShell = process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/zsh";
   const cwdResolved = cwd || activeProjectPath();
   const existingAgent = agentId ? store.state.agents.find((a) => a.id === agentId) || null : null;
   const commandToRun = String(command || existingAgent?.cli || "").trim();
+  const remoteCwd = isRemote ? String(cwd || remoteHost.defaultCwd || "").trim() : cwdResolved;
+  // 受管 agent 终端：PATH 里放 harness，token 只指向这条终端；纯 shell 不发
+  const remoteBridge = isRemote && commandToRun
+    ? await startRemoteBridge(remoteHost, { terminalId: id, todoId: todoId || null, cwd: remoteCwd })
+    : null;
+  const agentEnv = commandToRun && !isRemote
+    ? await agentBridgeEnv({ terminalId: id, todoId: todoId || null, cwd: cwdResolved })
+    : {};
   const spawnOptions = {
     name: "xterm-256color",
     cols: Math.max(20, Math.min(500, Number(cols) || 120)),
     rows: Math.max(2, Math.min(300, Number(rows) || 32)),
-    cwd: cwdResolved,
-    env: { ...process.env, TERM: "xterm-256color" },
+    cwd: isRemote ? workspaceRoot : cwdResolved,
+    env: { ...process.env, TERM: "xterm-256color", ...agentEnv },
   };
   const spawnArgs = commandToRun ? [] : (process.platform === "win32" ? [] : ["-l"]);
   let term;
   try {
-    term = pty.spawn(commandToRun || shell, spawnArgs, spawnOptions);
+    if (isRemote) {
+      const assignments = remoteBridge?.assignments?.join(" ") || "";
+      const remoteCommand = commandToRun
+        ? `${remoteCwd ? `cd ${shellQuote(remoteCwd)} && ` : ""}${assignments ? `env ${assignments} ` : ""}${shellQuote(commandToRun)}`
+        : `${remoteCwd ? `cd ${shellQuote(remoteCwd)} && ` : ""}exec "\${SHELL:-/bin/sh}" -l`;
+      const sshArgs = ["-tt", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15"];
+      if (remoteHost.port) sshArgs.push("-p", String(remoteHost.port));
+      sshArgs.push(remoteTarget(remoteHost), remoteCommand);
+      term = pty.spawn("ssh", sshArgs, spawnOptions);
+    } else {
+      term = pty.spawn(commandToRun || shell, spawnArgs, spawnOptions);
+    }
   } catch (err) {
-    if (commandToRun) throw err;
+    releaseRemoteBridge({ terminalId: id });
+    releaseAgentTokens({ terminalId: id });
+    if (commandToRun || isRemote) throw err;
     store.addEvent("terminal.shell_fallback", `terminal.shell_fallback ${shell} → ${fallbackShell}: ${String(err?.message || err).slice(0, 120)}`);
     // cwd 可能已被删除（worktree 清理等）：回落到项目根目录，避免终端直接起不来
     let safeCwd = cwdResolved;
@@ -8016,7 +8885,7 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
     const project = store.state.projects.find((p) => p.id === pid) || activeProject();
     if (!agent) {
       agent = {
-        id: store.nextId("ag"), name: `${project?.name || "project"} · ${commandToRun}`, hostId: "h-local",
+        id: store.nextId("ag"), name: `${project?.name || "project"} · ${commandToRun}`, hostId: isRemote ? remoteHost.id : "h-local",
         cli: commandToRun, cwd: cwdResolved, max: 1, approval: "ask", skills: [], color: "teal",
         alias: uniqueAgentAlias(commandToRun, pid), projectId: pid, terminalId: id,
         role: "worker", chatRuntime: commandToRun === "dsh" ? "acp" : "terminal",
@@ -8065,7 +8934,8 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
     agentId: agent?.id || null,
     cwd: cwdResolved,
     kind: commandToRun ? "agent" : "shell",
-    title: commandToRun ? `${agent?.name || commandToRun}` : path.basename(cwdResolved) || "shell",
+    hostId: isRemote ? remoteHost.id : null,
+    title: commandToRun ? `${agent?.name || commandToRun}` : (isRemote ? `${remoteHost.name} · shell` : path.basename(cwdResolved) || "shell"),
     status: "running",
     exitCode: null,
     tail: "",
@@ -8091,6 +8961,8 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
   });
   term.onExit(({ exitCode, signal } = {}) => {
     terminals.delete(id);
+    releaseAgentTokens({ terminalId: id });
+    releaseRemoteBridge({ terminalId: id });
     info.exited = true;
     info.exitCode = typeof exitCode === "number" ? exitCode : null;
     info.exitSignal = signal ?? null;
@@ -8116,7 +8988,7 @@ ipcMain.handle("terminal:create", async (_e, { cwd, command, projectId, todoId, 
       try { live.write(payload.endsWith("\r") ? payload : `${payload}\r`); } catch { /* ignore */ }
     }, 1500);
   }
-  return { id, cwd: cwdResolved, agent, run, branch: branch || null };
+  return { id, cwd: isRemote ? (remoteCwd || remoteHost.defaultCwd || "") : cwdResolved, hostId: isRemote ? remoteHost.id : null, agent, run, branch: branch || null };
 });
 
 // 渲染进程挂载后调用：返回挂载前的输出，并切换为实时推送（之后的输出只走 terminal:data）
@@ -8146,6 +9018,8 @@ ipcMain.handle("terminal:resize", (_e, { id, cols, rows }) => {
 });
 
 ipcMain.handle("terminal:close", (_e, { id }) => {
+  releaseAgentTokens({ terminalId: String(id || "") });
+  releaseRemoteBridge({ terminalId: String(id || "") });
   const info = terminalUrls.get(id);
   if (info) {
     // 用户主动关标签 = 取消这次终端运行；先结算，避免 onExit 再判成 failed。
@@ -8751,6 +9625,7 @@ app.on("before-quit", (event) => {
   try { grapeProc?.kill(); } catch { /* ignore */ }
   try { mcpServer?.close(); } catch { /* ignore */ }
   try { wikiMcpServer?.close(); } catch { /* ignore */ }
+  try { agentBridgeServer?.close(); } catch { /* ignore */ }
   try { imGateway?.stop(); } catch { /* ignore */ }
   void pluginHost?.stopAll();
   // 正常退出也要结算：否则下次启动前卡片一直是「进行中」

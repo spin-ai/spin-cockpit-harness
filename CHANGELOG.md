@@ -4,6 +4,25 @@
 
 ## [Unreleased]
 
+### Added（机器人：工作区交接、群聊路由、终端窄通道）
+- **工作区交接**：项目右键 / 终端右键「交给机器人」写一条 `bot_workspaces`（path / branch / terminalId / goal），项目根同时绑 `bots.project_id`；`work_list` 看工作区、git 分支 / 脏文件、终端尾部与 run；`workspace_*` / `git_*` 接受 `workspace=<id>`；`task_create` 在交接工作区**原地起活**（不再套新 worktree）；交回只标 `released`（项目根解绑），历史可展开 / 再交；删 bot / 删群 / 撤销一起清干净
+- **交接后带目标自动开一轮**：`kickoffHandoff()` 只在**新目标**时触发，长 prompt 只留审计（`inputRole=none`），不冒充用户气泡；正在聊 / 暂停 / 没 key 静默跳过
+- **终端 agent 窄通道**：受管 pty 的 PATH 里注入 `harness`，三条命令 `whoami` / `note --text` / `report --text`；token 绑定本次 run / 终端、24h 过期、离开即撤销；`report` 写 `run.result`（`agent_cli`），pty 尾部不再覆盖；不暴露 action bus / 任意 shell / 审批
+- **群聊路由**：`electron/bot/group.mjs` 纯函数解析 @（代码块 / 引用 / 引号 / 路径不算，最长名字匹配，同名歧义报错）；`mentions` 模式没 @ = **0 人回**（不再「主管 + 第一个」双答）；`@everyone` / 固定成员 / `all` 有明确失败语义
+- **成员接力**：回复正文里的 `@成员` 唤醒对方（一跳、最多 2 个、去重、不叫醒自己 / 已回过的人）；新增 `ask_bot`（问信息）与 `handoff_to_bot`（转让责任）分开，系统行 `【问】/【交接】/【@】`
+- **群共享上下文**：每轮注入上一轮别人 + 本轮前面别人（不含自己）；`bot_groups.memo` 群共识进 system prompt；`crossTopicDigest` 带其他话题最近 2 条（背景，不是指令）
+- **群内多话题**：`bot_groups.threads` + `bot_group_messages.thread_id`；第一句成为标题；消息 / 草稿 / 回复流按话题隔离；`bot_groups.sessions` 让每个成员在每个话题用**独立 bot thread**（不进 1:1 Chats，删话题 / 删群 / 删 bot 同步清）
+- **按话题未读**：`bot_groups.reads`（`last_read_at` 保留兼容）；左栏群行取各话题之和，侧栏显示「N 新」，正在看的话题自动清零
+- **群附件 / 群档案**：群消息最多 3 个文本附件（内容只进本轮 prompt，落库只留名称）；`userData/bot-groups/<id>/GROUP.md` 只读镜像（群名 / 共识 / 成员 / 话题 / 回复规则）+「主目录」按钮
+- **SOUL.md 镜像**：`userData/bots/<id>/SOUL.md` 从档案生成（职责卡 / 语气 / Never / 能力），bot 保存 / 模板 / 恢复 / 交接后刷新；与 MEMORY.md 同口径只读
+- **ACP harness MCP**：本地 ACP run 额外挂 `cockpit_harness`（stdio MCP），`harness_whoami` / `harness_note` / `harness_report` 走同一个 token 服务；远端 run 不挂
+- **`harness ask` 审批回传**：终端 agent 用 `harness ask --text "…" [--timeout 300]` 发起桌面审批（允许 / 拒绝），CLI 等到决定才继续；超时 30–900 秒自动收掉；不能自批、不会自动执行
+- **远端 agent bridge**：SSH 主机上用 `ssh -R 127.0.0.1:0:...` 反向隧道 + 远端 POSIX shim（curl/base64），pty run 本地 pty 包 `ssh -tt`，ACP run 走 `AcpClient.sshEnv`；隧道 / token 按 run 关闭，shim 缺失时明说不可用
+- **手动远端 shell**：终端「＋」菜单按主机列出「新建终端 · <host>」；`terminal:create` 接受 `hostId`，远端 `cd defaultCwd && exec "$SHELL" -l`；`terminals.host_id` + Pane 落盘恢复，重启仍回同一台
+- **远端 harness MCP**：远端有 node 时，把 `harness-mcp.mjs` 装到 `$HOME/.cockpit-harness/bin` 并以 MCP 挂给远端 ACP；没有 node 就退回 CLI shim
+- **群内同事消息（peer mail）**：`ask_bot` / `handoff_to_bot` 先落 `bot_peer_mail` pending；对方下一次在同一话题开口时带进 prompt，答完销账（`answered` + `answerTurnId`）；Bot 页「工作」能看到等它下一轮的消息；删 bot 一起清
+- **其他**：`harness report` 之后 pty 尾部不覆盖结论；`ask_bot` / `work_list` 进工具表；删除 / 撤销 / 清种子覆盖新增的 workspaces / 群话题草稿 / peer mail
+
 ### Security（依赖：把两个 high 清掉，`npm audit` 归零）
 - **`xlsx` 换成 0.20.3 构建**：npm 上的 `xlsx@0.18.5` 停在两年前，原型污染 / ReDoS 两个 advisory 一直没有修复版（官方修复只发在 SheetJS CDN，本机访问不到）；改用 npm 上的同版本重发布 `@e965/xlsx@0.20.3`，通过 npm alias 仍以 `xlsx` 引入，调用方零改动
 - **0.20 的 ESM 构建不再自带 `fs`**：`doc-preview` 与 `knowledge/parse` 的 xlsx 读取改成「读 buffer + `XLSX.read(buf,{type:'buffer'})`」，不再依赖 `readFile`；用例里的造数据也改成写 buffer

@@ -205,6 +205,8 @@ export interface CoordinationScene {
 }
 export interface TerminalRecord {
   id: string; projectId: string | null; todoId: string | null; runId: string | null; agentId: string | null;
+  /** 远端主机；空 = 本机。重启后恢复远端 shell / agent 终端靠它 */
+  hostId?: string | null;
   cwd: string; kind: "agent" | "shell"; title: string;
   status: "running" | "exited" | "closed" | "detached" | "failed";
   exitCode: number | null; tail: string; createdAt: number; endedAt: number | null;
@@ -213,6 +215,18 @@ export interface TerminalRecord {
   idleMs?: number;
   /** 谁在用这条 pty：null/缺省 = 空着（Agent 可写），"user" = 人接管中（Agent 写入被拒） */
   controlBy?: "user" | null;
+}
+/**
+ * 交给机器人的工作区：项目根 / worktree / 终端目录。
+ * 这是一段长期关系，pty 退出不影响它；`status === "released"` 就是人交回了。
+ */
+export interface BotWorkspace {
+  id: string; botId: string; projectId: string | null;
+  path: string; branch: string; title: string;
+  kind: "project" | "worktree" | "terminal";
+  terminalId: string | null; goal: string;
+  status: "open" | "released";
+  createdAt: number; updatedAt: number;
 }
 export interface RuntimeView {
   id: string; hostId: string; hostName: string; cli: string; label: string;
@@ -382,10 +396,14 @@ export interface Settings {
   personaDatasetDir?: string;
 }
 /** 群聊的一句话发给谁：指定某个成员 / 全体 / 被 @ 的人（ORCA 的 BotGroupReplyMode） */
-export type BotGroupReplyMode =
+export type BotGroupReplyMode = (
   | { kind: "bot"; botId: string }
   | { kind: "all" }
-  | { kind: "mentions" };
+  | { kind: "mentions" }
+) & {
+  /** 成员并行（默认）还是依次说；依次时后说的能看到前面刚说的 */
+  pace?: "serial" | "parallel";
+};
 
 export interface BotGroup {
   id: string;
@@ -394,6 +412,31 @@ export interface BotGroup {
   replyMode: BotGroupReplyMode;
   createdAt: number;
   updatedAt: number;
+  /** 左栏未读点：比这个时间新的成员消息算未读 */
+  lastReadAt?: number;
+  /** 群内多话题：每条话题各自消息流；threadId 为空 = 默认话题 */
+  threads?: { id: string; title: string; createdAt: number }[];
+  /** 群共识 / 目标：所有成员都注入（不代替各自职责） */
+  memo?: string;
+  /** 按话题已读：{ threadId | main : timestamp } */
+  reads?: Record<string, number>;
+  /** 每个话题里各成员用哪条 bot thread：{ threadId | main : { botId: threadId } } */
+  sessions?: Record<string, Record<string, string>>;
+}
+
+export interface BotPeerMail {
+  id: string;
+  fromBotId: string;
+  toBotId: string;
+  groupId: string;
+  threadId: string | null;
+  kind: "question" | "handoff" | "status";
+  body: string;
+  status: "pending" | "delivered" | "answered" | "cancelled";
+  createdAt: number;
+  deliveredAt: number | null;
+  answeredAt: number | null;
+  answerTurnId: string | null;
 }
 
 export interface BotGroupMessage {
@@ -406,9 +449,15 @@ export interface BotGroupMessage {
   text: string;
   /** 沉默 / 被拦也要留痕：作者是 bot 但没开口 */
   decision: string;
+  /** 多话题：归属哪条话题；空 = 默认话题 */
+  threadId?: string | null;
   createdAt: number;
-  /** 这一句对应的回合：turnId / runId / cost（点开看轨迹用） */
-  meta?: { turnId?: string | null; runId?: string | null; cost?: { tokens?: number | null; ms?: number } | null } | null;
+  /** 这一句对应的回合：turnId / runId / sessionId / cost / 附件（点开看轨迹用） */
+  meta?: {
+    turnId?: string | null; runId?: string | null; sessionId?: string | null;
+    cost?: { tokens?: number | null; ms?: number } | null;
+    attachments?: { name: string; path: string }[];
+  } | null;
 }
 
 /** Items 台账的计数：每个 bot 一份（needsYou > 0 才出现在行尾 / chrome 上） */
@@ -439,6 +488,7 @@ export interface State {
   scenes?: Scene[];
   coordinationScenes?: CoordinationScene[];
   bots?: Bot[];
+  botWorkspaces?: BotWorkspace[];
   botTurns?: BotTurn[];
   botGroups?: BotGroup[];
   botGroupMessages?: BotGroupMessage[];
@@ -448,6 +498,7 @@ export interface State {
   botChats?: Record<string, BotChatSummary[]>;
   /** 最近一次增量通知：渲染层据此决定「这个 bot 要不要重读」 */
   botChanged?: { botId: string; kinds: string[]; at: number } | null;
+  botPeerMails?: BotPeerMail[];
   routines?: BotRoutine[];
   terminals?: TerminalRecord[];
   runtimes?: RuntimeView[];

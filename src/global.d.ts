@@ -13,7 +13,7 @@ declare global {
       chooseProject(): Promise<string | null>;
       switchProject(id: string): Promise<string>;
       pickProjectFolder(): Promise<string | null>;
-      createTerminal(cwd: string, opts?: { command?: string; projectId?: string; todoId?: string; agentId?: string; branch?: string | null; initialInput?: string; cols?: number; rows?: number; explore?: boolean }): Promise<{ id: string; cwd: string; agent?: unknown; run?: unknown }>;
+      createTerminal(cwd: string, opts?: { command?: string; projectId?: string; todoId?: string; agentId?: string; hostId?: string; branch?: string | null; initialInput?: string; cols?: number; rows?: number; explore?: boolean }): Promise<{ id: string; cwd: string; hostId?: string | null; agent?: unknown; run?: unknown }>;
       attachTerminal(id: string): Promise<{ data: string; url?: string | null; exited?: boolean; exitCode?: number | null; missing?: boolean }>;
       /** 关闭视图：pty 继续跑，输出攒回主进程 buffer，之后可重新 attach */
       detachTerminal(id: string): Promise<boolean>;
@@ -33,9 +33,9 @@ declare global {
       onTerminalUrl(cb: (p: { id: string; url: string }) => void): () => void;
       onTerminalExit(cb: (p: { id: string; exitCode: number | null; signal: string | null }) => void): () => void;
       onImPaired(cb: (p: { appId: string; allowIds?: string }) => void): () => void;
-      onBotDelta(cb: (p: { botId: string; delta: string; groupId?: string; name?: string }) => void): () => void;
-      onBotTool(cb: (p: { botId: string; name: string; phase: "start" | "done"; groupId?: string; botName?: string }) => void): () => void;
-      onBotPhase(cb: (p: { botId: string; phase: "thinking" | "tool" | "done"; groupId?: string; name?: string; tool?: string }) => void): () => void;
+      onBotDelta(cb: (p: { botId: string; delta: string; groupId?: string; threadId?: string; name?: string }) => void): () => void;
+      onBotTool(cb: (p: { botId: string; name: string; phase: "start" | "done"; groupId?: string; threadId?: string; botName?: string }) => void): () => void;
+      onBotPhase(cb: (p: { botId: string; phase: "thinking" | "tool" | "done"; groupId?: string; threadId?: string; name?: string; tool?: string }) => void): () => void;
       onBotGroupMessage(cb: (p: { groupId: string; message: BotGroupMessage }) => void): () => void;
       onBotMessage(cb: (p: { botId: string; text: string; turnId: string }) => void): () => void;
       /** 作用域增量：只带这个 bot 变了的切片（botTurns / botGroupMessages / botChats / itemCounts） */

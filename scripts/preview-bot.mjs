@@ -201,6 +201,8 @@ const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "bot-preview-"));
 start(CHROME, [
   "--headless=new", `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${userDataDir}`,
   "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--hide-scrollbars",
+  // root / 容器里 Chromium 默认 sandbox 起不来
+  ...(process.getuid?.() === 0 ? ["--no-sandbox", "--disable-dev-shm-usage"] : []),
   "--force-device-scale-factor=2", "--window-size=1600,1000", "about:blank",
 ]);
 const target = await wait(async () => {
@@ -311,9 +313,8 @@ await run(`
   await new Promise((r) => setTimeout(r, 250));
   return true;`);
 check("自动化面板存在（标签）", (await all(".bot-tabs button")).some((t) => t.includes("自动化")));
-check("工具与通道面板存在（标签）", (await all(".bot-tabs button")).some((t) => t.includes("工具与通道")));
 const settingTabs = await all(".bot-aside .bot-tabs button");
-check("设置分区全部可见", ["待处理", "人格卡", "记忆", "任务", "自动化", "工具与通道", "出场规则"].every((x) => settingTabs.some((t) => t.includes(x))), settingTabs.join(" / "));
+check("设置分区全部可见", ["身份", "能力", "记忆", "自动化", "规则"].every((x) => settingTabs.some((t) => t.includes(x))), settingTabs.join(" / "));
 check("设置 tab：消息列让位，不重叠", await ev(`!document.querySelector(".bot-msg-col") && !!document.querySelector(".bot-aside .bot-tabs")`));
 await shot(path.join(OUT, "bot-settings.png"));
 await run(`
@@ -342,7 +343,8 @@ check("会话头：返回 / 标题 / 条数 / 新会话", (await text(".bot-chat
 check("BOT 三栏：联系人 / 消息 / 对话", await ev(`!!document.querySelector(".bot-side .bot-item") && !!document.querySelector(".bot-msg-col .bot-chat-row") && !!document.querySelector(".bot-main .bot-stream")`));
 check("Chat 窗口：用户气泡 / agent 扁平正文", await ev(`!!document.querySelector(".ds-user .ds-bubble") && !!document.querySelector(".ds-assistant-body")`));
 check("Chat 窗口：气泡 R20、composer R28", await ev(`getComputedStyle(document.querySelector(".ds-bubble")).borderRadius === "20px" && getComputedStyle(document.querySelector(".ds-composer")).borderRadius === "28px"`));
-check("Chat 窗口：composer 是 34px 圆形发送", await ev(`(() => { const b = document.querySelector(".ds-send"); if (!b) return false; const s = getComputedStyle(b); return Math.round(b.getBoundingClientRect().width) === 34 && s.borderRadius === "999px"; })()`));
+const sendBtn = await ev(`(() => { const b = [...document.querySelectorAll(".ds-send")].find((x) => x.getBoundingClientRect().width > 0); if (!b) return "missing"; const s = getComputedStyle(b); return JSON.stringify({ w: Math.round(b.getBoundingClientRect().width), r: s.borderRadius }); })()`);
+check("Chat 窗口：composer 是 34px 圆形发送", sendBtn === '{"w":34,"r":"999px"}', sendBtn);
 check("正文渲染 Markdown 代码块", await ev(`!!document.querySelector(".ds-assistant-body pre code")`));
 check("正文渲染 Markdown 列表", await ev(`!!document.querySelector(".ds-assistant-body ul li")`));
 check("run 汇报带产物", (await text(".bot-stream")).includes("src/App.tsx"));
@@ -373,15 +375,9 @@ await shot(path.join(OUT, "bot-chat-dark.png"));
 await run(`document.documentElement.dataset.theme = "light"; document.documentElement.dataset.mode = "light"; return true;`);
 
 // 轨迹：展开一轮的过程（思考 / 工具 / 终端）
-await run(`
-  const head = document.querySelector(".ds-trace .ds-process-head");
-  if (!head) throw new Error("没有轨迹头");
-  head.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 250));
-  return true;`);
-const traceText = await text(".ds-trace .ds-process-body");
-check("轨迹：展开后有工具调用 / 终端", traceText.includes("npm test") && traceText.includes("终端"), traceText.slice(0, 80));
-check("轨迹：工具卡带命令 / 输出", await ev(`!!document.querySelector(".ds-term-cmd") || !!document.querySelector(".ds-card-body")`));
+const traceText = await text(".ds-steps");
+check("轨迹：有工具调用 / 终端", traceText.includes("npm test") && traceText.includes("终端"), traceText.slice(0, 80));
+check("轨迹：工具卡带命令 / 输出", await ev(`!!document.querySelector(".ds-term-cmd") || !!document.querySelector(".ds-card-body") || !!document.querySelector(".ds-tool-row")`));
 await shot(path.join(OUT, "bot-trace.png"));
 
 // 独立轨迹 tab：时间轴 + 账本
@@ -406,7 +402,8 @@ await run(`
   btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 200));
   return true;`);
-check("点「引用」把原文带进输入框", (await ev(`document.querySelector(".ds-composer textarea")?.value || ""`)).startsWith(">"));
+const quoteValue = await ev(`[...document.querySelectorAll(".ds-composer textarea")].map((t) => t.value).find((v) => v.startsWith(">")) || ""`);
+check("点「引用」把原文带进输入框", quoteValue.startsWith(">"), quoteValue.slice(0, 40));
 
 // 附件
 await run(`
@@ -443,12 +440,12 @@ await run(`
 
 // 连接器 / 自动化 / 谁能找它
 await run(`
-  const tab = [...document.querySelectorAll(".bot-tabs button")].find((b) => b.textContent.includes("工具与通道"));
+  const tab = [...document.querySelectorAll(".bot-tabs button")].find((b) => b.textContent.includes("能力"));
   tab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 250));
   return true;`);
 const conn = await text(".bot-aside");
-check("工具与通道：列出工具 / 通道 / 插件", conn.includes("memory_search") && conn.includes("feishu") && conn.includes("手机端") && conn.includes("notes"));
+check("能力：列出通道 / 插件", conn.includes("feishu") && conn.includes("手机端") && conn.includes("插件"), conn.slice(0, 100));
 await run(`
   const tab = [...document.querySelectorAll(".bot-tabs button")].find((b) => b.textContent.includes("自动化"));
   tab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -457,7 +454,7 @@ await run(`
 const auto = await text(".bot-aside");
 check("自动化：一行一条（名字 / 下次 / 上次失败 / 启用）", auto.includes("早报") && auto.includes("上次") && auto.includes("启用"));
 await run(`
-  const tab = [...document.querySelectorAll(".bot-tabs button")].find((b) => b.textContent.includes("出场规则"));
+  const tab = [...document.querySelectorAll(".bot-tabs button")].find((b) => b.textContent.includes("规则"));
   tab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 250));
   return true;`);
@@ -470,21 +467,22 @@ await run(`
   item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 250));
   return true;`);
-check("群聊：进去了（群聊 chip）", (await text(".ds-composer")).includes("群聊"));
+const groupComposer = await ev(`(() => { const el = [...document.querySelectorAll(".ds-composer textarea")].find((t) => t.getBoundingClientRect().width > 0); return el ? (el.getAttribute("placeholder") || "") : ""; })()`);
+check("群聊：进去了（在群里说一句）", groupComposer.includes("在群里说一句"), groupComposer);
 await run(`
-  const box = document.querySelector(".ds-composer textarea");
+  const box = [...document.querySelectorAll(".ds-composer textarea")].find((t) => t.getBoundingClientRect().width > 0);
   if (!box) throw new Error("没有输入框");
   const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
   setter.call(box, "群里问一句");
   box.dispatchEvent(new Event("input", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 80));
-  const send = document.querySelector(".ds-send");
+  const send = [...document.querySelectorAll(".ds-send")].find((b) => b.getBoundingClientRect().width > 0);
   if (!send) throw new Error("没有发送按钮");
   send.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   return true;`);
 await sleep(40);
 check("群聊：自己的话立刻出现（不等后端）", (await text(".ds-pending")).includes("群里问一句"));
-check("群聊：没人开口时有一行「等成员回…」", (await text(".ds-typing")).includes("等成员回"), JSON.stringify((await text(".bot-stream")).slice(-160)));
+check("群聊：没人开口时有「正在想」行", await ev(`!!document.querySelector(".ds-typing")`), JSON.stringify((await text(".bot-stream")).slice(-160)));
 await sleep(250);
 check("群聊：后端回声到了就不再画乐观气泡（不重复）", await ev(`!document.querySelector(".ds-pending")`));
 check("群聊：逐字流式可见（不等整段）", (await text(".ds-streaming")).includes("先说一半"));

@@ -3,7 +3,7 @@
 # Arch · Bot（人格 bot）
 
 > 目标：让 Agent 以**固定人格**长期存在——本地 Chat 和 IM 是同一个身份、同一套记忆，且**以主动开口为主**。
-> 关联：[`ARCH-memory.md`](ARCH-memory.md)（四层记忆与注入预算）、[`ARCH-memory-persona-im.md`](ARCH-memory-persona-im.md)（画像数据模型）、[`ARCH-im-gateway.md`](ARCH-im-gateway.md)（飞书通道）、[`ARCH-super-agent.md`](ARCH-super-agent.md)（起任务）、[`ARCH-multi-agent-workspace.md`](ARCH-multi-agent-workspace.md)（thread/todo/run）、[`REQ-bot-intelligence.md`](../product/REQ-bot-intelligence.md)（vs ORCA / Rakazo 的智能度差距与 IR/SR）、[`ARCH-bot-borrow-from-orca.md`](ARCH-bot-borrow-from-orca.md)（ORCA @ 59f3122bc 的盘点与 P0/P1/P2 借鉴清单）。
+> 关联：[`ARCH-bot-workspace.md`](ARCH-bot-workspace.md)（项目 / worktree / 终端交接）、[`ARCH-bot-group.md`](ARCH-bot-group.md)（群聊路由 / 共享上下文）、[`ARCH-memory.md`](ARCH-memory.md)（四层记忆与注入预算）、[`ARCH-memory-persona-im.md`](ARCH-memory-persona-im.md)（画像数据模型）、[`ARCH-im-gateway.md`](ARCH-im-gateway.md)（飞书通道）、[`ARCH-super-agent.md`](ARCH-super-agent.md)（起任务）、[`ARCH-multi-agent-workspace.md`](ARCH-multi-agent-workspace.md)（thread/todo/run）、[`REQ-bot-intelligence.md`](../product/REQ-bot-intelligence.md)（vs ORCA / Rakazo 的智能度差距与 IR/SR）、[`ARCH-bot-borrow-from-orca.md`](ARCH-bot-borrow-from-orca.md)（ORCA @ 59f3122bc 的盘点与 P0/P1/P2 借鉴清单）。
 
 ---
 
@@ -70,6 +70,7 @@
 | **工具与通道面板**：按档位列出实际下发的工具（只读 13 / 自己的记忆 6 / 写任务 3）、通道（local / group / feishu 未接入 / mobile 不适用）、已装插件 —— 只陈述「它能碰到什么」，写操作仍走审批 | `Bot.tsx` §connectors |
 | **出场规则 · 谁能找它**：`policy.whoCanAsk = owner / group / anyone`；`owner` 的 bot 不进群聊（`botGroupSend` 过滤），只在 1:1 回应 | `DEFAULT_POLICY` / `botGroupSend` |
 | **群聊实时感**：`botGroupSend` 先落并广播 owner 那句，再逐个成员 `reply`，每个成员都带 `onDelta` / `onTool`（payload 带 `groupId` + `name`）并按 botId 分块流式渲染；成员之间各自一个 `AbortController`，`停止` 只掉正在说的那个；回声到达后乐观气泡让位给真消息 | `botGroupSend` / `sendDelta` / `groupStream` |
+| **群聊路由（2026-11-23）**：@ 解析忽略代码 / 引用 / 引号 / 路径并按最长名字匹配；`mentions` 没 @ = 0 人回（不再「主管+第一个」双答）；成员回复里的 @ 唤醒对方（一跳、去重、最多 2 个）；每轮注入上一轮与前面的共享上下文；左栏群未读点按 `last_read_at` | `electron/bot/group.mjs` / `botGroupSend` / `bot_groups.last_read_at` / `Bot.tsx` |
 | **头像**：人格卡里选 emoji（不存图片），带底色档位 | `Bot.tsx` §persona |
 | **会话正文**：agent 回复走 `RichText`（与 Chat 窗口同一套 Markdown / 代码卡 / 列表），用户消息保留纯文本气泡；视觉规范见 `ARCH-chat-ui` | `RichText` / `src/components/TaskChat.tsx` |
 | **回合可恢复（bot 侧）**：被动回复先落一条 `decision: "streaming"`，增量每 800ms 节流刷新；成功后同一条改成 `replied`，取消 / 报错则删掉；**应用被杀**留下的 `streaming` 在下次 `ensureSeed()` 收成 `interrupted` 并保留半截正文 | `reply()` / `ensureSeed()` / Bot 页「被打断」行 |
@@ -105,6 +106,9 @@
 | **per-bot 通知开关（2026-11-22）**：`policy.notify` 四个开关（主动开口 / 需要你决定 / 任务完成 / 未能完成）；run 完成与失败也会按开关弹通知，仍受 180 字 / 每小时 3 条 / 未读节流约束 | `electron/bot/notify.mjs` / `startBotTick()` / run 完成与失败路径 / `Bot.tsx` |
 | **职责卡（persona.duty）**：目标 / 范围 / 交付物 / 不做什么 / 汇报口径，与 `mission`、`role` 一起进 system prompt —— 只写人设不写职责，PM 和 DE-A 在模型眼里是同一个人 | `buildSystemPrompt()` / Bot 页「职责卡」 |
 | **记忆写入按 bot 落 owner**：bot 起的 run（`todo.botId`）经 MCP 写记忆时默认 `owner=bot:<id>`，读侧 `inject({ owner })` 只看「共享 + 自己」；人手开的 run 仍写共享层 | `startWikiMcpServer()` 的 `ownerOf()` |
+
+| **工作区交接（2026-11-23）**：项目右键 / 终端右键「交给机器人」写一条 `bot_workspaces`（path / branch / terminalId / goal），项目根交接同时绑 `bots.project_id`；`work_list` 看工作区、git 分支 / 脏文件、终端尾部与 run；`workspace_*` / `git_*` 接受 `workspace=<id>`，`task_create` 在那里原地起活（`worktree skipped: handed-workspace`），`worker_send` 可给活着的 worker 发话；带新目标交接会自动开一轮；交回只标 `released` 并解绑项目，历史可展开 / 再交 | `electron/bot/index.mjs` 的 `handOff` / `releaseWorkspace` / `soulMarkdown`、`electron/main.mjs`、`src/components/Bot.tsx` 工作区栏、`docs/arch/ARCH-bot-workspace.md` |
+| **SOUL.md 镜像（2026-11-23）**：`userData/bots/<id>/SOUL.md` 由档案生成（职责卡 / 语气 / Never / 能力），与 MEMORY.md 同一口径（只读、手改不回写）；bot 保存 / 模板 / 恢复 / 交接后刷新 | `soulMarkdown()` / `syncBotFiles()` / `botHomeOpen` / Bot 页「主目录」 |
 
 **人格为什么留在 `bots.persona`**：这是**多 bot** 产品，人格属于「这个 bot」，不属于「我」。`persona` 模块建模的是"人"（含别人的双时态证据链），和 bot 人格不是一张表；两者只在"结构化字段"这一层同构。真要复用画像，也应该是「从某个画像复制一份人格卡」，不是共享一行记录。
 
@@ -365,4 +369,4 @@ CREATE TABLE bot_turns(id TEXT PRIMARY KEY, bot_id TEXT, channel TEXT,
 - **语音/形象**（TTS、3D avatar）：先把「说什么、该不该说」做对。
 - **bot 自己写人格**（自我修改）：人格只由人改，避免越跑越偏。
 - **跨设备同步 bot 状态**：bot 状态在本机 `harness.db`。
-- **群聊多 bot 协同**：P3 之后再看，先解决单 bot 在群里的出场规则。
+- **群聊多话题 / 跨机成员 / peer mail**：单群的路由、成员接力与共享上下文已落地（见 [`ARCH-bot-group.md`](ARCH-bot-group.md)）；多房间、跨机 mail、群 home 仍是下一期。
