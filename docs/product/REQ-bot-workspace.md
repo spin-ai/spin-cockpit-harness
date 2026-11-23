@@ -78,7 +78,7 @@
 | SR-W08 | 上下文：`compileContext({ workspaces })` 增加分区并进 `sectionChars.workspaces`；最多 8 条 | 无工作区时不出现该段 |
 | SR-W09 | 删除 / 撤销：`collectBotData` / `dropBotData` 带上 workspaces | 删 bot 不留孤儿 |
 | SR-W10 | 审计：交接写 `bot_turns`（`decision=watching`）与 `bot_events`；交回写 released + updatedAt | 任意交接可追到人、时间、路径 |
-| SR-W11 | 终端 Agent 窄通道：`harness` 垫片进受管终端的 PATH；token 绑定 run / 终端；只接受 whoami / note / report；note 写当前任务会话，report 只写 run 结果（不改 run 状态、不绕过审批）；离开终端即撤销 token | `electron/agent-bridge.mjs` / `electron/agent-cli.mjs` / 主进程 token 服务 |
+| SR-W11 | 终端 Agent 窄通道：pty 走 `harness` 垫片（PATH + token）；ACP 走 `cockpit_harness` MCP；两者只接受 whoami / note / report；note 写当前任务会话，report 只写 run 结果（不改 run 状态、不绕过审批）；run / 终端结束即撤销 token | `electron/agent-bridge.mjs` / `agent-cli.mjs` / `harness-mcp-bridge.mjs` / 主进程 token 服务 |
 
 ---
 

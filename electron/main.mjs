@@ -17,6 +17,7 @@ import { createKnowledge } from "./knowledge/index.mjs";
 import { CHAT_MODEL_CATALOG, chat as arkChat, chatStream as arkChatStream, resolveArkKey as resolveArkKeyFor } from "./knowledge/ark.mjs";
 import { BOT_INJECT_CHARS, createBots, soulMarkdown } from "./bot/index.mjs";
 import { crossTopicDigest, groupAudience, groupContextLines, groupMarkdown, replyMentions } from "./bot/group.mjs";
+import { mailPrompt, pendingMailsFor } from "./bot/mail.mjs";
 import { notifyAllowed, notifyDecision } from "./bot/notify.mjs";
 import { TIDY_MAX_ARCHIVE, planTidy } from "./bot/tidy.mjs";
 import { botTemplate, templateSummaries } from "./bot/templates.mjs";
@@ -443,6 +444,9 @@ const agentTokens = new Map();
 const AGENT_CLI_PATH = app.isPackaged
   ? path.join(process.resourcesPath, "app.asar.unpacked", "electron", "agent-cli.mjs")
   : path.join(__dirname, "agent-cli.mjs");
+const HARNESS_MCP_BRIDGE_PATH = app.isPackaged
+  ? path.join(process.resourcesPath, "app.asar.unpacked", "electron", "harness-mcp-bridge.mjs")
+  : path.join(__dirname, "harness-mcp-bridge.mjs");
 const WIKI_MCP_BRIDGE_PATH = app.isPackaged
   ? path.join(process.resourcesPath, "app.asar.unpacked", "electron", "wiki-mcp-bridge.mjs")
   : path.join(__dirname, "wiki-mcp-bridge.mjs");
@@ -1212,8 +1216,9 @@ async function startRun(run, todo, agent) {
   }
 
   const extraEnv = parseEnvText(decSecret(store.state.settings?.dshEnv || ""));
-  // 浏览器工具只在本地 run 可用：远端机器连不到本机回环端点
+  // 浏览器 / harness 工具只在本地 run 可用：远端机器连不到本机回环端点
   const browserMcp = isRemote ? [] : await browserMcpServers(run);
+  const harnessMcp = isRemote ? [] : await harnessMcpServers(run);
   const client = new AcpClient({
     cwd,
     env: isRemote ? null : extraEnv, // 远端请在目标机自己配置（env 不会随 ssh 过去）
@@ -1225,7 +1230,7 @@ async function startRun(run, todo, agent) {
     model: thread.model || store.state.settings?.model || undefined,
     effort: thread.effort || store.state.settings?.effort || undefined,
     patches: process.env.COCKPIT_TEST_DSH_PATCH ? [process.env.COCKPIT_TEST_DSH_PATCH] : [],
-    mcpServers: [...wikiMcpServers(run.id), ...browserMcp, ...desktopMcpServers()],
+    mcpServers: [...wikiMcpServers(run.id), ...browserMcp, ...desktopMcpServers(), ...harnessMcp],
   });
   const handle = { client, threadId: thread.id, streamId: null, thoughtId: null, tools: new Map(), toolMeta: new Map(), done: false, stderr: "" };
   active.set(run.id, handle);
@@ -1436,6 +1441,7 @@ async function startRun(run, todo, agent) {
     if (run.endedAt && run.startedAt) run.durationMs = Math.max(0, run.endedAt - run.startedAt);
     settlePendingSteers(run.id);
     releaseWikiToken(run.id);
+    releaseAgentTokens({ runId: run.id });
     active.delete(run.id);
     broadcast();
     tick();
@@ -3020,6 +3026,28 @@ async function agentBridgeEnv(scope = {}) {
   } catch (err) {
     console.warn(`[agent.cli] env failed: ${String(err?.message || err)}`);
     return {};
+  }
+}
+
+/** ACP agent 的 harness MCP：不用 shell，也能 whoami / note / report。token 同样只覆盖这次 run。 */
+async function harnessMcpServers(run) {
+  try {
+    await startAgentBridge();
+    if (!agentBridgeUrl) return [];
+    const token = issueAgentToken({ runId: run.id, todoId: run.todoId || null, cwd: run.cwd || "" });
+    return [{
+      name: "cockpit_harness",
+      command: process.execPath,
+      args: [HARNESS_MCP_BRIDGE_PATH],
+      env: [
+        { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+        { name: "COCKPIT_AGENT_URL", value: agentBridgeUrl },
+        { name: "COCKPIT_AGENT_TOKEN", value: token },
+      ],
+    }];
+  } catch (err) {
+    console.warn(`[agent.mcp] ${String(err?.message || err)}`);
+    return [];
   }
 }
 
@@ -4770,6 +4798,32 @@ function kickoffHandoff(bot, ws) {
   });
 }
 
+/** 群内同事消息：立即唤醒失败也不能丢；等对方下一次在这个话题里开口时带进 prompt。 */
+function createPeerMail({ fromBotId, toBotId, groupId, threadId = "", kind = "question", body = "" } = {}) {
+  const list = store.state.botPeerMails || (store.state.botPeerMails = []);
+  const mail = {
+    id: `pm${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+    fromBotId: String(fromBotId || ""), toBotId: String(toBotId || ""),
+    groupId: String(groupId || ""), threadId: String(threadId || "") || null,
+    kind: ["question", "handoff", "status"].includes(kind) ? kind : "question",
+    body: String(body || "").slice(0, 600), status: "pending", createdAt: Date.now(),
+    deliveredAt: null, answeredAt: null, answerTurnId: null,
+  };
+  list.push(mail);
+  if (list.length > 500) store.state.botPeerMails = list.slice(-500);
+  store.persist();
+  return mail;
+}
+
+function markPeerMail(id, status, turnId = null) {
+  const mail = (store.state.botPeerMails || []).find((m) => m.id === String(id || ""));
+  if (!mail) return null;
+  mail.status = status;
+  if (status === "answered") { mail.answeredAt = Date.now(); mail.answerTurnId = turnId || null; }
+  if (status === "delivered" && !mail.deliveredAt) mail.deliveredAt = Date.now();
+  return mail;
+}
+
 const actions = {
   /** 人接管这条终端：接管期间 Agent 的写入被拒绝（不排队），避免两边交错 */
   terminalTakeControl: ({ id } = {}) => {
@@ -5535,17 +5589,27 @@ const actions = {
             : `${botValue}\n\n[${handoff.fromName} 把这件事交给你]：${handoff.task}${handoff.reason ? `；原因：${handoff.reason}` : ""}`
           : botValue;
         const sessionId = sessionFor(bot);
-        const turn = await bots().reply(bot, input, {
+        // 以前没送达的同事消息：这次在这个话题里开口就带上，答完销账
+        const waiting = pendingMailsFor(store.state.botPeerMails || [], {
+          groupId: gid, threadId: tid, toBotId: bot.id,
+          excludeIds: handoff?.mailId ? [handoff.mailId] : [],
+        });
+        const waitingText = mailPrompt(waiting, Object.fromEntries(all.map((b) => [b.id, b.name])));
+        const turn = await bots().reply(bot, waitingText ? `${input}\n\n${waitingText}` : input, {
           threadId: sessionId,
           signal: controller.signal,
           groupContext: contextOf(bot),
           groupId: gid,
+          groupThreadId: tid,
           groupMemo: String(group.memo || ""),
           groupDigest: crossTopicDigest(group, msgs.filter((m) => m.groupId === gid), topicKey),
           onDelta: (delta) => sendDelta(base, delta),
           onTool: (tool) => sendTool(base, tool),
         });
         flushDelta(base);
+        // 这次答了就销账；失败的公开回复不销账，留给下一轮
+        for (const mail of waiting) markPeerMail(mail.id, "answered", turn?.id || null);
+        if (handoff?.mailId) markPeerMail(handoff.mailId, "answered", turn?.id || null);
         const msg = push("bot", bot, turn?.reply || "", turn?.decision || "answered", {
           turnId: turn?.id || null, runId: turn?.runId || null, cost: turn?.cost || null, sessionId,
         });

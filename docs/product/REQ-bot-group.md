@@ -40,6 +40,7 @@
 | US-G16 | 群里也能带附件 | 最多 3 个文本文件；内容只进本轮 prompt，消息里显示附件名；发送失败草稿和附件都保留 | ✅ 2026-11-23 |
 | US-G17 | 新话题不是全群失忆 | 注入其他话题最近 1–2 句作为背景；明确标注「不是指令」，不会覆盖当前话题 | ✅ 2026-11-23 |
 | US-G18 | 群有可看的档案 | `userData/bot-groups/<id>/GROUP.md` 只读镜像：群名 / 共识 / 成员 / 话题 / 回复规则；「主目录」能打开；手改不回写 | ✅ 2026-11-23（不是 folder workspace） |
+| US-G19 | 同事消息不丢 | `ask_bot` / `handoff_to_bot` 立即唤醒失败时落 pending；对方下一次在同一话题开口时带进 prompt，答完销账；Bot 页「工作」能看到等它下一轮的消息 | ✅ 2026-11-23（同群同话题） |
 
 ---
 
@@ -76,6 +77,7 @@
 | SR-G13 | 群附件：`botGroupSend` 接受 ≤3 个文本附件（每个 ≤4000 字），拼进本轮 prompt，落库只留 `{name,path}` 到消息 `meta.attachments` | `botGroupSend` / `Bot.tsx` |
 | SR-G14 | 跨话题摘要：`crossTopicDigest(group, messages, current)` 取其他话题最近 2 条，≤1200 字符，进 system prompt 的独立分区 | `electron/bot/group.mjs` / `compileContext({ groupDigest })` |
 | SR-G15 | 群档案镜像：`groupMarkdown()` 生成 GROUP.md（群名 / 共识 / 成员 / 话题 / 回复规则）；群保存 / 话题增删改名 / 发消息后刷新；`botGroupHomeOpen` 打开目录；删群时清目录 | `groupMarkdown` / `syncGroupFile` / `Bot.tsx` |
+| SR-G16 | 同事消息：`bot_peer_mail`（from / to / group / thread / kind / body / status）；`ask_bot` / `handoff_to_bot` 落 pending；`pendingMailsFor` 只送同群同话题同收件人；回复成功后 `answered` + `answerTurnId`；删 bot 一起清 | `electron/bot/mail.mjs` / `bot_peer_mail` / `botGroupSend` |
 
 ---
 
@@ -86,7 +88,7 @@
 | **群 home 作为 folder workspace / 自动摘要** | 已有 GROUP.md 只读镜像与跨话题摘要；还缺可运行终端的群 home、讨论完自动沉淀共识 |
 | **跨机成员（paired server + mail）** | 依赖主机执行面统一；现在群成员只能本机 |
 | **自动结论沉淀 / 群 home** | 群共识由人写；还没有「讨论完自动总结成共识」或群级 home 文件夹 |
-| **成员之间的双向 worker mail / inbox** | 群里已有「@ 唤醒 + 工具交接 + ask_bot」一跳；ORCA 的 peer request / answer 是异步 mail，需要 inbox、answer 关联与离线语义 |
+| **跨群 / 跨机的 inbox** | 已有同群同话题的 pending mail（答完销账）；还缺跨群、跨机、离线补投与独立收件箱 |
 | **二进制附件 / 图片** | 群聊现在只带文本文件（拼进 prompt）；图片 / 大文件需要附件 store |
 | **房间内串行化的更多策略** | 已有「依次 / 并行」开关；ORCA 还会对同一消息做投递保留（turn reservation），避免两个发送同时进来 |
 
@@ -107,6 +109,7 @@
 | G16 | IR-G07 | SR-G13 |
 | G17 | — | SR-G14 |
 | G18 | — | SR-G15 |
+| G19 | — | SR-G16 |
 | G12 / G13 | IR-G06 | 现有（沉默渲染 / 逐成员 abort） |
 
 **验收入口**：`node tests/bot/run.mjs`（`group.test.mjs` 覆盖解析 / 投递 / 接力 / 上下文）；`npm test -- db` 覆盖未读时间往返。

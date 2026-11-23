@@ -114,6 +114,7 @@ export function collectBotData(state, ids) {
     revisions: (state.botRevisions || []).filter((r) => ids.has(r.botId)),
     events: (state.botEvents || []).filter((e) => ids.has(e.botId)),
     workspaces: (state.botWorkspaces || []).filter((w) => ids.has(w.botId)),
+    peerMails: (state.botPeerMails || []).filter((m) => ids.has(m.fromBotId) || ids.has(m.toBotId)),
     threads: (state.threads || []).filter((t) => threadIds.has(t.id)),
     messages: (state.messages || []).filter((m) => threadIds.has(m.threadId)),
     groups,
@@ -131,6 +132,7 @@ export function dropBotData(state, ids, data = collectBotData(state, ids)) {
   state.botRevisions = (state.botRevisions || []).filter((r) => !ids.has(r.botId));
   state.botEvents = (state.botEvents || []).filter((e) => !ids.has(e.botId));
   state.botWorkspaces = (state.botWorkspaces || []).filter((w) => !ids.has(w.botId));
+  state.botPeerMails = (state.botPeerMails || []).filter((m) => !ids.has(m.fromBotId) && !ids.has(m.toBotId));
   // 群会话映射：删掉的 bot 不能再指着一间已经不存在的 session
   for (const g of state.botGroups || []) {
     if (!g.sessions) continue;
@@ -987,6 +989,8 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     pushNew(stateOf().botEvents, data.events);
     stateOf().botWorkspaces = stateOf().botWorkspaces || [];
     pushNew(stateOf().botWorkspaces, data.workspaces);
+    stateOf().botPeerMails = stateOf().botPeerMails || [];
+    pushNew(stateOf().botPeerMails, data.peerMails);
     stateOf().threads = stateOf().threads || [];
     pushNew(stateOf().threads, data.threads);
     stateOf().messages = stateOf().messages || [];
@@ -1297,7 +1301,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
    *  - 写操作（改文件、跑命令、起任务）不在工具表里，只能靠提议给人确认；
    *  - 最多 4 轮，防模型在两个工具之间来回问；网关不支持 tools 时自动退回纯对话。
    */
-  async function chatStreamWithTools(messages, bot, onDelta, signal, onTool, { turnId = "", groupId = "" } = {}) {
+  async function chatStreamWithTools(messages, bot, onDelta, signal, onTool, { turnId = "", groupId = "", groupThreadId = "" } = {}) {
     // read 档也发工具：只读工具 + 自己的记忆。能力档只决定有没有 task_create。
     const tools = runTool ? botToolsFor(bot.capability) : [];
     const allowed = new Set(tools.map((t) => t.function.name));
@@ -1370,7 +1374,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
           const args = parseToolArgs(call.args);
           const startedAt = now();
           try { onTool?.({ name: call.name, phase: "start" }); } catch { /* 回调失败不影响查询 */ }
-          try { result = await runTool(call.name, args, { bot, turnId, groupId }); } catch (err) { result = { error: String(err?.message || err) }; }
+          try { result = await runTool(call.name, args, { bot, turnId, groupId, groupThreadId }); } catch (err) { result = { error: String(err?.message || err) }; }
           try { onTool?.({ name: call.name, phase: "done" }); } catch { /* 忽略 */ }
           const failed = Boolean(result && typeof result === "object" && "error" in result);
           const cap = Number(BOT_TOOL_META[call.name]?.maxResultChars) || 6000;
@@ -1412,7 +1416,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
 
   /** 被动回复：同一个 bot、同一份记忆，流式吐字；落一条 decision=replied 的回合 */
   async function reply(bot, text, {
-    onDelta, onTool, signal, threadId = "", groupContext = "", groupId = "", groupMemo = "", groupDigest = "",
+    onDelta, onTool, signal, threadId = "", groupContext = "", groupId = "", groupThreadId = "", groupMemo = "", groupDigest = "",
     // 交接 / 系统触发的这一轮：审计里区分是谁开的口，镜像时别把系统话术冒充成用户原话
     trigger = { kind: "mention", ref: "" }, inputRole = "user",
   } = {}) {
@@ -1514,7 +1518,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
         ...(groupNote ? [{ role: "system", content: `群聊里其他人这轮已经说的（只作讨论上下文，不要冒充他们，也不要重复他们的整段）：\n${groupNote}` }] : []),
         ...history,
         { role: "user", content: clean },
-      ], bot, onDeltaTracked, signal, onTool, { turnId, groupId });
+      ], bot, onDeltaTracked, signal, onTool, { turnId, groupId, groupThreadId });
     } catch (err) {
       // 取消：把已经吐出来的半截留下，标成 interrupted（界面上是「被打断」+ 半截）
       if (signal?.aborted) {

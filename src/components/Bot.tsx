@@ -671,6 +671,11 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     () => assignmentsForBot(state?.todos ?? [], state?.delegations, { executorAgentId: botEntity?.executorAgentId ?? null }),
     [state?.todos, state?.delegations, botEntity?.executorAgentId],
   );
+  /** 同事消息（peer mail）：对方没能在当轮回的，挂在这个 bot 名下等下一轮 */
+  const pendingMails = useMemo(
+    () => (state?.botPeerMails ?? []).filter((m) => m.status === "pending" && m.toBotId === (botEntity?.id ?? "")),
+    [state?.botPeerMails, botEntity?.id],
+  );
   const [draft, setDraft] = useState("");
   /** 会话（ORCA 的 Chats）：null = 看列表，有值 = 在那条会话里 */
   const [openThreadId, setOpenThreadId] = useState<string | null>(null);
@@ -2436,7 +2441,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
               )}
               <div className="bot-upnext">
                   <div className="bot-label">工作</div>
-                  {needs.length === 0 && !myRoutines.some((r) => r.due) && assigned.rows.length === 0 && (
+                  {needs.length === 0 && !myRoutines.some((r) => r.due) && assigned.rows.length === 0 && pendingMails.length === 0 && (
                     <p className="bot-note">没有需要你处理的。任务在任务面板，日程在「自动化」。</p>
                   )}
                   {needs.slice(0, 4).map((n) => (
@@ -2464,6 +2469,18 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                       <span className="tiny faint">{r.prompt ? "看日程" : "等它开口"}</span>
                     </button>
                   ))}
+                  {pendingMails.slice(0, 3).map((m) => {
+                    const from = (state?.bots ?? []).find((b) => b.id === m.fromBotId)?.name || "同事";
+                    return (
+                      <div className="bot-mem-row" key={m.id}>
+                        <span className="mono">同事</span>
+                        <span className="ellipsis">
+                          {from} {m.kind === "question" ? "问" : m.kind === "handoff" ? "交接" : "说"}：{m.body}
+                          <span className="tiny faint"> · 等它下一轮</span>
+                        </span>
+                      </div>
+                    );
+                  })}
                   {assigned.rows.slice(0, 3).map((a) => (
                     <button className="bot-upnext-row" key={a.todo.id} onClick={() => onOpenTodo?.(a.todo.id)} title={a.todo.title}>
                       <span className="tag">任务</span>

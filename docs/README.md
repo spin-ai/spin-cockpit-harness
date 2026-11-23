@@ -64,7 +64,7 @@
 | [`product/REQ-modules-original.md`](product/REQ-modules-original.md)（按模块） | `ARCH-knowledge`、`ARCH-memory`、`ARCH-wiki-retrieval`、`ARCH-memory-persona-im`、`ARCH-plugins`、`PLUGIN-notes` | 同上；用例见 [`product/TEST-REQ-modules-original.md`](product/TEST-REQ-modules-original.md) |
 | 跨模块（§1/§2/§3/§4 的能力总览） | `ARCH-key-tech`（五件关键技术：解析 / 编排 / 整理 / 记忆 / 画像） | 同上 |
 | [`product/REQ-bot-workspace.md`](product/REQ-bot-workspace.md)（15 条） | `ARCH-bot-workspace`、`ARCH-agent-bridge`、`ARCH-bot`、`ARCH-workbench-execution` | 见该 REQ §5「明确不做」 |
-| [`product/REQ-bot-group.md`](product/REQ-bot-group.md)（18 条） | `ARCH-bot-group`、`ARCH-bot` | 见该 REQ §4 |
+| [`product/REQ-bot-group.md`](product/REQ-bot-group.md)（19 条） | `ARCH-bot-group`、`ARCH-bot` | 见该 REQ §4 |
 | **（缺）Super Agent / Mission** | `ARCH-super-agent` + `USAGE-super-agent` | — |
 
 **已确认的两个编排缺口：**

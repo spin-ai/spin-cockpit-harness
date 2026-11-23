@@ -165,6 +165,9 @@ try {
     threads: [{ id: "gth-rt", title: "发布检查", createdAt: 1700000000003 }], memo: "本周只修 P0",
     reads: { main: 1700000000005, "gth-rt": 1700000000006 },
     sessions: { main: { "bot-rt": "th-group-rt" } } });
+  rt.state.botPeerMails.push({ id: "pm-rt", fromBotId: "bot-a", toBotId: "bot-rt", groupId: "grp-rt",
+    threadId: "gth-rt", kind: "question", body: "CI 为什么红", status: "pending",
+    createdAt: 1700000000007, deliveredAt: null, answeredAt: null, answerTurnId: null });
   rt.state.botGroupMessages.push({ id: "gm-rt", groupId: "grp-rt", threadId: "gth-rt", seq: 1, author: "owner",
     botId: null, botName: "", text: "查一下发布", decision: "answered", createdAt: 1700000000004, meta: { runId: "r-rt" } });
   rt.state.botWorkspaces.push({ id: "ws-rt", botId: "bot-rt", projectId: "p1", path: dir, branch: "feat/handoff",
@@ -201,6 +204,10 @@ try {
   assert.equal(grp?.memo, "本周只修 P0", "群共识要能往返");
   assert.equal(grp?.reads?.["gth-rt"], 1700000000006, "按话题已读要能往返");
   assert.equal(grp?.sessions?.main?.["bot-rt"], "th-group-rt", "群话题会话映射要能往返");
+  const pm = (rt2.state.botPeerMails || []).find((m) => m.id === "pm-rt");
+  assert.equal(pm?.body, "CI 为什么红", "peer mail 正文要能往返");
+  assert.equal(pm?.status, "pending");
+  assert.equal(pm?.threadId, "gth-rt");
   const gm = (rt2.state.botGroupMessages || []).find((m) => m.id === "gm-rt");
   assert.equal(gm?.threadId, "gth-rt", "群消息归属的话题要能往返");
   const ws = (rt2.state.botWorkspaces || []).find((w) => w.id === "ws-rt");

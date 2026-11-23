@@ -58,10 +58,15 @@ await test("PATH 垫片：Windows 生成 .cmd，保留 %*", () => {
   assert.equal(agentCliBinName("win32"), "harness.cmd");
 });
 
-await test("CLI 脚本存在，主进程按 unpacked 路径能跑到", () => {
-  const file = path.join(process.cwd(), "electron", "agent-cli.mjs");
-  assert.ok(fs.existsSync(file), "electron/agent-cli.mjs 必须在仓库里");
-  assert.match(fs.readFileSync(file, "utf8"), /COCKPIT_AGENT_TOKEN/);
+await test("CLI / MCP 脚本存在，主进程按 unpacked 路径能跑到", () => {
+  const cli = path.join(process.cwd(), "electron", "agent-cli.mjs");
+  assert.ok(fs.existsSync(cli), "electron/agent-cli.mjs 必须在仓库里");
+  assert.match(fs.readFileSync(cli, "utf8"), /COCKPIT_AGENT_TOKEN/);
+  const mcp = path.join(process.cwd(), "electron", "harness-mcp-bridge.mjs");
+  assert.ok(fs.existsSync(mcp), "electron/harness-mcp-bridge.mjs 必须在仓库里");
+  const text = fs.readFileSync(mcp, "utf8");
+  assert.match(text, /harness_note/);
+  assert.match(text, /harness_report/);
 });
 
 report("AgentBridge");

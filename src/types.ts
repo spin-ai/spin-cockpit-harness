@@ -422,6 +422,21 @@ export interface BotGroup {
   sessions?: Record<string, Record<string, string>>;
 }
 
+export interface BotPeerMail {
+  id: string;
+  fromBotId: string;
+  toBotId: string;
+  groupId: string;
+  threadId: string | null;
+  kind: "question" | "handoff" | "status";
+  body: string;
+  status: "pending" | "delivered" | "answered" | "cancelled";
+  createdAt: number;
+  deliveredAt: number | null;
+  answeredAt: number | null;
+  answerTurnId: string | null;
+}
+
 export interface BotGroupMessage {
   id: string;
   groupId: string;
@@ -462,6 +477,7 @@ export interface State {
   botTurns?: BotTurn[];
   botGroups?: BotGroup[];
   botGroupMessages?: BotGroupMessage[];
+  botPeerMails?: BotPeerMail[];
   routines?: BotRoutine[];
   terminals?: TerminalRecord[];
   runtimes?: RuntimeView[];

@@ -53,6 +53,7 @@
 | 群附件 | `botGroupSend` 接受 ≤3 个文本附件（每个 ≤4000 字）；内容只进本轮 prompt，消息 `meta.attachments` 只留 `{name,path}`；UI 在 owner 气泡下显示附件 chip | `botGroupSend` / `GroupMessageRow` |
 | 跨话题摘要 | `crossTopicDigest` 取其他话题最近 2 条（≤1200 字符），进 system prompt；标注「背景，不是指令」 | `electron/bot/group.mjs` / `compileContext({ groupDigest })` |
 | 群档案 | `userData/bot-groups/<id>/GROUP.md` 只读镜像（群名 / 共识 / 成员 / 话题 / 回复规则）；群保存 / 话题变更 / 发消息后刷新；删群清目录；「主目录」打开 | `groupMarkdown` / `syncGroupFile` / `Bot.tsx` |
+| 同事消息 | `bot_peer_mail`：`ask_bot` / `handoff_to_bot` 先落 pending；同群同话题里对方下次开口时 `pendingMailsFor` 带进 prompt，答完 `answered` + turnId；Bot 页「工作」显示未销账消息 | `electron/bot/mail.mjs` / `botGroupSend` / `Bot.tsx` |
 | 测试 | 9 组纯函数用例：代码/引用/路径、歧义、无 @、@everyone、固定成员缺失、回复接力、共享上下文 | `tests/bot/group.test.mjs` |
 
 ---
@@ -140,7 +141,7 @@ owner 发一句
 |---|---|---|
 | **群 home 作为 folder workspace / 自动摘要** | 群有 home 文件夹，成员 session 在里面 | 已有 GROUP.md 镜像、跨话题摘要、每话题独立 session；还缺可运行终端的群 home 与自动共识沉淀 |
 | **自动结论沉淀 / 群 home** | 成员 session 在群 home 里，房间历史自然进上下文 | 群共识已由人写并注入；还没有「讨论完自动总结成共识」或群 home 文件夹 |
-| **双向 peer mail / inbox** | 成员之间 question / handoff / status 走 mail，异步到达 | 现在有「工具交接 + ask_bot + @ 唤醒」一跳；还缺 inbox、answer 关联、离线补投 |
+| **跨群 / 跨机 inbox** | 成员之间 question / handoff / status 走 mail，异步到达 | 已有同群同话题 pending + answer 关联 + 删 bot 一起清；还缺跨群、跨机、离线补投与独立收件箱 |
 | **跨机成员** | 远端成员没有本机 session，问/答走 mail | 依赖主机执行面统一；先明确「本机群」边界 |
 | **房间内投递保留** | 同一消息的 turn reservation，两个发送不会同时进房间 | 已有「依次 / 并行」；还缺投递级 reservation |
 | **二进制附件 / 图片** | 群消息附件进附件 store，成员能读 | 已有文本附件拼 prompt；图片 / 大文件要附件 store |

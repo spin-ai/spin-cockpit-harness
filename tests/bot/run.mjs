@@ -28,6 +28,7 @@ const suites = [
   "./handoff.test.mjs",   // 工作区交接：长期关系 / 项目绑定 / 上下文 / 交回
   "./soul.test.mjs",      // SOUL.md 镜像：职责 / Never / 能力 / 空字段
   "./group.test.mjs",     // 群聊路由：@ 解析 / 投递 / 回复唤醒 / 共享上下文
+  "./mail.test.mjs",      // 群内同事消息：待回复过滤 / prompt / 截断
   "./context.test.mjs",   // 上下文预算 / 长对话压缩 / 温度与工具签名
   "./tidy.test.mjs",      // 记忆整理：80% 才给候选 / 只归档可恢复
   "./templates.test.mjs",  // 内置模板：人格 / 职责 / 日程成品可用

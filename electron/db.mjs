@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS bot_ui (k TEXT PRIMARY KEY, draft TEXT, scroll TEXT, 
 CREATE TABLE IF NOT EXISTS bot_revisions (id TEXT PRIMARY KEY, bot_id TEXT, at INTEGER, by TEXT, data TEXT);
 -- 交给机器人的工作区（项目根 / worktree / 终端目录）：一段长期关系，pty 退出不影响它
 CREATE TABLE IF NOT EXISTS bot_workspaces (id TEXT PRIMARY KEY, bot_id TEXT, project_id TEXT, path TEXT, branch TEXT, title TEXT, kind TEXT, terminal_id TEXT, goal TEXT, status TEXT, created_at INTEGER, updated_at INTEGER);
+-- 群内同事消息：ask_bot / handoff 立即唤醒失败时留一条 pending，等对方下次在该话题开口
+CREATE TABLE IF NOT EXISTS bot_peer_mail (id TEXT PRIMARY KEY, from_bot_id TEXT, to_bot_id TEXT, group_id TEXT, thread_id TEXT, kind TEXT, body TEXT, status TEXT, created_at INTEGER, delivered_at INTEGER, answered_at INTEGER, answer_turn_id TEXT);
 `;
 
 /** 应用设置默认值。缺失的键一律从这里补齐。 */
@@ -388,6 +390,12 @@ export async function openDb(dir, { onTranscript } = {}) {
     terminalId: r.terminal_id || null, goal: r.goal || "", status: r.status || "open",
     createdAt: r.created_at || 0, updatedAt: r.updated_at || 0,
   }));
+  state.botPeerMails = rows("SELECT * FROM bot_peer_mail ORDER BY created_at DESC LIMIT 500").map((r) => ({
+    id: r.id, fromBotId: r.from_bot_id, toBotId: r.to_bot_id, groupId: r.group_id || "",
+    threadId: r.thread_id || null, kind: r.kind || "question", body: r.body || "",
+    status: r.status || "pending", createdAt: r.created_at || 0,
+    deliveredAt: r.delivered_at || null, answeredAt: r.answered_at || null, answerTurnId: r.answer_turn_id || null,
+  })).reverse();
   state.routines = rows("SELECT * FROM routines").map((r) => {
     const data = J(r.data, {});
     return { ...data, id: r.id, botId: r.bot_id || "", kind: r.kind || data.kind || "daily", updatedAt: data.updatedAt || r.updated_at || 0 };
@@ -452,7 +460,7 @@ export async function openDb(dir, { onTranscript } = {}) {
     if (closed) return;
     db.exec("BEGIN IMMEDIATE");
     try {
-    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "coordination_scenes", "terminals", "context", "settings", "meta", "bots", "bot_turns", "routines", "bot_events", "bot_groups", "bot_group_members", "bot_group_messages", "bot_revisions", "bot_workspaces"]) run(`DELETE FROM ${t}`);
+    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "coordination_scenes", "terminals", "context", "settings", "meta", "bots", "bot_turns", "routines", "bot_events", "bot_groups", "bot_group_members", "bot_group_messages", "bot_revisions", "bot_workspaces", "bot_peer_mail"]) run(`DELETE FROM ${t}`);
     for (const h of state.hosts) run(
       "INSERT INTO hosts (id,name,kind,addr,status,heartbeat,version,port,user,caps,last_probe,latency_ms,max_concurrency,default_cwd,probe_error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [h.id, h.name, h.kind, h.addr, h.status, h.heartbeat || 0, h.version || "—", h.port || 22, h.user || "",
@@ -520,6 +528,11 @@ export async function openDb(dir, { onTranscript } = {}) {
       [w.id, w.botId, w.projectId || null, w.path || "", w.branch || "", w.title || "",
         w.kind || "worktree", w.terminalId || null, w.goal || "", w.status || "open",
         w.createdAt || Date.now(), w.updatedAt || Date.now()],
+    );
+    for (const m of state.botPeerMails || []) run(
+      "INSERT INTO bot_peer_mail (id,from_bot_id,to_bot_id,group_id,thread_id,kind,body,status,created_at,delivered_at,answered_at,answer_turn_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+      [m.id, m.fromBotId, m.toBotId, m.groupId || "", m.threadId || null, m.kind || "question", m.body || "",
+        m.status || "pending", m.createdAt || Date.now(), m.deliveredAt ?? null, m.answeredAt ?? null, m.answerTurnId || null],
     );
     for (const tm of state.terminals || []) run("INSERT INTO terminals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [tm.id, tm.projectId || null, tm.todoId || null, tm.runId || null, tm.agentId || null, tm.cwd || "", tm.kind || "shell", tm.title || "", tm.status || "exited", tm.exitCode ?? null, tm.tail || "", tm.createdAt || Date.now(), tm.endedAt ?? null]);
     run("INSERT INTO context VALUES ('current', ?)", [JSON.stringify(state.context)]);

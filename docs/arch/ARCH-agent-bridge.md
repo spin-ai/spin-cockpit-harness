@@ -93,7 +93,21 @@ harness ... → POST 127.0.0.1:<random>/call（Bearer token）
 - `note` / `report` 正文出站前走 `redactSecrets`；不写进 SOUL/MEMORY。
 - 仍然**没有**任意 shell、改文件、改设置、审批动作。
 
-### 4.3 与内置 bot 的关系
+### 4.3 ACP 侧的 MCP
+
+ACP（dsh）不是 shell，给它单独挂一个 MCP：
+
+```text
+harness_whoami / harness_note / harness_report
+  → electron/harness-mcp-bridge.mjs（stdio MCP）
+  → POST 127.0.0.1/call（同一个 token 服务）
+```
+
+- 只在**本地** ACP run 挂载；远端 run 连不到本机回环，不挂。
+- token 仍然按 run 下发，run 结束（`finally`）撤销。
+- 与 pty 的三条 CLI 命令共用同一个主进程服务，不复制权限逻辑。
+
+### 4.4 与内置 bot 的关系
 
 内置 bot 的工具表**不含** `harness` / `exec` / `terminal`；它仍然通过 `worker_send`、`task_create`、`run_start` 和 `run_log` 和终端交互。窄通道只给 pty 里的 agent，不反向扩大 bot 的能力面。
 
@@ -103,7 +117,7 @@ harness ... → POST 127.0.0.1:<random>/call（Bearer token）
 
 | 缺口 | 说明 |
 |---|---|
-| **ACP 侧的通用 harness MCP** | dsh 已能挂 MCP；下一步可把 `work_list` / `note` / `report` 也做成 MCP tools，让 ACP agent 不依赖 shell |
+| ~~ACP 侧 harness MCP~~ | 已做：`harness_whoami / note / report`（本地 run；远端不挂） |
 | **双向 peer mail / inbox** | 现在 `note` 只是「写给当前任务会话」，不是给某个 bot 的收件箱；跨 run、离线的消息还没有 |
 | **远端终端** | token 只在本机回环；SSH 终端需要隧道或远端 serve |
 | **审批类回传** | agent 不能通过 CLI 请求批准 / 选方案；仍走 UI 审批 |

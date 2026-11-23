@@ -15,7 +15,9 @@
 - **按话题未读**：`bot_groups.reads`（`last_read_at` 保留兼容）；左栏群行取各话题之和，侧栏显示「N 新」，正在看的话题自动清零
 - **群附件 / 群档案**：群消息最多 3 个文本附件（内容只进本轮 prompt，落库只留名称）；`userData/bot-groups/<id>/GROUP.md` 只读镜像（群名 / 共识 / 成员 / 话题 / 回复规则）+「主目录」按钮
 - **SOUL.md 镜像**：`userData/bots/<id>/SOUL.md` 从档案生成（职责卡 / 语气 / Never / 能力），bot 保存 / 模板 / 恢复 / 交接后刷新；与 MEMORY.md 同口径只读
-- **其他**：`harness report` 之后 pty 尾部不覆盖结论；`ask_bot` / `work_list` 进工具表；删除 / 撤销 / 清种子覆盖新增的 workspaces / 群话题草稿
+- **ACP harness MCP**：本地 ACP run 额外挂 `cockpit_harness`（stdio MCP），`harness_whoami` / `harness_note` / `harness_report` 走同一个 token 服务；远端 run 不挂
+- **群内同事消息（peer mail）**：`ask_bot` / `handoff_to_bot` 先落 `bot_peer_mail` pending；对方下一次在同一话题开口时带进 prompt，答完销账（`answered` + `answerTurnId`）；Bot 页「工作」能看到等它下一轮的消息；删 bot 一起清
+- **其他**：`harness report` 之后 pty 尾部不覆盖结论；`ask_bot` / `work_list` 进工具表；删除 / 撤销 / 清种子覆盖新增的 workspaces / 群话题草稿 / peer mail
 
 ### Security（依赖：把两个 high 清掉，`npm audit` 归零）
 - **`xlsx` 换成 0.20.3 构建**：npm 上的 `xlsx@0.18.5` 停在两年前，原型污染 / ReDoS 两个 advisory 一直没有修复版（官方修复只发在 SheetJS CDN，本机访问不到）；改用 npm 上的同版本重发布 `@e965/xlsx@0.20.3`，通过 npm alias 仍以 `xlsx` 引入，调用方零改动
