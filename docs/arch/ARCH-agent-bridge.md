@@ -123,6 +123,7 @@ harness_whoami / harness_note / harness_report
 - **远端 pty run**：本地 pty 包 `ssh -tt`，远端命令 `cd <cwd> && env <bridge env> <agent cli>`；输出、停止、结算仍走现有 pty 路径。
 - **手动远端 shell**：终端「＋」菜单按主机列出「新建终端 · <host>」；`terminal:create` 接受 `hostId`，远端命令 `cd <defaultCwd> && exec "$SHELL" -l`；`terminals.host_id` 落库，Pane / 标签落盘恢复都带它，重启仍回同一台。
 - **远端 ACP run**：`AcpClient` 支持 `sshEnv`，ssh 远端命令变成 `env <assignments> dsh --profile acp`；本地 MCP 仍不挂远端（远端够不到本机进程）。
+- 反向隧道优先用 `-R 0` 让服务端分配端口；老版本退回 `49300–49307` 固定端口段，转发失败直接判失败。
 - 没有 `curl` / `base64` / 反向隧道失败：agent 仍能跑，只是没有 `harness`；事件与提示不假装成功。
 - token 仍按 run 下发、run 结束 / 终端退出即撤销；隧道进程按 run / 终端关闭。
 - 同一 SSH 主机首次安装 shim 会缓存；主机改名 / 换地址会重新安装。
@@ -140,7 +141,7 @@ harness_whoami / harness_note / harness_report
 | 缺口 | 说明 |
 |---|---|
 | ~~ACP 侧 harness MCP~~ | 已做：`harness_whoami / note / report`（本地 run；远端不挂） |
-| ~~远端终端~~ | 已做：远端 pty run + SSH 反向隧道 + 远端 shim；远端 ACP 走 `sshEnv`。手动远程 shell 仍未接到 TerminalPanel 的「新建」 |
+| ~~远端终端~~ | 已做：远端 pty run + SSH 反向隧道 + 远端 shim；远端 ACP 走 `sshEnv`；手动远端 shell 已进终端「＋」菜单 |
 | **双向 peer mail / inbox** | 现在 `note` 只是「写给当前任务会话」，不是给某个 bot 的收件箱；跨 run、离线的消息还没有 |
 | **远端终端** | token 只在本机回环；SSH 终端需要隧道或远端 serve |
 | **多选项 / 带上下文的审批** | 现在只有允许 / 拒绝；还没有多方案选择、附件、审批历史页。ACP 原生 permission 仍更完整 |
