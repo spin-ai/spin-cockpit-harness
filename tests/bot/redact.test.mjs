@@ -44,6 +44,9 @@ await test("redactDeep：深层对象 / 数组都涂掉，不保留长度", () =
   assert.equal(text.includes(SK), false);
   assert.equal(text.includes("a".repeat(20)), false, "Bearer 的值也要涂掉");
   assert.equal(value.count, 3, "非字符串不受影响");
+  // commit sha 不是密钥：工具结果里的 40 位十六进制必须留着，否则 git_log 不可读
+  assert.equal(redactDeep({ sha: "9f8c7e5b3a1d2c4e6f8a0b2c4d6e8f0a1b3c5d7e" }).value.sha, "9f8c7e5b3a1d2c4e6f8a0b2c4d6e8f0a1b3c5d7e");
+  assert.equal(redactDeep({ sha: "9f8c7e5b3a1d2c4e6f8a0b2c4d6e8f0a1b3c5d7e" }).hits, 0);
   assert.equal(value.rows[0].file, "src/a.ts", "路径不误伤");
   assert.match(value.note, /正常的说明/);
 });

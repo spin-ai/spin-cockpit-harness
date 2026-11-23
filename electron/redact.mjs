@@ -99,6 +99,28 @@ export function containsSecretLike(text) {
 }
 
 /**
+ * 强形态脱敏（不含裸十六进制）：工具入参 / 工具结果用这个。
+ * commit sha / 内容哈希是正常业务数据，涂掉会让 `git_log`、`workspace_read` 不可读。
+ */
+function redactStrong(text) {
+  let s = String(text ?? "");
+  if (!s) return { text: s, hits: 0 };
+  let hits = 0;
+  for (const re of STRONG_PATTERNS) {
+    re.lastIndex = 0;
+    s = s.replace(re, () => { hits += 1; return REDACTED; });
+  }
+  const kv = PATTERNS[7];
+  kv.lastIndex = 0;
+  s = s.replace(kv, (match, key, value) => {
+    if (String(value).includes(REDACTED)) return match;
+    hits += 1;
+    return match.replace(value, REDACTED);
+  });
+  return { text: s, hits };
+}
+
+/**
  * 对象的**深层**脱敏：工具入参 / 工具结果这类模型可控的任意 JSON 用这个。
  * 返回 `{ value, hits }`；命中一律 `[redacted]`，不保留长度。
  * 深度与数组长度都封顶：宁可丢一半，也不要因为一个大结果把主进程卡住。
@@ -107,7 +129,7 @@ export function redactDeep(value, { maxDepth = 8, maxItems = 200 } = {}) {
   let hits = 0;
   const walk = (v, depth) => {
     if (typeof v === "string") {
-      const res = redactSecrets(v);
+      const res = redactStrong(v);
       hits += res.hits;
       return res.text;
     }

@@ -1064,7 +1064,6 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     if (silent.quiet) {
       return { reply: "", quiet: true, body: silent.body, reason: "模型给了 NO_REPLY：这件事不值得说" };
     }
-    if (silent.marker) return { reply: silent.text.slice(0, 400), usage: res?.usage || null };
     // `ASK: 你想让我先看哪一个？` → 落成一张可作答的卡片（正文只有问题本身）
     const ask = text.match(/^ASK\s*[:：]\s*(.+)$/is);
     if (ask) return { ask: ask[1].trim().slice(0, 300), reply: ask[1].trim().slice(0, 300), usage: res?.usage || null };
