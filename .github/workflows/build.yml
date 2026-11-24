@@ -79,7 +79,9 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          npm run dist -- --publish never 2>&1 | tee dist.log
+          # --publish never 已经写进 package.json 的 dist 脚本（挂在这里会被 npm 追加到
+          # install-mac.mjs 上，electron-builder 反而按 CI 隐式发布 → 缺 GH_TOKEN 报错）
+          npm run dist 2>&1 | tee dist.log
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           # CI 上不需要把产物装进 /Applications（本地才有意义）
