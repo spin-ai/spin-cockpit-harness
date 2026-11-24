@@ -8,10 +8,10 @@ import { confirmDialog } from "./ConfirmHost";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
-const LEVELS: RequirementLevel[] = ["ir", "sr", "us"];
-const LEVEL_LABEL: Record<RequirementLevel, string> = { ir: "IR", sr: "SR", us: "US" };
-const LEVEL_NAME: Record<RequirementLevel, string> = { ir: "初始需求", sr: "系统需求", us: "用户故事" };
-const NEXT_LEVEL: Record<RequirementLevel, RequirementLevel | null> = { ir: "sr", sr: "us", us: null };
+const LEVELS: RequirementLevel[] = ["rr", "ir", "sr", "us"];
+const LEVEL_LABEL: Record<RequirementLevel, string> = { rr: "RR", ir: "IR", sr: "SR", us: "US" };
+const LEVEL_NAME: Record<RequirementLevel, string> = { rr: "原始需求", ir: "初始需求", sr: "系统需求", us: "用户故事" };
+const NEXT_LEVEL: Record<RequirementLevel, RequirementLevel | null> = { rr: "ir", ir: "sr", sr: "us", us: null };
 const STATUS_LABEL: Record<RequirementStatus, string> = {
   draft: "草稿", reviewing: "待评审", approved: "已批准", done: "已完成",
   rejected: "已拒绝", obsolete: "已废弃", in_progress: "实现中", verifying: "待验收",
@@ -19,7 +19,7 @@ const STATUS_LABEL: Record<RequirementStatus, string> = {
 const M0_STATUSES: RequirementStatus[] = ["draft", "reviewing", "approved", "done", "rejected", "obsolete"];
 const FIELD_LABEL: Record<string, string> = {
   scope: "范围", outOfScope: "范围外", impact: "影响模块", acceptance: "验收判据",
-  role: "角色", value: "价值", children: "子需求", tasks: "任务",
+  role: "角色", value: "价值", children: "子需求", tasks: "任务", source: "来源", requester: "提出人",
 };
 
 const byCreated = (a: Requirement, b: Requirement) => (a.createdAt || 0) - (b.createdAt || 0) || a.key.localeCompare(b.key);
@@ -43,7 +43,9 @@ function gapOf(req: Requirement, children: Requirement[]): { label: string; tone
 
 function missingFields(req: Requirement): string[] {
   const missing: string[] = [];
-  const required = req.level === "ir" ? ["scope", "outOfScope"] : req.level === "sr" ? ["impact", "acceptance"] : ["role", "value", "acceptance"];
+  const required = req.level === "rr" ? ["source", "requester"]
+    : req.level === "ir" ? ["scope", "outOfScope"]
+      : req.level === "sr" ? ["impact", "acceptance"] : ["role", "value", "acceptance"];
   for (const field of required) {
     if (field === "acceptance") {
       if (!acceptance(req).length) missing.push(field);
@@ -65,8 +67,8 @@ function gateFor(req: Requirement, next: RequirementStatus, children: Requiremen
       if (!list.length) return { ok: false, missing: ["acceptance"], message: "没有验收判据" };
       if (list.some((a) => !a.done)) return { ok: false, missing: ["acceptance"], message: "验收判据还没全部勾选" };
     }
-    if (req.level === "ir") {
-      if (!children.length) return { ok: false, missing: ["children"], message: "IR 还没有子需求" };
+    if (req.level === "ir" || req.level === "rr") {
+      if (!children.length) return { ok: false, missing: ["children"], message: `${LEVEL_LABEL[req.level]} 还没有子需求` };
       const open = children.filter((c) => !["approved", "done"].includes(c.status));
       if (open.length) return { ok: false, missing: ["children"], message: `还有 ${open.length} 条子需求没批准` };
     }
@@ -163,7 +165,7 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
   };
 
   const startCreate = (parentId: string | null) => {
-    const level: RequirementLevel = parentId ? (NEXT_LEVEL[projectReqs.find((r) => r.id === parentId)?.level || "ir"] || "us") : "ir";
+    const level: RequirementLevel = parentId ? (NEXT_LEVEL[projectReqs.find((r) => r.id === parentId)?.level || "rr"] || "us") : "rr";
     setCreating({ parentId, level, title: "" });
     if (parentId) setExpanded((prev) => new Set(prev).add(parentId));
   };
@@ -272,7 +274,7 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
     <div className="page req-page">
       <PageHeader
         title="需求"
-        subtitle={`${project?.name || "未选择项目"} · IR → SR → US · 先完成需求定义`}
+        subtitle={`${project?.name || "未选择项目"} · RR → IR → SR → US · 先完成需求定义`}
         actions={<div className="row gap8">
           {onBack ? <button className="btn tiny" onClick={onBack} title="返回项目" aria-label="返回项目"><ChevronLeftIcon size={14} /></button> : null}
           <select className="req-select" aria-label="切换项目" value={project?.id || ""} onChange={(e) => void switchProject(e.target.value)}>
@@ -308,7 +310,7 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
           <div className="req-tree-scroll">
             {creating?.parentId === null ? (
               <div className="req-create-row">
-                <span className="req-key">IR</span>
+                <span className="req-key">{LEVEL_LABEL[creating.level]}</span>
                 <input
                   className="req-input"
                   autoFocus
@@ -326,7 +328,7 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
             {isFiltering
               ? (flat.length ? flat.map((req) => renderRow(req, 0, true)) : <div className="inline-empty">没有匹配的需求</div>)
               : (roots.length ? roots.map((req) => renderRow(req, 0)) : (
-                <EmptyState compact title="还没有需求" desc="先用一条 IR 记下来源，再往下拆 SR / US。" action={<button className="btn tiny" onClick={() => startCreate(null)}>新建 IR</button>} />
+                <EmptyState compact title="还没有需求" desc="先用一条 RR 记下来源，再往下拆 IR / SR / US。" action={<button className="btn tiny" onClick={() => startCreate(null)}>新建 RR</button>} />
               ))}
           </div>
         </section>
@@ -335,7 +337,7 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
           {!selected ? (
             projectReqs.length
               ? <EmptyState compact title="选择一条需求" desc="左栏点一行查看 / 修改；点击行尾箭头展开子需求。" />
-              : <div className="inline-empty">左侧先建一条 IR；需求先定义，再拆到 SR / US。</div>
+              : <div className="inline-empty">左侧先建一条 RR；需求先定义，再拆到 IR / SR / US。</div>
           ) : (
             <div className="req-detail-scroll">
               <div className="req-crumbs">

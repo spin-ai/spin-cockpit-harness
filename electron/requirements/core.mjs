@@ -4,13 +4,14 @@
  * 这里只放纯函数：层级顺序、父子校验、key 生成、状态闸门、缺口判断。
  * 主进程 actions / 渲染层 / 测试共用同一套规则，避免 UI 和主进程各写一份。
  *
- * RR 还没进这一期：root = IR；以后加 RR 时只要把 REQUIREMENT_LEVELS 前面补 "rr"，
- * 父子关系和 key 规则不变。
+ * 层级顺序：RR → IR → SR → US；RR 是 root，US 是交付层。
+ * 裁剪后（例如 IR 关掉）只要把 levels 换成启用层，父子关系仍按相邻层校验。
  */
 
-export const REQUIREMENT_LEVELS = ["ir", "sr", "us"];
-export const REQUIREMENT_LEVEL_LABEL = { ir: "IR", sr: "SR", us: "US" };
+export const REQUIREMENT_LEVELS = ["rr", "ir", "sr", "us"];
+export const REQUIREMENT_LEVEL_LABEL = { rr: "RR", ir: "IR", sr: "SR", us: "US" };
 export const REQUIREMENT_LEVEL_NAME = {
+  rr: "原始需求",
   ir: "初始需求",
   sr: "系统需求",
   us: "用户故事",
@@ -102,6 +103,7 @@ export function acceptanceComplete(req) {
 
 /** 每层批准前必须有什么。返回字段 key，给 UI 聚焦用。 */
 export function requiredFieldsFor(level) {
+  if (level === "rr") return ["source", "requester"];
   if (level === "ir") return ["scope", "outOfScope"];
   if (level === "sr") return ["impact", "acceptance"];
   if (level === "us") return ["role", "value", "acceptance"];
@@ -138,8 +140,8 @@ export function statusGate(req, next, { children = [] } = {}) {
     if (req.level === "us" || req.level === "sr") {
       if (!acceptanceComplete(req)) return { ok: false, missing: ["acceptance"], error: "验收判据还没全部勾选" };
     }
-    if (req.level === "ir") {
-      if (!children.length) return { ok: false, missing: ["children"], error: "IR 还没有子需求" };
+    if (req.level === "ir" || req.level === "rr") {
+      if (!children.length) return { ok: false, missing: ["children"], error: `${REQUIREMENT_LEVEL_LABEL[req.level]} 还没有子需求` };
       const open = children.filter((child) => !["approved", "done"].includes(child.status));
       if (open.length) return { ok: false, missing: ["children"], error: `还有 ${open.length} 条子需求没批准` };
     }

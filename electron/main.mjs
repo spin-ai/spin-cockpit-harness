@@ -7260,7 +7260,7 @@ const actions = {
     store.addEvent("project.status", `project.status ${project.name} → ${status}`);
     return project;
   },
-  requirementCreate: ({ projectId = "", level = "ir", parentId = null, title = "", body = "" } = {}) => {
+  requirementCreate: ({ projectId = "", level = "rr", parentId = null, title = "", body = "" } = {}) => {
     const normalized = normalizeLevel(level);
     if (!normalized) throw new Error(`未知需求层级：${level}`);
     const project = projectId ? store.state.projects.find((p) => p.id === projectId) : activeProject();

@@ -4,12 +4,12 @@
 
 ## [Unreleased]
 
-### Added（需求管理 M0：IR → SR → US）
-- **新的需求页**：`src/components/Requirements.tsx`，标准页外壳；左侧需求树（IR 根 / SR / US）、右侧详情；搜索、层级 / 状态筛选、行内新建、子需求、验收判据、状态闸门、缺口提示
+### Added（需求管理 M0：RR → IR → SR → US）
+- **新的需求页**：`src/components/Requirements.tsx`，标准页外壳；左侧需求树（RR 根 / IR / SR / US）、右侧详情；搜索、层级 / 状态筛选、行内新建、子需求、验收判据、状态闸门、缺口提示
 - **持久化**：`requirements` 表 + `State.requirements`；写入 / 读取 / 回放校验已在 `tests/db.test.mjs`
 - **主进程 actions**：`requirementCreate / requirementUpdate / requirementSetStatus / requirementDelete`；层级、父子、key、状态闸门走 `electron/requirements/core.mjs` 纯函数
-- **入口**：项目页页头「需求」、项目行菜单「需求」、命令面板「需求（IR → SR → US）」
-- **测试**：`tests/requirements/core.test.mjs`（层级 / key / 验收 / 状态闸门）；`npm test -- requirements`
+- **入口**：项目页页头「需求」、项目行菜单「需求」、命令面板「需求（RR → IR → SR → US）」
+- **测试**：`tests/requirements/core.test.mjs`（四层 / 父子 / key / 验收 / 状态闸门）；`npm test -- requirements`
 
 ### Changed（清理 A：重复的 helper 与死代码）
 - **时间格式收口**：`src/ui.ts` 新增 `hm(ts, { date })` / `hhmmss(ts)`，替掉 4 份 `hm`、2 份 `hhmmss` 的各写一遍；Bot 页保留「不是今天带月/日」的行为（本地 `botTime`），其余页面只要 hh:mm

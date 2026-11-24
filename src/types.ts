@@ -4,12 +4,12 @@ export interface Project {
   id: string; name: string; path: string; desc: string; color: string;
   status: ProjectStatus; createdAt: number; lastOpenedAt: number; alias: string;
 }
-export type RequirementLevel = "ir" | "sr" | "us";
+export type RequirementLevel = "rr" | "ir" | "sr" | "us";
 export type RequirementStatus = "draft" | "reviewing" | "approved" | "done" | "rejected" | "obsolete" | "in_progress" | "verifying";
 export interface RequirementAcceptance { text: string; done: boolean; }
 /**
- * 需求（第一片 IR → SR → US）。
- * 一条需求只有一个父节点：IR 是 root，SR 挂 IR，US 挂 SR。
+ * 需求（RR → IR → SR → US）。
+ * 一条需求只有一个父节点：RR 是 root，IR 挂 RR，SR 挂 IR，US 挂 SR。
  */
 export interface Requirement {
   id: string;
