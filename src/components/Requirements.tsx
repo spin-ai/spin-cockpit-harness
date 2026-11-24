@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Requirement, RequirementLevel, RequirementStatus, State } from "../types";
+import type { Requirement, RequirementLevel, RequirementLinkKind, RequirementStatus, State } from "../types";
 import { PageHeader } from "./PageHeader";
 import { Overview } from "./Overview";
 import { EmptyState } from "./EmptyState";
@@ -18,6 +18,7 @@ const STATUS_LABEL: Record<RequirementStatus, string> = {
   rejected: "已拒绝", obsolete: "已废弃", in_progress: "实现中", verifying: "待验收",
 };
 const M0_STATUSES: RequirementStatus[] = ["draft", "reviewing", "approved", "done", "rejected", "obsolete"];
+const LINK_KIND: Record<RequirementLinkKind, string> = { relates: "相关", duplicates: "重复", conflicts: "冲突" };
 const FIELD_LABEL: Record<string, string> = {
   scope: "范围", outOfScope: "范围外", impact: "影响模块", acceptance: "验收判据",
   role: "角色", value: "价值", children: "子需求", tasks: "任务", source: "来源", requester: "提出人",
@@ -93,6 +94,10 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
   const [levelFilter, setLevelFilter] = useState<"all" | RequirementLevel>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | RequirementStatus>("all");
   const [matrixOnlyGaps, setMatrixOnlyGaps] = useState(false);
+  const [matrixCreating, setMatrixCreating] = useState<{ parentId: string; level: RequirementLevel; title: string } | null>(null);
+  const [linkAdding, setLinkAdding] = useState(false);
+  const [linkTarget, setLinkTarget] = useState("");
+  const [linkKind, setLinkKind] = useState<RequirementLinkKind>("relates");
   const [creating, setCreating] = useState<{ parentId: string | null; level: RequirementLevel; title: string } | null>(null);
   const [gate, setGate] = useState<{ missing: string[]; message: string } | null>(null);
   const [form, setForm] = useState<Record<DraftKey, string>>({
@@ -108,6 +113,9 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
     setSelectedId((prev) => (prev && projectReqs.some((r) => r.id === prev) ? prev : roots[0]?.id ?? null));
     setGate(null);
     setCreating(null);
+    setMatrixCreating(null);
+    setLinkAdding(false);
+    setLinkTarget("");
     // 只跟项目切换走；需求更新不能重置用户的选中 / 展开
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
@@ -121,6 +129,9 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
       role: selected.role || "", value: selected.value || "",
     });
     setGate(null);
+    setLinkAdding(false);
+    setLinkTarget("");
+    setLinkKind("relates");
     // 只在切换选中时同步；保存一个字段时不要把另一个字段里没失焦的草稿冲掉
   }, [selected?.id]);
 
@@ -198,6 +209,18 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
     if (parentId) setExpanded((prev) => new Set(prev).add(parentId));
   };
 
+  const submitMatrixCreate = async (titleOverride?: string) => {
+    if (!project || !matrixCreating) return;
+    const title = String(titleOverride ?? matrixCreating.title).trim();
+    if (!title) return;
+    const res = await act("requirementCreate", { projectId: project.id, level: matrixCreating.level, parentId: matrixCreating.parentId, title });
+    if (res?.id) {
+      setMatrixCreating(null);
+      setSelectedId(res.id);
+      setExpanded((prev) => new Set(prev).add(matrixCreating.parentId));
+    }
+  };
+
   const submitCreate = async (titleOverride?: string) => {
     if (!project || !creating) return;
     const title = String(titleOverride ?? creating.title).trim();
@@ -246,6 +269,20 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
     const next = parent && projectReqs.some((r) => r.id === parent) ? parent : projectReqs.find((r) => r.id !== selected.id && !r.parentId)?.id ?? null;
     setSelectedId(next);
     notify("已删除需求草稿");
+  };
+
+  const linksOf = (req: Requirement) => (state.requirementLinks || []).filter((l) => l.fromId === req.id || l.toId === req.id);
+  const addLink = async () => {
+    if (!selected || !linkTarget) return;
+    const res = await act("requirementLinkAdd", { fromId: selected.id, toId: linkTarget, kind: linkKind });
+    if (res) {
+      setLinkAdding(false);
+      setLinkTarget("");
+      setLinkKind("relates");
+    }
+  };
+  const removeLink = async (id: string) => {
+    await act("requirementLinkRemove", { id });
   };
 
   const switchProject = async (id: string) => {
@@ -303,7 +340,7 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
       <PageHeader
         title="需求"
         subtitle={`${project?.name || "未选择项目"} · RR → IR → SR → US · 先完成需求定义`}
-        tabs={<Tabs ariaLabel="需求视图" value={tab} onChange={(id) => setTab(id as "pool" | "matrix")} items={[
+        tabs={<Tabs ariaLabel="需求视图" value={tab} onChange={(id) => { setTab(id as "pool" | "matrix"); setMatrixCreating(null); }} items={[
           { id: "pool", label: "需求池" },
           { id: "matrix", label: "追溯矩阵" },
         ]} />}
@@ -518,6 +555,42 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
                   <div className="inline-empty">这是交付层，没有下一级需求。</div>
                 )}
               </section>
+
+              <section className="req-section">
+                <div className="req-section-head">
+                  <b>关联</b><span>{linksOf(selected).length}</span>
+                  {linkAdding ? null : <button className="btn tiny req-add-link" onClick={() => setLinkAdding(true)}><PlusIcon size={12} /> 关联</button>}
+                </div>
+                {linksOf(selected).map((link) => {
+                  const targetId = link.fromId === selected.id ? link.toId : link.fromId;
+                  const target = projectReqs.find((r) => r.id === targetId);
+                  if (!target) return null;
+                  return (
+                    <div className="req-link-row" key={link.id}>
+                      <span className="req-chip">{LINK_KIND[link.kind] || link.kind}</span>
+                      <button className="req-link-target" onClick={() => setSelectedId(target.id)} title={target.title}>
+                        <span className="req-key">{target.key}</span>
+                        <span className="req-row-title">{target.title}</span>
+                      </button>
+                      <button className="req-icon-btn" title="删除关联" aria-label="删除关联" onClick={() => void removeLink(link.id)}><XIcon size={12} /></button>
+                    </div>
+                  );
+                })}
+                {!linksOf(selected).length && !linkAdding ? <div className="inline-empty">没有横向关联；父子关系在「子需求」里。</div> : null}
+                {linkAdding ? (
+                  <div className="req-link-add">
+                    <select className="req-select" value={linkTarget} onChange={(e) => setLinkTarget(e.target.value)} aria-label="关联到哪条需求">
+                      <option value="">选择需求</option>
+                      {projectReqs.filter((r) => r.id !== selected.id).map((r) => <option key={r.id} value={r.id}>{r.key} · {r.title}</option>)}
+                    </select>
+                    <select className="req-select" value={linkKind} onChange={(e) => setLinkKind(e.target.value as RequirementLinkKind)} aria-label="关联类型">
+                      {(Object.keys(LINK_KIND) as RequirementLinkKind[]).map((kind) => <option key={kind} value={kind}>{LINK_KIND[kind]}</option>)}
+                    </select>
+                    <button className="btn tiny" disabled={!linkTarget} onClick={() => void addLink()}>添加</button>
+                    <button className="btn tiny" onClick={() => setLinkAdding(false)}>取消</button>
+                  </div>
+                ) : null}
+              </section>
             </div>
           )}
         </section>
@@ -545,7 +618,19 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
                       <tr key={`${path.map((r) => r.id).join("-")}-${index}`}>
                         {matrixColumns.map((level) => {
                           const item = path.find((req) => req.level === level);
-                          if (!item) return <td key={level}><span className="req-matrix-miss">—</span></td>;
+                          if (!item) {
+                            const index = matrixColumns.indexOf(level);
+                            const prevLevel = index === 0 ? "rr" : matrixColumns[index - 1];
+                            const prev = prevLevel === "rr" ? path[0] : path.find((req) => req.level === prevLevel);
+                            const creatable = !!prev && prev.level === prevLevel;
+                            if (creatable && matrixCreating?.parentId === prev.id && matrixCreating.level === level) {
+                              return <td key={level}><input className="req-matrix-input" autoFocus value={matrixCreating.title} placeholder={`${LEVEL_LABEL[level]} 标题，回车新建`} onChange={(e) => setMatrixCreating((current) => current ? { ...current, title: e.target.value } : current)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void submitMatrixCreate((e.target as HTMLInputElement).value); } if (e.key === "Escape") setMatrixCreating(null); }} /></td>;
+                            }
+                            if (creatable) {
+                              return <td key={level}><button className="req-matrix-add" onClick={() => setMatrixCreating({ parentId: prev.id, level, title: "" })} title={`在 ${prev.key} 下新建 ${LEVEL_LABEL[level]}`}><PlusIcon size={10} /> 新建</button></td>;
+                            }
+                            return <td key={level}><span className="req-matrix-miss">—</span></td>;
+                          }
                           const gap = gapOf(item, childrenOf(projectReqs, item.id));
                           return <td key={level}><button className="req-matrix-chip" onClick={() => { setSelectedId(item.id); setTab("pool"); }} title={`${item.key} · ${STATUS_LABEL[item.status]}`}><span className={`req-dot ${item.status}`} /><span>{item.key}</span>{gap ? <span className="req-chip warn">{gap.label}</span> : null}</button></td>;
                         })}

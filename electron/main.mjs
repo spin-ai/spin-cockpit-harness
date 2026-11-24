@@ -7323,6 +7323,32 @@ const actions = {
     store.addEvent("requirement.status", `requirement.status ${req.key} → ${status}`);
     return req;
   },
+  requirementLinkAdd: ({ fromId, toId, kind = "relates" } = {}) => {
+    const list = store.state.requirements || [];
+    const from = list.find((r) => r.id === fromId);
+    const to = list.find((r) => r.id === toId);
+    if (!from || !to) throw new Error("关联的需求不存在");
+    if (from.id === to.id) throw new Error("不能关联自己");
+    if (from.projectId !== to.projectId) throw new Error("不能跨项目关联需求");
+    const allowed = ["relates", "duplicates", "conflicts"];
+    if (!allowed.includes(kind)) throw new Error("未知关联类型");
+    if (!store.state.requirementLinks) store.state.requirementLinks = [];
+    const dup = store.state.requirementLinks.some((l) => l.kind === kind
+      && ((l.fromId === from.id && l.toId === to.id) || (l.fromId === to.id && l.toId === from.id)));
+    if (dup) throw new Error("这条关联已经存在");
+    const link = { id: store.nextId("rl"), fromId: from.id, toId: to.id, kind, createdAt: Date.now() };
+    store.state.requirementLinks.push(link);
+    store.addEvent("requirement.linked", `requirement.linked ${from.key} ${kind} ${to.key}`);
+    return link;
+  },
+  requirementLinkRemove: ({ id } = {}) => {
+    const list = store.state.requirementLinks || [];
+    const link = list.find((l) => l.id === id);
+    if (!link) throw new Error("关联不存在");
+    store.state.requirementLinks = list.filter((l) => l.id !== id);
+    store.addEvent("requirement.unlinked", `requirement.unlinked ${link.id}`);
+    return { ok: true };
+  },
   requirementDelete: ({ id } = {}) => {
     const list = store.state.requirements || [];
     const req = list.find((r) => r.id === id);
@@ -7331,6 +7357,7 @@ const actions = {
     const children = list.filter((r) => r.parentId === req.id);
     if (children.length) throw new Error(`还有 ${children.length} 条子需求，不能删除`);
     store.state.requirements = list.filter((r) => r.id !== req.id);
+    store.state.requirementLinks = (store.state.requirementLinks || []).filter((l) => l.fromId !== req.id && l.toId !== req.id);
     store.addEvent("requirement.deleted", `requirement.deleted ${req.key}`);
     return { ok: true };
   },

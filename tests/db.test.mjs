@@ -59,6 +59,12 @@ try {
     requester: "李", scope: "只读", outOfScope: "不改存储", impact: "", role: "", value: "",
     acceptance: [{ text: "可判定", done: false }], tags: ["req"], createdAt: 30, updatedAt: 31,
   });
+  db.state.requirements.push({
+    id: "rq2", projectId: "p1", key: "DEMO-IR-02", level: "ir", parentId: null,
+    title: "第二条需求", body: "", status: "draft", priority: "P2", owner: "", source: "", requester: "",
+    scope: "", outOfScope: "", impact: "", role: "", value: "", acceptance: [], tags: [], createdAt: 32, updatedAt: 33,
+  });
+  db.state.requirementLinks.push({ id: "rl1", fromId: "rq1", toId: "rq2", kind: "conflicts", createdAt: 34 });
   db.state.todos.push({
     id: "t1", key: "#1", title: "往返", desc: "", acceptance: ["a"], status: "queued",
     agentId: null, priority: "P1", due: "", parentId: null, tags: ["x"], subtasks: [],
@@ -110,6 +116,9 @@ try {
   assert.equal(reqRt.outOfScope, "不改存储");
   assert.deepEqual(reqRt.acceptance, [{ text: "可判定", done: false }]);
   assert.deepEqual(reqRt.tags, ["req"]);
+  const linkRt = again.state.requirementLinks.find((l) => l.id === "rl1");
+  assert.ok(linkRt, "requirement_links 应该往返");
+  assert.equal(linkRt.kind, "conflicts");
   assert.deepEqual(again.state.pluginKv[0].value, { nested: true });
   assert.equal(again.state.settings.theme, "dark");
   assert.equal(again.state.seq, 200);
