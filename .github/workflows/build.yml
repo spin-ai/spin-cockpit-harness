@@ -64,21 +64,108 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-15
-            name: macos-arm64
           - os: ubuntu-24.04
             name: linux-x64
           - os: windows-2022
             name: windows-x64
     runs-on: ${{ matrix.os }}
-    # macOS arm64 的 hosted runner 经常「拿不到机器」（注解：The job was not acquired by
-    # Runner of type hosted even after multiple attempts）——那一步连 job 都没起来，
-    # GitHub 记成 cancelled，continue-on-error 兜不住，只会把某次提交判红。
-    # 所以 mac 只在 tag / 每晚定时 / 手动触发时排：能验证，但不挂在某一个人的提交上。
-    if: ${{ needs.changes.outputs.code == 'true' && (matrix.name != 'macos-arm64' || github.ref_type == 'tag' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    # 文档 / 文章 / 站点改动不打包（changes job 判定）；tag 与手动触发一律跑
+    if: ${{ needs.changes.outputs.code == 'true' }}
     # Linux 不是硬要求：装不出来（libarchive / AppImage / dsh 运行时缺件）就只记一笔，
     # 不拖累整个 workflow，也不挡 tag 发布——win / mac 的产物照常上传。
     continue-on-error: ${{ matrix.name == 'linux-x64' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          node -e "const p=require('./package.json'); const t=process.env.GITHUB_REF_NAME.replace(/^v/,''); if(p.version!==t){console.error('package.json version '+p.version+' != tag '+t);process.exit(1)}"
+
+      - name: Install Linux packaging deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools fakeroot build-essential python3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Verify plugin manifests
+        run: npm run verify:plugins
+
+      - name: Verify design system
+        run: npm run verify:design
+
+      - name: Verify privacy
+        run: npm run verify:privacy
+
+      # 从 PyPI 取当前平台的 dsh 单文件运行时，并做 ACP 冒烟
+      - name: Bundle dsh
+        run: npm run bundle:dsh
+
+      - name: Smoke test bundled dsh
+        run: npm run smoke:dsh
+
+      # 打当前平台的原生产物（mac dmg / win nsis / linux AppImage）
+      - name: Package
+        # tee 一份日志：失败时把最后几行塞进 ::error::，在 run 顶部就能看到原因（不用翻折叠日志）
+        shell: bash
+        run: |
+          set -o pipefail
+          # --publish never 已经写进 package.json 的 dist 脚本（挂在这里会被 npm 追加到
+          # install-mac.mjs 上，electron-builder 反而按 CI 隐式发布 → 缺 GH_TOKEN 报错）
+          npm run dist 2>&1 | tee dist.log
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # CI 上不需要把产物装进 /Applications（本地才有意义）
+          SKIP_LOCAL_INSTALL: "1"
+
+      - name: Surface packaging error
+        if: failure()
+        shell: bash
+        run: |
+          echo "---- dist.log tail ----"
+          tail -n 30 dist.log || true
+          TAIL=$(tail -n 12 dist.log 2>/dev/null | tr '\n' ' ' | tr -s ' ' | cut -c1-900)
+          echo "::error title=Package failed::${TAIL}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cockpit-harness-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            release/*.dmg
+            release/*.exe
+            release/*.AppImage
+            release/*.zip
+            release/*.tar.gz
+
+
+  # macOS arm64 单独一个 job：hosted runner 经常「拿不到机器」，只在 tag / 每晚定时 /
+  # 手动触发时排。**不能**把它留在上面那个 matrix 里再用 job 级 if 判 `matrix.name`：
+  # job 级 if 在 matrix 展开之前求值，matrix 上下文在那里不可用，GitHub 会把整个 workflow
+  # 判成无效文件（0 秒失败，一个 job 都不起——2026-11-24 踩过）。
+  package-macos:
+    needs: changes
+    name: package · macos-arm64
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            name: macos-arm64
+    runs-on: ${{ matrix.os }}
+    if: ${{ needs.changes.outputs.code == 'true' && (github.ref_type == 'tag' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     steps:
       - uses: actions/checkout@v7
 
@@ -160,7 +247,7 @@ jobs:
     # macOS hosted runner may be unavailable on some accounts; publish whatever
     # platform assets built successfully instead of skipping the whole release.
     if: ${{ always() && startsWith(github.ref, 'refs/tags/v') }}
-    needs: package
+    needs: [package, package-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
