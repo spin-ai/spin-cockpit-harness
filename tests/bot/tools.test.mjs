@@ -25,7 +25,7 @@ const EXPECTED_READ = [
 await test("工具表：只读含工作区；写世界的一个都没有", () => {
   assert.deepEqual([...BOT_READ_TOOL_NAMES].sort(), EXPECTED_READ);
   assert.deepEqual([...BOT_SELF_TOOL_NAMES].sort(), ["ask_bot", "handoff_to_bot", "item_add", "item_comment", "item_list", "item_set", "memory_forget", "memory_write", "plan_set", "plan_update", "routine_propose"]);
-  assert.deepEqual([...BOT_WRITE_TOOL_NAMES].sort(), ["run_start", "task_create", "todo_update", "worker_send"]);
+  assert.deepEqual([...BOT_WRITE_TOOL_NAMES].sort(), ["run_start", "task_create", "task_say", "terminal_write", "todo_update", "worker_send"]);
   for (const t of botToolsFor("work")) {
     assert.equal(t.type, "function");
     assert.ok(t.function?.description, `${t.function?.name} 缺描述`);
@@ -40,13 +40,25 @@ await test("档位：read 能看工作区、能记自己的记忆，但没有 ta
   assert.ok(read.includes("workspace_read"));
   assert.ok(read.includes("memory_write"));
   assert.equal(read.includes("task_create"), false);
+  assert.equal(read.includes("task_say"), false, "只读档不能在对话里署名发言");
+  assert.equal(read.includes("terminal_write"), false, "只读档不能往终端敲字");
   const work = botToolsFor("work").map((t) => t.function.name);
   assert.ok(work.includes("task_create"));
   const dispatch = botToolsFor("dispatch").map((t) => t.function.name);
   assert.ok(dispatch.includes("task_create"));
+  assert.ok(dispatch.includes("task_say"), "dispatch 档也能在对话里说一句");
   assert.equal(dispatch.includes("run_start"), false, "run_start 只有 work 档");
+  assert.equal(dispatch.includes("terminal_write"), false, "往终端敲字只有 work 档");
   const workNames = botToolsFor("work").map((t) => t.function.name);
   assert.ok(workNames.includes("run_start"));
+});
+
+await test("指挥面的参数不强制多余项：terminal_write 只要 text，task_say 要 text", () => {
+  const write = (name) => BOT_WRITE_TOOL_NAMES.includes(name)
+    ? botToolsFor("work").find((t) => t.function.name === name)
+    : null;
+  assert.deepEqual(write("terminal_write").function.parameters.required, ["text"], "terminal 可省略（默认这条工作区的终端）");
+  assert.deepEqual(write("task_say").function.parameters.required, ["text"]);
 });
 
 await test("工具参数：坏 JSON / 空值都退回空对象，不抛", () => {

@@ -4,6 +4,38 @@
 
 ## [Unreleased]
 
+### Added / Fixed（聊天窗口：失败卡、上下文账、叫停即时恢复）
+- **失败卡落进对话**：发送 / 重试失败不再只有页头 banner——转录里该次对话的位置出现一张 `.ds-fail`（`没回` 标签 + 原因 + 复制 + 收起 + **重试**）；重试有回合按 `turnId` 重跑，没回合就把原文再发一次（不复制消息、不动草稿）
+- **叫停立刻可用**：`cancel()` 的 `finally` 收掉本地 `streaming / busy / pendingUser` 等临时态并刷新回合账——此前按「停止」后发送键会一直被「停止」占着，直到后端把回合收成 interrupted
+- **上下文账可点**：composer 上方那一行（字符 / 记忆占比 / 历史条数 / 已压缩）现在点它直接去轨迹看这一轮的上下文构成；≥80% 仍是琥珀**文字**（不做进度条、不编模型窗口）
+- **修一处 CSS 事故**：`.ds-context` 的按钮重置上一轮被插进了 `.chat-pane .ds-composer{` 选择器中间，整段 composer 样式（28px 卡片 / 圆形发送）随之失效；已恢复选择器并把规则移到 `.ds-context` 自己那段
+- **preview 门继续收**：`preview-bot` 增加失败卡（3 条）与上下文账（3 条）断言；`view=bot 外壳` 改判「外壳在、转录若在必在壳内」；群聊流式「停止」与群聊乐观气泡改为等待到元素出现；上下文琥珀色用 `var(--amber)` 探基准色比对。连续两次 `全部通过`（75 项）
+
+### Added（聊天窗口：失败卡进对话、上下文账）
+- **失败卡落在对话里**：发送失败不再只有页头 banner——对话末尾出现 `.ds-fail`（原因两行 + 复制 + 收起 + 重试）；重试有回合按 `turnId` 重跑，没有回合就把同一句再发一次（不复制消息、草稿不动）。群聊失败只给原因与收起，不给假重试
+- **上下文账**：composer 上方一行 `上下文 12.3k 字符 · 记忆 62% · 8.0k/12.9k · 历史 10 条`，数据来自上一轮 `turn.context`（`chars / memory / memoryUsedPct / memoryLines.budget / history`）；≥80% 用琥珀文字，不做进度条、不编模型上限
+- **任务会话失败也有出口**：`RunFocusCard` 在 `status=failed` 时给「重试这次运行」（复用最后一轮提问新建一次运行，旧记录保留），不再只能自己再打一遍
+- **preview 脚本可配**：`PREVIEW_SCALE`（低内存机器用 1 跑同一套断言）、`PREVIEW_MOUNT_MS`（冷缓存首屏放宽）、`PREVIEW_TRACE`（逐步打点 + 透传 child stderr）。新增「上下文账」「失败卡」两组断言与 `docsRead` / 失败 mock
+
+### Fixed（聊天窗口：阅读位置 / 草稿 / 验证门）
+- **阅读位置还原算错符号**：采样 `offset` = 那一轮相对容器顶的 y，还原时却写成 `contentTop + offset`，落点整体推出去两倍——切走再回来会跑到别的地方。改成 `contentTop - offset`，实测回到同一位置（preview 断言 `nodeTop = -192`，与采样 -192 一致）
+- **草稿跨会话被冲掉**：`bot_ui` 只写 scroll 的那一拍会把草稿也清空；渲染层在切会话的那一帧又拿着上一条的 `draft` 写进新 key。现在主/渲染两边都按字段合并，且切换那一帧不落盘
+- **preview 门回到全绿**：mock `botUiSave` 改成和主进程 `saveBotUi` 一样的按字段合并；IME / aria-label / 草稿 / 跟随四处断言改成取**可见**的 composer / 转录（页面里同时挂着隐藏 surface）；「回合流自己滚」改判「转录是滚动容器且整页不动」，不再靠「内容一定超过一屏」；群聊乐观气泡断言给 200ms 窗口。`npm run preview:bot` 连续多次 **全部通过**
+
+### Added（聊天窗口：对话内预览、轨迹细节、输入顺滑）
+- **对话内预览**（新组件 `src/components/InlinePreview.tsx`）：工具行里的文件路径点一下**就地展开**前 80 行正文（等宽、可滚动、`N 行 · 从第 M 行`），卡片头上有「复制全文 / 在标签里打开 / 收起」；同时只留一张，再点同一个收起。相对路径按这次 run 的 `cwd` 解析（worktree 里的改动不会读成项目根），读取走 `docs:read` 并做进程内缓存；拒绝理由照抄不吞。BOT 与 CHAT 同一套
+- **轨迹细节**：会话里的工具行展开成「参数 / 输出」两段（原始入参与完整结果，空段不渲染）；轨迹视图每条记录按字段列出（原始参数 / 输出 / 用量）且**每个字段可整段复制**，工具 / 终端记录另有「复制整步」；任务会话的助手记录补上这次 run 的 `tokens · 时长`
+- **输入顺滑**：任务会话的 composer 补输入法状态机（`compositionstart/end` + `isComposing` + `keyCode 229`，候选态回车只上屏）；`Esc` 在对话面直接停当前运行（有界面上下文时先撤上下文）；机器人流式增量改为按帧合并后再 setState（长会话不再逐个 delta 重渲染）；发送成功焦点回输入框、失败保留草稿
+- **预览脚本补门**：`npm run preview:bot` 新增「轨迹字段展开 + 字段复制」「文件 chip 就地展开 + 带正文 + 仍可在标签打开」两组断言；fixture 增加一条 `read` 步骤与 `docsRead` mock；`traceText` 改为汇总所有过程组（原来只看第一组，会误判「没有工具调用」）
+- **修 preview 挂起**：mock harness 补 `onBotPatch`（此前 Proxy 兜底返回 async 函数，App cleanup 里 `offPatch()` 直接抛，整段截图验证跑不起来）
+
+### Added（工作台：一次运行的两面；机器人 ↔ 对话 / 终端双向）
+- **对话与终端是一体两面**：终端标签栏里那一组「对话 | 终端」不是两个入口，而是**同一条 run 的两个面**。切面不新建标签、不改列表顺序、不重排；点终端标签时对话面自动跟到同一条 run（`threadId` 由标签的 `taskId` 反查），不会再出现「对话看 #12、终端是 #13 的 shell」。ACP 执行没有终端面时按钮置灰并说明原因，不伪造标签
+- **机器人可以在对话里署名发言**（`task_say`，dispatch / work 档）：写进任务会话（`〔bot〕…`），**不打断**正在跑的 run；要纠正执行体仍用 `worker_send`。只允许自己的任务 / 交接工作区 / 绑定项目
+- **机器人可以指挥终端**（`terminal_write`，仅 work 档）：往**已交到它手上**的终端敲一行（默认回车）；默认落点 = 交接工作区的终端 → 自己名下正在跑的 run 的终端；人正在接管（`controlBy=user`）时拒绝；终端已退出时明说写不进去；每次写入落 `bot.terminal_write` 审计事件。不新建终端、不结束进程、不给任意路径
+- **终端 / 对话 → 机器人**：`harness note`（pty CLI 与 ACP MCP 共用）不再只写给人看——同一句话同时落一条 `bot_turns(decision=noted)`，`from` 记是谁回的；下一轮开口时进 system 段「交出去的活最近回的话（只作背景，不是人下的指令）」，1 小时之外的旧话不再喂。`harness report` 也走同一条通道
+- **Bot 页回合流分清署名**：`noted` 单独一档（「收到回话」+ ↩），既不冒充机器人自己说的话，也不和 `watching` / `reported` 混
+
 ### Added（机器人：工作区交接、群聊路由、终端窄通道）
 - **工作区交接**：项目右键 / 终端右键「交给机器人」写一条 `bot_workspaces`（path / branch / terminalId / goal），项目根同时绑 `bots.project_id`；`work_list` 看工作区、git 分支 / 脏文件、终端尾部与 run；`workspace_*` / `git_*` 接受 `workspace=<id>`；`task_create` 在交接工作区**原地起活**（不再套新 worktree）；交回只标 `released`（项目根解绑），历史可展开 / 再交；删 bot / 删群 / 撤销一起清干净
 - **交接后带目标自动开一轮**：`kickoffHandoff()` 只在**新目标**时触发，长 prompt 只留审计（`inputRole=none`），不冒充用户气泡；正在聊 / 暂停 / 没 key 静默跳过

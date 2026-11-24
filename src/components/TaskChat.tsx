@@ -8,7 +8,7 @@ import { RowMenu } from "./RowMenu";
 import { templateOf } from "../office/templates";
 import { XIcon } from "./Icons";
 import { FAMILY_LABEL, FAMILY_UNIT, FAMILY_VERB, STATUS_LABEL, familyOf, formatDuration, isFileLike, objectOf, runsOfFamily, statusOf, summarizeFamilies, turnStatusOf, type ToolFamily, type ToolStatus } from "../tool-family";
-import { requestFilePreview } from "../terminal-events";
+import { InlinePreviewCard, useInlinePreview, type InlinePreviewTarget } from "./InlinePreview";
 import { ToolFamilyIcon } from "./ToolFamilyIcon";
 import { TrajectoryView, type TrajectoryRecord } from "./TrajectoryView";
 
@@ -44,10 +44,12 @@ function runSourceLabel(source?: string | null, error?: string | null) {
 
 const RUN_FOCUS_CLAMP = 900;
 
-function RunFocusCard({ run, todo, onOpenTerminal, onClose }: {
+function RunFocusCard({ run, todo, onOpenTerminal, onClose, onRetry }: {
   run: Run; todo: Todo | null;
   onOpenTerminal: (opts: { terminalId: string; cwd: string; title: string; taskId?: string }) => void;
   onClose?: () => void;
+  /** 这次运行失败时给一条就地重试的路（复用最后一轮提问，不复制消息） */
+  onRetry?: () => void;
 }) {
   const text = String(run.result || run.error || "");
   // 默认收起：只在头行显示一句摘要，避免一次失败白占三行
@@ -86,6 +88,12 @@ function RunFocusCard({ run, todo, onOpenTerminal, onClose }: {
           {run.resultSource === "pty_tail" ? <pre>{text}</pre> : <RichText text={text} />}
         </div>
       )}
+      {run.status === "failed" && (
+        <div className="ds-fail-actions">
+          {onRetry && <button className="btn tiny primary" onClick={onRetry} title="用最后一轮提问重新起一次运行（不改原记录）">重试这次运行</button>}
+          <span className="ds-fail-hint">{run.error ? "失败原因见上面" : "这次运行没有留下结论"}{onRetry ? "；重试会新建一次运行，旧记录保留" : ""}</span>
+        </div>
+      )}
     </section>
   );
 }
@@ -118,6 +126,10 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   const [steerRunId, setSteerRunId] = useState("");
   const active = activeRuns.find((r) => r.id === steerRunId) || activeRuns[0] || null;
   const last = todo ? lastRun(todo, state.runs) : null;
+  /** 对话内预览：工具行里的文件路径就地展开，不跳标签（一次只留一张，点新的换旧的） */
+  const preview = useInlinePreview();
+  /** 工具输出里的路径按哪条 run 的 cwd 解析：worktree 里的改动不在项目根 */
+  const previewRoot = last?.cwd || todo?.cwd || state.projectPath;
   useEffect(() => {
     if (!activeRuns.length) { if (steerRunId) setSteerRunId(""); return; }
     if (!activeRuns.some((r) => r.id === steerRunId)) setSteerRunId(activeRuns[0].id);
@@ -181,7 +193,14 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
             ms: meta?.durationMs || 1,
           });
         } else if (m.kind === "approval") out.push({ ...base, id: m.id, kind: "context", title: `审批 · ${m.meta?.decision || ""}`, text: m.meta?.title || "" });
-        else if (m.role === "agent" || m.role === "system") out.push({ ...base, id: m.id, kind: "assistant", title: "助手", text: String(m.content || "").trim() });
+        else if (m.role === "agent" || m.role === "system") {
+          // 助手记录带上这次 run 的用量：轨迹里能回答「这句花了多少、跑了多久」
+          const run = state.runs.find((r) => r.id === runId) ?? null;
+          const usage = run
+            ? [run.tokens ? `${run.tokens} tokens` : "", run.startedAt ? duration(run, now) : ""].filter(Boolean).join(" · ") || undefined
+            : undefined;
+          out.push({ ...base, id: m.id, kind: "assistant", title: "助手", text: String(m.content || "").trim(), usage });
+        }
       }
     });
     return out;
@@ -223,13 +242,24 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     if (!botThread) return;
     const offDelta = window.harness.onBotDelta?.((payload) => {
       if (payload.botId !== botThread) return;
-      setBotStream((prev) => prev + payload.delta);
+      botDeltaBuf.current += payload.delta;
+      if (botDeltaRaf.current) return;
+      botDeltaRaf.current = requestAnimationFrame(() => {
+        botDeltaRaf.current = 0;
+        const next = botDeltaBuf.current;
+        botDeltaBuf.current = "";
+        if (next) setBotStream((prev) => prev + next);
+      });
     });
     const offTool = window.harness.onBotTool?.((payload) => {
       if (payload.botId !== botThread) return;
       setBotTool(payload.phase === "start" ? payload.name : null);
     });
-    return () => { offDelta?.(); offTool?.(); };
+    return () => {
+      offDelta?.(); offTool?.();
+      if (botDeltaRaf.current) { cancelAnimationFrame(botDeltaRaf.current); botDeltaRaf.current = 0; }
+      botDeltaBuf.current = "";
+    };
   }, [botThread]);
   // Mission 面板占的高度按 mission 记：默认收起（有待审批计划时才展开），聊天区优先
   const missionDockKey = mission ? `cmh.chat.missionDock.${mission.id}` : "";
@@ -264,6 +294,11 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   const stickRef = useRef(true);
   const atBottomRef = useRef(true);
   const drafts = useRef<Record<string, string>>({});
+  /** 中文输入法：候选态的回车只上屏（Chromium 会同时给 keyCode 229 与 isComposing） */
+  const composingRef = useRef(false);
+  /** 机器人流式增量按帧合并：每个 delta 都 setState 会把长会话拖成幻灯片 */
+  const botDeltaBuf = useRef("");
+  const botDeltaRaf = useRef(0);
   const prevCount = useRef(0);
 
   const agentId = thread?.agentId ?? runnableAgents[0]?.id ?? state.agents[0]?.id ?? "";
@@ -965,7 +1000,13 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
           })()}
 
           {focusRun && (focusRun.result || focusRun.error) && (
-            <RunFocusCard run={focusRun} todo={todo} onOpenTerminal={openGlobalTerminal} onClose={onClearFocusRun} />
+            <RunFocusCard
+              run={focusRun}
+              todo={todo}
+              onOpenTerminal={openGlobalTerminal}
+              onClose={onClearFocusRun}
+              onRetry={todo && !todo.confirmed && !active ? () => void regenerate() : undefined}
+            />
           )}
 
           <div className="chat-body-wrap">
@@ -994,6 +1035,8 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                       copiedId={copiedId}
                       onCopy={(m) => void copy(m.id, m.content)}
                       onRetry={(m) => void act("retryMessage", { id: m.id })}
+                      preview={preview}
+                      previewRoot={previewRoot}
                     />
                   );
                 }
@@ -1160,7 +1203,11 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
               rows={1}
               value={text}
               onChange={(e) => updateText(e.target.value)}
+              onCompositionStart={() => { composingRef.current = true; }}
+              onCompositionEnd={() => { composingRef.current = false; }}
               onKeyDown={(e) => {
+                // 中文输入法：候选态的回车只上屏，不能顺手把半句话发出去
+                if (composingRef.current || e.nativeEvent.isComposing || (e.nativeEvent as KeyboardEvent).keyCode === 229) return;
                 if (mentionOpen) {
                   const size = Math.min(mentionItems.length, 8);
                   if (e.key === "ArrowDown") { e.preventDefault(); setMentionIndex((i) => (i + 1) % size); return; }
@@ -1169,7 +1216,9 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                   if (e.key === "Escape") { e.preventDefault(); setMentionDismissed(true); return; }
                 }
                 if (e.key === "Escape") {
+                  // 先撤掉待发送的界面上下文，其次才是停止这次运行（Esc 是聊天里最顺手的停键）
                   if (context) { e.preventDefault(); onClearContext(); return; }
+                  if (active) { e.preventDefault(); void stop(); return; }
                 }
                 if (e.key === "ArrowUp" || e.key === "ArrowDown") {
                   if (recallHistory(e.key === "ArrowUp" ? -1 : 1, e)) return;
@@ -1583,9 +1632,17 @@ function ThoughtBlock({ message, now }: { message: Message; now: number }) {
 
 /** 连续的工具 / 思考步骤收成「已处理」一行，展开是一行一步 */
 /** 一行摘要 + 步骤常驻（ZCode 的做法：过程是日志，不是要展开的盒子） */
-function ToolGroup({ messages, now, copiedId, onCopy, onRetry }: {
+type PreviewApi = {
+  target: InlinePreviewTarget | null;
+  openFile: (owner: string, path: string, opts?: { root?: string; name?: string; line?: number }) => void;
+  openText: (owner: string, title: string, text: string, mono?: boolean) => void;
+  close: () => void;
+};
+
+function ToolGroup({ messages, now, copiedId, onCopy, onRetry, preview, previewRoot }: {
   messages: Message[]; now: number; copiedId: string | null;
   onCopy: (m: Message) => void; onRetry: (m: Message) => void;
+  preview: PreviewApi; previewRoot?: string;
 }) {
   const [showAll, setShowAll] = useState(false);
   const first = messages[0];
@@ -1619,6 +1676,8 @@ function ToolGroup({ messages, now, copiedId, onCopy, onRetry }: {
             copied={copiedId === run.items[0].id}
             onCopy={() => onCopy(run.items[0])}
             onRetry={() => onRetry(run.items[0])}
+            preview={preview}
+            previewRoot={previewRoot}
           />
         ) : (
           <StepRun
@@ -1629,6 +1688,8 @@ function ToolGroup({ messages, now, copiedId, onCopy, onRetry }: {
             copiedId={copiedId}
             onCopy={onCopy}
             onRetry={onRetry}
+            preview={preview}
+            previewRoot={previewRoot}
           />
         )
       ))}
@@ -1637,9 +1698,10 @@ function ToolGroup({ messages, now, copiedId, onCopy, onRetry }: {
 }
 
 /** 连续同族步骤（≥3 条）：一行「已执行 6 条命令」，展开才逐条看 */
-function StepRun({ family, messages, now, copiedId, onCopy, onRetry }: {
+function StepRun({ family, messages, now, copiedId, onCopy, onRetry, preview, previewRoot }: {
   family: ToolFamily; messages: Message[]; now: number; copiedId: string | null;
   onCopy: (m: Message) => void; onRetry: (m: Message) => void;
+  preview: PreviewApi; previewRoot?: string;
 }) {
   const [open, setOpen] = useState(false);
   const failed = messages.some((m) => statusOf(m.meta) === "failed") || messages.some((m) => statusOf(m.meta) === "denied");
@@ -1653,14 +1715,15 @@ function StepRun({ family, messages, now, copiedId, onCopy, onRetry }: {
         <ChevronDownIcon size={14} className={`ds-tool-chev ${open ? "rot-180" : ""}`} />
       </button>
       {open && messages.map((m) => (
-        <ToolRow key={m.id} message={m} now={now} copied={copiedId === m.id} onCopy={() => onCopy(m)} onRetry={() => onRetry(m)} />
+        <ToolRow key={m.id} message={m} now={now} copied={copiedId === m.id} onCopy={() => onCopy(m)} onRetry={() => onRetry(m)} preview={preview} previewRoot={previewRoot} />
       ))}
     </div>
   );
 }
 
-function ToolRow({ message: m, now, copied, onCopy, onRetry }: {
+function ToolRow({ message: m, now, copied, onCopy, onRetry, preview, previewRoot }: {
   message: Message; now: number; copied: boolean; onCopy: () => void; onRetry: () => void;
+  preview: PreviewApi; previewRoot?: string;
 }) {
   const [expanded, setExpanded] = useState(m.kind === "error" || m.delivery === "failed" || statusOf(m.meta) === "failed");
   const { head, rest } = normalizeToolContent(m.content);
@@ -1668,9 +1731,18 @@ function ToolRow({ message: m, now, copied, onCopy, onRetry }: {
   const state = statusOf(m.meta);
   const object = objectOf(m.meta, family, splitToolHead(head).summary || head);
   const fileLike = (family === "read" || family === "edit") && isFileLike(object);
-  const long = Boolean(rest) || Boolean(m.meta?.output) || head.length > 120;
+  const args = String(m.meta?.input || "").trim();
+  const result = String(m.meta?.output || rest || "").trim();
+  const long = Boolean(result) || Boolean(args) || head.length > 120;
   const ms = formatDuration(m.meta?.durationMs);
   const toggle = () => { if (long) setExpanded((v) => !v); };
+  /** 对话内预览的文件/行号：`src/a.ts:12` 这种也认（行号只用来开窗，不用来定位高亮） */
+  const targetOfObject = object.replace(/:\d+(?::\d+)?$/, "");
+  const lineOfObject = Number(object.match(/:(\d+)/)?.[1]) || undefined;
+  const openPreview = () => {
+    if (!targetOfObject) return;
+    preview.openFile(m.id, fileLike ? targetOfObject : object, { root: previewRoot, name: targetOfObject.split("/").pop(), line: lineOfObject });
+  };
   return (
     <>
       <div className={`ds-tool-row ${m.kind} k-${state}${m.meta?.parentToolId ? " child" : ""}`} data-family={family}>
@@ -1679,12 +1751,12 @@ function ToolRow({ message: m, now, copied, onCopy, onRetry }: {
           className="ds-tool-main"
           onClick={toggle}
           disabled={!long}
-          title={long ? (expanded ? "收起输出" : "查看命令 / 输出") : object}
+          title={long ? (expanded ? "收起输出" : "查看参数 / 输出") : object}
           aria-expanded={long ? expanded : undefined}
         >
           <span className="ds-tool-title">{FAMILY_VERB[family]}</span>
           {object && (fileLike
-            ? <FileChip path={object} onOpen={(target) => requestFilePreview({ rel: target, name: target.split("/").pop() })} />
+            ? <FileChip path={targetOfObject} onOpen={openPreview} />
             : <span className="ds-tool-summary">{object}</span>)}
           {state !== "done" && <span className={`ds-tool-status ${state}`}>{STATUS_LABEL[state]}</span>}
           {ms && <span className="ds-tool-ms mono">{ms}</span>}
@@ -1695,7 +1767,24 @@ function ToolRow({ message: m, now, copied, onCopy, onRetry }: {
           {copied ? <CopyCheckIcon size={14} /> : <CopyIcon size={14} />}
         </button>
       </div>
-      {long && expanded && <pre className="ds-tool-body">{rest || m.meta?.output || m.content}</pre>}
+      {long && expanded && (
+        <div className="ds-tool-detail">
+          {args && (
+            <div className="ds-tool-field">
+              <div className="ds-tool-field-head"><span>参数</span></div>
+              <pre className="ds-tool-field-body">{args}</pre>
+            </div>
+          )}
+          {result && (
+            <div className="ds-tool-field">
+              <div className="ds-tool-field-head"><span>输出</span></div>
+              <pre className="ds-tool-field-body">{result || "（没有输出）"}</pre>
+            </div>
+          )}
+          {!args && !result && <pre className="ds-tool-field-body">{head}</pre>}
+        </div>
+      )}
+      {preview.target?.owner === m.id && <InlinePreviewCard target={preview.target} onClose={preview.close} />}
       {m.delivery === "failed" && <button className="ds-delivery failed" onClick={onRetry}>投递失败 · 重发</button>}
     </>
   );

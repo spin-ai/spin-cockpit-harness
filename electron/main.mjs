@@ -748,6 +748,8 @@ function terminalSnapshot() {
       endedAt: info?.exited ? (info.endedAt || Date.now()) : t.endedAt,
       stalled: idle.stalled,
       idleMs: idle.idleMs,
+      // 谁在写这条终端：接管状态此前只存在内存 Map 里，界面永远读不到（✋ 与「交回终端」都不出现）
+      controlBy: terminalControl.get(t.id)?.by || null,
     };
   });
 }
@@ -3085,6 +3087,8 @@ function startAgentBridge() {
           const clean = redactSecrets(text).text;
           store.addMessage(thread.id, run?.id || null, "system", "system", `〔${agent?.alias || agent?.name || "agent"}〕${clean}`);
           store.addEvent("run.agent_note", `run.agent_note ${run?.id || todo?.key || "terminal"}`);
+          // 反方向也通：这句话同时到盯着这条活的 bot（note 不再只是写给人看）
+          if (todo) deliverWorkerNote({ todo, run, agent, text: clean });
           store.persist(); broadcast();
           return send(200, { ok: true, runId: run?.id || null, threadId: thread.id });
         }
@@ -3100,6 +3104,7 @@ function startAgentBridge() {
           const thread = todo ? threadForTodo(todo) : (run.threadId ? store.state.threads.find((t) => t.id === run.threadId) : null);
           if (thread) store.addMessage(thread.id, run.id, "system", "system", `agent 汇报：${clean.slice(0, 400)}`);
           store.addEvent("run.agent_report", `run.agent_report ${run.id}`);
+          if (todo) deliverWorkerNote({ todo, run, agent, text: clean, kind: "worker.report" });
           store.persist(); broadcast();
           return send(200, { ok: true, runId: run.id });
         }
@@ -3676,6 +3681,38 @@ function watchDelegation(todo, targetBot, ownerBot) {
   }
 }
 
+/** 审计行里的一句话：空白压成一行并截断（事件只记一句） */
+const clipForEvent = (text, limit = 160) => String(text || "").replace(/\s+/g, " ").slice(0, Math.max(1, Number(limit) || 160));
+
+/**
+ * 执行体（终端 / 对话里的 agent）中途说的话送到「正在盯这条活的 bot」。
+ *
+ * 以前这一方向只有「run 结束 → 汇报」：agent 想中途说一句，只能等人去看屏幕。
+ * 现在落一条 `decision=noted` 的回合，它在下一轮开口时就从 system 段读到这句话（`recentNotes()`），
+ * 要回话用 `worker_send` / `task_say` / `terminal_write` —— 这样两个方向都通了。
+ */
+function deliverWorkerNote({ todo, run, agent, text, kind = "worker.note" }) {
+  const body = String(text || "").trim();
+  if (!todo || !body) return 0;
+  const targets = new Set();
+  for (const t of store.state.botTurns || []) {
+    if (t.botId && t.todoId === todo.id && ["watching", "reported", "noted"].includes(t.decision)) targets.add(t.botId);
+  }
+  if (todo.botId) targets.add(todo.botId);
+  let sent = 0;
+  for (const botId of targets) {
+    if (!(store.state.bots || []).some((b) => b.id === botId)) continue;
+    try {
+      bots().noted({ botId, todoId: todo.id, runId: run?.id || null, text: body, from: agent?.alias || agent?.name || "agent", kind });
+      sent += 1;
+    } catch (err) {
+      console.warn(`[bot] noted 落库失败：${String(err?.message || err)}`);
+    }
+  }
+  if (sent) broadcast();
+  return sent;
+}
+
 async function botReadToolNow(name, args = {}, ctx = {}) {
   const st = store.state;
   // bot 绑了默认项目就用它；没绑才回退当前项目。workspace_* / git_* 的根都按这个走。
@@ -3875,6 +3912,80 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
       store.persist();
       broadcast();
       return { ok: delivery !== "failed", runId: run.id, todoId: todo?.id || null, delivered: delivery, threadId: thread.id };
+    }
+    case "task_say": {
+      const bot = ctx?.bot;
+      if (!bot || !["work", "dispatch"].includes(bot.capability || "")) {
+        return { error: "当前能力档不能往对话里说（只读档只能看）" };
+      }
+      const text = String(args.text || "").trim().slice(0, 800);
+      if (!text) return { error: "text 不能为空" };
+      const ref = String(args.todo || "").trim();
+      if (!ref) return { error: "task_say 要指定任务（编号或 id）" };
+      const todo = st.todos.find((t) => t.id === ref || t.key === ref || t.key.replace(/^#/, "") === ref.replace(/^#/, ""));
+      if (!todo) return { error: `找不到任务 ${ref}` };
+      if (todo.kind === "mission") return { error: "Mission 的计划对话不在这个工具里" };
+      const own = Boolean(todo.botId) && todo.botId === bot.id;
+      const inHanded = Boolean(handed && todo.cwd === handed.path);
+      const inBound = Boolean(bot.projectId && todo.projectId === bot.projectId);
+      if (!own && !inHanded && !inBound) return { error: "这条任务不在你手上（自己的任务 / 交接工作区 / 绑定项目之外不说）" };
+      const thread = threadForTodo(todo);
+      const active = [...st.runs].reverse().find((r) => r.todoId === todo.id && ["queued", "running", "waiting_input"].includes(r.status));
+      const clean = redactSecrets(text).text;
+      const msg = store.addMessage(thread.id, active?.id || null, "system", "system", `〔${bot.name}〕${clean}`);
+      store.addEvent("bot.task_say", `bot.task_say ${todo.key} by ${bot.id}`);
+      store.persist();
+      broadcast();
+      return {
+        ok: true, todoId: todo.id, key: todo.key, threadId: thread.id, messageId: msg?.id || null,
+        delivered: false,
+        note: active ? "只写进了对话；要让它现在改做法，用 worker_send" : "只写进了对话（这条任务现在没有在跑的 run）",
+      };
+    }
+    case "terminal_write": {
+      const bot = ctx?.bot;
+      if (!bot || (bot.capability || "read") !== "work") {
+        return { error: "只有 work 档能往终端敲字（只读档只能看）" };
+      }
+      const raw = String(args.text || "").replace(/\r/g, "");
+      if (!raw.trim()) return { error: "text 不能为空" };
+      const activeStatus = ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"];
+      // 没显式传 workspace 时：取「已交接 + 终端还活着」里最近更新的那条，作为默认落点
+      const liveHanded = !handed && !String(args.workspace || "").trim()
+        ? ([...(st.botWorkspaces || [])]
+          .filter((w) => w.botId === bot.id && w.status !== "released" && w.terminalId && terminals.get(w.terminalId))
+          .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0] || null)
+        : null;
+      const scope = handed || liveHanded;
+      let terminalId = String(args.terminal || "").trim();
+      if (!terminalId) {
+        // 默认落点：这条交接工作区的终端 → 其次自己名下正在跑的 run 的终端
+        const wsTerminal = String(scope?.terminalId || "").trim();
+        const runTerminal = [...st.runs].reverse().find((r) => activeStatus.includes(r.status) && r.terminalId
+          && (scope
+            ? r.cwd === scope.path
+            : Boolean(r.todoId && st.todos.find((t2) => t2.id === r.todoId)?.botId === bot.id)))?.terminalId || "";
+        terminalId = (wsTerminal && terminals.get(wsTerminal) ? wsTerminal : "") || runTerminal;
+      }
+      if (!terminalId) return { error: "没有可写的终端：先把终端交给机器人（右键「交给机器人」），或让它起一条 run" };
+      const term = terminals.get(terminalId);
+      if (!term) return { error: `终端 ${terminalId} 已经退出，写不进去` };
+      const rec = (st.terminals || []).find((t) => t.id === terminalId) || null;
+      if (terminalControl.get(terminalId)?.by === "user") return { error: "你正在接管这条终端：它不该和你抢输入，先交回终端" };
+      const ownRun = rec?.runId ? (st.runs || []).find((r) => r.id === rec.runId) : null;
+      const ownedByHandoff = Boolean(scope && (scope.terminalId === terminalId || (rec?.cwd && rec.cwd === scope.path)));
+      const ownedByTask = Boolean(rec?.todoId && st.todos.find((t2) => t2.id === rec.todoId)?.botId === bot.id)
+        || Boolean(ownRun?.todoId && st.todos.find((t2) => t2.id === ownRun.todoId)?.botId === bot.id);
+      if (!ownedByHandoff && !ownedByTask) return { error: "这条终端没交给你：只能写交接工作区 / 自己任务的终端" };
+      const payload = String(raw).replace(/\r?\n/g, "\r");
+      try {
+        term.write(args.enter === false ? payload : `${payload}\r`);
+      } catch (err) {
+        return { error: `写入失败：${String(err?.message || err)}` };
+      }
+      store.addEvent("bot.terminal_write", `bot.terminal_write ${terminalId} by ${bot.id} ${clipForEvent(raw, 120)}`);
+      store.persist();
+      return { ok: true, terminalId, enter: args.enter !== false, text: clipForEvent(raw, 200) };
     }
     case "task_create": {
       const bot = ctx?.bot;

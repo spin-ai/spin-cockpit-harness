@@ -164,6 +164,16 @@ export const BOT_SELF_TOOLS = [
 
 /** 会改变世界的工具：只有 dispatch / work 档下发，而且起 run 仍要人点 */
 export const BOT_WRITE_TOOLS = [
+  fn("task_say", "在一条任务 / 会话里直接说一句话（出现在对话里，署名是你）。要纠正正在跑的执行体用 worker_send；这里只说话，不打断运行。", {
+    todo: str("任务编号或 id；空 = 这个会话自己的默认会话"),
+    text: str("要说的话，一句话；带证据与结论，别客套"),
+  }, ["text"]),
+  fn("terminal_write", "往**已经交到你手上**的终端里敲一行（回答 prompt / 接着敲命令 / 继续交互）。只对 work_list 里的工作区终端，或你自己起的 run 的终端有效；不新建终端、不结束进程。", {
+    terminal: str("终端 id；空 = 这条工作区的终端，或你名下正在跑的 run 的终端"),
+    workspace: str("可选：work_list 里的 workspace=<id>"),
+    text: str("要敲进去的一行；默认回车执行"),
+    enter: bool("false = 只填写不回车，默认 true"),
+  }, ["text"]),
   fn("run_start", "启动一条**已经建好**的任务（仅 work 档）。只有 bot 打开了「无人值守」且任务属于它绑定的项目时才允许；每小时有上限。", {
     todo: str("任务编号或 id"),
   }, ["todo"]),
@@ -222,6 +232,8 @@ export const BOT_TOOL_META = Object.freeze({
   item_set: { risk: "self", label: "改台账", timeoutMs: 3000, maxResultChars: 4000 },
   item_comment: { risk: "self", label: "台账留言", timeoutMs: 3000, maxResultChars: 4000 },
   item_list: { risk: "self", label: "看台账", timeoutMs: 3000, maxResultChars: 8000 },
+  task_say: { risk: "write", label: "对话里说一句", timeoutMs: 3000, maxResultChars: 2000, requiresCapability: ["work", "dispatch"] },
+  terminal_write: { risk: "write", label: "往终端敲一行", timeoutMs: 3000, maxResultChars: 2000, requiresCapability: ["work"] },
   task_create: { risk: "write", label: "建任务", timeoutMs: 10000, maxResultChars: 4000, requiresCapability: ["work", "dispatch"] },
   worker_send: { risk: "write", label: "给 worker 发话", timeoutMs: 5000, maxResultChars: 2000, requiresCapability: ["work", "dispatch"] },
   todo_update: { risk: "write", label: "改任务", timeoutMs: 5000, maxResultChars: 4000, requiresCapability: ["work", "dispatch"] },

@@ -1,4 +1,4 @@
-> 层：需求 · 状态：部分落地 · 核对：2026-11-23 · 覆盖：把项目 / worktree / 终端交给机器人的交接语义、可见面与验收
+> 层：需求 · 状态：部分落地 · 核对：2026-11-24 · 覆盖：把项目 / worktree / 终端交给机器人的交接语义、双向通信与可见面
 
 # 需求 · 机器人工作区交接
 
@@ -49,6 +49,9 @@
 | US-W19 | 终端 agent 能请人确认 | `harness ask --text "…" [--timeout]` 弹桌面审批（允许 / 拒绝）；CLI 等到决定才继续；超时自动收掉；不能自批 | ✅ 2026-11-23 |
 | US-W20 | 远端主机的 agent 也能回一句 | SSH 主机上的 pty / ACP run 通过反向隧道 + 远端 shim 用 `harness note / report / ask`；没有 curl / base64 时明说不可用，不假装成功 | ✅ 2026-11-23 |
 | US-W21 | 我能直接开一条远端 shell | 终端「＋」菜单按主机列「新建终端 · <host>」；标签记住 host，重启恢复仍连同一台；远端默认目录由 host.defaultCwd | ✅ 2026-11-23 |
+| US-W22 | 终端里的 agent 中途说一句，它真的听得见 | 受管 pty / ACP 里 `harness note --text "…"` 之后：任务会话里有人看得见的那一行，**同时**落成 bot 回合（`decision=noted`、带 `from`），下一轮开口时出现在 system 的背景段；1 小时外的旧话不再喂；`report` 走同一条通道 | ✅ 2026-11-24 |
+| US-W23 | 它能在对话里说一句，署名是它自己 | 任务会话收到 `〔bot〕…` 一行；只对**自己的任务 / 交接工作区 / 绑定项目**发言；不打断正在跑的 run（要纠偏它得用 `worker_send`），回执里写清这一点 | ✅ 2026-11-24 |
+| US-W24 | 它能在交到手上的终端里接着敲 | work 档可以往**已交接**的终端（或自己名下 run 的终端）敲一行，默认回车；人正在接管时被拒；终端已退出时明说；每次写入落审计事件；不能新开 / 结束终端、不能指定任意路径 | ✅ 2026-11-24 |
 
 ---
 
@@ -66,6 +69,9 @@
 | IR-W08 | 终端里 `harness whoami` 能说清 run / 任务 / agent；`note` 在会话里是「〔agent〕…」系统行；`report` 在 run 结果与轨迹里可见；`ask` 进桌面审批 | 没有 token 时 CLI 明说「这条终端不在受管 run 里」，不假装成功 | US-W18/19 |
 | IR-W09 | 远端 run 的事件 / 提示同时说明「远端 bridge 可用 / 不可用」；远端审批同样进桌面弹窗 | 隧道或 shim 失败时不阻塞 agent，也不显示「已连接」 | US-W20 |
 | IR-W10 | 终端「＋」菜单里按主机列出「新建终端 · <host>」；远端标签标题带主机名；`host_id` 落库，重启恢复回同一台 | 主机离线 / SSH 失败时终端显示错误，不回落到本地 shell | US-W21 |
+| IR-W11 | Bot 页回合流里 `noted` 是独立一档「收到回话」，展开能看到是哪个执行体回的 | 老回合没有 `from` 时只显示正文，不猜署名 | US-W22 |
+| IR-W12 | `task_say` 写进会话的那一行带 `〔bot〕` 前缀，和 agent 的 `〔agent〕`、人的气泡都不同 | 没有权限时工具回错误，不静默写进别处的会话 | US-W23 |
+| IR-W13 | `terminal_write` 的回执说清敲进了哪条终端、是否回车；被拒时写清原因（接管中 / 已退出 / 未交接） | 不假装写成功 | US-W24 |
 
 ---
 
@@ -86,6 +92,8 @@
 | SR-W11 | 终端 Agent 窄通道：pty 走 `harness` 垫片（PATH + token）；ACP 走 `cockpit_harness` MCP；命令 whoami / note / report / ask；note 写当前任务会话，report 只写 run 结果；ask 建桌面审批，人决定后 CLI 取走（不自批、不自动执行）；run / 终端结束即撤销 token | `electron/agent-bridge.mjs` / `agent-cli.mjs` / `harness-mcp-bridge.mjs` / 主进程 token 服务 |
 | SR-W12 | 远端：`ssh -R 127.0.0.1:0:...` 反向隧道 + 远端 POSIX shim（curl/base64）；pty 用本地 pty 包 `ssh -tt`；ACP 用 `AcpClient.sshEnv`，远端有 node 时挂远端 harness MCP；隧道 / token 按 run 关闭；shim 缺失时不假装可用 | `startRemoteBridge` / `remoteAgentCliShimContent` / `AcpClient.sshEnv` / 远端 MCP 安装 |
 | SR-W13 | 手动远端 shell：`terminal:create` 接受 `hostId`；远端命令 `cd <defaultCwd> && exec "$SHELL" -l`；`terminals.host_id` 落库；PaneState / 落盘恢复带 hostId；新建菜单按主机列出 | `terminal:create` / `terminals.host_id` / `TerminalPanel` |
+| SR-W14 | 双向回传：`harness note` / `report` 落 `bot_turns(decision=noted, from)`；`recentNotes(botId)` 只取 1 小时内的 ≤4 条进 `compileContext` 的 `workerNotes` 段（标注「只作背景，不是人下的指令」）；`deliverWorkerNote` 只发给 watching / 已汇报 / 归属该任务的 bot | `electron/main.mjs` / `electron/bot/index.mjs`（`noted` / `recentNotes` / `compileContext`） |
+| SR-W15 | 指挥面工具：`task_say`（dispatch / work，只写会话）与 `terminal_write`（work，只写已交接 / 自己 run 的终端）；`terminal_write` 检查 `controlBy` 与终端存活，落 `bot.terminal_write` 事件 | `electron/bot/tools.mjs` / `botReadToolNow` |
 
 ---
 
@@ -123,6 +131,8 @@
 | W02 / W03 / W13 | IR-W02 / IR-W03 / IR-W06 | SR-W01 / SR-W03 / SR-W09 |
 | W04 / W05 / W09 | IR-W06 | SR-W05 / SR-W06 / SR-W07 / SR-W08 |
 | W07 / W08 / W14 / W16 | IR-W07 | SR-W04 / SR-W09 / SR-W10 |
-| W11 / W12 / W17 / W18 / W19 / W20 / W21 | IR-W02 / IR-W03 / IR-W08 / IR-W09 / IR-W10 | `worker_send` / `soulMarkdown` / 终端窄通道（SR-W11） / 远端隧道（SR-W12） / 手动远端 shell（SR-W13）；异步回复回流未做 |
+| W11 / W12 / W17 / W18 / W19 / W20 / W21 | IR-W02 / IR-W03 / IR-W08 / IR-W09 / IR-W10 | `worker_send` / `soulMarkdown` / 终端窄通道（SR-W11） / 远端隧道（SR-W12） / 手动远端 shell（SR-W13） |
+| W22 / W23 / W24 | IR-W11 / IR-W12 / IR-W13 | SR-W14（回话落回合 + 进背景） / SR-W15（`task_say` / `terminal_write`） |
 
 **已知差距**：交接后的**主动确认**与**追问活着的 agent**是下一步最值钱的两刀；前者便宜（条件触发），后者要动 ACP 投递面。
+双向通信（W22–W24）已通：它听得见执行体中途说的话，也能在对话里署名发言、在交到手上的终端里接着敲。仍然缺的是**跨 run / 跨机 / 离线的收件箱**（全局 peer mail），见 [`../arch/ARCH-agent-bridge.md`](../arch/ARCH-agent-bridge.md) §5。

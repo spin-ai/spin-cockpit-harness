@@ -1,4 +1,4 @@
-> 层：架构 · 状态：部分落地 · 核对：2026-11-23 · 覆盖：Bot ↔ Terminal 的通信方式、为什么不做全量 CLI、窄通道的范围与安全边界
+> 层：架构 · 状态：部分落地 · 核对：2026-11-24 · 覆盖：Bot ↔ 终端 / 对话的双向通道、为什么不做全量 CLI、窄通道的范围与安全边界
 
 # Arch · Agent Bridge（Bot ↔ Terminal）
 
@@ -132,7 +132,20 @@ harness_whoami / harness_note / harness_report
 
 ### 4.5 与内置 bot 的关系
 
-内置 bot 的工具表**不含** `harness` / `exec` / `terminal`；它仍然通过 `worker_send`、`task_create`、`run_start` 和 `run_log` 和终端交互。窄通道只给 pty 里的 agent，不反向扩大 bot 的能力面。
+内置 bot 的工具表**不含** `harness` / `exec` / 任意 shell；它和终端交互靠的是下面这五个带授权前缀的工具，每一个都只能作用在「它自己的活」上：
+
+| 方向 | 工具 | 档位 | 作用范围 / 拒绝条件 |
+|---|---|---|---|
+| Bot → 终端（纠偏） | `worker_send` | dispatch / work | 正在跑的 run（自己名下或交接工作区里）；pty 直接写入，ACP 作为下一次 prompt |
+| Bot → 终端（直接敲一行） | `terminal_write`（2026-11-24） | **work** | 交接工作区里的终端，或自己名下 run 的终端；人在接管（`controlBy=user`）时拒绝；终端已退出时说明；不新建 / 不 kill / 不接受任意路径 |
+| Bot → 对话 | `task_say`（2026-11-24） | dispatch / work | 自己的任务 / 交接工作区 / 绑定项目；写进会话（`〔bot〕…`），**不打断**运行的 run（纠偏走 `worker_send`） |
+| 终端 / 对话 → Bot | `harness note` / `report` | — | 同一句话落 `bot_turns(decision=noted, from=<agent>)`（2026-11-24），下一轮进 system 的背景段，1 小时外不再喂 |
+| 终端 → 人 | `harness ask` | — | 桌面审批；不能自批 |
+
+两条边界仍然成立：
+
+1. **不照搬全量 CLI**：`terminal_write` 不是「给 bot 一个 shell」，它没有新开终端、没有工作目录选择、没有 `kill`，且必须先有**人**做过的交接（`bot_workspaces`）或 bot 自己起的 run；
+2. **署名分开**：执行体说的话是 `noted`（谁回的、回给谁），bot 自己说的话是 `answered / replied / task_say`。两者混在一起时，「是谁决定的」就查不出来了。
 
 ---
 
@@ -142,10 +155,11 @@ harness_whoami / harness_note / harness_report
 |---|---|
 | ~~ACP 侧 harness MCP~~ | 已做：`harness_whoami / note / report`（本地 run；远端不挂） |
 | ~~远端终端~~ | 已做：远端 pty run + SSH 反向隧道 + 远端 shim；远端 ACP 走 `sshEnv`，有 node 时也挂 harness MCP；手动远端 shell 已进终端「＋」菜单 |
-| **双向 peer mail / inbox** | 现在 `note` 只是「写给当前任务会话」，不是给某个 bot 的收件箱；跨 run、离线的消息还没有 |
+| **双向 peer mail / inbox** | `note` 现在已经同时落成 bot 回合（`noted`）并进下一轮背景；还缺跨 run / 跨机 / 离线的收件箱（群内有 `bot_peer_mail`，全局没有） |
 | **远端终端** | token 只在本机回环；SSH 终端需要隧道或远端 serve |
 | **多选项 / 带上下文的审批** | 现在只有允许 / 拒绝；还没有多方案选择、附件、审批历史页。ACP 原生 permission 仍更完整 |
 | **CLI 子命令扩展** | 故意只保留 3 条；每加一条都要重新判断是否可用 `actions` 里的安全子集 |
+| **bot 侧新增写终端 / 说话工具** | 只有 `terminal_write` / `task_say` 两条，且都限定在「交到它手上的活」；不做 `terminal_create` / `terminal_kill` / 任意 `run_command` |
 
 ---
 
@@ -158,6 +172,8 @@ harness_whoami / harness_note / harness_report
 | 截断不产生半截 | 同上 |
 | CLI 脚本存在且读 token | 同上 |
 | 主进程 token 服务：whoami / note / report 仅三种命令 | 手动：起一条 pty agent，执行 `harness whoami` / `note` / `report`，在会话与 run 结果里看到 |
+| 回话到 bot：`note` 落 noted 回合、进 system 背景段、1 小时后不再喂 | `tests/bot/bridge.test.mjs` |
+| 指挥面授权：`terminal_write` 只对交到手上的终端 / work 档；`task_say` 只对自己的活 | `tests/bot/tools.test.mjs` + 手动 |
 | 手动 shell 没有 `harness` 注入 | 手动：新建普通终端，`harness whoami` 应报无 token |
 
 ---

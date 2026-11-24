@@ -1,10 +1,10 @@
-> 层：需求 · 状态：提案 · 核对：2026-11-22 · 覆盖：Bot 会话窗口 / 群聊的 User Story（US-Chat）与界面规格 IR、系统规格 SR，全部带判据、现状与验证方式
+> 层：需求 · 状态：部分落地 · 核对：2026-11-24 · 覆盖：Bot 会话窗口 / 群聊的 User Story（US-Chat）与界面规格 IR、系统规格 SR，全部带判据、现状与验证方式
 
 # 需求 · Bot 聊天窗口（US / IR / SR）
 
 **用途**：`COMPARE-chat-window.md` 只回答「差在哪」；本文把它变成**可开工的规格**：先 13 条用户故事（带判据），再拆成 12 条界面规格（IR）与 14 条系统规格（SR），每条都写明现状、依赖与怎么验。
 
-**范围**：`Bot.tsx` 的会话面 —— 1:1 对话、群聊、转录、composer、回合轨、跟随与长会话。**不含** TaskChat（任务会话，另有 `GAP-chat.md`）与轨迹视图的功能扩展。
+**范围**：`Bot.tsx` 的会话面 —— 1:1 对话、群聊、转录、composer、回合轨、跟随、长会话、对话内预览与轨迹细节。任务会话（`TaskChat`）共用同一套 `.ds-*` 视觉与同一套预览 / 细节组件；它自己的领域语义见 `GAP-chat.md`。
 
 **依据**：源码 + 装机包实测（`COMPARE-chat-window.md` §1–§6）；对照对象 `deepseek-harness @ 39163dd3`、`Orca @ 8e0c267e`。
 
@@ -37,10 +37,12 @@
 | US-Chat-07 | 我打了一半的字不会丢（判据：切会话、崩溃重启后草稿还在；发送失败原文回填输入框）                                                     | ✅ 500ms 节流落库 + 切会话取回 | Orca 草稿（IndexedDB + journal）           | P1，改 |
 | US-Chat-08 | 中文输入不出错（判据：拼音候选里按回车只上屏，不发送；Shift+Enter 换行；⌘/Ctrl+Enter 发送）                                   | ✗ 没有 composing 判断             | dsh `keyboard-composition.ts`          | P0，改 |
 | US-Chat-09 | 对一条消息能重试、追问、分支（判据：重试用同一条输入重跑且不重复原消息；引用只带 1–3 行；分支复制到新会话而源会话不动）                               | ◐ 复制 / 引用 / 分支 / 重试已做；赞踩未做 | dsh `MessageIconActions`（复制 / 分支 / 用量） | P1，改 |
-| US-Chat-10 | 出错时我在聊天里就能看到并重试（判据：失败卡写明原因 + 「重试」；草稿不丢；不只剩页头一条 banner）                                       | ✗ 只有页头 banner                 | Orca `messages/notices/`；dsh 失败卡       | P1，改 |
-| US-Chat-11 | 上下文快满时我提前知道（判据：占用 >80% 时 composer 上方有提示；压缩后留下「已压缩 N 轮 → 摘要」卡）                                | ✗ 静默截断                        | dsh compaction 卡 + quota 提示            | P2，改 |
+| US-Chat-10 | 出错时我在聊天里就能看到并重试（判据：失败卡写明原因 + 「重试」；草稿不丢；不只剩页头一条 banner）                                       | ✅ 2026-11-24（`.ds-fail`；重试按 `turnId` 或重发原文） | Orca `messages/notices/`；dsh 失败卡       | P1 |
+| US-Chat-11 | 上下文快满时我提前知道（判据：占用 >80% 时 composer 上方有提示；压缩后留下「已压缩 N 轮 → 摘要」卡）                                | ◐ 2026-11-24：composer 上方有上下文账（字符 / 记忆占比 / 历史条数，>80% 琥珀文字）；压缩卡仍缺 | dsh compaction 卡 + quota 提示            | P2 |
 | US-Chat-12 | 读屏和键盘也能完整用（判据：转录是 `role=log` 且 `aria-live`；每条有可读发送者 / 状态；输入框有 `aria-label`；Esc 停止；发送后焦点回输入框） | ◐ role=log / article / label 已做；Esc 停止与焦点恢复未做 | dsh 大量 `aria-live` / 语义角色              | P1，改 |
 | US-Chat-13 | 群聊里每条回复独立可读、可单独处置（判据：谁回的 / 何时 / 状态标签齐全；能单独停止；失败能单独重试）                                        | ◐ 有标签与停止，无重试                  | Orca 消息卡（sender chip / peer card）      | P2，改 |
+| US-Chat-14 | 我读结果不用离开对话（判据：工具行里的文件路径点一下就展开正文，不新增标签、不切页；卡片里仍能「在标签里打开」；再点一次收起） | ✅ 2026-11-24（BOT 与 CHAT 共用 `InlinePreviewCard`） | — | P1 |
+| US-Chat-15 | 轨迹能查到「这步传了什么、回了什么」（判据：工具行展开分「参数 / 输出」两段；轨迹视图每字段可整段复制；助手记录带 `tokens · 时长`） | ✅ 2026-11-24 | dsh 的 usage 明细 | P1 |
 
 ---
 
@@ -154,6 +156,25 @@
 | 判据 | 上翻 30px 后新内容不抢位置；回到底部后恢复跟随且不抖动 |
 | 关联 | US-Chat-05 |
 
+### IR-Chat-13 对话内预览（US-Chat-14）
+
+| 项 | 规格 |
+|---|---|
+| 位置 | 该步工具行正下方，同缩进；跟着消息滚动，不浮起、不遮挡转录 |
+| 结构 | `文件/结果` 标签 + 文件名 + `N 行 · 从第 M 行` + 复制全文 + 在标签里打开（仅文件）+ 收起 |
+| 状态 | `读取中…` / 正文（前 80 行）/ `读取失败`（原文照抄 `docs:read` 的拒绝理由） |
+| 唯一性 | 一次一张：点新的换旧的，点同一个收起 |
+| 判据 | ≤300ms 出现；不新增标签；收起后滚动位置不变 |
+
+### IR-Chat-14 轨迹细节（US-Chat-15）
+
+| 项 | 规格 |
+|---|---|
+| 会话工具行 | 展开后「参数 / 输出」两段，等宽可滚动；空段不渲染 |
+| 轨迹视图 | 每条记录详情按字段列出（原始参数 / 输出 / 用量），字段头右侧一个复制按钮；工具 / 终端记录另有「复制整步」 |
+| 用量 | 任务会话助手记录：`tokens · 时长`；bot 回合：`tokens · TTFT`（`bot_turns.trace`） |
+| 判据 | 每个字段都能整段复制；空字段不占位 |
+
 ### IR-Chat-12 键盘
 
 | 项 | 规格 |
@@ -172,17 +193,22 @@
 | SR-Chat-01 | **工具事件订阅**：渲染层订阅 `harness:bot-tool`，维护 `liveTools: Map<botId, ToolRun[]>`；payload `{ botId, groupId?, name, phase: start|done, args?, result?, ok?, ms? }`；`done` 时合并同名未完成项 | ✗ 无人订阅      | IR-Chat-02，改    |
 | SR-Chat-02 | **历史分页**：`botTurnsPage({ botId, threadId, beforeTurnId, limit=40 })` → `{ turns, hasMore, headTurnId }`；会话面默认只取最近 40 轮，滚到顶再取一页；`botSnapshot` 不再返回全部 `botTurns`              | ✗ 全量        | US-Chat-04，改    |
 | SR-Chat-03 | **草稿持久化**：`bot_drafts(botId, threadId, text, attachments, updatedAt)`；输入 500ms 节流写；上限 8k 字符；发送成功即清；同一 bot 多 thread 各一份                                                      | ✅ `bot_ui` 表 + `saveBotUi` 单行写 | IR-Chat-07，改    |
-| SR-Chat-04 | **阅读位置**：`bot_threads.scroll = { turnId, offset }`；滚动采样 500ms 或 `scrollend` 写一次；打开会话时按 `turnId` 定位（找不到则回底）                                                                  | ✅ `bot_ui.scroll` = `{ turnId, offset }` | US-Chat-06，改    |
+| SR-Chat-04 | **阅读位置**：`bot_ui.scroll = { turnId, offset }`；滚动采样 500ms 写一次；打开会话时按 `turnId` 定位，**还原公式 `contentTop - offset`**（2026-11-24 修正符号错误），每次切回来都还原 | ✅（`offset` 语义：那一轮的视口内 y） | US-Chat-06 |
 | SR-Chat-05 | **重试**：`botRetry({ turnId })` 复用原 `turn.input` + 原 `threadId`，新建一轮（不改写原轮）；同一轮重复点击幂等（带 `retryOf`）                                                                            | ✅ `botRetry`：复用原话 + 原会话，`trigger.kind=retry` 指回原轮 | IR-Chat-06，改    |
 | SR-Chat-06 | **反馈**：`bot_turns.feedback ∈ {up, down}` + `feedbackNote`；`botFeedback({ turnId, value })`，同一轮可改不可叠加                                                                        | ✗           | IR-Chat-06，改    |
 | SR-Chat-07 | **用量字段**：`turn.cost` 增 `ttftMs`（首个增量时间）与 `model`；UI 只读，不估算费用                                                                                                                | ✅ tokens / ms / ttftMs / model | IR-Chat-06/09，改 |
-| SR-Chat-08 | **中断语义**：abort → `decision = "interrupted"`，`reply` 保留已生成前缀（≤4000 字）；UI 显示「已停止」；不进会话镜像                                                                                      | ◐ 现在整轮删除    | IR-Chat-01，改    |
-| SR-Chat-09 | **上下文估计**：`botContextEstimate({ botId, threadId })` → `{ used, limit, ratio }`；`limit` 取模型目录，未知则不给数字只给「模型上限未知」                                                              | ✗           | IR-Chat-09，改    |
+| SR-Chat-08 | **中断语义**：abort → `decision = "interrupted"`，`reply` 保留已生成前缀（≤4000 字）；UI 显示「已停止」；叫停**立刻**收掉本地临时态（发送键马上回来），再刷回合账 | ✅ 2026-11-24（`cancel()` finally 清 streaming / busy，`load()` 取 interrupted 回合） | IR-Chat-01 |
+| SR-Chat-09 | **上下文估计**：不另造 `botContextEstimate`；用上一轮落库的真实账（`turn.context`：chars / memoryUsedPct / memoryLines / history），窗口未知就不给百分比；**点这一行去轨迹**看上下文构成 | ✅ 见 SR-Chat-18 | IR-Chat-09 |
 | SR-Chat-10 | **输入法状态机**：`compositionstart` → composing；`compositionend` 后吞掉紧随的一次 Enter（`keyCode 229` 兜底）；状态放 `useRef` 不进 React state                                                     | ✗           | IR-Chat-12，改    |
 | SR-Chat-11 | **群聊单条重试**：`botGroupRetry({ messageId })` 只让原 `botId` 重答同一句，追加新消息（`retryOf` 指回原条）；失败条同样可重试                                                                                  | ✗           | US-Chat-13，改    |
 | SR-Chat-12 | **增量广播**：新增 `harness:bot-patch`（只推 bot 相关切片：`botTurns` 尾部、`botGroupMessages` 尾部、`botChats` 摘要）；`harness:state` 全量保留做兜底与首帧                                                   | ✗ 每次全量      | US-Chat-04，改    |
 | SR-Chat-13 | **性能闸门**：`preview-bot.mjs` 断言 200 轮时渲染节点 ≤3000、首屏 `performance.now()` ≤1.5s；基线写进 `COMPARE-chat-window.md` §6                                                                | ◐ 只有功能断言    | US-Chat-04，改    |
 | SR-Chat-14 | **可访问性**：转录 `role=log` + `aria-live=polite`；每轮 `aria-label`；textarea / 附件 / 停止按钮均有 `aria-label`；焦点恢复；正文对比度 ≥4.5:1                                                           | ◐ role=log / article / label / Esc / 焦点已做；对比度待核 | IR-Chat-03/07，改 |
+| SR-Chat-15 | **对话内预览**：`InlinePreviewCard` 走 `docs:read`（带进程内缓存），相对路径按这次 run 的 `cwd` 解析；同一时刻最多一张；不新增标签 | ✅ `src/components/InlinePreview.tsx` | IR-Chat-13 |
+| SR-Chat-16 | **轨迹细节**：工具行 `meta.input` / `meta.output` 分段展示；`TrajectoryView` 字段级复制；运行态带 `tokens / 时长` 与 `TTFT` | ✅ `TaskChat` `ToolRow` / `TrajectoryView` `TrField` | IR-Chat-14 |
+| SR-Chat-17 | **失败卡在对话里**：`error` → `.ds-fail`（原因 / 复制 / 收起 / 重试）；重试优先 `retryTurn(turnId)`，无回合时用同一条原文重发 | ✅ `src/components/Bot.tsx` | IR-Chat-08 |
+| SR-Chat-18 | **上下文账**：读上一轮 `turn.context`（`chars / memory / memoryUsedPct / memoryLines.budget / history`），不编模型上限；≥80% 琥珀文字 | ✅ `src/components/Bot.tsx`（`lastContext`） | IR-Chat-09 |
+| SR-Chat-10（续） | 输入法状态机在任务会话里同样生效（`compositionstart/end` + `isComposing` + `keyCode 229`）；`Esc` 停运行、发送后焦点回输入框 | ✅ 2026-11-24 | IR-Chat-12 |
 
 ---
 
@@ -192,7 +218,7 @@
 |---|---|---|
 | SR-Chat-01 | `preview-bot.mjs`：mock 推两条 `bot-tool`，断言 `.ds-tool-line` 出现 `running` → `ok`，且发生在正式消息之前 | 两态都出现，顺序正确 |
 | SR-Chat-02 | `preview-bot.mjs`：mock 200 轮，断言首屏只渲染 ≤40 轮、DOM 节点 ≤3000；滚到顶触发第二页 | 节点数达标且能翻页 |
-| SR-Chat-08 | 手动：发一句长回复，中途「停止」 | 留下半截 + 「已停止」，不消失、不进会话 |
+| SR-Chat-08 | **中断语义**：abort → `decision = "interrupted"`，`reply` 保留已生成前缀（≤4000 字）；UI 显示「已停止」；叫停**立刻**收掉本地临时态（发送键马上回来），再刷回合账 | ✅ 2026-11-24（`cancel()` finally 清 streaming / busy，`load()` 取 interrupted 回合） | IR-Chat-01 |
 | SR-Chat-10 | 手动：拼音输入「nihao」候选态按 Enter | 只上屏，不发送；再按 Enter 才发 |
 | SR-Chat-12 | `npm test`：一遍广播后 renderer 收到的 patch 体积 < 全量 5% | 体积达标且消息不乱序 |
 

@@ -27,6 +27,7 @@ const suites = [
   "./tools.test.mjs",     // 工具表 / 职责卡 / 工具循环上限与循环保护
   "./workspace.test.mjs", // 工作区只读：路径 jail / 二进制 / 搜索跳过依赖
   "./handoff.test.mjs",   // 工作区交接：长期关系 / 项目绑定 / 上下文 / 交回
+  "./bridge.test.mjs",    // 机器人 ↔ 执行体双向：回话落 noted / 进 system / 过期不喂 / 不污染监视
   "./soul.test.mjs",      // SOUL.md 镜像：职责 / Never / 能力 / 空字段
   "./group.test.mjs",     // 群聊路由：@ 解析 / 投递 / 回复唤醒 / 共享上下文
   "./mail.test.mjs",      // 群内同事消息：待回复过滤 / prompt / 截断

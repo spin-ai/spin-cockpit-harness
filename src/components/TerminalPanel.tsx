@@ -248,10 +248,13 @@ function cleanTitle(raw: string) {
   return String(raw || "").replace(/[\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
-export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previewHost, onCollapse, terminalFontSize = 12, terminalScrollback = 5000, previewHomeUrl, onOpenThread, act, maximized = false, onToggleMaximize, chat, onContinueInChat, onOpenRunFocus }: {
+export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previewHost, onCollapse, terminalFontSize = 12, terminalScrollback = 5000, previewHomeUrl, onOpenThread, act, maximized = false, onToggleMaximize, chat, onContinueInChat, onOpenRunFocus, threadId = null, onFocusThread }: {
   state: State; todo: Todo | null;
   /** 对话器：工作台的 Chat 已收进这里，作为标签栏第一个标签（不落盘，不进 tabs） */
   chat?: ReactNode;
+  /** 当前对话会话 id：终端标签接上任务时，让对话面跟着同一条 run，而不是停在别的任务上 */
+  threadId?: string | null;
+  onFocusThread?: (threadId: string) => void;
   /** 终端标签 → 对话面：点「在对话里继续」时把这次运行交给对话（同一次 run 的另一面） */
   onContinueInChat?: (taskId: string) => void;
   /** 运行记录里点一行：切到对话面看这次运行的产出 */
@@ -456,6 +459,14 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
   const activeFocusedId = activeTab?.root ? (activeTab.focusedPaneId ?? firstPane(activeTab.root).id) : null;
   const activePane = activeTab?.root && activeFocusedId ? findPaneById(activeTab.root, activeFocusedId) : null;
   const activeUrl = activePane ? urlByPane[activePane.id] : undefined;
+  /**
+   * 一次运行的纵横两面：对话是它的 ACP 面，终端是它的 pty 面。
+   * 两面必须指向**同一条 run**：在对话里看着 #12，切到终端不能变成 #13 的 shell。
+   */
+  const pairTaskId = active === CHAT_TAB_ID ? (todo?.id ?? null) : (continueTaskId ?? null);
+  const pairThreadId = pairTaskId ? (state.threads.find((t) => t.todoId === pairTaskId)?.id ?? null) : null;
+  /** 当前任务已打开的终端面（它的 run 绑了 pty）；没有就是没有终端面，不造假标签 */
+  const pairTerminalTab = pairTaskId ? (tabs.find((t) => t.kind === "terminal" && t.taskId === pairTaskId) ?? null) : null;
   /* 能在终端里直接跑的 Agent（dsh 走 ACP，不在这一列） */
   const terminalAgents = state.agents.filter((a) => a.chatRuntime === "terminal" && a.chatRunnable !== false);
 
@@ -555,7 +566,29 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
     setActive(tabId);
     if (paneId) setTabs((list) => list.map((t) => (t.id === tabId ? { ...t, focusedPaneId: paneId } : t)));
     setFocusToken((n) => n + 1);
-  }, []);
+    // 终端面被选中 = 把对话面也拉到同一条 run：两面始终在说同一件事
+    if (tabId !== CHAT_TAB_ID) {
+      const tab = tabs.find((t) => t.id === tabId);
+      const taskId = tab?.taskId
+        || (state.terminals || []).find((t) => t.id === (tab?.root ? firstPane(tab.root).terminalId : null))?.todoId
+        || null;
+      const want = taskId ? state.threads.find((t) => t.todoId === taskId)?.id : null;
+      if (want && want !== threadId) onFocusThread?.(want);
+    }
+  }, [tabs, state.terminals, state.threads, threadId, onFocusThread]);
+
+  /** 切到某个对象的另一面：对话 ↔ 终端，不新建标签、不重排列表 */
+  const switchFace = useCallback((face: "chat" | "terminal") => {
+    if (face === "chat") {
+      // 先钉住同一条 run，再切面：对话面打开时就已经聚焦在这次的产出卡上
+      if (pairTaskId && onContinueInChat) onContinueInChat(pairTaskId);
+      else if (pairThreadId) onFocusThread?.(pairThreadId);
+      setActive(CHAT_TAB_ID);
+      setFocusToken((n) => n + 1);
+      return;
+    }
+    if (pairTerminalTab) activate(pairTerminalTab.id);
+  }, [pairTaskId, pairThreadId, pairTerminalTab, onContinueInChat, onFocusThread, activate]);
 
   /**
    * 任务详情是标签栏里的一个固定标签（和「对话」并列的前两个之一）。
@@ -1147,8 +1180,26 @@ export function TerminalPanel({ state, todo, onPickedContext, previewRoot, previ
         {activeUrl && (
           <button className="link" title={activeUrl} onClick={() => openPreview(activeUrl)}>预览 {portOf(activeUrl)}</button>
         )}
-        {activeTab?.kind === "terminal" && onContinueInChat && continueTaskId && (
-          <button className="link" title="这条终端接着某个任务：在对话里看它的产出并继续" onClick={() => onContinueInChat(continueTaskId)}>在对话里继续</button>
+        {/*
+          一次运行的两面：对话 / 终端。只有一个常驻入口（不是两个链接）：
+          切过去 = 同一条 run 的另一个面，不新建标签、不改顺序。
+        */}
+        {chat && pairTaskId && (pairThreadId || pairTerminalTab) && (
+          <div className="term-face" role="group" aria-label="同一次运行的两面">
+            <button
+              className={`term-face-btn ${active === CHAT_TAB_ID ? "on" : ""}`}
+              title="这次运行的对话面：正文、思考、工具、追问"
+              aria-pressed={active === CHAT_TAB_ID}
+              onClick={() => switchFace("chat")}
+            >对话</button>
+            <button
+              className={`term-face-btn ${activeTab?.kind === "terminal" ? "on" : ""}`}
+              title={pairTerminalTab ? "这次运行的终端面：同一条 pty，关闭标签不会停进程" : "这条 run 没有终端面（ACP 执行）"}
+              aria-pressed={activeTab?.kind === "terminal"}
+              disabled={!pairTerminalTab}
+              onClick={() => switchFace("terminal")}
+            >终端</button>
+          </div>
         )}
         {(runningHidden.length > 0 || endedHidden.length > 0) && (
           <button

@@ -13,6 +13,7 @@ import { TrajectoryView, type TrajectoryRecord } from "./TrajectoryView";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "./Icons";
 import { useT } from "../i18n";
 import { RichText, MissionOverview } from "./TaskChat";
+import { InlinePreviewCard, useInlinePreview, type InlinePreviewTarget } from "./InlinePreview";
 import { relTime } from "../ui";
 import { assignmentsForBot } from "../selectors/assignments";
 import { requestTerminalAdopt, requestTerminalAt } from "../terminal-events";
@@ -53,7 +54,9 @@ type Turn = {
   id: string; botId: string; channel?: string;
   trigger?: { kind?: string; ref?: string }; input?: string;
   injected?: { layer: string; id: string; title: string }[];
-  reply?: string; decision?: "answered" | "replied" | "reported" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted" | "watching" | "quiet";
+  reply?: string; decision?: "answered" | "replied" | "reported" | "noted" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted" | "watching" | "quiet";
+  /** noted 回合：这句话是哪个执行体回的（终端 / 对话里的 agent） */
+  from?: string | null;
   todoId?: string | null;
   runId?: string | null;
   proposal?: { title: string; desc: string; dismissed?: boolean; acceptedAt?: number } | null;
@@ -61,7 +64,7 @@ type Turn = {
   /** 这一轮为什么停（轮数 / 循环 / 预算 / 超时）；空 = 正常说完 */
   stopReason?: string;
   /** 上下文账：注入了多少字符、记忆占多少、是否带摘要 */
-  context?: { chars?: number; memory?: number; memoryRaw?: number; history?: number; digest?: boolean; sections?: Record<string, number> };
+  context?: { chars?: number; memory?: number; memoryRaw?: number; history?: number; digest?: boolean; memoryUsedPct?: number; memoryLines?: { total?: number; loaded?: number; dropped?: number; cap?: number; budget?: number }; sections?: Record<string, number> };
   /** 这一轮用过的工具（只读）：name / args / ms / ok / preview */
   tools?: { name: string; args?: string; argsRaw?: string; result?: string; at?: number; ms?: number; ok?: boolean; rejected?: boolean; preview?: string; family?: ToolFamily; statusKind?: ToolStatus; durationMs?: number; agentId?: string | null }[];
   /** 结构化轨迹：每次模型请求（usage / TTFT 可算）+ 每次工具调用（原始参数 / 完整输出） */
@@ -494,7 +497,14 @@ function traceStepsOf(turn: Turn, state?: State | null): TraceStep[] {
   return steps;
 }
 
-function ToolCard({ step, child = false }: { step: TraceStep; child?: boolean }) {
+type BotPreviewApi = {
+  target: InlinePreviewTarget | null;
+  openFile: (owner: string, path: string, opts?: { root?: string; name?: string; line?: number }) => void;
+  openText: (owner: string, title: string, text: string, mono?: boolean) => void;
+  close: () => void;
+};
+
+function ToolCard({ step, child = false, preview, previewRoot }: { step: TraceStep; child?: boolean; preview?: BotPreviewApi; previewRoot?: string }) {
   const out = step.output || "";
   const family = step.family || familyOf(null, { title: step.title });
   const state = step.status || (step.ok === false ? "failed" : "done");
@@ -548,11 +558,15 @@ function ToolCard({ step, child = false }: { step: TraceStep; child?: boolean })
   }
   if (family === "read") {
     const lineCount = out ? out.split("\n").length : 0;
+    const open = () => preview?.openFile(step.id, object, { root: previewRoot, name: object.split("/").pop() });
     return (
-      <details className={depthClass}>
-        <summary className="ds-tool-main">{head(<FileTextIcon size={14} />, label, fileLike ? <FileChip path={object} /> : (human || ""), lineCount ? <span className="ds-stat">{lineCount} 行</span> : null)}</summary>
-        {body(<pre className="ds-card-pre">{out || "（没有内容）"}</pre>)}
-      </details>
+      <>
+        <details className={depthClass}>
+          <summary className="ds-tool-main">{head(<FileTextIcon size={14} />, label, fileLike ? <FileChip path={object} onOpen={preview ? open : undefined} /> : (human || ""), lineCount ? <span className="ds-stat">{lineCount} 行</span> : null)}</summary>
+          {body(<pre className="ds-card-pre">{out || "（没有内容）"}</pre>)}
+        </details>
+        {preview?.target?.owner === step.id && <InlinePreviewCard target={preview.target} onClose={preview.close} />}
+      </>
     );
   }
   if (family === "search") {
@@ -586,19 +600,19 @@ function ToolCard({ step, child = false }: { step: TraceStep; child?: boolean })
   );
 }
 
-/** 文件 chip：点击在预览面板打开 */
-function FileChip({ path }: { path: string }) {
+/** 文件 chip：默认在对话里展开预览（给了 onOpen 就交给它，卡片里还有「在标签里打开」） */
+function FileChip({ path, onOpen }: { path: string; onOpen?: () => void }) {
   const name = path.split("/").filter(Boolean).pop() || path;
   const short = name.length > 28 ? `${name.slice(0, 26)}…` : name;
   return (
     <span className="ds-file-chip" title={path}>
       <FileTextIcon size={14} />
-      <button className="ds-file-chip-name" onClick={(e) => { e.stopPropagation(); requestFilePreview({ rel: path, name }); }}>{short}</button>
+      <button className="ds-file-chip-name" onClick={(e) => { e.stopPropagation(); if (onOpen) onOpen(); else requestFilePreview({ rel: path, name }); }}>{short}</button>
     </span>
   );
 }
 
-function BotTrace({ turn, state, label }: { turn: Turn; state?: State | null; label: string }) {
+function BotTrace({ turn, state, label, preview, previewRoot }: { turn: Turn; state?: State | null; label: string; preview?: BotPreviewApi; previewRoot?: string }) {
   const [showAll, setShowAll] = useState(false);
   const steps = traceStepsOf(turn, state);
   const run = turn.runId ? state?.runs?.find((r) => r.id === turn.runId) : undefined;
@@ -634,7 +648,7 @@ function BotTrace({ turn, state, label }: { turn: Turn; state?: State | null; la
                   <ChevronDownIcon size={14} className="ds-tool-chev" />
                 </summary>
                 {bundle.items.map((item) => (
-                  <ToolCard step={item} key={item.id} child={false} />
+                  <ToolCard step={item} key={item.id} child={false} preview={preview} previewRoot={previewRoot} />
                 ))}
               </details>
             );
@@ -674,7 +688,7 @@ function BotTrace({ turn, state, label }: { turn: Turn; state?: State | null; la
               </details>
             );
           }
-          return <ToolCard step={step} child={child} key={step.id} />;
+          return <ToolCard step={step} child={child} key={step.id} preview={preview} previewRoot={previewRoot} />;
         })}
       </div>
     </div>
@@ -734,7 +748,15 @@ type Snapshot = {
   itemCounts?: BotItemCounts;
 };
 
-const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "汇报", watching: "监视中", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工", quiet: "没说什么" };
+/** 字符数的人话：12.3k / 8.0k（上下文账只给估算，不编百分比） */
+const fmtChars = (n?: number) => {
+  const v = Number(n) || 0;
+  if (v >= 10000) return `${(v / 1000).toFixed(1)}k`;
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
+  return String(Math.round(v));
+};
+
+const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "汇报", watching: "监视中", noted: "收到回话", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工", quiet: "没说什么" };
 /** 工具名 → 「正在查 / 正在改」；标签来自主进程下发的工具目录，找不到再按家族兜底 */
 const toolLabel = (tool?: string, meta?: { label?: string; risk?: string }) => {
   const name = tool || "";
@@ -743,7 +765,7 @@ const toolLabel = (tool?: string, meta?: { label?: string; risk?: string }) => {
   const verb = family === "read" ? "读" : family === "edit" ? "改" : family === "run" ? "跑" : family === "net" ? "看网页" : family === "search" ? "查" : "用工具";
   return `正在${verb}${name ? ` · ${name}` : ""}`;
 };
-const GLYPH: Record<string, string> = { asked: "?", streaming: "…", interrupted: "⏸", silent: "·", blocked: "✕", escalated: "↗", quiet: "·" };
+const GLYPH: Record<string, string> = { asked: "?", streaming: "…", interrupted: "⏸", silent: "·", blocked: "✕", escalated: "↗", quiet: "·", noted: "↩" };
 const CAP_LABEL: Record<string, string> = { read: "只读", dispatch: "可起任务", work: "能执行" };
 const NOTIFY_ROWS = [
   ["proactive", "主动开口", "它自己觉得值得说时"],
@@ -859,6 +881,13 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     () => assignmentsForBot(state?.todos ?? [], state?.delegations, { executorAgentId: botEntity?.executorAgentId ?? null }),
     [state?.todos, state?.delegations, botEntity?.executorAgentId],
   );
+  /** 对话内预览：工具卡里的文件就地展开，和任务会话同一套（点新的换旧的） */
+  const inlinePreview = useInlinePreview();
+  const previewRootForBot = useMemo(() => {
+    const bound = (state?.projects || []).find((p) => p.id === (botEntity?.projectId ?? ""));
+    return bound?.path || state?.projectPath || "";
+  }, [state?.projects, state?.projectPath, botEntity?.projectId]);
+
   /** 同事消息（peer mail）：对方没能在当轮回的，挂在这个 bot 名下等下一轮 */
   const pendingMails = useMemo(
     () => (state?.botPeerMails ?? []).filter((m) => m.status === "pending" && m.toBotId === (botEntity?.id ?? "")),
@@ -920,6 +949,8 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   const [threadRenaming, setThreadRenaming] = useState<{ id: string; title: string } | null>(null);
   /** 1:1：自己刚发出去的那句先就地显示；回合落库后让位 */
   const [pendingUser, setPendingUser] = useState<{ text: string; at: number } | null>(null);
+  /** 发送失败留在这里：对话里的失败卡用它重试（有回合就按 turnId 重跑，没有就重发原文） */
+  const [failRetry, setFailRetry] = useState<{ text: string; turnId: string | null } | null>(null);
   const groupIdRef = useRef("");
   /** 输入法：composition 期间的回车只上屏（Candidate 里按 Enter 不该发送） */
   const composingRef = useRef(false);
@@ -1456,7 +1487,10 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     requestAnimationFrame(() => {
       const node = el.querySelector(`[data-turn-id="${saved.turnId}"]`) as HTMLElement | null;
       if (!node) return;
-      el.scrollTop = node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop + (saved.offset || 0);
+      // 采样时 offset = 那一轮的视口内 y（相对容器顶）。内容坐标 - offset 才是「它落在原来的位置」；
+      // 早先写成 contentTop + offset，会把落点整体推出去两倍，看起来像「切回来跑到别的地方」。
+      const contentTop = node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+      el.scrollTop = Math.max(0, contentTop - (saved.offset || 0));
     });
   }, [draftKey, snapshot]);
 
@@ -1467,16 +1501,22 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
   // 输入 500ms 后落一次盘（只写 bot_ui 一行，不广播整份 state）
+  const draftKeyRef = useRef(draftKey);
   useEffect(() => {
     if (!draftKey) return;
+    // 切会话 / 切 bot 的那一帧，draft 还是上一条的值：写进新 key 会把那条会话的草稿冲掉
+    if (draftKeyRef.current !== draftKey) {
+      draftKeyRef.current = draftKey;
+      return;
+    }
     const key = draftKey;
     const text = draft;
     const timer = setTimeout(() => { void act("botUiSave", { key, draft: text }); }, 500);
     return () => clearTimeout(timer);
   }, [draft, draftKey, act]);
 
-  const send = async () => {
-    const text = draft.trim();
+  const send = async (override?: string) => {
+    const text = (override ?? draft).trim();
     if (!text) return;
     if (isGroup && group && /@everyone\b/iu.test(text)) {
       const ok = await confirmDialog({
@@ -1537,7 +1577,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
       const message = String((err as Error)?.message || err);
       // 取消不是失败：回合已经落成「被打断」，刷新一下就能看到半截
       if (/abort/i.test(message)) { notify("已取消这次回复"); await load(); }
-      else { setError(message); setDraft(text); }
+      else { setError(message); setDraft(text); setFailRetry({ text, turnId: null }); }
       setPendingUser(null);
     } finally {
       setStreaming(null);
@@ -1832,13 +1872,25 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
         // 还没吐字时 groupStream 是空的，但仍可能有成员在跑：按成员逐个 abort
         const ids = groupStream.length ? groupStream.map((s) => s.botId) : groupMembers.map((m) => m.id);
         await Promise.all(ids.map((id) => act("botCancel", { botId: id })));
-        notify("已取消这次回复");
-        return;
+      } else {
+        await act("botCancel", { botId: bot?.id });
       }
-      await act("botCancel", { botId: bot?.id });
       notify("已取消这次回复");
     }
     catch (err) { notify(String((err as Error)?.message || err)); }
+    finally {
+      // 叫停是本地就能收的事：先把临时态收干净（发送键立即回来），再去刷回合账
+      // （后端把这一轮收成 interrupted 需要一点时间，不能让输入框一直卡在「停止」）
+      setStreaming(null);
+      setGroupStream([]);
+      setGroupPhases({});
+      setPendingUser(null);
+      setPendingOwner(null);
+      setBusy("");
+      revealRef.current.one = { target: "", shown: 0 };
+      revealRef.current.group.clear();
+      void load();
+    }
   };
 
   /** 重试一轮：后端复用原话重跑，前端只负责刷新 */
@@ -1846,8 +1898,16 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     setBusy("retry");
     setError("");
     try { await act("botRetry", { turnId }); await load(); }
-    catch (err) { setError(String((err as Error)?.message || err)); }
+    catch (err) { setError(String((err as Error)?.message || err)); setFailRetry({ text: "", turnId }); }
     finally { setBusy(""); }
+  };
+
+  /** 失败卡的重试：有回合就重跑那一轮；没有回合（发送即失败）就把原文再发一次 */
+  const retryFail = async () => {
+    if (busy) return;
+    setError("");
+    if (failRetry?.turnId) { await retryTurn(failRetry.turnId); return; }
+    if (failRetry?.text) { await send(failRetry.text); return; }
   };
 
   // Esc = 停止当前生成（聊天面里最常按的那个键）
@@ -2536,7 +2596,6 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     <div className="page bot-page">
       <UndoBar action={undo} onDone={() => setUndo(null)} />
 
-      {error && <div className="bot-banner fail"><i /><span>{error}</span></div>}
 
       <div className={`bot-grid${chatView === "trajectory" && !isGroup && openThreadId ? " trajectory-open" : ""}`}>
         <aside className="bot-side">
@@ -3117,6 +3176,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                             <span>{t.reason || "—"}</span>
                             {t.decision === "interrupted" && t.reply && <span className="ds-quiet-partial">「{t.reply}」</span>}
                             {t.decision === "quiet" && t.reply && <span className="ds-quiet-partial">「{t.reply}」</span>}
+                            {t.decision === "noted" && t.reply && <span className="ds-quiet-partial">{t.from ? `${t.from}：` : ""}「{t.reply}」</span>}
                             <details className="bot-why">
                               <summary>为什么</summary>
                               <div className="bot-why-body">
@@ -3143,7 +3203,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
               const turnHeadText = headLabel;
               const bubble = (
                 <>
-                  <BotTrace turn={turn} state={state} label={turnHeadText} />
+                  <BotTrace turn={turn} state={state} label={turnHeadText} preview={inlinePreview} previewRoot={previewRootForBot} />
                   <div className="ds-assistant-body"><RichText text={turn.reply || ""} /></div>
                   {turn.decision === "asked" && (
                     <div className="ds-system-note">你回一句就会成为它的职责（人格卡 → 职责），以后随时能改。</div>
@@ -3281,6 +3341,36 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 </div>
               </div>
             )}
+            {/* 失败卡就在这次对话的位置：原因 + 重试（重试复用同一句，草稿不动） */}
+            {error && (
+              <div className="ds-fail" role="alert">
+                <div className="ds-fail-head">
+                  <span className="ds-fail-tag">没回</span>
+                  <span className="ds-fail-msg" title={error}>{error}</span>
+                  <span className="ds-spacer" />
+                  <button
+                    className="icon-btn"
+                    title="复制原因"
+                    aria-label="复制原因"
+                    onClick={() => void window.harness.clipboardWrite(error)}
+                  ><CopyIcon size={14} /></button>
+                  <button
+                    className="icon-btn"
+                    title="收起这条报错"
+                    aria-label="收起这条报错"
+                    onClick={() => { setError(""); setFailRetry(null); }}
+                  ><XIcon size={14} /></button>
+                </div>
+                <div className="ds-fail-actions">
+                  {!isGroup && (
+                    <button className="btn tiny primary" disabled={Boolean(busy)} onClick={() => void retryFail()} title="复用同一句再发一次">
+                      重试
+                    </button>
+                  )}
+                  <span className="ds-fail-hint">{isGroup ? "群里这轮没回成；换个说法或稍后再试" : "草稿已保留；重试不会重复你发过的内容"}</span>
+                </div>
+              </div>
+            )}
           </div>
 
           {(() => {
@@ -3365,6 +3455,26 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 </span>
               ))}
             </div>
+          )}
+          {/* 上下文账：上一轮塞进 system 的量 + 记忆用了预算的几成；到 80% 用琥珀文字提醒（不做进度条）。
+              不给模型窗口的假百分比：窗口未知就不编；点它去轨迹看这一轮的上下文构成。 */}
+          {!isGroup && lastContext && (
+            <button
+              className={`ds-context${(lastContext.memoryUsedPct || 0) >= 80 ? " warn" : ""}`}
+              title={[
+                "上一次开口时塞进 system 的量（估算）",
+                lastContext.memoryLines?.budget ? `记忆预算 ${fmtChars(lastContext.memory)}/${fmtChars(lastContext.memoryLines.budget)} 字符` : "",
+                lastContext.memoryLines ? `记忆 ${lastContext.memoryLines.loaded || 0}/${lastContext.memoryLines.total || 0} 行` : "",
+                lastContext.digest ? "更早的对话已压缩成摘要（只作背景）" : "",
+                "点开轨迹看这一轮的上下文构成",
+              ].filter(Boolean).join(" · ")}
+              onClick={() => setChatView("trajectory")}
+            >
+              <span>上下文 {fmtChars(lastContext.chars)} 字符</span>
+              <span>记忆 {Math.round(lastContext.memoryUsedPct || 0)}%{lastContext.memoryLines?.budget ? ` · ${fmtChars(lastContext.memory)}/${fmtChars(lastContext.memoryLines.budget)}` : ""}</span>
+              {typeof lastContext.history === "number" && <span>历史 {lastContext.history} 条</span>}
+              {lastContext.digest && <span>已压缩</span>}
+            </button>
           )}
           <div className="ds-composer">
             <textarea

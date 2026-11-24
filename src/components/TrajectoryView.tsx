@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeftIcon } from "./Icons";
+import { ChevronLeftIcon, CopyCheckIcon, CopyIcon } from "./Icons";
 
 /** 时间戳 → hh:mm（轨迹账本与聊天时间同源格式） */
 const hm = (ts: number) => {
@@ -20,6 +20,27 @@ export interface TrajectoryRecord {
   result?: string;
   text?: string;
   usage?: string;
+}
+
+/** 轨迹里的一个字段：可整段复制（排查时贴出去的就是这一段原文，不是截断后的） */
+function TrField({ label, value, recordId }: { label: string; value: string; recordId: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="ds-tr-field" key={recordId}>
+      <span>{label}</span>
+      <button
+        className="icon-btn"
+        title={copied ? "已复制" : `复制${label}`}
+        aria-label={copied ? "已复制" : `复制${label}`}
+        onClick={() => {
+          void window.harness.clipboardWrite(value);
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1400);
+        }}
+      >{copied ? <CopyCheckIcon size={14} /> : <CopyIcon size={14} />}</button>
+      <pre>{value}</pre>
+    </div>
+  );
 }
 
 export function TrajectoryView({ records, onJump, focusTurnId, unit = "轮", onBack }: {
@@ -120,10 +141,21 @@ export function TrajectoryView({ records, onJump, focusTurnId, unit = "轮", onB
                 </summary>
                 <div className="ds-tr-detail">
                   {r.text && <pre>{r.text}</pre>}
-                  {r.args && <div><span>原始参数</span><pre>{r.args}</pre></div>}
-                  {r.result && <div><span>输出</span><pre>{r.result}</pre></div>}
-                  {r.usage && <div><span>用量</span><pre>{r.usage}</pre></div>}
-                  <button className="ds-action-text" onClick={() => onJump(r.turnId)}>跳到这一轮</button>
+                  {[
+                    { key: "args", label: "原始参数", value: r.args },
+                    { key: "result", label: "输出", value: r.result },
+                    { key: "usage", label: "用量", value: r.usage },
+                  ].filter((f) => f.value).map((f) => <TrField key={f.key} label={f.label} value={String(f.value)} recordId={r.id} />)}
+                  <div className="ds-tr-actions">
+                    <button className="ds-action-text" onClick={() => onJump(r.turnId)}>跳到这一轮</button>
+                    {(r.kind === "tool" || r.kind === "terminal") && r.result && (
+                      <button
+                        className="ds-action-text"
+                        title="把这一步的输出整段复制出来（贴到 issue / 对话里）"
+                        onClick={() => void window.harness.clipboardWrite(`${r.title}\n\n${r.result}`)}
+                      >复制整步</button>
+                    )}
+                  </div>
                 </div>
               </details>
             </Fragment>
