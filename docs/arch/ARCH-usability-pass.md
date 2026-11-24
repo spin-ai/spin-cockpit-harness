@@ -9,7 +9,7 @@
 
 - **Chat 草稿发送 = 派活**：UI 的 `willRun/baseMode` 与后端行为对齐；草稿发送会创建 TODO 并起 run，按钮显示「派活」，placeholder 明确说明。不再出现「显示发送、实际派活」的歧义。
 - **统计范围显式化**：Stats 改为使用全量 state，顶部增加「全部项目 / 单项目」范围选择；「按项目」分组现在能看到多个项目；范围切换即时重算。
-- **审批选项完整**：`ApprovalModal` 按 ACP `options` 渲染所有选项（allow once / always / reject…），提交 `optionId`；后端 `AcpClient.respondPermission` 支持指定 option；显示还有 N 个待审批；增加 `role=dialog`、焦点陷阱、首项自动聚焦。
+- **审批选项完整**：`ApprovalDock` 按 ACP `options` 渲染所有选项（allow once / always / reject…），提交 `optionId`；后端 `AcpClient.respondPermission` 支持指定 option；右下角一叠卡（不再用整屏模态）、每张可单独批、显示还有 N 个待审批；键盘不抢焦点（2026-11-24 从 `ApprovalModal` 收敛过来）。
 - **命令面板上下文安全**：跨页面命令不再静默空操作。执行终端/任务命令时先切回 workspace 并等面板挂载再派发；终端收起时自动展开；命令列表增加分组，并支持搜索任务、会话和项目。
 - **TODO 键盘可访问**：任务行 `role=button` + `tabIndex=0`，Enter/Space 选中；`:focus/:focus-within` 时显示快捷操作；搜索扩展到描述和标签。
 - **入口补齐**：Rail 增加「项目」「收件箱」，收件箱带未读徽标；`Inbox` 组件真正挂载。

@@ -67,7 +67,7 @@ TaskChat.send()
 | `agent_thought_chunk` | `agent/thought` | 样式弱化 |
 | `tool_call` / `tool_call_update` | `tool/tool`，内容 = `title · status` | 无参数/输出/diff；从 `rawInput.path` 推断 artifact |
 | `plan` | 只写 event | 不进 Chat |
-| `session/request_permission` | `waiting_input` + ApprovalModal + system 消息 | 唯一进入 `waiting_input` 的路径 |
+| `session/request_permission` | `waiting_input` + 审批队列（`ApprovalDock`，任务级档位可关掉逐条问）+ system 消息 | 唯一进入 `waiting_input` 的路径 |
 
 结束/失败/审批各写 `system` 消息与 inbox（`main.mjs:135,158,170`）。
 
@@ -122,7 +122,7 @@ TaskChat.send()
 | D1 | 每条 TODO 一个会话流（消息/工具/命令/文件改动/错误），可回放历史 run | 消息是扁平流，不按 run 分组、不可回放；tool 只有 `title · status`，无参数/命令输出/diff/文件改动；无 Markdown/代码块/复制 |
 | D2 | 最近 step 边界投递、投递回执、不支持时降级「已排队至下一轮」、默认目标为最新 active run、多条保序 | 对 in-flight prompt 再发 `session/prompt`，是否被接受未检测；失败只写 event 而 UI 仍显示「已注入」；无降级态、无回执、无多目标选择；queued 时消息不进 run |
 | D3 | 暂停 / 继续 / 中止 / 重试（重试新 run） | 只有停止 / 重试；**无 pause / resume** |
-| D4 | Agent 提问 → `等待输入` + 置顶提醒 → 回答后继续同一 run | 仅 ACP permission 会置 `waiting_input`（走 ApprovalModal）；普通提问不识别；Chat 无置顶/高亮；无“回答恢复同 run”路径 |
+| D4 | Agent 提问 → `等待输入` + 置顶提醒 → 回答后继续同一 run | 仅 ACP permission 会置 `waiting_input`（走审批队列）；普通提问不识别；Chat 无置顶/高亮；无“回答恢复同 run”路径 |
 | D5 | 全局对话：任选 Agent 一对一、不绑定 TODO、可转成 TODO 并保留上下文 | 完全未实现；未选任务时是分派表单，每次发送必建 TODO |
 
 关联条款同样缺失：

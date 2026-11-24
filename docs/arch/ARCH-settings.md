@@ -100,7 +100,8 @@
 | 外观 | `uiScale` | `0`（自动） | 主进程 `setZoomFactor`；`0` = 按窗口所在屏幕的**最长逻辑边**取 90 / 100 / 110 / 120 / 130%，拖到别的屏、改分辨率会重算；80–150 = 手动固定；⌘+ / ⌘- 手动步进，⌘0 回自动 |
 | 外观 | `chatFontSize` | `13` | CSS 变量 `--chat-font-size`（消息体 + 输入框） |
 | 执行 | `maxConcurrentRuns` | `0`（不限） | `tick()` 全局并发闸门，排队原因「等待全局并发」 |
-| 执行 | `approvalPolicy` | `ask` | ACP `session/request_permission`：ask 弹窗 / allow / deny |
+| 执行 | `approvalPolicy` | `ask` | ACP `session/request_permission`：ask 弹窗 / allow / deny（allow 不再逐条写 system 行，run 结束汇总一次） |
+| 执行 | `agent.approval`（Agent 角色卡） | 空 = 跟随全局 | 这个执行体收到权限请求时怎么办；优先于 `approvalPolicy`。注意上游：任务设了「本任务放行」时 dsh 根本不发请求 |
 | 执行 | `dshEnv` | 空 | `parseEnvText()` 解析 `KEY=VALUE` 行，启动本地 dsh 时注入（远端不生效）；用于 `DEEPSEEK_API_KEY` 等 |
 | 执行 | `dshBinary` / `dshHome` / `model` / `effort` | 空 = 环境默认 | 新建 `AcpClient` 与 `session/set_config_option`；Chat 的会话级模型覆盖此默认值 |
 | 终端 | `shellPath` | 空 = `$SHELL` | `terminal:create`（失败回落默认 shell 并写事件） |

@@ -5,17 +5,60 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  # 每晚跑一次三平台打包：mac 的 hosted runner 抢不到机器时不至于把某次提交判红，
+  # 又能保证「mac 还能打出来」这件事每天都被验证一次（03:00 北京时间）。
+  schedule:
+    - cron: "0 19 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # 事件名进组名：定时构建不被随后的 push 取消
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  # 同一分支连着推几次时，旧的那次没必要再跑完（tag 构建除外：产物要留）。
+  # 不取消的话，几次推送会同时抢 macOS hosted runner，后到的常常等不到机器。
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
+  # 文档 / 文章 / 站点改动不跑打包：三平台构建一次 ~5 分钟，只为改一段说明不值当。
+  # 判断放在单独 job 里（package 要 needs 它），tag 与手动触发一律跑。
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "push" ] || [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          base="${{ github.event.before }}"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # 全是 docs/、site/ 或 *.md → 不用打包。
+          # 不用 `| grep -q`：早退会让 git 吃 SIGPIPE，配 pipefail 会把「有代码」误判成没代码。
+          mapfile -t files < <(git diff --name-only "$base" "${{ github.sha }}")
+          code=false
+          # bash 3.2（macOS 本地跑同一段）对空数组加 set -u 会报错，用兼容写法
+          for f in ${files[@]+"${files[@]}"}; do
+            case "$f" in
+              docs/*|site/*|*.md) ;;
+              *) code=true; break ;;
+            esac
+          done
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
   package:
+    needs: changes
     name: package · ${{ matrix.name }}
     strategy:
       fail-fast: false
@@ -28,8 +71,13 @@ jobs:
           - os: windows-2022
             name: windows-x64
     runs-on: ${{ matrix.os }}
+    # macOS arm64 的 hosted runner 经常「拿不到机器」（注解：The job was not acquired by
+    # Runner of type hosted even after multiple attempts）——那一步连 job 都没起来，
+    # GitHub 记成 cancelled，continue-on-error 兜不住，只会把某次提交判红。
+    # 所以 mac 只在 tag / 每晚定时 / 手动触发时排：能验证，但不挂在某一个人的提交上。
+    if: ${{ needs.changes.outputs.code == 'true' && (matrix.name != 'macos-arm64' || github.ref_type == 'tag' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     # Linux 不是硬要求：装不出来（libarchive / AppImage / dsh 运行时缺件）就只记一笔，
-    # 不拖累整个 workflow，也不挡 tag 发布——mac / win 的产物照常上传。
+    # 不拖累整个 workflow，也不挡 tag 发布——win / mac 的产物照常上传。
     continue-on-error: ${{ matrix.name == 'linux-x64' }}
     steps:
       - uses: actions/checkout@v7

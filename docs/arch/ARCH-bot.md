@@ -55,7 +55,7 @@
 | **运行时脱敏**：回合落库前把 `sk-…` / `ghp_…` / `Bearer …` / JWT / 32+ hex / `key=value` 换成 `[redacted]` | `electron/redact.mjs` |
 | **记忆容量外显**：注入到 80% 时上下文尾部追加「已用 X/Y 字符 · 条目 N · 观察 M」，让它在保存被拒前自己整理 | `memory.usage()` / `recall()` |
 | **建 / 改 / 删的入口**：新建 = 占位名 + 聚焦改名（不弹窗）；`⋯` 在**页头**（新建 / 重命名 / 迁移历史 / 删除）；日程用行内表单。原因见 `AGENTS.md` 第 12 条：Electron 不实现 `window.prompt`，之前这些按钮点了没反应 | `Bot.tsx` / `verify:design` |
-| **提问卡片（ask_user）**：模型主动开口时输出 `ASK: 一句话问题` → 落一张**可作答**卡片（`bot_turns.ask = { text, status, answer }`），挂在输入框上方；人不回也不挡聊天，回一句自动结掉；「先不管」→ `dismissed`；7 天懒过期 → `expired` | `askOpen()` / `openAsks()` / `settleAsks()` / Bot 页卡片 |
+| **提问卡片（ask_user）**：模型主动开口时输出 `ASK: 一句话问题` → 落一张**可作答**卡片（`bot_turns.ask = { text, status, answer }`），挂在输入框上方；人不回也不挡聊天，回一句自动结掉；「先不管」→ `dismissed`；7 天懒过期 → `expired`。**群里也适用**：群消息没有 turn 表，卡落 `bot_group_messages.meta.ask`，卡上标出是谁问的；人一说话把这个话题里开着的卡一起结掉。 | `askOpen()` / `openAsks()` / `settleAsks()` / `openGroupAsks()` / `settleGroupAsks()` / Bot 页卡片 |
 | **日程落点**：`mode: "alongside"`（到点就跑）/ `"in-chat"`（等这个 bot 空下来，最多等 5 分钟就并进去）；有日程到点时 `gatesFor` 跳过「最小间隔」，否则排好的早报会被刚说的闲话挡掉 | `routine.mjs` / `tickBot()` |
 | **持续 chat（bot thread）**：默认会话一条 `threads.kind="bot"`，说出口的部分镜像进 `messages`，沉默/被拦只留 `bot_turns`；`reply()` 的历史改读 thread；老回合用 `botThreadMigrate({dryRun})` 幂等搬家 | `electron/bot/index.mjs` / `ARCH-chat-thread` |
 | **窗口三栏：机器人 / 聊天对话框 / 消息·设置**：左栏是 bot 与群聊（联系人，含未读点 / 暂停 / 静音）；中栏是聊天对话框（DeepSeek 式 transcript + composer）；右栏是 `消息 | 调度 | 设置` 三个 tab —— 消息是当前联系人的会话列表（搜索、＋新会话、重命名 / 删除、`N 条执行`）；调度是跨项目的 Mission（计划待审批 / 子任务进度，复用任务详情里的 `MissionOverview`）与未绑定任务的会话（点一条落到工作台的对话标签）；设置是人格卡 / 记忆 / 任务 / 自动化 / 工具与通道 / 出场规则。页面不再有 `PageHeader`：暂停 / 静音 / 跑一次决策 / 重命名 / 删除都收进右栏消息头的 `⋯`，旁边只保留「决策」 | `Bot.tsx` / `.bot-grid` / `.bot-rail-tabs` |
@@ -99,7 +99,7 @@
 | **项目/主机绑定（2026-11-22）**：`bots.project_id` / `bots.host_id`；能力 tab 选默认项目 / 主机，项目页与主机页的行菜单也能「交给机器人」。`workspace_*` / `git_*` / `task_create` 用绑定项目，executor 只能选绑主机上的 Agent | `electron/db.mjs` / `botReadTool()` / `Views.tsx` / `Bot.tsx` |
 | **MEMORY.md（2026-11-22）**：每个 bot 生成 `userData/bots/<id>/MEMORY.md`（共享 + 自己的 L4/L3/L2 + 观察）；**只读镜像，DB 仍是事实源**，手改不回写；记忆写入/删除/归档后自动刷新 | `memory.botMarkdown()` / `botMemoryFile()` / Bot 页「MEMORY.md」 |
 | **计划与可续（2026-11-22）**：`plan_set` / `plan_update` 把目标与步骤写进 `bots.plan`；重开应用还在，下一轮进 system prompt；这是计划级续跑，不是 turn checkpoint | `electron/bot/tools.mjs` / `compileContext()` / 会话列「计划」 |
-| **无人值守（2026-11-22）**：`policy.standing` 默认关；work 档 + 绑定项目 + 每小时上限才允许 `run_start` 启动**已建好**的任务；越界/超限/在跑都拒绝 | `botReadTool()` 的 `run_start` / Bot 页「规则」 |
+| **无人值守（2026-11-22，2026-11-24 补前提）**：`policy.standing` 默认关；work 档 + 绑定项目 + 每小时上限才允许 `run_start` 启动**已建好**的任务；越界/超限/在跑都拒绝。**任务必须先设成「审批 · 本任务放行」**——没人点审批，逐条问的任务起来只会卡在 `waiting_input` | `botReadTool()` 的 `run_start` / Bot 页「规则」 |
 | **Webhook 入站（2026-11-22）**：本机 `127.0.0.1` 随机端口监听；每个 bot 一个 token，`POST /hook/<token>` 收 `{title,text,url,id}`；写 `bot_events` 去重，bot 说过一次即 seen | `electron/bot/webhook.mjs` / `startWebhookServer()` / Bot 页「Webhook 入站」 |
 | **GitHub 事件（2026-11-22）**：`policy.github.enabled` 打开后每 5 分钟用本机 `gh` 只读拉「等你 review 的 PR」与「失败 CI」；去重键 + seen + 12h TTL；没装/没登录静默跳过 | `electron/bot/github.mjs` / `pollGithubEvents()` / `bot_events` |
 | **组织（2026-11-22）**：`bots.team` 自由文本；身份 tab 可改，卡片显示团队标签，群聊名册带团队；Bots 可按团队排序。不做权限体系 | `electron/db.mjs` / `Bot.tsx` / `Bots.tsx` |
@@ -280,6 +280,14 @@ tick（每 60s）
   │    └─ 出站：sensitiveBlocklist 命中即 blocked → 发 local/feishu → 记 BotTurn
   └─ 不阻塞主线程：emit 事件，UI 订阅
 ```
+
+### 4.1 思考流与思考档（2026-11-24）
+
+推理模型先吐 `reasoning_content`，再吐正文。只转发正文的话，界面上就是「正在想…」卡十几秒，然后整段冒出来——看起来像「先想完才回答」。
+
+- `ark.chatStream` 解析 `delta.reasoning_content`（兼容 `reasoning`）→ `onReasoning`；`reply()` 一路透传到 IPC `harness:bot-thought`（和正文增量同帧率合并），渲染层在正文出现前直接摊开，正文开始后收成「思考 · N 字」可展开。
+- 思考同时落进 `turn.trace` 的 `kind: "thought"`（截 1500 字）：轨迹里能回看，但不把每轮的快照撑大。
+- 「思考档」`effort` 映射到各网关字段（`electron/bot/reasoning.mjs`）：Ark/豆包 `thinking.type`、OpenAI 推理模型 `reasoning_effort`、DeepSeek 等不给。**不认字段的网关 400 后去掉重试一次**，不让「快速档」变成失败。`quick` 同时把工具轮次压到 2 轮（少绕两圈）。
 
 **沉默优先**：`decision: "silent"` 是正常结果，不是异常；连续沉默不报警，但连续 24h 一条没发要能在 UI 里看到（可能是配置错了）。
 

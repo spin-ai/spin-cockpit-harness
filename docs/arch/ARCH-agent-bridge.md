@@ -71,7 +71,7 @@ pty agent ── harness whoami / note / report ──> 主进程 token 服务
 | `harness whoami` | 当前 run / 任务 / agent / cwd | 只读 | — |
 | `harness note --text "…"` | 中途进度、疑问、需要人看的信息 | 当前任务会话里一条 `〔agent〕…` system 行 | 不能改 run 状态、不能改任务、不能给别的 run 写 |
 | `harness report --text "…"` | 这次运行的结论 | `run.result`（`resultSource = agent_cli`）+ 一条「agent 汇报」；pty 退出时的尾部**不会覆盖**它 | 不能把 run 标完成 / 失败；结算仍由 pty 退出 / ACP 结束做 |
-| `harness ask --text "…" [--timeout 300]` | 需要人确认时发起审批 | 桌面 `ApprovalModal`（允许 / 拒绝）；CLI 轮询到决定后返回 | 不能自批；超时（30–900 秒）自动收掉并告知；run 回 `running` |
+| `harness ask --text "…" [--timeout 300]` | 需要人确认时发起审批 | 桌面右下角审批卡（`ApprovalDock`，允许 / 拒绝）；CLI 轮询到决定后返回 | 不能自批；超时（30–900 秒）自动收掉并告知；run 回 `running` |
 
 `--text-file <path>` 用于多行文本；超过 4000 字截断，末尾标省略号。没有 token 时 CLI 明确报「这条终端不在受管 run 里」，不假装成功。
 

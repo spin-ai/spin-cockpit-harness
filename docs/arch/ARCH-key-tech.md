@@ -93,7 +93,7 @@
 |       |                                                                                                                                                              |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 目标    | Chat 派活 → 多个 Agent 在真实项目/终端执行 → 人在主界面看状态、必要时干预 → 结果可汇总                                                                                                       |
-| 现在的实现 | ACP over stdio（`electron/acp.mjs` + 内置 `dsh`）、`node-pty` 终端、Mission/子任务（`mission_plans` / `delegations`）、审批（`ApprovalModal`）、`todo claim/status` 上报、MCP 工具注入 |
+| 现在的实现 | ACP over stdio（`electron/acp.mjs` + 内置 `dsh`）、`node-pty` 终端、Mission/子任务（`mission_plans` / `delegations`）、审批（`ApprovalDock` 右下角队列 + 任务级审批档）、`todo claim/status` 上报、MCP 工具注入 |
 | 真难点   | 不是「起多个 Agent」，而是**状态能不能一眼看懂**、**干预后不产生半成品**、并发写同一仓库的回滚                                                                                                       |
 | 关键设计  | 子任务靠 `artifacts` 引用传递（不塞 prompt）；审批落库（谁 / 何时 / 哪个入口）；终端**主动上报**，不解析屏幕文本                                                                                      |
 | 判据    | 3 个 Agent 并行同一项目：不翻终端就能说出「谁卡住」；中断后仓库能回到一致状态                                                                                                                  |

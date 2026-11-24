@@ -4,6 +4,70 @@
 
 ## [Unreleased]
 
+### Added（群聊的会话内查找 + 回合轨）
+- **群聊 `⌘F`**：以前 `⌘F` 和查找面板都写死 `!isGroup`。现在群聊也能查（按群消息匹配，成员名做标签、系统行也搜得到），点击命中跳过去闪一下
+- **群聊回合轨**：右侧细线刻度，一轮 = **你发的那一句**（不按每条消息画）；悬浮看「你 · 第 N 轮 · 时间 + 原话」，点击跳回。1:1 与群聊共用 `data-turn-id` 定位，阅读位置 / 查找跳转 / 当前轮高亮同一套
+- 群消息行补 `data-turn-id` 与 `chat-flash`（原来只有 1:1 的行有，跳转会落空）
+- 测试：`preview:bot` 新增 4 条断言（轨道刻度、`data-turn-id`、群聊 ⌘F 命中、点击命中闪一下）；顺手给 preview 的 mock 补了 `onBotThought` 订阅（并行改动新增的订阅没在 mock 里，缺了会在卸载时炸）
+- 文档：`ARCH-chat-ui` §3.5 补群聊口径与回合轨，`REQ-bot-group` 加 US-G21 / IR-G09
+
+### Added（授权前告知：执行体审批档 + 常驻可见的风险状态）
+- **执行体自己的审批档**：设置 → 执行 → Agent 角色 新增「跟随全局 / 每步询问 / 自动批准 / 自动拒绝」（`agent.approval`，空 = 跟随 `approvalPolicy`）。这个字段一直存在但没有任何 UI，只能在建 agent 时写死
+- **任务放行是常驻状态**：composer 里的审批档选了「本任务放行」后选择器转**琥珀文字**（不加底色、不加徽标），一眼能看出这个任务现在是敞开的
+- **授权前告知**：审批档的 title 写明「执行体 + 它自己的审批设置 + 放行档下 dsh 不再发请求（sandbox 一起放开）」；Bot「能力」里的执行体说明补上「会不会逐条问由任务上的审批档决定」
+- 测试：`preview:bot` 新增 3 条断言（setTodoPermission 后选择器变 warn；title 带执行体与审批设置；设置里的执行体审批档可改）+ `task-approval.png` / `settings-agents.png`
+- 测试基建（顺手修的偶发失败）：①「机器人设置」菜单打开改轮询 ②所有跨面查询只认**可见**元素（工作台的隐藏 Chat 也挂着 `.ds-streaming` / `.ds-assistant`） ③群聊断言前确认还停在群面 ④流式块用 MutationObserver 记录「出现过」再断言，不再跨 CDP 赌 600ms 窗口 ⑤1:1 的 mock 发送补 500ms「在回」窗口，跟随用例才有内容可跟 ⑥「正在想」行在同一窗口内取样。**连跑 5 次全绿**
+- 文档：`ARCH-settings` 设置项表补 `agent.approval`，`ARCH-chat-ui` §3.10 补「授权前告知 / 执行体级 override」
+
+### Changed（composer 聚焦可见 / 审批状态不再混 / 自动批准不再刷屏）
+- **composer 聚焦给 1px hairline**：原来 `:focus-within` 和默认是同一条 `box-shadow`，等于没有反馈。现在 `outline:1px solid var(--border-strong)`（offset -1，随圆角），不发蓝、不做整块 ring
+- **`waiting_input` 分出「等你审批」**：挂审批时 run 带 `waitingFor: "approval"`，进展行写「等你审批」；agent 问了问题仍是「等你回答」。调度状态不变（任务列表口径不动），只是文案不再互相盖住
+- **`approvalPolicy = allow` 不再逐条写 system 消息**：逐条只记 `run.approval` 事件 + 计数，run 结束写一条「自动批准 N 次（明细在轨迹里）」；`deny` 仍立刻留痕（它会改变这次 run 能做什么）
+- 测试：`preview:bot` 新增 2 条断言（聚焦 1px / 失焦收起；审批卡住时状态写「等你审批」）
+- 文档：`ARCH-chat-ui` §3.8 补「聚焦可见」，§3.10 补「状态文案 / 自动策略」
+
+### Fixed（群成员的提问卡 + 审批档没落库）
+- **群里的提问卡**：成员回出 `ASK:` / 提问工具时，1:1 落在 `bot_turns.ask`，群消息没有 turn 表——之前直接丢掉了。现在落 `bot_group_messages.meta.ask`，`snapshot.groupAsks` 下发，卡挂在 composer 上方并写清是谁问的；「先不管」只划掉这一条（`botGroupAskDismiss`），人一说话把这个话题里开着的卡一起结掉；7 天懒过期不列（`openGroupAsks` / `settleGroupAsks`）
+- **`todos.permission` 之前根本不会落库**：`todos` 表没有这一列，整库写入也没带它——审批档一重启就丢。补列 + 迁移 `ALTER` + 写入/读回，`tests/db.test.mjs` 加往返断言；顺带去掉只存在内存里的 `run.permission`（改用 system 行 + `run.permission` 事件做审计）
+- 顺手：`preview:bot` 的「会话内查找：命中」改成轮询（固定 sleep 会偶发 0 命中）
+- 测试：`preview:bot` 新增群提问卡 2 条断言；`tests/bot/group.test.mjs` 新增 `openGroupAsks` / `settleGroupAsks`（新的在前、划掉/超期不列、只结当前话题）
+- 文档：`ARCH-bot` 提问卡片那段补群聊落点，`REQ-bot-group` 加 US-G20 / IR-G08
+
+### Added（审批：没人处理就按拒绝收尾，无人值守不能起「逐条问」的任务）
+- **超时**：ACP 权限请求原来没有时限（`harness ask` 有，ACP 没有），没人点就一直 `waiting_input`。现在有人看着 **10 分钟**、无人值守 **3 分钟** 没人处理 → 按拒绝回给 agent、run 回 `running`、会话里写「审批超时（N 分钟…）：按拒绝处理 · 哪一步」；`COCKPIT_APPROVAL_TIMEOUT_MS` 可覆盖，`0` = 不限时
+- **无人值守的前提**：`run_start` 要求任务已经是 `审批 · 本任务放行`，否则直接拒绝并说明原因（没人点审批，逐条问的任务起来只会卡住）；Bot 页「规则」里补了这句提示
+- **统一删除入口**：审批一律走 `forgetApproval` / `forgetApprovals`，顺带清定时器（人工批、IM 批、run 结束、删任务都不会留悬空 timer）
+- 纯函数落在 `electron/bot/approval.mjs`；`tests/bot/approval.test.mjs` 覆盖默认值 / 覆盖 / 无人值守判定 / 超时说明
+- 文档：`ARCH-chat-ui` §3.10 补超时与前提，`ARCH-bot` 的无人值守那段补「先设放行档」，`REQ-bot-chat` US-Chat-16 补判据
+
+### Changed（审批：不再整屏挡人，粒度从「一次调用」提到「一个任务」）
+- **右下角审批队列**：`ApprovalDock` 取代整屏模态（`ApprovalModal` 删除）。一叠卡、每张单独批、没有任何 `modal-mask`；一条按 ACP `options` 回传 `optionId`，带「去会话」看上下文；N 条时顶部写「还有 N 个等你批」
+- **任务审批档**：`todo.permission` = `ask`（缺省）/ `full-access`；composer 里的「审批 · 逐条问 / 审批 · 本任务放行」，放宽前要人确认。`startRun` 按任务注入 `DSH_PERMISSION_MODE`（`workspace-write` → approval ask；`danger-full-access` → approval never），本地走 env、远端拼 ssh 前缀，`run.permission` + 一条 system 行留痕；已跑起来的进程不受影响
+- **为什么走 dsh 的开关而不是 harness 代答**：dsh 的 acp profile 由这个环境变量推导 approval policy（`--dump-config` 可核对），ACP 面没有权限档（`session/new` 只有 model / reasoning_effort），所以「不再逐条问」是 agent 侧真实语义，sandbox 一起变；bot 的工具表里不暴露这个字段（人才能改）
+- 文档：`ARCH-chat-ui` §3.10、`REQ-bot-chat` US-Chat-16；`ARCH-usability-pass` / `ARCH-agent-bridge` / `ARCH-key-tech` / `ARCH-super-agent` / `GAP-chat` 里的 `ApprovalModal` 统一改名
+- 测试：`preview:bot` 新增 5 条断言（无 mask、按 optionId 批、批完消失、审批档选择器、放宽需确认）+ `approval-dock.png`
+
+### Fixed（群聊 @ 选择器：从「一开就卡住」到能用键盘选）
+- **不再挤转录**：`.im-mention-pop` 浮在 composer 上方（对齐 composer 宽度），`max-height:min(360px,45vh)` 自己滚；原来 200px 的流内块会把消息区顶上去
+- **列表不再截断**：去掉 `slice(0, 6)`，列全体成员 + `@everyone`，头上一行「@筛选 / N 人」
+- **关得掉**：`@` 后打空格 / 光标移出 / 失焦 / 发送都收起；发送后不再在空输入框上留一排成员（原来只在「选中」时清）
+- **键盘**：`↑↓` 换高亮、`Enter` / `Tab` 插入、`Esc` 关闭（关掉后同一个 `@` 不再自动弹回）；弹层打开时 `Enter` 不再把半截 `@` 当消息发出去
+- **焦点不丢**：`mousedown preventDefault` + 插入后 `setSelectionRange` 到插入内容末尾，点完成员可以接着打字
+- **歧义**：短名撞车时插入全名，不再被发送端按「写法有歧义」拒掉
+- 可访问性：`role=listbox` / `option` + 输入框 `aria-expanded` / `aria-controls` / `aria-activedescendant`
+- 测试：`preview:bot` 新增 8 条 @ 弹层断言 + 亮暗截图；顺带修掉「窗口跟随」用例往隐藏 composer 里打字导致判定失真的问题（只认可见的转录 / 输入框 / 发送键）
+
+### Fixed（群聊：逐成员停止 + 成员回答可复制 / 引用）
+- **「停止」只停这一个成员**：流式块上的停止改成 `botCancel({ botId })` 并只撤掉那一个的临时态，别的成员继续；composer 上的「停止」仍是全体叫停（title 写清）
+- **成员的回答能复制 / 引用**：`GroupMessageRow` 补上和 1:1 同一套动作行（复制、引用带进 composer 草稿），自己的那句也能复制
+- 测试：`preview:bot` 断言「单条停止只 abort 这一个成员」、复制写剪贴板、引用进草稿
+
+### Fixed（CI：package 别再因为抢不到 macOS runner 判红）
+- **mac 只在 tag / 每晚定时 / 手动触发时排**：抢不到 macOS arm64 hosted runner 时 GitHub 把 job 记成 `cancelled`（不是 `failed`），`continue-on-error` 兜不住，只会把某次提交判红；改成普通 push 只出 linux + win，另加 03:00 的定时构建保证「mac 每天还能打出来」
+- **文档改动不跑打包**：新增 `changes` job（按 `git diff` 判断），只有 `docs/` / `site/` / `*.md` 的 push 直接跳过三平台构建（tag 与手动触发一律跑）；分类不用 `grep -q`（早退 + pipefail 会把「有代码」误判成没代码）
+- **连推时取消旧构建**：`cancel-in-progress` 扩到分支推送（tag 除外），并发组加入事件名，定时构建不会被随后的 push 取消
+- **机器没拿到时自动重跑一次**：新增 `retry.yml`（`workflow_run` 触发）：只在「同一次 run 里有成功 job + 某个 job 是 cancelled 且零 step」时重跑整次 build，最多 2 次；真失败不重跑，tag 不兜底（发布要人盯）。用 `gh api` + `jq`，不引新 action
+
 ### Changed（清理 A：重复的 helper 与死代码）
 - **时间格式收口**：`src/ui.ts` 新增 `hm(ts, { date })` / `hhmmss(ts)`，替掉 4 份 `hm`、2 份 `hhmmss` 的各写一遍；Bot 页保留「不是今天带月/日」的行为（本地 `botTime`），其余页面只要 hh:mm
 - **文案表收口**：新增 `src/labels.ts`（`CAP_LABEL` / `DECISION_LABEL`），替掉 Bot 页 / 机器人总览 / 舞台检查器三份副本；顺带统一两处措辞（「主动开口」→「主动」、「回你」→「回复」）

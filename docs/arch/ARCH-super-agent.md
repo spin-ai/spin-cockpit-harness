@@ -69,7 +69,7 @@ Agent  = CLI 运行配置（cli / host / cwd / approval / skills）
 | 并发 | `maxActiveSubagents` 默认 8；depth 默认 1 | 全局/主机/Agent/同 cwd 调度 | 原生没有 Harness 的队列与主机语义 |
 | 外部 CLI | 可选 ACP / Codex / Claude Code backend | 当前 Chat 只有 dsh 适配器 | 原生外接 CLI 比 Harness 更成熟 |
 | 持久化 | child session 可 durable/continuable；但 ACP 不列/不 resume 子 session | Mission/Delegation 落 SQLite；运行中断可恢复 | 各有边界，不能互相假装 |
-| 审批 | in-process child 共享父策略；外部 ACP child 按 provider 策略自动应答 | 每个 child run 独立 ApprovalModal | 原生的“子任务审批”不可直接复用 |
+| 审批 | in-process child 共享父策略；外部 ACP child 按 provider 策略自动应答 | 每个 child run 一条独立审批卡（`ApprovalDock` 里按 `childTitle` 标出） | 原生的“子任务审批”不可直接复用 |
 
 **结论：**
 
@@ -383,7 +383,7 @@ open_delegations: 1
 ### 6.2 审批
 
 - **计划审批**是 UI 状态，不是 ACP permission；写 `mission_plans.status='approved'`。
-- Child 工具审批继续走现有 `request_permission` / ApprovalModal；额外带 `missionId` 和“子任务 d3”上下文，便于分组。
+- Child 工具审批继续走现有 `request_permission` / 审批队列；额外带 `missionId` 和“子任务 d3”上下文，便于分组。
 - 当前 `agent.approval` 字段存在但 `startRun` 只用全局 `approvalPolicy`；引入主管时要把 **Agent 级审批**接进 `startRun`，否则无法给主管单独设只读/审批策略。
 - 禁止“一键批准整个 Mission 的所有子任务工具调用”；只允许按子任务批准。
 
@@ -545,7 +545,7 @@ mission.waiting_children / mission.finished / mission.cancelled / mission.interr
 | `src/components/MissionPlan.tsx`（新） | 计划编辑与批准 |
 | `src/components/DelegationCard.tsx`（新） | 子任务状态卡 |
 | `TaskPane.tsx` / `Views.tsx` | 看板父任务、过滤、角色标记 |
-| `ApprovalModal.tsx` | Mission / child 上下文 |
+| `ApprovalDock.tsx` | Mission / child 上下文（卡上带 `childTitle`） |
 | `Settings.tsx` / Agent 详情 | 角色、instructions、max_children、开关 |
 | `docs/` | 本文 + 迁移 SQL；实现后补实测结果 |
 
