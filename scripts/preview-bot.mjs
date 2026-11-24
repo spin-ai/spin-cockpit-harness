@@ -70,9 +70,14 @@ const MOCK = String.raw`
     turn({ id: "t1", decision: "replied", input: "发布节奏怎么样？", threadId: "th-bot-b1",
       reply: "今天两条：\n\n- 首页标题已改大\n- 构建通过\n\n\`\`\`bash\nnpm test\n\`\`\`",
       injected: [{ layer: "L4", id: "m1", title: "发布节奏" }], cost: { tokens: 320, ms: 1200 },
+      // 会话面（BotTrace）读 turn.tools；轨迹视图读 turn.trace —— 两处都要有「读取文件」这一步
+      tools: [
+        { name: "read", args: "src/App.tsx", argsRaw: "src/App.tsx", result: "export default function App() {\n  return null;\n}", at: now - 698500, ms: 120, ok: true, family: "read", statusKind: "done", durationMs: 120 },
+      ],
       trace: [
         { kind: "request", round: 0, at: now - 700000, ms: 820, usage: { total_tokens: 180, prompt_tokens: 120, completion_tokens: 60 }, text: "先查一下发布节奏。" },
         { kind: "tool", name: "knowledge_search", argsRaw: "{\"query\":\"发布节奏\",\"limit\":5}", result: "{\"hits\":[{\"title\":\"发布节奏\"},{\"title\":\"构建通过\"}]}", ms: 240, at: now - 699000, ok: true },
+        { kind: "tool", name: "read", argsRaw: "src/App.tsx", result: "export default function App() {\n  return null;\n}", ms: 120, at: now - 698500, ok: true },
         { kind: "request", round: 1, at: now - 698000, ms: 600, usage: { total_tokens: 140, prompt_tokens: 80, completion_tokens: 60 }, text: "今天两条：\n\n- 首页标题已改大\n- 构建通过" },
       ] }),
     turn({ id: "t2", decision: "reported", threadId: "th-bot-b1", runId: "r1", todoId: "td1",
@@ -159,7 +164,9 @@ const MOCK = String.raw`
       return { ok: true, result };
     },
     docsPick: async () => [{ path: "/tmp/ws/README.md", name: "README.md", text: "# 标题\n正文", size: 20 }],
-    docsRead: async () => [{ path: "/tmp/ws/README.md", name: "README.md", text: "# 标题\n正文" }],
+    docsRead: async (paths) => (paths || []).map((path) => (String(path).includes("App.tsx")
+      ? { path, name: "App.tsx", text: "export default function App() {\n  return null;\n}\n" }
+      : { path, name: "README.md", text: "# 标题\n正文" })),
     clipboardRead: async () => "",
     clipboardWrite: async () => {},
     onBotDelta: (cb) => { window.__delta = cb; return () => {}; }, onBotTool: () => () => {}, onBotMessage: () => () => {},
@@ -377,8 +384,9 @@ await shot(path.join(OUT, "bot-chat-dark.png"));
 await run(`document.documentElement.dataset.theme = "light"; document.documentElement.dataset.mode = "light"; return true;`);
 
 // 轨迹：展开一轮的过程（思考 / 工具 / 终端）
-const traceText = await text(".ds-steps");
-check("轨迹：有工具调用 / 终端", traceText.includes("npm test") && traceText.includes("终端"), traceText.slice(0, 80));
+// 会话里有多组过程（每轮一组）：一起取，不能只看第一组
+const traceText = await ev(`[...document.querySelectorAll(".ds-steps")].map((e) => e.textContent).join(" / ")`);
+check("轨迹：有工具调用 / 终端", traceText.includes("npm test") && traceText.includes("终端"), traceText.slice(0, 120));
 check("轨迹：工具卡带命令 / 输出", await ev(`!!document.querySelector(".ds-term-cmd") || !!document.querySelector(".ds-card-body") || !!document.querySelector(".ds-tool-row")`));
 await shot(path.join(OUT, "bot-trace.png"));
 
@@ -390,11 +398,54 @@ await run(`
   await new Promise((r) => setTimeout(r, 250));
   return true;`);
 check("轨迹：时间轴三轨 / 记录账本", await ev(`!!document.querySelector(".ds-tr-lane") && !!document.querySelector(".ds-tr-block") && !!document.querySelector(".ds-tr-row")`));
+// 轨迹细节：每一步都能展开看「原始参数 / 输出 / 用量」，字段可整段复制（贴出去的是原文，不是截断）
+await run(`
+  const row = document.querySelector(".ds-tr-row");
+  if (!row) throw new Error("没有轨迹行");
+  row.querySelector("summary")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 160));
+  return true;`);
+const trDetail = await ev(`(() => {
+  const fields = [...document.querySelectorAll(".ds-tr-field")];
+  return JSON.stringify({
+    fields: fields.length,
+    labels: fields.map((f) => f.querySelector("span")?.textContent || ""),
+    copies: fields.filter((f) => f.querySelector(".icon-btn")).length,
+  });
+})()`);
+const trObj = JSON.parse(trDetail || "{}");
+check("轨迹细节：字段展开（参数 / 输出 / 用量）", (trObj.fields || 0) >= 1 && (trObj.labels || []).some((l) => /参数|输出|用量/.test(l)), trDetail);
+check("轨迹细节：字段带整段复制", (trObj.copies || 0) === (trObj.fields || 0), trDetail);
 await shot(path.join(OUT, "bot-trajectory.png"));
 await run(`
   const tab = [...document.querySelectorAll(".bot-chat-tabs button")].find((b) => b.textContent.trim() === "对话");
   if (tab) tab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 200));
+  return true;`);
+
+// 对话内预览：工具行里的文件 chip 就地展开（不跳标签），再点一次收起
+const previewState = await run(`
+  const chip = document.querySelector(".ds-file-chip-name");
+  if (!chip) { window.__preview = { has: false }; return true; }
+  chip.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 320));
+  const card = document.querySelector(".ds-inline-preview");
+  window.__preview = {
+    has: true,
+    open: Boolean(card),
+    body: card?.querySelector(".ds-ip-body")?.textContent || "",
+    title: card?.querySelector(".ds-ip-title")?.textContent || "",
+    openInTab: Boolean(card?.querySelector('[aria-label="在预览标签里打开"]')),
+  };
+  return true;`);
+const pv = JSON.parse(await ev(`JSON.stringify(window.__preview || {})`) || "{}");
+check("对话内预览：文件 chip 就地展开（不跳标签）", pv.has === false || (pv.open === true && /App\.tsx/.test(pv.title || "")), JSON.stringify(pv));
+check("对话内预览：卡片里带文件正文", pv.has === false || /export default function App/.test(pv.body || ""), JSON.stringify(pv));
+check("对话内预览：仍然可以「在标签里打开」", pv.has === false || pv.openInTab === true, JSON.stringify(pv));
+await shot(path.join(OUT, "bot-inline-preview.png"));
+await run(`
+  document.querySelector('.ds-inline-preview [aria-label="收起预览"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 160));
   return true;`);
 
 // 引用

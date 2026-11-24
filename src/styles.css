@@ -4541,6 +4541,24 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
   font:12px/1.6 var(--mono);white-space:pre-wrap;max-height:240px;overflow:auto;color:var(--fg-2);
 }
 
+/* 工具细节：参数 / 输出分两段（原始入参与完整结果是「轨迹细节」的两块硬信息） */
+.ds-tool-detail{margin:4px 0 8px var(--chat-indent);border:1px solid var(--border);border-radius:var(--radius);background:var(--page-canvas);overflow:hidden}
+.ds-tool-field{border-bottom:1px solid var(--border)}
+.ds-tool-field:last-child{border-bottom:0}
+.ds-tool-field-head{padding:8px 12px 2px;font-size:11px;letter-spacing:.02em;color:var(--faint)}
+.ds-tool-field-body{margin:0;padding:0 12px 12px;font:12px/1.6 var(--mono);white-space:pre-wrap;max-height:260px;overflow:auto;color:var(--fg-2)}
+
+/* 对话内预览：和消息同列、同一个 indent，不用浮层抢走上下文 */
+.ds-inline-preview{margin:4px 0 8px var(--chat-indent);border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);overflow:hidden}
+.ds-ip-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);min-width:0}
+.ds-ip-tag{flex:none;font-size:11px;letter-spacing:.02em;color:var(--muted)}
+.ds-ip-title{flex:0 1 auto;min-width:0;font-size:13px;font-weight:600;color:var(--fg)}
+.ds-ip-meta{flex:none;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
+.ds-ip-spacer{flex:1 1 auto}
+.ds-ip-body{margin:0;padding:12px 12px;font:12px/1.6 var(--mono);white-space:pre-wrap;max-height:260px;overflow:auto;color:var(--fg-2);background:var(--page-canvas)}
+.ds-ip-body.is-prose{font-family:var(--font-sans);font-size:13px;line-height:1.65}
+.ds-ip-empty{padding:12px 12px;font-size:12px;color:var(--muted)}
+
 /* 运行中：蓝色 shimmer 一行（DeepSeek 的 Deep diving） */
 .ds-running{display:flex;align-items:center;gap:6px;min-height:28px;margin-top:16px;color:var(--ds-blue);min-width:0}
 .ds-running.waiting{color:var(--amber)}
@@ -4728,6 +4746,8 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
 .bot-main .bot-stream{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
 :root[data-mode="dark"] .ds-assistant-body .md-code-block,
 :root[data-mode="dark"] .ds-tool-body{background:color-mix(in srgb,var(--fg) 5%,var(--surface))}
+:root[data-mode="dark"] .ds-tool-detail,:root[data-mode="dark"] .ds-ip-body{background:color-mix(in srgb,var(--fg) 5%,var(--surface))}
+:root[data-mode="dark"] .ds-inline-preview{background:color-mix(in srgb,var(--fg) 3%,var(--surface))}
 .ds-process-body{gap:4px}
 .ds-reason + .ds-reason,
 .ds-tool-row + .ds-reason{margin-top:4px}
@@ -4893,6 +4913,12 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
 .ds-tr-detail span{font-size:11px;color:var(--faint);letter-spacing:.02em}
 .ds-tr-detail pre{margin:0;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--page-canvas);font:12px/15px var(--mono);white-space:pre-wrap;max-height:240px;overflow:auto;color:var(--fg-2)}
 .ds-tr-detail .ds-action-text{align-self:flex-start}
+/* 字段头一行：名字 + 复制；正文立整（贴出去的就是这段原文） */
+.ds-tr-field{display:grid;grid-template-columns:auto 20px;grid-template-rows:auto auto;align-items:center;gap:2px 8px}
+.ds-tr-field>span{grid-column:1;grid-row:1}
+.ds-tr-field>.icon-btn{grid-column:2;grid-row:1;justify-self:end}
+.ds-tr-field>pre{grid-column:1 / -1;grid-row:2}
+.ds-tr-actions{flex-direction:row;gap:12px;align-items:center}
 .ds-tr-empty{padding:32px 16px;text-align:center;color:var(--faint);font-size:13px}
 .ds-tr-block.k-context{background:var(--muted)}
 .ds-tr-chip.k-context{color:var(--muted);background:var(--surface-hover)}

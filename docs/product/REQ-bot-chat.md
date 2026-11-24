@@ -1,10 +1,10 @@
-> 层：需求 · 状态：提案 · 核对：2026-11-22 · 覆盖：Bot 会话窗口 / 群聊的 User Story（US-Chat）与界面规格 IR、系统规格 SR，全部带判据、现状与验证方式
+> 层：需求 · 状态：部分落地 · 核对：2026-11-24 · 覆盖：Bot 会话窗口 / 群聊的 User Story（US-Chat）与界面规格 IR、系统规格 SR，全部带判据、现状与验证方式
 
 # 需求 · Bot 聊天窗口（US / IR / SR）
 
 **用途**：`COMPARE-chat-window.md` 只回答「差在哪」；本文把它变成**可开工的规格**：先 13 条用户故事（带判据），再拆成 12 条界面规格（IR）与 14 条系统规格（SR），每条都写明现状、依赖与怎么验。
 
-**范围**：`Bot.tsx` 的会话面 —— 1:1 对话、群聊、转录、composer、回合轨、跟随与长会话。**不含** TaskChat（任务会话，另有 `GAP-chat.md`）与轨迹视图的功能扩展。
+**范围**：`Bot.tsx` 的会话面 —— 1:1 对话、群聊、转录、composer、回合轨、跟随、长会话、对话内预览与轨迹细节。任务会话（`TaskChat`）共用同一套 `.ds-*` 视觉与同一套预览 / 细节组件；它自己的领域语义见 `GAP-chat.md`。
 
 **依据**：源码 + 装机包实测（`COMPARE-chat-window.md` §1–§6）；对照对象 `deepseek-harness @ 39163dd3`、`Orca @ 8e0c267e`。
 
@@ -41,6 +41,8 @@
 | US-Chat-11 | 上下文快满时我提前知道（判据：占用 >80% 时 composer 上方有提示；压缩后留下「已压缩 N 轮 → 摘要」卡）                                | ✗ 静默截断                        | dsh compaction 卡 + quota 提示            | P2，改 |
 | US-Chat-12 | 读屏和键盘也能完整用（判据：转录是 `role=log` 且 `aria-live`；每条有可读发送者 / 状态；输入框有 `aria-label`；Esc 停止；发送后焦点回输入框） | ◐ role=log / article / label 已做；Esc 停止与焦点恢复未做 | dsh 大量 `aria-live` / 语义角色              | P1，改 |
 | US-Chat-13 | 群聊里每条回复独立可读、可单独处置（判据：谁回的 / 何时 / 状态标签齐全；能单独停止；失败能单独重试）                                        | ◐ 有标签与停止，无重试                  | Orca 消息卡（sender chip / peer card）      | P2，改 |
+| US-Chat-14 | 我读结果不用离开对话（判据：工具行里的文件路径点一下就展开正文，不新增标签、不切页；卡片里仍能「在标签里打开」；再点一次收起） | ✅ 2026-11-24（BOT 与 CHAT 共用 `InlinePreviewCard`） | — | P1 |
+| US-Chat-15 | 轨迹能查到「这步传了什么、回了什么」（判据：工具行展开分「参数 / 输出」两段；轨迹视图每字段可整段复制；助手记录带 `tokens · 时长`） | ✅ 2026-11-24 | dsh 的 usage 明细 | P1 |
 
 ---
 
@@ -154,6 +156,25 @@
 | 判据 | 上翻 30px 后新内容不抢位置；回到底部后恢复跟随且不抖动 |
 | 关联 | US-Chat-05 |
 
+### IR-Chat-13 对话内预览（US-Chat-14）
+
+| 项 | 规格 |
+|---|---|
+| 位置 | 该步工具行正下方，同缩进；跟着消息滚动，不浮起、不遮挡转录 |
+| 结构 | `文件/结果` 标签 + 文件名 + `N 行 · 从第 M 行` + 复制全文 + 在标签里打开（仅文件）+ 收起 |
+| 状态 | `读取中…` / 正文（前 80 行）/ `读取失败`（原文照抄 `docs:read` 的拒绝理由） |
+| 唯一性 | 一次一张：点新的换旧的，点同一个收起 |
+| 判据 | ≤300ms 出现；不新增标签；收起后滚动位置不变 |
+
+### IR-Chat-14 轨迹细节（US-Chat-15）
+
+| 项 | 规格 |
+|---|---|
+| 会话工具行 | 展开后「参数 / 输出」两段，等宽可滚动；空段不渲染 |
+| 轨迹视图 | 每条记录详情按字段列出（原始参数 / 输出 / 用量），字段头右侧一个复制按钮；工具 / 终端记录另有「复制整步」 |
+| 用量 | 任务会话助手记录：`tokens · 时长`；bot 回合：`tokens · TTFT`（`bot_turns.trace`） |
+| 判据 | 每个字段都能整段复制；空字段不占位 |
+
 ### IR-Chat-12 键盘
 
 | 项 | 规格 |
@@ -183,6 +204,9 @@
 | SR-Chat-12 | **增量广播**：新增 `harness:bot-patch`（只推 bot 相关切片：`botTurns` 尾部、`botGroupMessages` 尾部、`botChats` 摘要）；`harness:state` 全量保留做兜底与首帧                                                   | ✗ 每次全量      | US-Chat-04，改    |
 | SR-Chat-13 | **性能闸门**：`preview-bot.mjs` 断言 200 轮时渲染节点 ≤3000、首屏 `performance.now()` ≤1.5s；基线写进 `COMPARE-chat-window.md` §6                                                                | ◐ 只有功能断言    | US-Chat-04，改    |
 | SR-Chat-14 | **可访问性**：转录 `role=log` + `aria-live=polite`；每轮 `aria-label`；textarea / 附件 / 停止按钮均有 `aria-label`；焦点恢复；正文对比度 ≥4.5:1                                                           | ◐ role=log / article / label / Esc / 焦点已做；对比度待核 | IR-Chat-03/07，改 |
+| SR-Chat-15 | **对话内预览**：`InlinePreviewCard` 走 `docs:read`（带进程内缓存），相对路径按这次 run 的 `cwd` 解析；同一时刻最多一张；不新增标签 | ✅ `src/components/InlinePreview.tsx` | IR-Chat-13 |
+| SR-Chat-16 | **轨迹细节**：工具行 `meta.input` / `meta.output` 分段展示；`TrajectoryView` 字段级复制；运行态带 `tokens / 时长` 与 `TTFT` | ✅ `TaskChat` `ToolRow` / `TrajectoryView` `TrField` | IR-Chat-14 |
+| SR-Chat-10（续） | 输入法状态机在任务会话里同样生效（`compositionstart/end` + `isComposing` + `keyCode 229`）；`Esc` 停运行、发送后焦点回输入框 | ✅ 2026-11-24 | IR-Chat-12 |
 
 ---
 

@@ -89,7 +89,7 @@
 | [`product/COMPARE-knowledge-memory.md`](product/COMPARE-knowledge-memory.md) | 需求 | 记录 | 知识与记忆专项对照：vs WeKnora 与 Anthropic 记忆机制，附 ZCode 参照 |
 | [`product/COMPARE-rakazo.md`](product/COMPARE-rakazo.md) | 需求 | 记录 | vs Rakazo（自托管 AI 同事）**两层合并**对照：产品级 8 组用户故事 + bot 源码级实现（turn / 记忆 / 日程 / 求助 / 通知），含方向决定、12 条可抄、G1–G10 缺口 |
 | [`product/COMPARE-chat-window.md`](product/COMPARE-chat-window.md) | 需求 | 记录 | 聊天窗口逐部件对照：vs DeepSeek Harness / Orca 的 transcript / 流式 / 跟随 / composer / 长会话，含 P0–P2 缺口与不照抄项 |
-| [`product/REQ-bot-chat.md`](product/REQ-bot-chat.md) | 需求 | 提案 | **Bot 聊天窗口规格**：13 条 User Story（带判据）+ 12 条 IR（界面）+ 14 条 SR（系统），含验收矩阵与 M1–M4 分期 |
+| [`product/REQ-bot-chat.md`](product/REQ-bot-chat.md) | 需求 | 部分落地 | **Bot 聊天窗口规格**：15 条 User Story（带判据）+ 14 条 IR（界面）+ 16 条 SR（系统），含对话内预览 / 轨迹细节与 M1–M4 分期 |
 | [`product/REQ-bot-intelligence.md`](product/REQ-bot-intelligence.md) | 需求 | 提案 | **机器人智能度规格**：vs ORCA Bot / Rakazo Bot 的 12 条 User Story + 10 条 IR + 16 条 SR（观察面 / 上下文 / 循环 / 记忆 / 自主 / 协作 / 可学习），含 6 维矩阵与 M1–M4 验收 |
 | [`product/REQ-bot-workspace.md`](product/REQ-bot-workspace.md) | 需求 | 部分落地 | **机器人工作区交接**：把项目 / worktree / 终端交给 bot 的 21 条 User Story + 10 条 IR + 13 条 SR，参照 ORCA 的 hand-over / work list；含终端 agent 窄通道 / 审批回传 / 远端隧道 / 手动远端 shell |
 | [`product/REQ-bot-group.md`](product/REQ-bot-group.md) | 需求 | 部分落地 | **机器人群聊**：@ 解析 / 投递规则 / 成员接力 / 共享上下文 / 未读 / 话题 / 附件 / 群档案的 19 条 User Story + 7 条 IR + 16 条 SR，先纠正「ORCA 没有群聊」的前提 |

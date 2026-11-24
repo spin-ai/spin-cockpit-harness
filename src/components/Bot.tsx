@@ -13,6 +13,7 @@ import { TrajectoryView, type TrajectoryRecord } from "./TrajectoryView";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "./Icons";
 import { useT } from "../i18n";
 import { RichText, MissionOverview } from "./TaskChat";
+import { InlinePreviewCard, useInlinePreview, type InlinePreviewTarget } from "./InlinePreview";
 import { relTime } from "../ui";
 import { assignmentsForBot } from "../selectors/assignments";
 import { requestTerminalAdopt, requestTerminalAt } from "../terminal-events";
@@ -496,7 +497,14 @@ function traceStepsOf(turn: Turn, state?: State | null): TraceStep[] {
   return steps;
 }
 
-function ToolCard({ step, child = false }: { step: TraceStep; child?: boolean }) {
+type BotPreviewApi = {
+  target: InlinePreviewTarget | null;
+  openFile: (owner: string, path: string, opts?: { root?: string; name?: string; line?: number }) => void;
+  openText: (owner: string, title: string, text: string, mono?: boolean) => void;
+  close: () => void;
+};
+
+function ToolCard({ step, child = false, preview, previewRoot }: { step: TraceStep; child?: boolean; preview?: BotPreviewApi; previewRoot?: string }) {
   const out = step.output || "";
   const family = step.family || familyOf(null, { title: step.title });
   const state = step.status || (step.ok === false ? "failed" : "done");
@@ -550,11 +558,15 @@ function ToolCard({ step, child = false }: { step: TraceStep; child?: boolean })
   }
   if (family === "read") {
     const lineCount = out ? out.split("\n").length : 0;
+    const open = () => preview?.openFile(step.id, object, { root: previewRoot, name: object.split("/").pop() });
     return (
-      <details className={depthClass}>
-        <summary className="ds-tool-main">{head(<FileTextIcon size={14} />, label, fileLike ? <FileChip path={object} /> : (human || ""), lineCount ? <span className="ds-stat">{lineCount} 行</span> : null)}</summary>
-        {body(<pre className="ds-card-pre">{out || "（没有内容）"}</pre>)}
-      </details>
+      <>
+        <details className={depthClass}>
+          <summary className="ds-tool-main">{head(<FileTextIcon size={14} />, label, fileLike ? <FileChip path={object} onOpen={preview ? open : undefined} /> : (human || ""), lineCount ? <span className="ds-stat">{lineCount} 行</span> : null)}</summary>
+          {body(<pre className="ds-card-pre">{out || "（没有内容）"}</pre>)}
+        </details>
+        {preview?.target?.owner === step.id && <InlinePreviewCard target={preview.target} onClose={preview.close} />}
+      </>
     );
   }
   if (family === "search") {
@@ -588,19 +600,19 @@ function ToolCard({ step, child = false }: { step: TraceStep; child?: boolean })
   );
 }
 
-/** 文件 chip：点击在预览面板打开 */
-function FileChip({ path }: { path: string }) {
+/** 文件 chip：默认在对话里展开预览（给了 onOpen 就交给它，卡片里还有「在标签里打开」） */
+function FileChip({ path, onOpen }: { path: string; onOpen?: () => void }) {
   const name = path.split("/").filter(Boolean).pop() || path;
   const short = name.length > 28 ? `${name.slice(0, 26)}…` : name;
   return (
     <span className="ds-file-chip" title={path}>
       <FileTextIcon size={14} />
-      <button className="ds-file-chip-name" onClick={(e) => { e.stopPropagation(); requestFilePreview({ rel: path, name }); }}>{short}</button>
+      <button className="ds-file-chip-name" onClick={(e) => { e.stopPropagation(); if (onOpen) onOpen(); else requestFilePreview({ rel: path, name }); }}>{short}</button>
     </span>
   );
 }
 
-function BotTrace({ turn, state, label }: { turn: Turn; state?: State | null; label: string }) {
+function BotTrace({ turn, state, label, preview, previewRoot }: { turn: Turn; state?: State | null; label: string; preview?: BotPreviewApi; previewRoot?: string }) {
   const [showAll, setShowAll] = useState(false);
   const steps = traceStepsOf(turn, state);
   const run = turn.runId ? state?.runs?.find((r) => r.id === turn.runId) : undefined;
@@ -636,7 +648,7 @@ function BotTrace({ turn, state, label }: { turn: Turn; state?: State | null; la
                   <ChevronDownIcon size={14} className="ds-tool-chev" />
                 </summary>
                 {bundle.items.map((item) => (
-                  <ToolCard step={item} key={item.id} child={false} />
+                  <ToolCard step={item} key={item.id} child={false} preview={preview} previewRoot={previewRoot} />
                 ))}
               </details>
             );
@@ -676,7 +688,7 @@ function BotTrace({ turn, state, label }: { turn: Turn; state?: State | null; la
               </details>
             );
           }
-          return <ToolCard step={step} child={child} key={step.id} />;
+          return <ToolCard step={step} child={child} key={step.id} preview={preview} previewRoot={previewRoot} />;
         })}
       </div>
     </div>
@@ -861,6 +873,13 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     () => assignmentsForBot(state?.todos ?? [], state?.delegations, { executorAgentId: botEntity?.executorAgentId ?? null }),
     [state?.todos, state?.delegations, botEntity?.executorAgentId],
   );
+  /** 对话内预览：工具卡里的文件就地展开，和任务会话同一套（点新的换旧的） */
+  const inlinePreview = useInlinePreview();
+  const previewRootForBot = useMemo(() => {
+    const bound = (state?.projects || []).find((p) => p.id === (botEntity?.projectId ?? ""));
+    return bound?.path || state?.projectPath || "";
+  }, [state?.projects, state?.projectPath, botEntity?.projectId]);
+
   /** 同事消息（peer mail）：对方没能在当轮回的，挂在这个 bot 名下等下一轮 */
   const pendingMails = useMemo(
     () => (state?.botPeerMails ?? []).filter((m) => m.status === "pending" && m.toBotId === (botEntity?.id ?? "")),
@@ -3146,7 +3165,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
               const turnHeadText = headLabel;
               const bubble = (
                 <>
-                  <BotTrace turn={turn} state={state} label={turnHeadText} />
+                  <BotTrace turn={turn} state={state} label={turnHeadText} preview={inlinePreview} previewRoot={previewRootForBot} />
                   <div className="ds-assistant-body"><RichText text={turn.reply || ""} /></div>
                   {turn.decision === "asked" && (
                     <div className="ds-system-note">你回一句就会成为它的职责（人格卡 → 职责），以后随时能改。</div>
