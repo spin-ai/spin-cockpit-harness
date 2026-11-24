@@ -24,6 +24,7 @@
     "verify:pty": "node scripts/verify-pty.mjs",
     "verify:privacy": "node scripts/verify-privacy.mjs",
     "verify:wade": "node scripts/verify-wade.mjs",
+    "who": "node scripts/who.mjs",
     "bundle:dsh": "node scripts/bundle-dsh.mjs",
     "bundle:dsh:optional": "node scripts/bundle-dsh.mjs --optional",
     "smoke:dsh": "node scripts/smoke-dsh.mjs",
