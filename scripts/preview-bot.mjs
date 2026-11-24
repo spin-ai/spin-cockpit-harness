@@ -141,7 +141,8 @@ const MOCK = String.raw`
       else if (type === "botChatFork") result = { thread: { id: "th-bot-b1-fork" }, copied: 2 };
       else if (type === "botChat") result = { ok: true, result: turns[0] };
       else if (type === "botRetry") result = { ok: true };
-      else if (type === "botUiSave") { draftStore[payload.key] = { draft: payload.draft || "", scroll: payload.scroll ?? null, updatedAt: Date.now() }; result = { ok: true }; }
+      // 和主进程 db.saveBotUi 一样「按字段合并」：只写 scroll 时不能把草稿清空，反之亦然
+      else if (type === "botUiSave") { const prev = draftStore[payload.key] || { draft: "", scroll: null }; draftStore[payload.key] = { draft: payload.draft !== undefined ? payload.draft : prev.draft, scroll: payload.scroll !== undefined ? payload.scroll : prev.scroll, updatedAt: Date.now() }; result = { ok: true }; }
       else if (type === "botGroupSend") {
         // 模拟群聊：先落自己的话，再逐个成员流式回（和主进程 botGroupSend 一样）
         const text = (head) => head + "\n\n" + "这是一段用来把回合流撑出滚动的正文，验证新内容进来时窗口会不会跟着往下走。\n".repeat(12);
@@ -533,7 +534,10 @@ await run(`
   if (!send) throw new Error("没有发送按钮");
   send.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   return true;`);
-await sleep(40);
+// 「立刻」= 200ms 内出现（React 提交 + IPC 往返都可能差几十毫秒，固定 40ms 读会偶发空）
+await run(`
+  for (let i = 0; i < 10 && !document.querySelector(".ds-pending"); i++) await new Promise((r) => setTimeout(r, 20));
+  return true;`);
 check("群聊：自己的话立刻出现（不等后端）", (await text(".ds-pending")).includes("群里问一句"));
 check("群聊：没人开口时有「正在想」行", await ev(`!!document.querySelector(".ds-typing")`), JSON.stringify((await text(".bot-stream")).slice(-160)));
 await sleep(250);
@@ -546,10 +550,22 @@ check("群聊：跑完后落库、临时态收干净", (await text(".bot-stream"
 
 
 // 窗口跟随：回合流自己滚（整页填充），新内容进来时贴底；两条入口都要一样
+// 注意：判据是「转录是滚动容器、整页不动」，不是「内容一定超过一屏」——
+// 短会话本来就撑不满，用 clientHeight < scrollHeight 判会随 fixture 内容漂。
 const streamMetrics = () => ev(`(() => {
   const el = document.querySelector(".bot-stream");
   if (!el) return null;
-  return { overflow: getComputedStyle(el).overflowY, selfScrolls: el.clientHeight < el.scrollHeight, gap: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight) };
+  const page = document.scrollingElement || document.documentElement;
+  const prev = el.scrollTop;
+  el.scrollTop = prev + 40;                     // 真滚一下，看谁在动
+  const scrolled = el.scrollTop !== prev;
+  el.scrollTop = prev;
+  return {
+    overflow: getComputedStyle(el).overflowY,
+    scrolled,
+    pageScrolled: page.scrollTop > 0,
+    gap: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight),
+  };
 })()`);
 const followAfterSend = async (label) => {
   await run(`
@@ -573,7 +589,7 @@ const followAfterSend = async (label) => {
 check("回合流是独立滚动容器（不是整页滚）", (await streamMetrics())?.overflow === "auto");
 await followAfterSend("BOT 工作台");
 const wsMetrics = await streamMetrics();
-check("BOT 工作台：内容超长时回合流自己滚", wsMetrics && wsMetrics.selfScrolls, JSON.stringify(wsMetrics));
+check("BOT 工作台：回合流自己滚、整页不动", Boolean(wsMetrics && wsMetrics.overflow === "auto" && !wsMetrics.pageScrolled), JSON.stringify(wsMetrics));
 
 // 另一条入口：从机器人列表 / 派单进来的是 view "bot"，外壳必须同样整页填充
 await run(`window.dispatchEvent(new CustomEvent("harness:view", { detail: "bot" })); await new Promise((r) => setTimeout(r, 500)); return true;`);
@@ -583,7 +599,7 @@ await run(`
   if (item) { item.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 300)); }
   return true;`);
 const botMetrics = await streamMetrics();
-check("view=bot：回合流自己滚", botMetrics && botMetrics.overflow === "auto" && botMetrics.selfScrolls, JSON.stringify(botMetrics));
+check("view=bot：回合流自己滚、整页不动", Boolean(botMetrics && botMetrics.overflow === "auto" && !botMetrics.pageScrolled), JSON.stringify(botMetrics));
 await followAfterSend("view=bot");
 
 // 输入法：候选态的回车只上屏，不发送（SR-Chat-10）
@@ -600,8 +616,9 @@ const composerSet = (text) => `
   setter.call(box, ${JSON.stringify("")} + ${JSON.stringify("")});
   return box;`;
 await run(`
-  const box = document.querySelector(".ds-composer textarea");
-  if (!box) throw new Error("没有输入框");
+  const vis = (sel) => [...document.querySelectorAll(sel)].find((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+  const box = vis(".ds-composer textarea");
+  if (!box) throw new Error("没有可见的输入框");
   const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
   setter.call(box, "nihao");
   box.dispatchEvent(new Event("input", { bubbles: true }));
@@ -667,7 +684,7 @@ const jumpObj = JSON.parse(afterJump || "{}");
 check("跟随：点 chip 回到底部并收起提示", jumpObj.chip === false && jumpObj.gap <= 8, afterJump);
 
 // 可访问性：转录是 log，每轮有可读标签（SR-Chat-14）
-const a11y = await ev(`(() => { const s = document.querySelector(".bot-stream"); const box = document.querySelector(".ds-composer textarea"); return JSON.stringify({ role: s.getAttribute("role"), live: s.getAttribute("aria-live"), label: s.getAttribute("aria-label"), articles: document.querySelectorAll('[role="article"]').length, inputLabel: box?.getAttribute("aria-label") || "" }); })()`);
+const a11y = await ev(`(() => { const s = document.querySelector(".bot-stream"); const box = [...document.querySelectorAll(".ds-composer textarea")].find((el) => el.getBoundingClientRect().width > 0); return JSON.stringify({ role: s.getAttribute("role"), live: s.getAttribute("aria-live"), label: s.getAttribute("aria-label"), articles: document.querySelectorAll('[role="article"]').length, inputLabel: box?.getAttribute("aria-label") || "" }); })()`);
 const a11yObj = JSON.parse(a11y || "{}");
 check("可访问性：转录 role=log + aria-live", a11yObj.role === "log" && a11yObj.live === "polite", a11y);
 check("可访问性：每轮有 role=article 标签", a11yObj.articles > 0, a11y);
@@ -679,7 +696,9 @@ await run(`
   await new Promise((r) => setTimeout(r, 400));
   const b1 = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("PM"));
   if (b1) { b1.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 300)); }
-  const box = document.querySelector(".ds-composer textarea");
+  const vis = (sel) => [...document.querySelectorAll(sel)].find((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+  const box = vis(".ds-composer textarea");
+  if (!box) throw new Error("没有可见的输入框");
   const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
   setter.call(box, "打了一半的草稿");
   box.dispatchEvent(new Event("input", { bubbles: true }));
@@ -693,7 +712,7 @@ await run(`
   const b1 = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("PM"));
   if (b1) { b1.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 400)); }
   return true;`);
-const draftRestored = await ev(`document.querySelector(".ds-composer textarea")?.value || ""`);
+const draftRestored = await ev(`([...document.querySelectorAll(".ds-composer textarea")].find((el) => el.getBoundingClientRect().width > 0)?.value) || ""`);
 check("草稿：切走再回来还在", draftRestored === "打了一半的草稿", JSON.stringify(draftRestored));
 
 // 阅读位置：滚上去停 500ms 记一次，切走再回来落回原处（SR-Chat-04）

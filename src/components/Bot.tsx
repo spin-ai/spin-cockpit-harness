@@ -1477,7 +1477,10 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     requestAnimationFrame(() => {
       const node = el.querySelector(`[data-turn-id="${saved.turnId}"]`) as HTMLElement | null;
       if (!node) return;
-      el.scrollTop = node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop + (saved.offset || 0);
+      // 采样时 offset = 那一轮的视口内 y（相对容器顶）。内容坐标 - offset 才是「它落在原来的位置」；
+      // 早先写成 contentTop + offset，会把落点整体推出去两倍，看起来像「切回来跑到别的地方」。
+      const contentTop = node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+      el.scrollTop = Math.max(0, contentTop - (saved.offset || 0));
     });
   }, [draftKey, snapshot]);
 
@@ -1488,8 +1491,14 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
   // 输入 500ms 后落一次盘（只写 bot_ui 一行，不广播整份 state）
+  const draftKeyRef = useRef(draftKey);
   useEffect(() => {
     if (!draftKey) return;
+    // 切会话 / 切 bot 的那一帧，draft 还是上一条的值：写进新 key 会把那条会话的草稿冲掉
+    if (draftKeyRef.current !== draftKey) {
+      draftKeyRef.current = draftKey;
+      return;
+    }
     const key = draftKey;
     const text = draft;
     const timer = setTimeout(() => { void act("botUiSave", { key, draft: text }); }, 500);
