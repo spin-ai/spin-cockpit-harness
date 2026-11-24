@@ -98,7 +98,7 @@ await test("取消：signal abort 时回合留成 interrupted，半截回复不�
   assert.equal(kept.input, "在吗");
 });
 
-await test("报错（非取消）：回合不留在账上", async () => {
+await test("报错（非取消）：落成 failed 回合（原因写进转录，不再静默删掉）", async () => {
   const errStore = { state: { bots: [], botTurns: [] }, persist() {} };
   const failing = createBots({
     store: errStore,
@@ -109,5 +109,11 @@ await test("报错（非取消）：回合不留在账上", async () => {
   });
   failing.ensureSeed();
   await assert.rejects(() => failing.reply(makeBot(failing), "在吗"), /上游 500/);
-  assert.equal(errStore.state.botTurns.length, 0);
+  // 以前这里会把这一轮删掉：刷新后用户只看到自己的话凭空消失
+  assert.equal(errStore.state.botTurns.length, 1);
+  const failed = errStore.state.botTurns[0];
+  assert.equal(failed.decision, "failed");
+  assert.equal(failed.input, "在吗");
+  assert.match(String(failed.reason || ""), /上游 500/);
+  assert.match(String(failed.threadId || ""), /th-bot-/);
 });

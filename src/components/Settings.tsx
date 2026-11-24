@@ -524,6 +524,7 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
             </Card>
 
             <Card title="Agent 角色">
+              <p className="set-note">审批档 = 这个执行体收到 ACP 权限请求时怎么办：自动批准不弹窗（逐条记事件、run 结束汇总一次），自动拒绝会挡住写操作。任务上选了「本任务放行」时 dsh 根本不发请求，这里不生效。</p>
               {state.agents.length === 0 && <Row title="还没有 Agent"><span className="muted small">在 Chat 里点「＋ dsh」纳管</span></Row>}
               {state.agents.map((agent) => (
                 <div className="settings-agent-row" key={agent.id}>
@@ -539,6 +540,17 @@ export function Settings({ state, act, notify, now, onOpenTodo, initialSection }
                   >
                     <option value="worker">Worker</option>
                     <option value="supervisor">Supervisor</option>
+                  </select>
+                  <select
+                    className="settings-control"
+                    value={agent.approval || ""}
+                    title="这个执行体收到 ACP 权限请求时怎么办：跟随全局 / 每步询问 / 自动批准 / 自动拒绝。任务设成「本任务放行」时 dsh 根本不问，轮不到这里。"
+                    onChange={(e) => void act("updateAgent", { id: agent.id, approval: e.target.value })}
+                  >
+                    <option value="">审批 · 跟随全局</option>
+                    <option value="ask">每步询问</option>
+                    <option value="allow">自动批准</option>
+                    <option value="deny">自动拒绝</option>
                   </select>
                   {(agent.role === "supervisor") && (
                     <TextSetting

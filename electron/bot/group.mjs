@@ -171,6 +171,53 @@ export function crossTopicDigest(group = {}, messages = [], current = "main", { 
  * GROUP.md：群档案的只读镜像（DB 是事实源）。成员在自己的 home 里就能看到「这个群是干什么的」，
  * 不必先跑上下文编译器；手改不回写。
  */
+/* ── 群里的提问卡片 ────────────────────────────────────────────────────────
+ * 1:1 的 ask 挂在 `bot_turns.ask` 上；群消息没有 turn 表，就落在 `meta.ask`。
+ * 口径和 1:1 一致：**人一说话就把这个话题里开着的卡一起结掉**，不要求一一对应。
+ */
+export const GROUP_ASK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** 当前能答的提问（新的在前，最多 limit 张） */
+export function openGroupAsks(messages = [], { now = Date.now(), ttl = GROUP_ASK_TTL_MS, limit = 5 } = {}) {
+  return (messages || [])
+    .filter((m) => {
+      const ask = m?.meta?.ask;
+      if (!ask || ask.status !== "open") return false;
+      return now - (ask.createdAt || m.createdAt || 0) <= ttl;
+    })
+    .slice(-limit)
+    .reverse()
+    .map((m) => ({
+      messageId: m.id,
+      groupId: m.groupId,
+      threadId: m.threadId || "",
+      botId: m.botId || null,
+      botName: m.botName || "",
+      text: String(m.meta.ask.text || m.text || "").slice(0, 300),
+      createdAt: m.meta.ask.createdAt || m.createdAt || 0,
+    }));
+}
+
+/** 人说话了：这个话题里开着的卡一起结掉（原地改 `meta.ask`，调用方负责 persist） */
+export function settleGroupAsks(messages = [], { groupId = "", threadId = "", status = "answered", now = Date.now(), ttl = GROUP_ASK_TTL_MS } = {}) {
+  let changed = 0;
+  for (const m of messages || []) {
+    if (groupId && m.groupId !== groupId) continue;
+    if ((m.threadId || "") !== (threadId || "")) continue;
+    const ask = m?.meta?.ask;
+    if (!ask || ask.status !== "open") continue;
+    // 超期的先标 expired（和 1:1 的 askOpen 同一口径）：它不该算「被这句话答掉」
+    if (now - (ask.createdAt || m.createdAt || 0) > ttl) {
+      ask.status = "expired";
+      continue;
+    }
+    ask.status = status;
+    ask.answeredAt = now;
+    changed += 1;
+  }
+  return changed;
+}
+
 export function groupMarkdown(group = {}, members = []) {
   const lines = [`# ${group.name || "群聊"}`, ""];
   lines.push(group.memo ? `群共识：${group.memo}` : "群共识：还没有写");

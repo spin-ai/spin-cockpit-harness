@@ -12,12 +12,14 @@ import { redactSecrets } from "../redact.mjs";
 import { suppressionReason } from "./guard.mjs";
 import { notifyDecision } from "./notify.mjs";
 import { QUIET_INSTRUCTION, quietOf } from "./quiet.mjs";
+import { openGroupAsks } from "./group.mjs";
 import { BOT_MEMORY_LINE_CAP, capMemoryLines } from "../memory/lines.mjs";
 import { WAIT_LIMIT_MS, describeRoutine, nextRunAt, normalizeRoutine, routineDue } from "./routine.mjs";
 import { BOT_TOOL_CATALOG, BOT_TOOL_META, botToolsFor, parseToolArgs, redactToolArgs, redactToolResult, toolNamesFor } from "./tools.mjs";
 import { skillsFor } from "./skills.mjs";
 import { isFreshEvent } from "./github.mjs";
 import { normalizeToolStatus, toolFamily } from "../tool-format.mjs";
+import { reasoningParams } from "./reasoning.mjs";
 
 const HOUR = 60 * 60 * 1000;
 const MINUTE = 60 * 1000;
@@ -307,7 +309,8 @@ export function temperatureFor(hasTools) {
 
 /** 思考档：只改「最多查几轮 / 工具轮温度」，不改 token 上限（配额不被人一键绕过） */
 export function effortPolicy(effort) {
-  if (effort === "quick") return { rounds: 4, temperature: 0.4, label: "快速" };
+  // 快速档：工具轮次压到 2 轮，优先首字和整轮时长；要多查就切「标准/深入」
+  if (effort === "quick") return { rounds: 2, temperature: 0.4, label: "快速" };
   if (effort === "deep") return { rounds: 12, temperature: 0.2, label: "深入" };
   return { rounds: MAX_TOOL_ROUNDS, temperature: 0.3, label: "标准" };
 }
@@ -1069,6 +1072,8 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       routines: listRoutines(),
       routineStatus: routineStatus(),
       asks: openAsks(),
+      // 群里的提问卡片：1:1 的 asks 只覆盖 bot_turns，群消息的 ask 落在 meta 里
+      groupAsks: openGroupAsks(stateOf().botGroupMessages || []),
       botThreads: bots().reduce((acc, b) => {
         const t = threadOf(b.id);
         if (t) acc[b.id] = t.id;
@@ -1353,7 +1358,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
    *  - 写操作（改文件、跑命令、起任务）不在工具表里，只能靠提议给人确认；
    *  - 最多 4 轮，防模型在两个工具之间来回问；网关不支持 tools 时自动退回纯对话。
    */
-  async function chatStreamWithTools(messages, bot, onDelta, signal, onTool, { turnId = "", groupId = "", groupThreadId = "" } = {}) {
+  async function chatStreamWithTools(messages, bot, onDelta, signal, onTool, { turnId = "", groupId = "", groupThreadId = "", onReasoning } = {}) {
     // read 档也发工具：只读工具 + 自己的记忆。能力档只决定有没有 task_create。
     const tools = runTool ? botToolsFor(bot.capability) : [];
     const allowed = new Set(tools.map((t) => t.function.name));
@@ -1369,27 +1374,38 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
     let toolCalls = 0;
     let stopReason = "";
     const rounds = { used: 0, max: maxRounds, calls: 0 };
+    /** 思考档 → 网关字段（按模型家族给；不认的网关会 400，下面回退一次） */
+    let reasoningOpts = reasoningParams({ model: String(model || ""), effort: String(bot.effort || "") });
+    /** 这一轮所有思考文本（推理模型才有）；落库进 trace，轨迹里能回看 */
+    let reasoning = "";
 
     for (let round = 0; round < maxRounds; round += 1) {
       rounds.used = round + 1;
       const roundAt = now();
+      const callOnce = () => chatStream(conversation, {
+        key: key(),
+        model,
+        maxTokens,
+        temperature: tools.length ? policy.temperature : 0.7,
+        onDelta,
+        onReasoning: (delta) => { reasoning += delta; onReasoning?.(delta); },
+        signal,
+        ...(Object.keys(reasoningOpts.fields).length ? { extra: reasoningOpts.fields } : {}),
+        tools: tools.length ? tools : null,
+      });
       let res;
       try {
-        res = await chatStream(conversation, {
-          key: key(),
-          model,
-          maxTokens,
-          temperature: tools.length ? policy.temperature : 0.7,
-          onDelta,
-          signal,
-          tools: tools.length ? tools : null,
-        });
+        res = await callOnce();
       } catch (err) {
-        // 部分网关不支持 function calling：第一轮就退回纯对话，不要让人看不到回复
-        if (round === 0 && tools.length && /tools?|function|400/i.test(String(err?.message || ""))) {
+        // 不认识推理字段的网关：去掉它们重试一次，别让「快速档」直接失败
+        if (Object.keys(reasoningOpts.fields).length && /thinking|reasoning|400|invalid/i.test(String(err?.message || ""))) {
+          reasoningOpts = { fields: {} };
+          res = await callOnce();
+        } else if (round === 0 && tools.length && /tools?|function|400/i.test(String(err?.message || ""))) {
           res = await chatStream(messages, {
             key: key(), model, maxTokens,
             temperature: temperatureFor(false), onDelta, signal,
+            onReasoning: (delta) => { reasoning += delta; onReasoning?.(delta); },
           });
           return { ...res, toolTrace: [], events, stopReason: "", toolFallback: true, rounds };
         }
@@ -1401,8 +1417,13 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
         usage: res?.usage || {}, ttft: res?.ttft, text: String(res?.text || ""),
       });
       text += String(res?.text || "");
+      // 兜底：网关在最终结果里给了整段 reasoning、却没走增量回调（非流式降级）
+      if (!reasoning && res?.reasoning) { reasoning = String(res.reasoning); try { onReasoning?.(reasoning); } catch { /* 忽略 */ } }
       const calls = res?.toolCalls || [];
-      if (!calls.length) return { ...res, text, toolTrace: trace, events, stopReason, rounds };
+      if (!calls.length) {
+        if (reasoning.trim()) events.push({ kind: "thought", at: now(), text: reasoning.slice(0, 1500) });
+        return { ...res, text, reasoning, toolTrace: trace, events, stopReason, rounds };
+      }
 
       // 模型可能编出工具表里没有的名字：照样回一条 tool 错误，让它自己改口，不执行。
       conversation = [
@@ -1465,15 +1486,16 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
       }
       if (stopReason) break;
     }
+    if (reasoning.trim()) events.push({ kind: "thought", at: now(), text: reasoning.slice(0, 4000) });
     return {
-      text, toolCalls: [], usage: {}, toolTrace: trace, events, rounds,
+      text, toolCalls: [], usage: {}, toolTrace: trace, events, rounds, reasoning,
       stopReason: stopReason || `达到 ${maxRounds} 轮工具上限`,
     };
   }
 
   /** 被动回复：同一个 bot、同一份记忆，流式吐字；落一条 decision=replied 的回合 */
   async function reply(bot, text, {
-    onDelta, onTool, signal, threadId = "", groupContext = "", groupId = "", groupThreadId = "", groupMemo = "", groupDigest = "",
+    onDelta, onTool, onReasoning, signal, threadId = "", groupContext = "", groupId = "", groupThreadId = "", groupMemo = "", groupDigest = "",
     // 交接 / 系统触发的这一轮：审计里区分是谁开的口，镜像时别把系统话术冒充成用户原话
     trigger = { kind: "mention", ref: "" }, inputRole = "user",
   } = {}) {
@@ -1578,7 +1600,7 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
         ...(groupNote ? [{ role: "system", content: `群聊里其他人这轮已经说的（只作讨论上下文，不要冒充他们，也不要重复他们的整段）：\n${groupNote}` }] : []),
         ...history,
         { role: "user", content: clean },
-      ], bot, onDeltaTracked, signal, onTool, { turnId, groupId, groupThreadId });
+      ], bot, onDeltaTracked, signal, onTool, { turnId, groupId, groupThreadId, onReasoning });
     } catch (err) {
       // 取消：把已经吐出来的半截留下，标成 interrupted（界面上是「被打断」+ 半截）
       if (signal?.aborted) {
@@ -1590,9 +1612,14 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
         else store.persist();
         throw err;
       }
-      // 报错：这条回合不该留在账上（半截流式内容只在真崩溃时才有意义）
-      stateOf().botTurns = turnsOf().filter((t) => t.id !== pending.id);
-      store.persist();
+      // 报错也要留痕：以前这里直接把这一轮删掉，刷新后用户只看到自己的话凭空消失。
+      // 现在落成 decision=failed（带原因），和「沉默 / 被打断」一样进审计与转录
+      pending.reply = acc.slice(0, 4000);
+      pending.decision = "failed";
+      pending.reason = redactSecrets(String(err?.message || err)).text.slice(0, 400);
+      pending.cost = { ...(pending.cost || {}), ms: now() - started };
+      if (typeof store.saveBotTurn === "function") store.saveBotTurn(pending);
+      else store.persist();
       throw err;
     }
     const rawAnswer = String(res?.text || "").trim()
@@ -1808,12 +1835,14 @@ export function createBots({ store, memory, chat, chatStream, key, probeWatch, r
    * 落一条 `decision=noted` 的回合，并给下一次开口留背景（`recentNotes()` → system 段）。
    * 为什么不是 replied：这不是它自己说的话，署名和执行体要分清。
    */
-  function noted({ botId, todoId = null, runId = null, text = "", from = "", kind = "worker.note" }) {
+  function noted({ botId, todoId = null, runId = null, text = "", from = "", kind = "worker.note", threadId = "" } = {}) {
     const body = String(text || "").slice(0, 400);
     if (!body.trim()) throw new Error("回话内容为空");
+    // threadId 给「1:1 里同事回了话」用：不带它，注记会落到默认会话，用户正在看的会话里看不到
     return record({
       botId, trigger: { kind, ref: todoId ? `todo:${todoId}` : (runId ? `run:${runId}` : "") },
       decision: "noted", reply: body, todoId, runId, from: String(from || "").slice(0, 60),
+      ...(threadId ? { threadId } : null),
       injected: [], cost: {},
     });
   }

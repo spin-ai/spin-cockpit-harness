@@ -128,6 +128,11 @@ contextBridge.exposeInMainWorld("harness", {
     ipcRenderer.on("harness:bot-delta", handler);
     return () => ipcRenderer.removeListener("harness:bot-delta", handler);
   },
+  onBotThought: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("harness:bot-thought", handler);
+    return () => ipcRenderer.removeListener("harness:bot-thought", handler);
+  },
   onBotTool: (cb) => {
     const handler = (_event, payload) => cb(payload);
     ipcRenderer.on("harness:bot-tool", handler);

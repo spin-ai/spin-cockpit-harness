@@ -31,6 +31,9 @@ const suites = [
   "./soul.test.mjs",      // SOUL.md 镜像：职责 / Never / 能力 / 空字段
   "./group.test.mjs",     // 群聊路由：@ 解析 / 投递 / 回复唤醒 / 共享上下文
   "./mail.test.mjs",      // 群内同事消息：待回复过滤 / prompt / 截断
+  "./peer-note.test.mjs", // 1:1 里 @ 到别的机器人：地址上下文 / 交接目标 / 喂给目标的框法
+  "./thinking.test.mjs",  // 推理模型思考流：回吐 / 落 trace / 截断 / 无思考不留空事件
+  "./reasoning.test.mjs", // 思考档 → 各网关推理字段（thinking / reasoning_effort / 不给）
   "./context.test.mjs",   // 上下文预算 / 长对话压缩 / 温度与工具签名
   "./tidy.test.mjs",      // 记忆整理：80% 才给候选 / 只归档可恢复
   "./templates.test.mjs",  // 内置模板：人格 / 职责 / 日程成品可用
@@ -41,6 +44,7 @@ const suites = [
   "./items.test.mjs",      // Items 台账：状态机 / ask / snooze / stale / 分页 / 编号
   "./patch.test.mjs",      // 作用域增量：patch < 全量 5% / 500ms 合并 / 按 id 合并
   "./memory-lines.test.mjs", // 记忆行模型：一行一条 / from / 200 行上限 / 未载入提示
+  "./approval.test.mjs",   // 审批时限 / 无人值守判定 / 超时说明
 ];
 
 for (const file of suites) await import(file);

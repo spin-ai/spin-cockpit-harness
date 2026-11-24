@@ -16,14 +16,16 @@ import { AcpClient, dshPathEnv } from "./acp.mjs";
 import { createKnowledge } from "./knowledge/index.mjs";
 import { CHAT_MODEL_CATALOG, chat as arkChat, chatStream as arkChatStream, resolveArkKey as resolveArkKeyFor } from "./knowledge/ark.mjs";
 import { BOT_INJECT_CHARS, createBots, soulMarkdown } from "./bot/index.mjs";
-import { crossTopicDigest, groupAudience, groupContextLines, groupMarkdown, replyMentions } from "./bot/group.mjs";
+import { crossTopicDigest, groupAudience, groupContextLines, groupMarkdown, replyMentions, settleGroupAsks } from "./bot/group.mjs";
 import { mailPrompt, pendingMailsFor } from "./bot/mail.mjs";
+import { handoffPrompt, peerMentionNote, resolveHandoffTarget } from "./bot/peer-note.mjs";
 import { notifyAllowed, notifyDecision } from "./bot/notify.mjs";
 import { TIDY_MAX_ARCHIVE, planTidy } from "./bot/tidy.mjs";
 import { botTemplate, templateSummaries } from "./bot/templates.mjs";
 import { eventRowsFromGh, parseGhJson } from "./bot/github.mjs";
 import { newWebhookToken, webhookEvent } from "./bot/webhook.mjs";
 import { skillSummaries } from "./bot/skills.mjs";
+import { UNATTENDED_NEEDS_RELEASE, approvalTimeoutMs, approvalTimeoutNote, unattendedTodo } from "./bot/approval.mjs";
 import { describeRoutine, nextRunAt, normalizeRoutine } from "./bot/routine.mjs";
 import { BOT_TOOL_META, matchBotRef, redactToolArgs, redactToolResult } from "./bot/tools.mjs";
 import { createItems } from "./bot/items.mjs";
@@ -460,8 +462,58 @@ let win = null;
 let captureWin = null;
 let store = null;
 const approvals = new Map();
+/**
+ * 审批超时：ACP 的 permission 请求没有时限，没人点就一直挂着。
+ * 有人看着 10 分钟、无人值守 3 分钟，超时按拒绝收尾（`electron/bot/approval.mjs`）。
+ * 删除审批一律走 forgetApproval / forgetApprovals，顺带清掉定时器。
+ */
+function forgetApproval(id) {
+  const a = approvals.get(id);
+  if (a?.timer) clearTimeout(a.timer);
+  approvals.delete(id);
+  return a || null;
+}
+function forgetApprovals(pred) {
+  for (const [id, a] of approvals) if (pred(a)) forgetApproval(id);
+}
+/** 审批策略 = allow 时，run 结束写一条汇总（逐条写会把会话刷满） */
+function flushAutoApprovals(run, threadId) {
+  const n = Number(run?.autoApproved) || 0;
+  if (!n || !threadId) return;
+  run.autoApproved = 0;
+  store.addMessage(threadId, run.id, "system", "system", `自动批准 ${n} 次（审批策略：allow；明细在轨迹里）`);
+}
+/** 挂上超时：到点按拒绝回给 agent，并在会话里写清原因（人不在的时候 run 不能永远等） */
+function armApprovalTimeout(approval, client) {
+  const minutesUnattended = unattendedTodo(store.state.todos.find((t) => t.id === approval.todoId), store.state.bots || []);
+  const ms = approvalTimeoutMs({
+    unattended: minutesUnattended,
+    override: Number(process.env.COCKPIT_APPROVAL_TIMEOUT_MS) || 0,
+  });
+  approval.timeoutMs = ms;
+  approval.unattended = minutesUnattended;
+  if (!ms) return;
+  approval.timer = setTimeout(() => {
+    if (!approvals.has(approval.id)) return;
+    forgetApproval(approval.id);
+    try { client?.respondPermission(approval.requestId, false); } catch { /* handle 可能已关 */ }
+    const run = store.state.runs.find((r) => r.id === approval.runId);
+    if (run && run.status === "waiting_input") run.status = "running";
+    if (run) delete run.waitingFor;
+    const todo = store.state.todos.find((t) => t.id === approval.todoId);
+    const thread = todo ? threadForTodo(todo) : (run?.threadId ? store.state.threads.find((t) => t.id === run.threadId) : null);
+    const note = approvalTimeoutNote({ minutes: Math.round(ms / 60000), unattended: minutesUnattended, title: approval.title });
+    if (thread) store.addMessage(thread.id, approval.runId, "system", "system", note);
+    store.addEvent("run.approval_timeout", `run.approval_timeout ${approval.runId} ${approval.title}`);
+    store.persist(); broadcast();
+  }, ms);
+  approval.timer.unref?.();
+}
 const terminals = new Map();
 const terminalUrls = new Map();
+// 谁在写这条终端：terminalTakeControl / terminalReleaseControl 写，terminalSnapshot 读给界面（✋ 与「交回终端」）。
+// 之前只有四处用、没有声明 —— 一调 state 就 ReferenceError: terminalControl is not defined，渲染层永远停在「启动中」
+const terminalControl = new Map();
 /**
  * 拆掉一条 pty：先摘监听，再 destroy（关读流 + SIGHUP）。
  *
@@ -1109,6 +1161,18 @@ function failQueuedRun(run, err) {
   broadcast();
 }
 
+/**
+ * 任务级审批档 → dsh 的权限模式。
+ *
+ * dsh 的 acp profile 里 approval policy 由 DSH_PERMISSION_MODE 推导
+ * （`workspace-write` → approval: ask；`danger-full-access` → approval: never），
+ * 所以「这个任务不再逐条问」是 agent 侧的真实语义，不是 harness 替人点允许。
+ * ACP 面没有暴露权限档（session/new 只有 model / reasoning_effort），只能走环境变量。
+ */
+function dshPermissionMode(todo) {
+  return todo?.permission === "full-access" ? "danger-full-access" : "workspace-write";
+}
+
 async function startRun(run, todo, agent) {
   const host = store.state.hosts.find((h) => h.id === agent.hostId);
   const isRemote = host?.kind === "ssh";
@@ -1276,7 +1340,13 @@ async function startRun(run, todo, agent) {
     return;
   }
 
-  const extraEnv = parseEnvText(decSecret(store.state.settings?.dshEnv || ""));
+  // 任务级审批档：本地注入 env；远端拼进 ssh 的环境前缀（同一个值）
+  const permissionMode = dshPermissionMode(todo);
+  const extraEnv = { ...parseEnvText(decSecret(store.state.settings?.dshEnv || "")), DSH_PERMISSION_MODE: permissionMode };
+  if (todo?.permission === "full-access") {
+    store.addEvent("run.permission", `run.permission ${todo?.key || run.id} full-access`);
+    store.addMessage(thread.id, run.id, "system", "system", "审批模式：本任务放行（dsh 不再逐条问，改动直接落盘）");
+  }
   // 浏览器 / harness 工具只在本地 run 可用：远端机器连不到本机回环端点
   const browserMcp = isRemote ? [] : await browserMcpServers(run);
   // 远端：装远端 shim / MCP + 反向隧道，把本机 bridge 暴露成远端 127.0.0.1
@@ -1286,7 +1356,7 @@ async function startRun(run, todo, agent) {
     cwd,
     env: isRemote ? null : extraEnv, // 远端请在目标机自己配置（env 不会随 ssh 过去）
     ssh: isRemote ? { host: host.addr, port: host.port, user: host.user } : null,
-    sshEnv: isRemote ? remoteBridge?.assignments || null : null,
+    sshEnv: isRemote ? [...(remoteBridge?.assignments || []), `DSH_PERMISSION_MODE=${permissionMode}`] : null,
     // 本地：设置覆盖 > 内置单文件运行时 > PATH 里的 dsh
     bin: isRemote ? remoteDshBin() : (store.state.settings?.dshBinary || bundledDshPath() || undefined),
     home: store.state.settings?.dshHome || undefined,
@@ -1314,12 +1384,21 @@ async function startRun(run, todo, agent) {
     if (policy === "allow" || policy === "deny") {
       const allow = policy === "allow";
       const ok = client.respondPermission(params.requestId, allow);
-      store.addEvent("run.approval", `run.approval auto ${allow ? "allow" : "deny"} ok=${ok}`);
-      store.addMessage(thread.id, run.id, "system", "system", `自动${allow ? "批准" : "拒绝"}：${params.title || "工具调用"}`);
+      store.addEvent("run.approval", `run.approval auto ${allow ? "allow" : "deny"} ${params.title || "工具调用"} ok=${ok}`);
+      if (allow) {
+        // 自动批准不是「发生了什么」：逐条写 system 行会把长任务的会话刷满。
+        // 计数留在 run 上，结束时写一条汇总（明细仍能在轨迹里查到）。
+        run.autoApproved = (Number(run.autoApproved) || 0) + 1;
+        return;
+      }
+      // 自动拒绝会改变这次 run 能做什么，仍然立刻留痕
+      store.addMessage(thread.id, run.id, "system", "system", `自动拒绝：${params.title || "工具调用"}（审批策略：deny）`);
       broadcast();
       return;
     }
     run.status = "waiting_input";
+    // 同样是 waiting_input，「有人要批」和「agent 问了问题」的文案不一样
+    run.waitingFor = "approval";
     const approval = {
       id: `ap-${params.requestId}`,
       requestId: params.requestId,
@@ -1330,6 +1409,7 @@ async function startRun(run, todo, agent) {
       options: (params.options || []).map((o) => ({ id: o.optionId, name: o.name, kind: o.kind })),
     };
     approvals.set(approval.id, approval);
+    armApprovalTimeout(approval, client);
     store.addEvent("run.permission", `run.permission ${approval.title} waiting`);
     store.addMessage(thread.id, run.id, "system", "system", `等待审批：${approval.title}`);
     broadcast();
@@ -1423,7 +1503,7 @@ async function startRun(run, todo, agent) {
       "完成后给出结论；如需改文件请直接修改。",
     ].filter(Boolean).join("\n");
     const res = await client.prompt(prompt);
-    for (const [id, a] of approvals) if (a.runId === run.id) approvals.delete(id);
+    forgetApprovals((a) => a.runId === run.id);
     run.status = "completed";
     run.endedAt = Date.now();
     applyRunUsage(run, res);
@@ -1432,6 +1512,7 @@ async function startRun(run, todo, agent) {
     if (todo) todo.status = otherActive ? "in_progress" : "in_review";
     if (todo) void imNotifyRun(todo, run, handle).catch(() => {});
     if (todo) todo.updatedAt = now();
+    flushAutoApprovals(run, thread.id);
     store.addMessage(thread.id, run.id, "system", "system", `run 结束 · ${res?.stopReason || "end_turn"}`);
     // 注入归因：回答里用到了哪几条注入的记忆（口水话指标，但不落库就永远只能猜）
     if (injectLogId) {
@@ -1465,7 +1546,7 @@ async function startRun(run, todo, agent) {
     }
     await client.close();
   } catch (err) {
-    for (const [id, a] of approvals) if (a.runId === run.id) approvals.delete(id);
+    forgetApprovals((a) => a.runId === run.id);
     if (!handle.done) {
       run.status = "failed";
       run.endedAt = Date.now();
@@ -1477,6 +1558,7 @@ async function startRun(run, todo, agent) {
       setRunResult(run, run.error, "error");
       run.exitCode = Number.isFinite(err?.exitCode) ? err.exitCode : null;
       if (todo) { todo.status = "todo"; todo.lastRunFailed = true; todo.updatedAt = now(); }
+      flushAutoApprovals(run, thread.id);
       store.addMessage(thread.id, run.id, "system", "error", `run 失败：${run.error}`);
       store.addEvent("run.failed", `run.failed todo=${todo?.key || run.id} ${run.error}`);
       pluginHost?.emit("run.failed", { runId: run.id, todoId: todo?.id ?? null, status: run.status, error: run.error });
@@ -2682,6 +2764,7 @@ async function afterSupervisorPrompt(run, mission, handle) {
   if (plan.status === "superseded" && mission.missionState === "planning") {
     run.status = "completed";
     run.endedAt = now();
+    flushAutoApprovals(run, missionThread(mission).id);
     if (run.startedAt) run.durationMs = Math.max(0, run.endedAt - run.startedAt);
     setRunResult(run, lastAgentText(missionThread(mission).id, run.id), "acp_text");
     store.addMessage(missionThread(mission).id, run.id, "system", "system", "计划已退回；请输入修改意见或重试，让主管重新规划");
@@ -2847,12 +2930,15 @@ async function startSupervisorRun(run, mission, agent) {
       return;
     }
     run.status = "waiting_input";
+    // 同样是 waiting_input，「有人要批」和「agent 问了问题」的文案不一样
+    run.waitingFor = "approval";
     const approval = {
       id: `ap-${params.requestId}`, requestId: params.requestId, runId: run.id, todoId: mission.id,
       missionId: mission.id, childTitle: "Supervisor", title: params.title || "需要审批",
       description: params.description || "", options: (params.options || []).map((o) => ({ id: o.optionId, name: o.name, kind: o.kind })),
     };
     approvals.set(approval.id, approval);
+    armApprovalTimeout(approval, client);
     store.addEvent("run.permission", `run.permission ${approval.title} waiting`);
     broadcast();
   });
@@ -2909,7 +2995,7 @@ function missionToolResult(mission, name, args = {}) {
         store.addMessage(missionThread(mission).id, newRun.id, "system", "system", `返工 · ${delegation.title}`);
       } else if (args.decision === "cancel") {
         const run = delegation.childRunId ? store.state.runs.find((r) => r.id === delegation.childRunId) : null;
-        if (run) { active.get(run.id)?.client.cancel(); run.status = "cancelled"; run.endedAt = now(); }
+        if (run) { active.get(run.id)?.client.cancel(); run.status = "cancelled"; run.endedAt = now(); delete run.waitingFor; }
         updateDelegation(delegation, { status: "cancelled" });
         child.status = "cancelled"; child.updatedAt = now();
       } else throw new Error("未知 review decision");
@@ -3057,14 +3143,15 @@ function startAgentBridge() {
           ask.timer = setTimeout(() => {
             if (ask.status !== "pending") return;
             ask.status = "expired";
-            approvals.delete(id);
+            forgetApproval(id);
             if (run.status === "waiting_input") run.status = "running";
+            delete run.waitingFor;
             const thread = todo ? threadForTodo(todo) : (run.threadId ? store.state.threads.find((t) => t.id === run.threadId) : null);
             if (thread) store.addMessage(thread.id, run.id, "system", "system", "审批超时：agent 的确认请求没有等到人决定");
             store.addEvent("run.approval_timeout", `run.approval_timeout ${run.id}`);
             store.persist(); broadcast();
           }, seconds * 1000);
-          if (run.status === "running") run.status = "waiting_input";
+          if (run.status === "running") { run.status = "waiting_input"; run.waitingFor = "approval"; }
           const thread = todo ? threadForTodo(todo) : (run.threadId ? store.state.threads.find((t) => t.id === run.threadId) : null);
           if (thread) store.addMessage(thread.id, run.id, "system", "system", `等待审批：${text.slice(0, 200)}`);
           store.addEvent("run.approval", `run.approval agent_cli waiting`);
@@ -3522,6 +3609,23 @@ const flushDelta = (base) => {
   if (!item.text) return;
   if (win && !win.isDestroyed()) win.webContents.send("harness:bot-delta", { ...item.base, delta: item.text });
 };
+const botThoughtQueues = new Map();
+/** 推理模型的思考流：和正文分开走，前端单独一块显示（不然只能看到「正在想…」） */
+const sendThought = (base, delta) => {
+  if (!delta) return;
+  const key = deltaKey(base);
+  let item = botThoughtQueues.get(key);
+  if (!item) { item = { base, text: "", timer: null }; botThoughtQueues.set(key, item); }
+  item.base = base;
+  item.text += delta;
+  if (item.timer) return;
+  item.timer = setTimeout(() => {
+    item.timer = null;
+    const it = botThoughtQueues.get(key);
+    botThoughtQueues.delete(key);
+    if (it?.text && win && !win.isDestroyed()) win.webContents.send("harness:bot-thought", { ...it.base, delta: it.text });
+  }, BOT_DELTA_FRAME_MS);
+};
 const sendDelta = (base, delta) => {
   if (!delta) return;
   const key = deltaKey(base);
@@ -3781,6 +3885,8 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
       if (!bot.projectId && !handedTask) return { error: "无人值守要求先绑定默认项目（设置 → 能力）" };
       if (todo.projectId !== bot.projectId && !handedTask) return { error: "这条任务不在 bot 绑定的项目里" };
       if (todo.status !== "todo" && todo.status !== "failed") return { error: `任务当前是 ${todo.status}，不能起` };
+      // 无人值守没有人点审批：没有预先放行的任务起来就会卡在 waiting_input
+      if (todo.permission !== "full-access") return { error: UNATTENDED_NEEDS_RELEASE };
       const active = ["queued", "running", "waiting_input", "waiting_plan", "waiting_children"];
       if (st.runs.some((r) => r.todoId === todo.id && active.includes(r.status))) return { error: "这条任务已经在跑" };
       const hourAgo = Date.now() - 3600_000;
@@ -4027,6 +4133,11 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
         && t.botId === ownerId && (!handed || t.cwd === handed.path));
       if (existed) {
         watchDelegation(existed, targetBot, bot);
+        if (targetBot && targetBot.id !== bot.id) {
+          try {
+            bots().noted({ botId: targetBot.id, todoId: existed.id, text: `${bot.name} 又把「${existed.title}」提到你这边${brief ? `：${brief.slice(0, 200)}` : ""}`, from: bot.name, kind: "task.assigned" });
+          } catch { /* 通知失败不挡派活 */ }
+        }
         // 同一轮重复建 / 用户改口说「开跑」：任务已存在时，start=true 就把这次当成启动
         let runId = null;
         if (args.start === true) {
@@ -4049,6 +4160,19 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
         todo.acceptance = args.acceptance.map((x) => String(x).trim()).filter(Boolean).slice(0, 5);
       }
       watchDelegation(todo, targetBot, bot);
+      // 派给另一个 bot：除了挂监视，再给它留一条 note —— 它的下一轮就能读到「X 把这条活交给你」，
+      // 不用等人再提醒一次（沿用 worker.note 的通道，渲染层/提示词都不用改）
+      if (targetBot && targetBot.id !== bot.id) {
+        try {
+          bots().noted({
+            botId: targetBot.id,
+            todoId: todo.id,
+            text: `${bot.name} 把「${todo.title}」交给你${brief ? `：${brief.slice(0, 260)}` : ""}`,
+            from: bot.name,
+            kind: "task.assigned",
+          });
+        } catch (err) { console.warn(`[bot] 派活通知没落库：${String(err?.message || err)}`); }
+      }
       // 只有用户明确说「开跑 / 开始 / 直接干」时模型才会传 start=true；默认只建 todo。
       let runId = null;
       if (args.start === true) {
@@ -4316,25 +4440,29 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
       try { botMemoryFile(bot.id); } catch { /* 镜像失败不影响删除 */ }
       return { ok: true, id: target.id, body: String(target.body || "").slice(0, 120) };
     }
+    case "ask_bot":
     case "handoff_to_bot": {
       const bot = ctx?.bot;
       const groupId = String(ctx?.groupId || "");
-      if (!bot || !groupId) return { error: "只在群聊里能交接" };
-      const group = (st.botGroups || []).find((g) => g.id === groupId);
-      if (!group) return { error: "群不存在" };
+      const isAsk = name === "ask_bot";
+      if (!bot) return { error: "缺少 bot 上下文" };
+      // 群聊里要验成员；1:1 里也允许（本轮结束由 deliverHandoffFromOneToOne 立即送达）
+      const group = groupId ? (st.botGroups || []).find((g) => g.id === groupId) : null;
+      if (groupId && !group) return { error: "群不存在" };
       const raw = String(args.to || "").trim().replace(/^@/, "").toLowerCase();
       const handleOf = (b) => String(b.name || "").split("·")[0].trim().toLowerCase();
       const target = bots().list().find((b) => b.id === String(args.to || "")
         || String(b.name || "").toLowerCase() === raw
         || handleOf(b) === raw);
       if (!target) return { error: `找不到机器人 ${args.to || "（空）"}` };
-      if (target.id === bot.id) return { error: "不能交给自己" };
-      if (!(group.memberIds || []).includes(target.id)) return { error: `${target.name} 不在这个群里` };
-      const task = String(args.task || "").trim().slice(0, 200);
-      if (!task) return { error: "task 不能为空：说清要它接什么" };
+      if (target.id === bot.id) return { error: isAsk ? "不能问自己" : "不能交给自己" };
+      if (group && !(group.memberIds || []).includes(target.id)) return { error: `${target.name} 不在这个群里` };
+      const task = String((isAsk ? args.question : args.task) || "").trim().slice(0, 400);
+      if (!task) return { error: isAsk ? "question 不能为空：一句话说清要问什么" : "task 不能为空：说清要它接什么" };
       return {
         ok: true,
         handoff: {
+          kind: isAsk ? "question" : "handoff",
           to: target.id, toName: target.name, task,
           reason: String(args.reason || "").trim().slice(0, 160),
         },
@@ -4688,7 +4816,7 @@ function startImGateway() {
         const option = approval.options[pick - 1];
         if (handle && option) {
           handle.client.respondPermission(option.id);
-          approvals.delete(approval.id);
+          forgetApproval(approval.id);
           store.addMessage(threadForTodo(store.state.todos.find((t) => t.id === approval.todoId)).id, approval.runId, "system", "system", `IM 审批：${option.name || option.id}`);
           broadcast();
           const res = { sent: true };
@@ -5258,6 +5386,47 @@ function markPeerMail(id, status, turnId = null) {
   return mail;
 }
 
+/**
+ * 1:1 里的交接 / 问同事：立即唤醒目标一跳；叫不动就留 peer mail（对方下一轮带上）。
+ * 无论成败都把目标的回答（或「已转交」）作为一条 `noted` 回合挂回源会话 —— 用户不用去翻别人的会话。
+ * 只跟一跳：目标再交回去不再继续，避免两个 bot 来回踢皮球（和群聊 depth=1 同一条规矩）。
+ */
+async function deliverHandoffFromOneToOne({ from, handoff, turn, threadId = "", signal } = {}) {
+  const target = resolveHandoffTarget(handoff, bots().list(), { selfId: from.id });
+  if (!target) return null;
+  const mail = createPeerMail({
+    fromBotId: from.id, toBotId: target.id, groupId: "", threadId: String(threadId || ""),
+    kind: handoff.kind === "handoff" ? "handoff" : "question", body: String(handoff.task || ""),
+  });
+  const sourceThreadId = String(threadId || "") || bots().threadOf(from.id)?.id || "";
+  const note = (text, kind) => {
+    try { bots().noted({ botId: from.id, threadId: sourceThreadId, text, from: target.name, kind }); } catch { /* 注记失败不影响主流程 */ }
+  };
+  try {
+    const targetThreadId = bots().threadOf(target.id)?.id
+      || bots().ensureBotThread?.(target)?.id
+      || bots().newChat({ botId: target.id }).id;
+    const answer = await bots().reply(target, handoffPrompt(handoff, from.name), {
+      threadId: targetThreadId,
+      signal,
+      trigger: { kind: "peer", ref: turn?.id || "" },
+      inputRole: "none",
+    });
+    markPeerMail(mail.id, "answered", answer?.id || null);
+    broadcastBot(target.id, ["turns", "chats"]);
+    if (answer?.reply) note(answer.reply, "peer.reply");
+    else note(`（${target.name} 接了，这一轮没有回话）`, "peer.note");
+  } catch (err) {
+    // 叫不动（没 key / 目标被停用 / 网络）：留 pending mail，并在源会话里说清楚，别假装问过了
+    console.warn(`[bot] 1:1 交接没有立即送达：${String(err?.message || err)}`);
+    note(`已经把这件事转给 ${target.name}；它下一次开口会看到这条（这条不会丢）。`, "peer.pending");
+    broadcastBot(target.id, ["turns", "chats"]);
+  }
+  broadcastBot(from.id, ["turns", "chats"]);
+  store.persist();
+  return mail;
+}
+
 const actions = {
   /** 人接管这条终端：接管期间 Agent 的写入被拒绝（不排队），避免两边交错 */
   terminalTakeControl: ({ id } = {}) => {
@@ -5691,6 +5860,17 @@ const actions = {
   botRoutineStatus: async ({ botId } = {}) => bots().routineStatus(String(botId || "")),
   /** 把一张提问卡片划掉（"先不管"）：卡片不挡聊天，但也不该一直挂着 */
   botAskDismiss: async ({ turnId } = {}) => ({ ok: true, changed: bots().settleAsks("", { status: "dismissed", turnId: String(turnId || "") }) }),
+  // 群里的提问卡：落 meta.ask，划掉只改这一条，不动别人的
+  botGroupAskDismiss: async ({ messageId } = {}) => {
+    const msg = (store.state.botGroupMessages || []).find((m) => m.id === String(messageId || ""));
+    if (!msg?.meta?.ask) return { ok: false, changed: 0 };
+    msg.meta.ask.status = "dismissed";
+    msg.meta.ask.answeredAt = Date.now();
+    store.saveGroupMessage?.(msg);
+    store.persist();
+    broadcast();
+    return { ok: true, changed: 1 };
+  },
   /** 这个 bot 的持续会话（没有就建），返回 thread id 供 Chat 打开 */
   botThread: async ({ botId } = {}) => {
     const bot = bots().list().find((b) => b.id === String(botId || ""));
@@ -6040,6 +6220,8 @@ const actions = {
         group.updatedAt = Date.now();
       }
     }
+    // 人说话了：这个话题里开着的提问卡一起结掉（和 1:1 的 settleAsks 同一口径）
+    if (!retryId && settleGroupAsks(msgs, { groupId: gid, threadId: tid, status: "answered" })) store.persist();
     // 先把「你说的这句」落盘 + 广播：群里多个 bot 可能各想十几秒，不能等全跑完才出现
     store.persist();
     syncGroupFile(gid);
@@ -6092,6 +6274,7 @@ const actions = {
           groupMemo: String(group.memo || ""),
           groupDigest: crossTopicDigest(group, msgs.filter((m) => m.groupId === gid), topicKey),
           onDelta: (delta) => sendDelta(base, delta),
+          onReasoning: (delta) => sendThought(base, delta),
           onTool: (tool) => sendTool(base, tool),
         });
         flushDelta(base);
@@ -6103,6 +6286,8 @@ const actions = {
         const msg = push("bot", bot, turn?.reply || "", turn?.decision || "answered", {
           turnId: turn?.id || null, runId: turn?.runId || null, cost: turn?.cost || null, sessionId,
           ...(retryId ? { retryOf: retryId } : null),
+          // 1:1 的提问卡挂在 bot_turns.ask 上；群消息没有 turn 表，落 meta.ask（人一说话就结）
+          ...(turn?.ask ? { ask: { text: String(turn.ask.text || turn?.reply || "").slice(0, 300), status: "open", createdAt: Date.now() } } : null),
         });
         store.saveGroupMessage?.(msg);
         sendGroupMessage(gid, msg);
@@ -6204,21 +6389,36 @@ const actions = {
     }
     return { ok: true };
   },
-  botChat: async ({ botId, text, threadId } = {}) => {
+  /**
+   * 1:1 里说一句话。
+   *
+   * `mentions` 是用户在 1:1 里 @ 到的其他机器人（渲染层传 id，不靠解析文本）：
+   * - 它们是**地址**，不是“谁回”：这一轮仍然只由 `bot` 回
+   * - 变成 `peerMentionNote()` 一行 system 上下文，告诉它“需要信息就 ask_bot、要交活就 handoff_to_bot”
+   * - 如果它真的交了（`turn.handoff`）：立即唤醒目标一跳（失败就留 peer mail 等下一轮），
+   *   把目标的回答作为一条 `noted` 回合挂回这条会话，用户能直接看到“DE-A 回了什么”
+   * 对齐 third-part/orca @ 59f3122bc（`bot-mention-context.ts` 的 `<orca_context>` + `orchestration send`）。
+   */
+  botChat: async ({ botId, text, threadId, mentions } = {}) => {
     const bot = bots().list().find((b) => b.id === String(botId || ""));
     if (!bot) throw new Error("bot 不存在");
     const controller = new AbortController();
     botAborts.set(bot.id, controller);
     const base = { botId: bot.id, name: bot.name };
     sendPhase(base, "thinking");
+    const peerNote = peerMentionNote(mentions, bots().list(), { selfId: bot.id });
     try {
       const turn = await bots().reply(bot, text, {
         threadId: String(threadId || ""),
         signal: controller.signal,
+        groupContext: peerNote || "",
         onDelta: (delta) => sendDelta(base, delta),
+        onReasoning: (delta) => sendThought(base, delta),
         onTool: (tool) => sendTool(base, tool),
       });
       broadcastBot(bot.id, ["turns", "chats"]);
+      // 交接：以前 1:1 里只有工具返回，没有消费者（群聊才有）——这里补上，不静默丢弃
+      if (turn?.handoff) await deliverHandoffFromOneToOne({ from: bot, handoff: turn.handoff, turn, threadId: String(threadId || ""), signal: controller.signal });
       return turn;
     } finally {
       flushDelta(base);
@@ -7493,7 +7693,7 @@ const actions = {
     store.addEvent("agent.created", `agent.created ${agent.name} @${agent.alias} (${executor.id}/${safeRole}/${runtime})`);
     return agent;
   },
-  updateAgent: ({ id, role, instructions, maxChildren, chatRuntime }) => {
+  updateAgent: ({ id, role, instructions, maxChildren, chatRuntime, approval }) => {
     const agent = store.state.agents.find((a) => a.id === id);
     if (!agent) throw new Error("agent not found");
     if (role !== undefined) {
@@ -7504,6 +7704,13 @@ const actions = {
     }
     if (instructions !== undefined) agent.instructions = String(instructions || "").slice(0, 4000);
     if (maxChildren !== undefined) agent.maxChildren = Math.max(1, Math.min(12, Number(maxChildren) || 4));
+    // 这个执行体收到 ACP 权限请求时怎么办："" = 跟随全局设置；ask / allow / deny 是它自己的选择。
+    // 注意优先级：任务设成「本任务放行」时 dsh 根本不问，轮不到这里。
+    if (approval !== undefined) {
+      const next = ["ask", "allow", "deny"].includes(String(approval)) ? String(approval) : "";
+      if (next) agent.approval = next; else delete agent.approval;
+      store.addEvent("agent.approval", `agent.approval ${agent.name} ${next || "inherit"}`);
+    }
     // 开启方式（对话 / 终端）是「这条 Agent 的对话用什么面」：主管强制 ACP，worker 可改
     if (chatRuntime !== undefined) {
       const next = chatRuntime === "terminal" ? "terminal" : "acp";
@@ -7530,6 +7737,24 @@ const actions = {
     store.state.threads.push(thread);
     store.addEvent("thread.created", `thread.created ${thread.id} scope=${thread.projectId || "global"}`);
     return thread;
+  },
+  // 任务级审批档：只改这个任务「下次起 run」时 dsh 的权限模式，不动全局设置；bot 不能调
+  setTodoPermission: ({ id, permission = "ask" }) => {
+    const todo = store.state.todos.find((t) => t.id === id);
+    if (!todo) throw new Error("todo not found");
+    if (isMission(todo)) throw new Error("Mission 的审批档跟着计划走，不在这里改");
+    const next = permission === "full-access" ? "full-access" : "ask";
+    if (todo.permission === next) return todo;
+    todo.permission = next;
+    todo.updatedAt = now();
+    const thread = threadForTodo(todo);
+    store.addMessage(thread.id, null, "system", "system", next === "full-access"
+      ? "审批模式改成「本任务放行」：下一次起跑起，dsh 不再逐条问，改动直接落盘"
+      : "审批模式改成「逐条问」：下一次起跑起，写操作会逐条等你批");
+    store.addEvent("todo.permission", `todo.permission ${todo.key} ${next}`);
+    store.persist();
+    broadcast();
+    return todo;
   },
   setThreadAgent: ({ threadId, agentId }) => {
     const thread = store.state.threads.find((t) => t.id === threadId);
@@ -7948,6 +8173,7 @@ const actions = {
         if (!["completed", "failed", "cancelled"].includes(run.status)) {
           run.status = "cancelled";
           run.endedAt = now();
+          delete run.waitingFor;
         }
       }
       delegation.status = "cancelled";
@@ -8213,7 +8439,7 @@ const actions = {
     todo.missingWriteback = false;
     store.addMessage(threadForTodo(todo).id, run.id, "system", "system", `采纳 run ${run.id}${run.branch ? ` · ${run.branch}` : ""}`);
     store.addEvent("run.adopted", `run.adopted ${todo.key} ${run.id}`);
-    for (const [id, a] of approvals) if (a.todoId === todo.id) approvals.delete(id);
+    forgetApprovals((a) => a.todoId === todo.id);
   },
   stop: ({ runId }) => {
     const run = store.state.runs.find((r) => r.id === runId);
@@ -8225,7 +8451,7 @@ const actions = {
       const term = terminals.get(run.terminalId);
       if (term) { try { term.kill(); } catch { /* ignore */ } terminals.delete(run.terminalId); }
     }
-    for (const [id, a] of approvals) if (a.runId === runId) approvals.delete(id);
+    forgetApprovals((a) => a.runId === runId);
     const handle = active.get(runId);
     if (handle) { handle.done = true; handle.client.cancel(); handle.client.close(); active.delete(runId); }
     releaseWikiToken(runId);
@@ -8235,7 +8461,7 @@ const actions = {
       releaseBrowserTokens(runId);
     }
     if (["running", "queued", "waiting_input", "waiting_plan", "waiting_children"].includes(run.status)) {
-      run.status = "cancelled"; run.endedAt = now();
+      run.status = "cancelled"; run.endedAt = now(); delete run.waitingFor;
       if (run.startedAt) run.durationMs = Math.max(0, run.endedAt - run.startedAt);
       const todo = store.state.todos.find((t) => t.id === run.todoId);
       if (todo) {
@@ -8316,9 +8542,10 @@ const actions = {
         ask.allow = allowIt;
         ask.label = label;
       }
-      approvals.delete(id);
+      forgetApproval(id);
       const cliRun = store.state.runs.find((r) => r.id === approval.runId);
       if (cliRun && cliRun.status === "waiting_input") cliRun.status = "running";
+      if (cliRun) delete cliRun.waitingFor;
       const cliTodo = store.state.todos.find((t) => t.id === approval.todoId);
       const cliThread = cliTodo ? threadForTodo(cliTodo) : (cliRun?.threadId ? store.state.threads.find((t) => t.id === cliRun.threadId) : null);
       if (cliThread) store.addMessage(cliThread.id, approval.runId, "system", "approval", `审批：${label} · ${approval.description || approval.title}`);
@@ -8327,9 +8554,10 @@ const actions = {
       return { ok: true, allow: allowIt };
     }
     const ok = handle?.client.respondPermission(approval.requestId, allowIt, optionId);
-    approvals.delete(id);
+    forgetApproval(id);
     const run = store.state.runs.find((r) => r.id === approval.runId);
     if (run && run.status === "waiting_input") run.status = "running";
+    if (run) delete run.waitingFor;
     store.addEvent("run.approval", `run.approval ${approval.title} ${label} ok=${ok}`);
     const approvalTodo = store.state.todos.find((t) => t.id === approval.todoId);
     // 审批关掉之后要能在会话里回看：命令原文 / 谁批的 / 批了什么

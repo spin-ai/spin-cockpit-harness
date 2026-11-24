@@ -57,7 +57,7 @@ try {
     id: "t1", key: "#1", title: "往返", desc: "", acceptance: ["a"], status: "queued",
     agentId: null, priority: "P1", due: "", parentId: null, tags: ["x"], subtasks: [],
     blockedBy: [], missingWriteback: false, lastRunFailed: false, cwd: dir, projectId: "p1",
-    kind: "task", missionState: null, createdAt: 3, updatedAt: 4,
+    kind: "task", missionState: null, createdAt: 3, updatedAt: 4, permission: "full-access",
   });
   db.state.threads.push({ id: "th1", todoId: "t1", title: "往返", projectId: "p1", project: "", agentId: null, createdAt: 5, updatedAt: 6, model: "", modelName: "", effort: "", kind: "chat" });
   db.state.messages.push({
@@ -88,6 +88,7 @@ try {
   const roundTrip = again.state.todos.find((t) => t.id === "t1");
   assert.ok(roundTrip, "新增的 t1 应该落盘");
   assert.equal(roundTrip.missionState, null);
+  assert.equal(roundTrip.permission, "full-access", "todos.permission 要能往返（审批档不能重启就丢）");
   assert.deepEqual(roundTrip.tags, ["x"]);
   assert.equal(again.state.messages[0].content, "hello");
   assert.deepEqual(again.state.messages[0].context, { a: 1 });

@@ -90,7 +90,8 @@ await test("记忆检索：本轮问题命中的条目先上浮（只改排序�
 });
 
 await test("思考档：只改轮数与工具轮温度，不改 token 上限", () => {
-  assert.equal(effortPolicy("quick").rounds, 4);
+  // 快速档压到 2 轮：少绕两圈比多查一次更重要（要多查就切标准/深入）
+  assert.equal(effortPolicy("quick").rounds, 2);
   assert.equal(effortPolicy("").rounds, 8);
   assert.equal(effortPolicy("deep").rounds, 12);
   assert.ok(effortPolicy("deep").temperature < effortPolicy("").temperature);

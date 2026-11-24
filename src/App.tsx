@@ -7,7 +7,7 @@ import { TerminalPanel } from "./components/TerminalPanel";
 import { FilePanel } from "./components/FilePanel";
 import { GitView } from "./components/GitView";
 import { Projects } from "./components/Views";
-import { ApprovalModal } from "./components/ApprovalModal";
+import { ApprovalDock } from "./components/ApprovalDock";
 import { ConfirmHost } from "./components/ConfirmHost";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { Splitter, useStoredSize } from "./components/Splitter";
@@ -787,27 +787,31 @@ export default function App() {
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
       <ConfirmHost />
-      {state.approvals?.length > 0 && <ApprovalModal approval={state.approvals[0]} pendingCount={state.approvals.length} act={act} />}
-      {errors.length > 0 && (
-        <div className="errstack" role="alert" aria-live="assertive">
-          {errors.map((e) => (
-            <div className="errcard" key={e.id}>
-              <div className="errcard-head">
-                <b>出错了</b>
-                {e.action && <code className="errcard-action">{e.action}</code>}
-                <time>{new Date(e.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
-                <button
-                  className="errcard-btn"
-                  onClick={() => void navigator.clipboard?.writeText(e.action ? `${e.action}: ${e.text}` : e.text)}
-                  title="复制完整报错，便于贴出来定位"
-                >复制</button>
-                <button className="errcard-btn" title="关闭这条报错" aria-label="关闭这条报错" onClick={() => setErrors((prev) => prev.filter((x) => x.id !== e.id))}><XIcon size={14} /></button>
-              </div>
-              <pre className="errcard-body">{e.text}</pre>
+      {(state.approvals?.length > 0 || errors.length > 0) && (
+        <div className="float-stack">
+          <ApprovalDock approvals={state.approvals || []} act={act} onOpen={(todoId) => void selectTodo(todoId)} />
+          {errors.length > 0 && (
+            <div className="errstack" role="alert" aria-live="assertive">
+              {errors.map((e) => (
+                <div className="errcard" key={e.id}>
+                  <div className="errcard-head">
+                    <b>出错了</b>
+                    {e.action && <code className="errcard-action">{e.action}</code>}
+                    <time>{new Date(e.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
+                    <button
+                      className="errcard-btn"
+                      onClick={() => void navigator.clipboard?.writeText(e.action ? `${e.action}: ${e.text}` : e.text)}
+                      title="复制完整报错，便于贴出来定位"
+                    >复制</button>
+                    <button className="errcard-btn" title="关闭这条报错" aria-label="关闭这条报错" onClick={() => setErrors((prev) => prev.filter((x) => x.id !== e.id))}><XIcon size={14} /></button>
+                  </div>
+                  <pre className="errcard-body">{e.text}</pre>
+                </div>
+              ))}
+              {errors.length > 1 && (
+                <button className="errcard-clear" onClick={() => setErrors([])}>清空全部（{errors.length}）</button>
+              )}
             </div>
-          ))}
-          {errors.length > 1 && (
-            <button className="errcard-clear" onClick={() => setErrors([])}>清空全部（{errors.length}）</button>
           )}
         </div>
       )}

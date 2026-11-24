@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 import { test } from "./_harness.mjs";
 import { compileContext, createBots } from "../../electron/bot/index.mjs";
 import {
+  openGroupAsks,
+  settleGroupAsks,
   crossTopicDigest,
   groupAudience,
   groupContextLines,
@@ -159,4 +161,30 @@ await test("群聊上下文：带上一轮别人的话，不带自己的，不�
   assert.match(ctx, /DE-A：我跟/);
   assert.equal(ctx.includes("本轮主管"), false, "还没说的不能拼进去");
   assert.equal(ctx.includes("PM：我先说"), false, "自己的话不重复拼");
+});
+
+await test("群提问卡：开着的才列出来 / 人一说话结掉这个话题 / 超期不列", () => {
+  const now = 1_700_000_000_000;
+  const H = 3600 * 1000;
+  const msgs = [
+    { id: "g1", groupId: "grp", threadId: "", author: "bot", botId: "b1", botName: "PM", text: "要改吗？", createdAt: now,
+      meta: { ask: { text: "要改吗？", status: "open", createdAt: now } } },
+    { id: "g2", groupId: "grp", threadId: "th2", author: "bot", botId: "b2", botName: "DE-A", text: "另一话题", createdAt: now + 1000,
+      meta: { ask: { text: "另一话题", status: "open", createdAt: now + 1000 } } },
+    { id: "g3", groupId: "grp", threadId: "", author: "bot", botId: "b2", text: "划掉的", createdAt: now,
+      meta: { ask: { text: "划掉的", status: "dismissed", createdAt: now } } },
+    { id: "g4", groupId: "grp", threadId: "", author: "bot", botId: "b1", text: "旧的", createdAt: now - 8 * 24 * H,
+      meta: { ask: { text: "旧的", status: "open", createdAt: now - 8 * 24 * H } } },
+    { id: "g5", groupId: "grp", threadId: "", author: "owner", text: "没有卡", createdAt: now, meta: null },
+  ];
+  const open = openGroupAsks(msgs, { now });
+  assert.deepEqual(open.map((a) => a.messageId), ["g2", "g1"], "新的在前；划掉 / 超期 / 没卡的不列");
+  assert.equal(open[1].botName, "PM", "卡上要能标出是谁问的");
+  const changed = settleGroupAsks(msgs, { groupId: "grp", threadId: "", status: "answered", now: now + 2000 });
+  assert.equal(changed, 1, "只结这个话题里开着的");
+  assert.equal(msgs[0].meta.ask.status, "answered");
+  assert.equal(msgs[0].meta.ask.answeredAt, now + 2000);
+  assert.equal(msgs[1].meta.ask.status, "open", "别的话题不动");
+  assert.equal(msgs[3].meta.ask.status, "expired", "超期的标 expired，不算被答掉（和 1:1 askOpen 同口径）");
+  assert.equal(settleGroupAsks(msgs, { groupId: "grp", threadId: "", now: now + 3000 }), 0, "已经是 answered / expired 的不重复计数");
 });

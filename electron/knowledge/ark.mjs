@@ -145,7 +145,7 @@ export function parseSseDelta(payload) {
  * `tools` 是 OpenAI 同构的 function calling：模型可能在流里吐 tool_calls，
  * 这里只负责**把调用拼完整**（id / name / arguments 分片到达），执行与循环在调用方。
  */
-export async function chatStream(messages, { key, model = MODELS.fast, temperature = 0.6, maxTokens = 700, signal, onDelta, tools = null } = {}) {
+export async function chatStream(messages, { key, model = MODELS.fast, temperature = 0.6, maxTokens = 700, signal, onDelta, onReasoning, tools = null, thinking, extra } = {}) {
   if (!key) { const err = new Error("缺少 Ark API key"); err.code = "no-key"; throw err; }
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 120000);
@@ -160,6 +160,10 @@ export async function chatStream(messages, { key, model = MODELS.fast, temperatu
         model, messages, temperature, max_tokens: maxTokens, stream: true,
         stream_options: { include_usage: true },
         ...(withTools ? { tools, tool_choice: "auto" } : {}),
+        // 「快速」档：能关思考的模型直接关（不关的话推理 token 会先把首字拖到十几秒）
+        ...(thinking === "off" ? { thinking: { type: "disabled" } } : {}),
+        // 各网关的推理字段（thinking / reasoning_effort …）：认就生效，不认由调用方 400 后重试
+        ...(extra && typeof extra === "object" ? extra : {}),
       }),
       signal: ac.signal,
     });
@@ -174,10 +178,13 @@ export async function chatStream(messages, { key, model = MODELS.fast, temperatu
       const json = await res.json().catch(() => ({}));
       const message = json?.choices?.[0]?.message || {};
       const text = String(message.content || "");
+      const thought = String(message.reasoning_content || message.reasoning || "");
       if (text) onDelta?.(text);
-      return { text, toolCalls: normalizeToolCalls(message.tool_calls), usage: json?.usage || {}, ttft: text ? Date.now() - startedAt : undefined, model };
+      if (thought) onReasoning?.(thought);
+      return { text, reasoning: thought, toolCalls: normalizeToolCalls(message.tool_calls), usage: json?.usage || {}, ttft: text ? Date.now() - startedAt : undefined, model };
     }
     let text = "";
+    let reasoning = "";
     let buffer = "";
     let finishReason = "";
     let usage = {};
@@ -200,6 +207,9 @@ export async function chatStream(messages, { key, model = MODELS.fast, temperatu
         if (payload?.usage) usage = payload.usage;
         const delta = choice.delta || {};
         if (delta.content) { if (!firstTokenAt) firstTokenAt = Date.now(); text += delta.content; onDelta?.(delta.content); }
+        // 推理模型的思考流：以前直接丢掉，界面上就只能看到「正在想…」直到正文开始
+        const rdelta = delta.reasoning_content ?? delta.reasoning;
+        if (rdelta) { if (!firstTokenAt) firstTokenAt = Date.now(); reasoning += rdelta; onReasoning?.(rdelta); }
         // tool_calls 分片到达：按 index 拼 id / name / arguments
         for (const part of delta.tool_calls || []) {
           const slot = calls[part.index ?? 0] || (calls[part.index ?? 0] = { id: "", name: "", args: "" });
@@ -209,7 +219,7 @@ export async function chatStream(messages, { key, model = MODELS.fast, temperatu
         }
       }
     }
-    return { text, toolCalls: calls.filter((c) => c && c.name), usage, ttft: firstTokenAt ? firstTokenAt - startedAt : undefined, model, finishReason };
+    return { text, reasoning, toolCalls: calls.filter((c) => c && c.name), usage, ttft: firstTokenAt ? firstTokenAt - startedAt : undefined, model, finishReason };
   } finally {
     clearTimeout(timer);
   }
