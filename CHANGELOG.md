@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Fixed（介绍视频：换成 Safari / iOS 能播的编码）
+- **60 秒介绍视频重编码**：原来是 `yuvj420p` + `color_range=pc` + `bt470bg`（还缺 transfer/primaries）。Chrome 能播，Safari / iOS 常见黑屏或拒绝播放。改成 `yuv420p` + `tv` + `bt709`（primaries / transfer / matrix 全部写入），High@4.1、faststart、AAC 原音轨不变；对照原片 PSNR 平均 44.3 dB
+
 ### Added（chat 界面收口第二轮）
 - **长会话窗口化**：BOT 与 CHAT 转录都先画最近 40 块，顶部「加载更早 · 还有 N 块」；加载时按 `scrollHeight - scrollTop` 保持阅读位置
 - **会话内查找**：`⌘F` 打开浮动查找条（命中最多 12 条，Enter 跳第一条、点击跳转），命中消息闪 8% fg / 0.9s 淡出；`⌘⇧C` 复制最近一条回答；`⋯` 里新增「复制整段对话（Markdown）」
