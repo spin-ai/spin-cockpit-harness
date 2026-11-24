@@ -44,10 +44,12 @@ function runSourceLabel(source?: string | null, error?: string | null) {
 
 const RUN_FOCUS_CLAMP = 900;
 
-function RunFocusCard({ run, todo, onOpenTerminal, onClose }: {
+function RunFocusCard({ run, todo, onOpenTerminal, onClose, onRetry }: {
   run: Run; todo: Todo | null;
   onOpenTerminal: (opts: { terminalId: string; cwd: string; title: string; taskId?: string }) => void;
   onClose?: () => void;
+  /** 这次运行失败时给一条就地重试的路（复用最后一轮提问，不复制消息） */
+  onRetry?: () => void;
 }) {
   const text = String(run.result || run.error || "");
   // 默认收起：只在头行显示一句摘要，避免一次失败白占三行
@@ -84,6 +86,12 @@ function RunFocusCard({ run, todo, onOpenTerminal, onClose }: {
       {open && (
         <div className={`run-focus-body${run.resultSource === "pty_tail" ? " is-mono" : ""}`}>
           {run.resultSource === "pty_tail" ? <pre>{text}</pre> : <RichText text={text} />}
+        </div>
+      )}
+      {run.status === "failed" && (
+        <div className="ds-fail-actions">
+          {onRetry && <button className="btn tiny primary" onClick={onRetry} title="用最后一轮提问重新起一次运行（不改原记录）">重试这次运行</button>}
+          <span className="ds-fail-hint">{run.error ? "失败原因见上面" : "这次运行没有留下结论"}{onRetry ? "；重试会新建一次运行，旧记录保留" : ""}</span>
         </div>
       )}
     </section>
@@ -992,7 +1000,13 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
           })()}
 
           {focusRun && (focusRun.result || focusRun.error) && (
-            <RunFocusCard run={focusRun} todo={todo} onOpenTerminal={openGlobalTerminal} onClose={onClearFocusRun} />
+            <RunFocusCard
+              run={focusRun}
+              todo={todo}
+              onOpenTerminal={openGlobalTerminal}
+              onClose={onClearFocusRun}
+              onRetry={todo && !todo.confirmed && !active ? () => void regenerate() : undefined}
+            />
           )}
 
           <div className="chat-body-wrap">

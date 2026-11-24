@@ -22,6 +22,9 @@ const freePort = () => new Promise((resolve, reject) => {
   srv.listen(0, "127.0.0.1", () => { const { port } = srv.address(); srv.close(() => resolve(port)); });
 });
 const PORT = await freePort();
+// 低内存机器（1.7G 云开发机）可用 PREVIEW_SCALE=1 跑同一套断言，只牺牲截图清晰度
+const SCALE = Number(process.env.PREVIEW_SCALE) || 2;
+
 const CDP_PORT = await freePort();
 const OUT = path.join(root, ".preview");
 
@@ -74,6 +77,7 @@ const MOCK = String.raw`
       tools: [
         { name: "read", args: "src/App.tsx", argsRaw: "src/App.tsx", result: "export default function App() {\n  return null;\n}", at: now - 698500, ms: 120, ok: true, family: "read", statusKind: "done", durationMs: 120 },
       ],
+      context: { chars: 12300, memory: 8000, memoryRaw: 8500, history: 10, digest: false, memoryUsedPct: 62, memoryLines: { total: 20, loaded: 18, dropped: 2, cap: 200, budget: 12900 }, sections: {} },
       trace: [
         { kind: "request", round: 0, at: now - 700000, ms: 820, usage: { total_tokens: 180, prompt_tokens: 120, completion_tokens: 60 }, text: "先查一下发布节奏。" },
         { kind: "tool", name: "knowledge_search", argsRaw: "{\"query\":\"发布节奏\",\"limit\":5}", result: "{\"hits\":[{\"title\":\"发布节奏\"},{\"title\":\"构建通过\"}]}", ms: 240, at: now - 699000, ok: true },
@@ -83,7 +87,8 @@ const MOCK = String.raw`
     turn({ id: "t2", decision: "reported", threadId: "th-bot-b1", runId: "r1", todoId: "td1",
       reply: "FEAT-1 完成：首页标题改大\n测试通过，等你确认。", cost: { tokens: 120, ms: 800 } }),
     turn({ id: "t3", decision: "silent", threadId: "th-bot-b1", reason: "没有值得说的事件", cost: {} }),
-    turn({ id: "t4", decision: "asked", threadId: "th-bot-b1", reply: "要我顺便把副标题也改了吗？", ask: { text: "副标题要不要一起改？", status: "open", createdAt: now - 300000 } }),
+    turn({ id: "t4", decision: "asked", threadId: "th-bot-b1", reply: "要我顺便把副标题也改了吗？", ask: { text: "副标题要不要一起改？", status: "open", createdAt: now - 300000 },
+      context: { chars: 16800, memory: 11200, memoryUsedPct: 85, history: 14, memoryLines: { total: 22, loaded: 18, dropped: 4, cap: 200, budget: 12900 }, sections: {} } }),
   ];
   const state = {
     projects: [{ id: "p", name: "演示项目", path: "/tmp/ws", branch: "main", createdAt: now }], agents: [{ id: "a1", name: "pi", alias: "pi", cli: "pi", role: "worker", hostId: "h1" }],
@@ -125,6 +130,8 @@ const MOCK = String.raw`
     snapshot.turns = Array.from({ length: n }, (_, i) => turn({
       id: "tbig" + i, decision: i % 2 ? "replied" : "answered",
       input: "第 " + i + " 问", reply: "第 " + i + " 答", threadId: "th-bot-b1",
+      // 窗口化用例之后还要验「上下文账」：最后一轮带真实 context，不让它变成空值
+      ...(i === n - 1 ? { context: { chars: 16800, memory: 11200, memoryUsedPct: 85, history: 14, memoryLines: { total: 22, loaded: 18, dropped: 4, cap: 200, budget: 12900 }, sections: {} } } : {}),
     }));
   };
   let emit = () => {};
@@ -139,7 +146,10 @@ const MOCK = String.raw`
       else if (type === "botChats") result = { chats, hits: [] };
       else if (type === "botChatNew") result = { id: "th-bot-b1-3", title: "新话题" };
       else if (type === "botChatFork") result = { thread: { id: "th-bot-b1-fork" }, copied: 2 };
-      else if (type === "botChat") result = { ok: true, result: turns[0] };
+      else if (type === "botChat") {
+        if (/失败测试/.test(String(payload?.text || ""))) return { ok: false, error: "模拟：模型网关 502（用于验证对话内失败卡）" };
+        result = { ok: true, result: turns[0] };
+      }
       else if (type === "botRetry") result = { ok: true };
       // 和主进程 db.saveBotUi 一样「按字段合并」：只写 scroll 时不能把草稿清空，反之亦然
       else if (type === "botUiSave") { const prev = draftStore[payload.key] || { draft: "", scroll: null }; draftStore[payload.key] = { draft: payload.draft !== undefined ? payload.draft : prev.draft, scroll: payload.scroll !== undefined ? payload.scroll : prev.scroll, updatedAt: Date.now() }; result = { ok: true }; }
@@ -197,8 +207,9 @@ process.on("SIGINT", () => { cleanup(); process.exit(130); });
 function start(cmd, args, env = {}) {
   const child = spawn(cmd, args, { cwd: root, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"] });
   children.push(child);
-  child.stdout.on("data", () => {});
-  child.stderr.on("data", () => {});
+  const TRACE_OUT = Boolean(process.env.PREVIEW_TRACE);
+  child.stdout.on("data", (d) => { if (TRACE_OUT) process.stderr.write(`[${args[1] ? "child" : "child"}] ${String(d).slice(0, 400)}`); });
+  child.stderr.on("data", (d) => { if (TRACE_OUT) process.stderr.write(`[child:err] ${String(d).slice(0, 2000)}`); });
   return child;
 }
 
@@ -213,7 +224,7 @@ start(CHROME, [
   "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--hide-scrollbars",
   // root / 容器里 Chromium 默认 sandbox 起不来
   ...(process.getuid?.() === 0 ? ["--no-sandbox", "--disable-dev-shm-usage"] : []),
-  "--force-device-scale-factor=2", "--window-size=1600,1000", "about:blank",
+  `--force-device-scale-factor=${SCALE}`, "--window-size=1600,1000", "about:blank",
 ]);
 const target = await wait(async () => {
   try {
@@ -229,10 +240,14 @@ const consoleErrors = [];
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
   if (msg.method === "Runtime.consoleAPICalled" && msg.params.type === "error") {
-    consoleErrors.push((msg.params.args || []).map((a) => a.value ?? a.description ?? "").join(" "));
+    const text = (msg.params.args || []).map((a) => a.value ?? a.description ?? "").join(" ");
+    consoleErrors.push(text);
+    if (process.env.PREVIEW_TRACE) process.stderr.write(`[console.error] ${text.slice(0, 400)}\n`);
   }
   if (msg.method === "Runtime.exceptionThrown") {
-    consoleErrors.push(msg.params.exceptionDetails?.exception?.description || msg.params.exceptionDetails?.text || "exception");
+    const text = msg.params.exceptionDetails?.exception?.description || msg.params.exceptionDetails?.text || "exception";
+    consoleErrors.push(text);
+    if (process.env.PREVIEW_TRACE) process.stderr.write(`[exception] ${String(text).slice(0, 400)}\n`);
   }
   if (!msg.id || !pending.has(msg.id)) return;
   const { resolve, reject } = pending.get(msg.id);
@@ -260,7 +275,7 @@ const shot = async (file) => {
 
 await send("Runtime.enable");
 await send("Page.enable");
-await send("Emulation.setDeviceMetricsOverride", { width: 1600, height: 1000, deviceScaleFactor: 2, mobile: false });
+await send("Emulation.setDeviceMetricsOverride", { width: 1600, height: 1000, deviceScaleFactor: SCALE, mobile: false });
 await send("Page.addScriptToEvaluateOnNewDocument", { source: MOCK });
 await send("Page.navigate", { url: `http://127.0.0.1:${PORT}/` });
 
@@ -271,7 +286,8 @@ const check = (name, ok, detail = "") => {
 };
 
 try {
-  await wait(async () => (await ev(`!!document.querySelector(".rail-btn")`)), 20000, "应用挂载");
+  // 冷缓存 / 低内存机器上首屏要更久：PREVIEW_MOUNT_MS 可放宽，默认 20s
+  await wait(async () => (await ev(`!!document.querySelector(".rail-btn")`)), Number(process.env.PREVIEW_MOUNT_MS) || 20000, "应用挂载");
 } catch (err) {
   console.error(`\n挂载失败：${err.message}`);
   console.error(await ev(`document.body.innerHTML.slice(0, 400)`));
@@ -468,29 +484,35 @@ await run(`
   return true;`);
 check("附件：读进来变成 chip", (await text(".bot-attach-row")).includes("README.md"));
 
-// 分支
+// 分支（菜单弹出的时机差一拍：最多重试 3 次，避免偶发「菜单里没有分支」）
 await run(`
-  const menu = document.querySelector(".bot-chat-bar .row-menu-trigger");
-  if (!menu) throw new Error("会话头没有操作菜单");
-  menu.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 150));
-  const item = [...document.querySelectorAll(".row-menu-pop button, .row-menu-popup button, [role=menu] button")].find((b) => b.textContent.includes("分支"));
-  if (!item) throw new Error("菜单里没有分支");
-  item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 400));
-  return true;`);
+  const pickItem = (re) => [...document.querySelectorAll(".row-menu-pop button, .row-menu-popup button, [role=menu] button")].find((b) => re.test(b.textContent));
+  for (let i = 0; i < 3; i++) {
+    const menu = document.querySelector(".bot-chat-bar .row-menu-trigger");
+    if (!menu) throw new Error("会话头没有操作菜单");
+    menu.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    for (let k = 0; k < 4 && !pickItem(/分支/); k++) await new Promise((r) => setTimeout(r, 60));
+    const item = pickItem(/分支/);
+    if (item) { item.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 400)); return true; }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  throw new Error("菜单里没有分支");`);
 check("分支：调用 botChatFork", await ev(`(window.__calls || []).some((c) => c.type === "botChatFork")`));
 
 // 打开右栏「设置」，后面的配置页断言才在
 await run(`
-  const trigger = document.querySelector(".bot-msg-col .row-menu-trigger");
-  if (trigger) trigger.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 120));
-  const item = [...document.querySelectorAll(".row-menu-pop button, .row-menu-popup button, [role=menu] button")].find((b) => /机器人设置/.test(b.textContent));
-  if (!item) throw new Error("没有机器人设置入口");
-  item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 250));
-  return true;`);
+  const pickItem = () => [...document.querySelectorAll(".row-menu-pop button, .row-menu-popup button, [role=menu] button")].find((b) => /机器人设置/.test(b.textContent));
+  for (let i = 0; i < 3; i++) {
+    const triggers = [...document.querySelectorAll(".row-menu-trigger")].filter((b) => b.getBoundingClientRect().width > 0);
+    const trigger = triggers.find((b) => b.closest(".bot-msg-col")) || triggers[0];
+    if (!trigger) { await new Promise((r) => setTimeout(r, 200)); continue; }
+    trigger.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    for (let k = 0; k < 4 && !pickItem(); k++) await new Promise((r) => setTimeout(r, 60));
+    const item = pickItem();
+    if (item) { item.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 250)); return true; }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  throw new Error("没有机器人设置入口");`);
 
 // 连接器 / 自动化 / 谁能找它
 await run(`
@@ -519,7 +541,10 @@ await run(`
   const item = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("项目群"));
   if (!item) throw new Error("没有群聊入口");
   item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 250));
+  // 群面挂载 + 可见 composer 就位（固定 250ms 在负载高时会读到上一个 surface）
+  const ready = () => [...document.querySelectorAll(".ds-composer textarea")]
+    .some((t) => t.getBoundingClientRect().width > 0 && (t.getAttribute("placeholder") || "").includes("在群里说一句"));
+  for (let i = 0; i < 20 && !ready(); i++) await new Promise((r) => setTimeout(r, 25));
   return true;`);
 const groupComposer = await ev(`(() => { const el = [...document.querySelectorAll(".ds-composer textarea")].find((t) => t.getBoundingClientRect().width > 0); return el ? (el.getAttribute("placeholder") || "") : ""; })()`);
 check("群聊：进去了（在群里说一句）", groupComposer.includes("在群里说一句"), groupComposer);
@@ -592,7 +617,10 @@ const wsMetrics = await streamMetrics();
 check("BOT 工作台：回合流自己滚、整页不动", Boolean(wsMetrics && wsMetrics.overflow === "auto" && !wsMetrics.pageScrolled), JSON.stringify(wsMetrics));
 
 // 另一条入口：从机器人列表 / 派单进来的是 view "bot"，外壳必须同样整页填充
-await run(`window.dispatchEvent(new CustomEvent("harness:view", { detail: "bot" })); await new Promise((r) => setTimeout(r, 500)); return true;`);
+await run(`
+  window.dispatchEvent(new CustomEvent("harness:view", { detail: "bot" }));
+  for (let i = 0; i < 40 && !document.querySelector(".wide.bot-workspace .bot-stream"); i++) await new Promise((r) => setTimeout(r, 25));
+  return true;`);
 check("view=bot 也用整页填充外壳（否则整页滚，跟不上）", await ev(`!!document.querySelector(".wide.bot-workspace .bot-stream")`));
 await run(`
   const item = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("项目群"));
@@ -777,6 +805,71 @@ await run(`
 const retry = await ev(`JSON.stringify(window.__retry)`);
 const retryObj = JSON.parse(retry || "{}");
 check("重试：点了用 turnId 调 botRetry", retryObj.after === retryObj.before + 1 && Boolean(retryObj.turnId), retry);
+
+// 上下文账：composer 上方一行，显示字符数与记忆占比；>80% 用琥珀文字（不铺底色）
+const ctxText = await text(".ds-context");
+check("上下文账：显示字符 / 记忆占比", /上下文/.test(ctxText) && /16\.8k/.test(ctxText) && /记忆 85%/.test(ctxText), ctxText);
+check("上下文账：>80% 用琥珀文字（不铺底色）", await ev(`(() => { const el = document.querySelector(".ds-context"); if (!el) return false; if (!el.classList.contains("warn")) return false; const s = [...el.querySelectorAll("span")][0]; return getComputedStyle(s).color !== getComputedStyle(el).color && getComputedStyle(el).backgroundColor === "rgba(0, 0, 0, 0)"; })()`), ctxText);
+// 上下文账是入口不是装饰：点它就落到轨迹（能看这一轮的上下文构成）
+await run(`
+  const el = document.querySelector(".ds-context");
+  if (!el) throw new Error("没有上下文账");
+  el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 220));
+  return true;`);
+check("上下文账：点它去轨迹（不是死数字）", await ev(`!!document.querySelector(".ds-trajectory")`));
+await run(`
+  const tab = [...document.querySelectorAll(".bot-chat-tabs button")].find((b) => b.textContent.trim() === "对话");
+  if (tab) tab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 200));
+  return true;`);
+await shot(path.join(OUT, "bot-context.png"));
+
+// 失败卡：发送失败落在对话里（不再只有页头 banner），重试复用同一句
+await run(`
+  const vis = (sel) => [...document.querySelectorAll(sel)].find((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+  const box = vis(".ds-composer textarea");
+  if (!box) throw new Error("没有可见的输入框");
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+  setter.call(box, "失败测试：让网关报错");
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 80));
+  const sendBtn = vis(".ds-send");
+  // 上一拍可能还在生成（composer 会变成「停止」）：等它回到「发送」再点
+  for (let i = 0; i < 20 && !vis(".ds-send"); i++) await new Promise((r) => setTimeout(r, 25));
+  const send2 = vis(".ds-send");
+  if (!send2) throw new Error("没有可见的发送按钮（仍在生成中）");
+  send2.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  for (let i = 0; i < 20 && !document.querySelector(".ds-fail"); i++) await new Promise((r) => setTimeout(r, 25));
+  return true;`);
+const failCard = await ev(`(() => {
+  const card = document.querySelector(".ds-fail");
+  return JSON.stringify({
+    shown: !!card,
+    text: card ? card.textContent : "",
+    retry: !!card?.querySelector(".btn.tiny.primary"),
+    banner: !!document.querySelector(".bot-banner.fail"),
+  });
+})()`);
+const failObj = JSON.parse(failCard || "{}");
+check("失败卡：落在对话里（原因 + 重试）", failObj.shown === true && /502/.test(failObj.text || "") && failObj.retry === true, failCard);
+check("失败卡：不再只剩页头 banner", failObj.banner === false, failCard);
+await shot(path.join(OUT, "bot-fail.png"));
+await run(`
+  const before = window.__calls.filter((c) => c.type === "botChat").length;
+  document.querySelector(".ds-fail .btn.tiny.primary")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 400));
+  window.__failRetry = { before, after: window.__calls.filter((c) => c.type === "botChat").length };
+  return true;`);
+const fr = JSON.parse(await ev(`JSON.stringify(window.__failRetry || {})`) || "{}");
+check("失败卡：重试复用同一句（再发一次，不复制消息）", (fr.after || 0) === (fr.before || 0) + 1, JSON.stringify(fr));
+await run(`
+  document.querySelector('.ds-fail [aria-label="收起这条报错"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 160));
+  const vis = (sel) => [...document.querySelectorAll(sel)].find((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+  const box = vis(".ds-composer textarea");
+  if (box) { const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set; setter.call(box, ""); box.dispatchEvent(new Event("input", { bubbles: true })); }
+  return true;`);
 
 check("没有控制台报错", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 

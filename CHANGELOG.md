@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### Added（聊天窗口：失败卡进对话、上下文账）
+- **失败卡落在对话里**：发送失败不再只有页头 banner——对话末尾出现 `.ds-fail`（原因两行 + 复制 + 收起 + 重试）；重试有回合按 `turnId` 重跑，没有回合就把同一句再发一次（不复制消息、草稿不动）。群聊失败只给原因与收起，不给假重试
+- **上下文账**：composer 上方一行 `上下文 12.3k 字符 · 记忆 62% · 8.0k/12.9k · 历史 10 条`，数据来自上一轮 `turn.context`（`chars / memory / memoryUsedPct / memoryLines.budget / history`）；≥80% 用琥珀文字，不做进度条、不编模型上限
+- **任务会话失败也有出口**：`RunFocusCard` 在 `status=failed` 时给「重试这次运行」（复用最后一轮提问新建一次运行，旧记录保留），不再只能自己再打一遍
+- **preview 脚本可配**：`PREVIEW_SCALE`（低内存机器用 1 跑同一套断言）、`PREVIEW_MOUNT_MS`（冷缓存首屏放宽）、`PREVIEW_TRACE`（逐步打点 + 透传 child stderr）。新增「上下文账」「失败卡」两组断言与 `docsRead` / 失败 mock
+
 ### Fixed（聊天窗口：阅读位置 / 草稿 / 验证门）
 - **阅读位置还原算错符号**：采样 `offset` = 那一轮相对容器顶的 y，还原时却写成 `contentTop + offset`，落点整体推出去两倍——切走再回来会跑到别的地方。改成 `contentTop - offset`，实测回到同一位置（preview 断言 `nodeTop = -192`，与采样 -192 一致）
 - **草稿跨会话被冲掉**：`bot_ui` 只写 scroll 的那一拍会把草稿也清空；渲染层在切会话的那一帧又拿着上一条的 `draft` 写进新 key。现在主/渲染两边都按字段合并，且切换那一帧不落盘

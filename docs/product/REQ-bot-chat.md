@@ -37,8 +37,8 @@
 | US-Chat-07 | 我打了一半的字不会丢（判据：切会话、崩溃重启后草稿还在；发送失败原文回填输入框）                                                     | ✅ 500ms 节流落库 + 切会话取回 | Orca 草稿（IndexedDB + journal）           | P1，改 |
 | US-Chat-08 | 中文输入不出错（判据：拼音候选里按回车只上屏，不发送；Shift+Enter 换行；⌘/Ctrl+Enter 发送）                                   | ✗ 没有 composing 判断             | dsh `keyboard-composition.ts`          | P0，改 |
 | US-Chat-09 | 对一条消息能重试、追问、分支（判据：重试用同一条输入重跑且不重复原消息；引用只带 1–3 行；分支复制到新会话而源会话不动）                               | ◐ 复制 / 引用 / 分支 / 重试已做；赞踩未做 | dsh `MessageIconActions`（复制 / 分支 / 用量） | P1，改 |
-| US-Chat-10 | 出错时我在聊天里就能看到并重试（判据：失败卡写明原因 + 「重试」；草稿不丢；不只剩页头一条 banner）                                       | ✗ 只有页头 banner                 | Orca `messages/notices/`；dsh 失败卡       | P1，改 |
-| US-Chat-11 | 上下文快满时我提前知道（判据：占用 >80% 时 composer 上方有提示；压缩后留下「已压缩 N 轮 → 摘要」卡）                                | ✗ 静默截断                        | dsh compaction 卡 + quota 提示            | P2，改 |
+| US-Chat-10 | 出错时我在聊天里就能看到并重试（判据：失败卡写明原因 + 「重试」；草稿不丢；不只剩页头一条 banner）                                       | ✅ 2026-11-24（`.ds-fail`；重试按 `turnId` 或重发原文） | Orca `messages/notices/`；dsh 失败卡       | P1 |
+| US-Chat-11 | 上下文快满时我提前知道（判据：占用 >80% 时 composer 上方有提示；压缩后留下「已压缩 N 轮 → 摘要」卡）                                | ◐ 2026-11-24：composer 上方有上下文账（字符 / 记忆占比 / 历史条数，>80% 琥珀文字）；压缩卡仍缺 | dsh compaction 卡 + quota 提示            | P2 |
 | US-Chat-12 | 读屏和键盘也能完整用（判据：转录是 `role=log` 且 `aria-live`；每条有可读发送者 / 状态；输入框有 `aria-label`；Esc 停止；发送后焦点回输入框） | ◐ role=log / article / label 已做；Esc 停止与焦点恢复未做 | dsh 大量 `aria-live` / 语义角色              | P1，改 |
 | US-Chat-13 | 群聊里每条回复独立可读、可单独处置（判据：谁回的 / 何时 / 状态标签齐全；能单独停止；失败能单独重试）                                        | ◐ 有标签与停止，无重试                  | Orca 消息卡（sender chip / peer card）      | P2，改 |
 | US-Chat-14 | 我读结果不用离开对话（判据：工具行里的文件路径点一下就展开正文，不新增标签、不切页；卡片里仍能「在标签里打开」；再点一次收起） | ✅ 2026-11-24（BOT 与 CHAT 共用 `InlinePreviewCard`） | — | P1 |
@@ -206,6 +206,8 @@
 | SR-Chat-14 | **可访问性**：转录 `role=log` + `aria-live=polite`；每轮 `aria-label`；textarea / 附件 / 停止按钮均有 `aria-label`；焦点恢复；正文对比度 ≥4.5:1                                                           | ◐ role=log / article / label / Esc / 焦点已做；对比度待核 | IR-Chat-03/07，改 |
 | SR-Chat-15 | **对话内预览**：`InlinePreviewCard` 走 `docs:read`（带进程内缓存），相对路径按这次 run 的 `cwd` 解析；同一时刻最多一张；不新增标签 | ✅ `src/components/InlinePreview.tsx` | IR-Chat-13 |
 | SR-Chat-16 | **轨迹细节**：工具行 `meta.input` / `meta.output` 分段展示；`TrajectoryView` 字段级复制；运行态带 `tokens / 时长` 与 `TTFT` | ✅ `TaskChat` `ToolRow` / `TrajectoryView` `TrField` | IR-Chat-14 |
+| SR-Chat-17 | **失败卡在对话里**：`error` → `.ds-fail`（原因 / 复制 / 收起 / 重试）；重试优先 `retryTurn(turnId)`，无回合时用同一条原文重发 | ✅ `src/components/Bot.tsx` | IR-Chat-08 |
+| SR-Chat-18 | **上下文账**：读上一轮 `turn.context`（`chars / memory / memoryUsedPct / memoryLines.budget / history`），不编模型上限；≥80% 琥珀文字 | ✅ `src/components/Bot.tsx`（`lastContext`） | IR-Chat-09 |
 | SR-Chat-10（续） | 输入法状态机在任务会话里同样生效（`compositionstart/end` + `isComposing` + `keyCode 229`）；`Esc` 停运行、发送后焦点回输入框 | ✅ 2026-11-24 | IR-Chat-12 |
 
 ---

@@ -64,7 +64,7 @@ type Turn = {
   /** 这一轮为什么停（轮数 / 循环 / 预算 / 超时）；空 = 正常说完 */
   stopReason?: string;
   /** 上下文账：注入了多少字符、记忆占多少、是否带摘要 */
-  context?: { chars?: number; memory?: number; memoryRaw?: number; history?: number; digest?: boolean; sections?: Record<string, number> };
+  context?: { chars?: number; memory?: number; memoryRaw?: number; history?: number; digest?: boolean; memoryUsedPct?: number; memoryLines?: { total?: number; loaded?: number; dropped?: number; cap?: number; budget?: number }; sections?: Record<string, number> };
   /** 这一轮用过的工具（只读）：name / args / ms / ok / preview */
   tools?: { name: string; args?: string; argsRaw?: string; result?: string; at?: number; ms?: number; ok?: boolean; rejected?: boolean; preview?: string; family?: ToolFamily; statusKind?: ToolStatus; durationMs?: number; agentId?: string | null }[];
   /** 结构化轨迹：每次模型请求（usage / TTFT 可算）+ 每次工具调用（原始参数 / 完整输出） */
@@ -748,6 +748,14 @@ type Snapshot = {
   itemCounts?: BotItemCounts;
 };
 
+/** 字符数的人话：12.3k / 8.0k（上下文账只给估算，不编百分比） */
+const fmtChars = (n?: number) => {
+  const v = Number(n) || 0;
+  if (v >= 10000) return `${(v / 1000).toFixed(1)}k`;
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
+  return String(Math.round(v));
+};
+
 const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "汇报", watching: "监视中", noted: "收到回话", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工", quiet: "没说什么" };
 /** 工具名 → 「正在查 / 正在改」；标签来自主进程下发的工具目录，找不到再按家族兜底 */
 const toolLabel = (tool?: string, meta?: { label?: string; risk?: string }) => {
@@ -941,6 +949,8 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   const [threadRenaming, setThreadRenaming] = useState<{ id: string; title: string } | null>(null);
   /** 1:1：自己刚发出去的那句先就地显示；回合落库后让位 */
   const [pendingUser, setPendingUser] = useState<{ text: string; at: number } | null>(null);
+  /** 发送失败留在这里：对话里的失败卡用它重试（有回合就按 turnId 重跑，没有就重发原文） */
+  const [failRetry, setFailRetry] = useState<{ text: string; turnId: string | null } | null>(null);
   const groupIdRef = useRef("");
   /** 输入法：composition 期间的回车只上屏（Candidate 里按 Enter 不该发送） */
   const composingRef = useRef(false);
@@ -1505,8 +1515,8 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     return () => clearTimeout(timer);
   }, [draft, draftKey, act]);
 
-  const send = async () => {
-    const text = draft.trim();
+  const send = async (override?: string) => {
+    const text = (override ?? draft).trim();
     if (!text) return;
     if (isGroup && group && /@everyone\b/iu.test(text)) {
       const ok = await confirmDialog({
@@ -1567,7 +1577,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
       const message = String((err as Error)?.message || err);
       // 取消不是失败：回合已经落成「被打断」，刷新一下就能看到半截
       if (/abort/i.test(message)) { notify("已取消这次回复"); await load(); }
-      else { setError(message); setDraft(text); }
+      else { setError(message); setDraft(text); setFailRetry({ text, turnId: null }); }
       setPendingUser(null);
     } finally {
       setStreaming(null);
@@ -1876,8 +1886,16 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     setBusy("retry");
     setError("");
     try { await act("botRetry", { turnId }); await load(); }
-    catch (err) { setError(String((err as Error)?.message || err)); }
+    catch (err) { setError(String((err as Error)?.message || err)); setFailRetry({ text: "", turnId }); }
     finally { setBusy(""); }
+  };
+
+  /** 失败卡的重试：有回合就重跑那一轮；没有回合（发送即失败）就把原文再发一次 */
+  const retryFail = async () => {
+    if (busy) return;
+    setError("");
+    if (failRetry?.turnId) { await retryTurn(failRetry.turnId); return; }
+    if (failRetry?.text) { await send(failRetry.text); return; }
   };
 
   // Esc = 停止当前生成（聊天面里最常按的那个键）
@@ -2566,7 +2584,6 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     <div className="page bot-page">
       <UndoBar action={undo} onDone={() => setUndo(null)} />
 
-      {error && <div className="bot-banner fail"><i /><span>{error}</span></div>}
 
       <div className={`bot-grid${chatView === "trajectory" && !isGroup && openThreadId ? " trajectory-open" : ""}`}>
         <aside className="bot-side">
@@ -3312,6 +3329,36 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 </div>
               </div>
             )}
+            {/* 失败卡就在这次对话的位置：原因 + 重试（重试复用同一句，草稿不动） */}
+            {error && (
+              <div className="ds-fail" role="alert">
+                <div className="ds-fail-head">
+                  <span className="ds-fail-tag">没回</span>
+                  <span className="ds-fail-msg" title={error}>{error}</span>
+                  <span className="ds-spacer" />
+                  <button
+                    className="icon-btn"
+                    title="复制原因"
+                    aria-label="复制原因"
+                    onClick={() => void window.harness.clipboardWrite(error)}
+                  ><CopyIcon size={14} /></button>
+                  <button
+                    className="icon-btn"
+                    title="收起这条报错"
+                    aria-label="收起这条报错"
+                    onClick={() => { setError(""); setFailRetry(null); }}
+                  ><XIcon size={14} /></button>
+                </div>
+                <div className="ds-fail-actions">
+                  {!isGroup && (
+                    <button className="btn tiny primary" disabled={Boolean(busy)} onClick={() => void retryFail()} title="复用同一句再发一次">
+                      重试
+                    </button>
+                  )}
+                  <span className="ds-fail-hint">{isGroup ? "群里这轮没回成；换个说法或稍后再试" : "草稿已保留；重试不会重复你发过的内容"}</span>
+                </div>
+              </div>
+            )}
           </div>
 
           {(() => {
@@ -3396,6 +3443,26 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 </span>
               ))}
             </div>
+          )}
+          {/* 上下文账：上一轮塞进 system 的量 + 记忆用了预算的几成；到 80% 用琥珀文字提醒（不做进度条）。
+              不给模型窗口的假百分比：窗口未知就不编；点它去轨迹看这一轮的上下文构成。 */}
+          {!isGroup && lastContext && (
+            <button
+              className={`ds-context${(lastContext.memoryUsedPct || 0) >= 80 ? " warn" : ""}`}
+              title={[
+                "上一次开口时塞进 system 的量（估算）",
+                lastContext.memoryLines?.budget ? `记忆预算 ${fmtChars(lastContext.memory)}/${fmtChars(lastContext.memoryLines.budget)} 字符` : "",
+                lastContext.memoryLines ? `记忆 ${lastContext.memoryLines.loaded || 0}/${lastContext.memoryLines.total || 0} 行` : "",
+                lastContext.digest ? "更早的对话已压缩成摘要（只作背景）" : "",
+                "点开轨迹看这一轮的上下文构成",
+              ].filter(Boolean).join(" · ")}
+              onClick={() => setChatView("trajectory")}
+            >
+              <span>上下文 {fmtChars(lastContext.chars)} 字符</span>
+              <span>记忆 {Math.round(lastContext.memoryUsedPct || 0)}%{lastContext.memoryLines?.budget ? ` · ${fmtChars(lastContext.memory)}/${fmtChars(lastContext.memoryLines.budget)}` : ""}</span>
+              {typeof lastContext.history === "number" && <span>历史 {lastContext.history} 条</span>}
+              {lastContext.digest && <span>已压缩</span>}
+            </button>
           )}
           <div className="ds-composer">
             <textarea
