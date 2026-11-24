@@ -1,0 +1,2495 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>需求管理 · 原型</title>
+<!--
+  需求管理（按项目 / RR–IR–SR–US / 可裁剪）静态交互原型
+  对应方案：docs/product/REQ-requirements.md
+  说明：单文件、双击打开、无构建；所有数据在内存，刷新即还原。不是实现。
+  亮暗：右上按钮或 ?theme=dark；宽度按 1280 / 1440 设计，<1100 左栏收窄。
+-->
+<style>
+:root{
+  --font-sans:"Geist Variable","Geist",-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:"Geist Mono Variable","Geist Mono","SF Mono",SFMono-Regular,ui-monospace,Menlo,Consolas,monospace;
+  --radius:10px;--radius-sm:6px;--radius-lg:14px;
+  --shadow-1:0 1px 2px rgba(10,10,10,.045);
+  --shadow-float:0 18px 46px rgba(0,0,0,.22),0 2px 8px rgba(0,0,0,.10);
+}
+:root[data-theme="light"]{
+  --page-canvas:#fafafa;--surface:#ffffff;--surface-hover:#f5f5f5;--surface-selected:#ededed;
+  --border:#e5e5e5;--border-strong:#d4d4d4;--input:#e5e5e5;
+  --fg:#0a0a0a;--fg-2:#404040;--muted:#696969;--faint:#a3a3a3;
+  --brand:#171717;--brand-fg:#ffffff;--brand-soft:#f2f2f2;--brand-line:#dedede;
+  --green:#3f9a68;--green-soft:#edf8f2;--green-line:#d5eedf;
+  --amber:#a97a2f;--amber-soft:#fdf8ee;--amber-line:#f2e3c4;
+  --red:#cf5f5d;--red-soft:#fdf2f2;--red-line:#f4d7d7;
+  --purple:#7d67d1;--purple-soft:#f4f2fd;--purple-line:#e3ddf8;
+}
+:root[data-theme="dark"]{
+  --page-canvas:#0a0a0a;--surface:#171717;--surface-hover:#262626;--surface-selected:#2e2e2e;
+  --border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.14);--input:rgba(255,255,255,.16);
+  --fg:#f0f0f0;--fg-2:#d4d4d4;--muted:#a3a3a3;--faint:#737373;
+  --brand:#e5e5e5;--brand-fg:#0a0a0a;--brand-soft:#262626;--brand-line:#3a3a3a;
+  --green:#5fb884;--green-soft:rgba(95,184,132,.12);--green-line:rgba(95,184,132,.28);
+  --amber:#c9a25c;--amber-soft:rgba(201,162,92,.12);--amber-line:rgba(201,162,92,.26);
+  --red:#d97a78;--red-soft:rgba(217,122,120,.12);--red-line:rgba(217,122,120,.26);
+  --purple:#9c8ae0;--purple-soft:rgba(156,138,224,.12);--purple-line:rgba(156,138,224,.26);
+  --shadow-1:0 1px 2px rgba(0,0,0,.22);
+  --shadow-float:0 18px 46px rgba(0,0,0,.52),0 2px 8px rgba(0,0,0,.28);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--page-canvas);color:var(--fg);font:13px/1.55 var(--font-sans);-webkit-font-smoothing:antialiased;overflow:hidden}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0;padding:0}
+::selection{background:color-mix(in srgb,var(--fg) 14%,transparent);color:inherit}
+svg{display:block}
+.app{height:100vh;display:grid;grid-template-columns:56px minmax(0,1fr);min-width:0}
+.main{min-width:0;display:flex;flex-direction:column;overflow:hidden;height:100vh}
+.rail{height:100vh;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0 4px;background:var(--surface);border-right:1px solid var(--border)}
+.rail-btn{width:48px;height:44px;border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--muted);font-size:9px;line-height:1}
+.rail-btn:hover{background:var(--surface-hover);color:var(--fg)}
+.rail-btn.on{background:var(--surface-selected);color:var(--fg)}
+.rail-btn svg{width:18px;height:18px;display:block}
+.rail-sep{width:24px;height:1px;background:var(--border);margin:5px 0}
+.rail-bottom{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:2px}
+
+/* Page header */
+.head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 20px;align-items:end;padding:16px 24px 0}
+.head h1{margin:0;font-size:22px;line-height:1.15;font-weight:600;letter-spacing:-.03em}
+.head .sub{margin:2px 0 0;font-size:11.5px;color:var(--muted)}
+.head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.overview{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 24px 11px;font-size:11.5px;color:var(--muted)}
+.overview b{font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg)}
+.overview .sep{color:var(--faint)}
+.overview .warn b{color:var(--amber)}
+.overview .run b{color:var(--brand)}
+
+/* Controls */
+.select,.input{height:28px;min-width:0;padding:0 8px;border:1px solid var(--input);border-radius:6px;background:var(--surface);color:var(--fg);font-size:11.5px;outline:none}
+.select:focus,.input:focus{border-color:var(--border-strong)}
+.btn{height:30px;padding:0 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--fg);font-size:12px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn:hover{background:var(--surface-hover)}
+.btn:disabled,.btn[disabled]{opacity:.45;cursor:not-allowed}
+.btn.primary{background:var(--brand);border-color:var(--brand);color:var(--brand-fg)}
+.btn.primary:hover{opacity:.9}
+.btn.tiny{height:26px;padding:0 8px;font-size:11.5px}
+.icon-btn{width:20px;height:20px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;color:var(--muted);flex:none}
+.icon-btn:hover{background:var(--surface-hover);color:var(--fg)}
+.icon-btn svg{width:15px;height:15px}
+.btn svg{width:14px;height:14px}
+[data-theme="light"] .moon,[data-theme="dark"] .sun{display:none}
+.menu-wrap{position:relative}
+.menu{position:absolute;right:0;top:26px;z-index:40;width:188px;padding:4px;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-float)}
+.menu button{width:100%;height:28px;padding:0 8px;border-radius:5px;display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--fg-2);text-align:left}
+.menu button:hover{background:var(--surface-hover);color:var(--fg)}
+.menu .sep{height:1px;margin:4px 0;background:var(--border)}
+.menu .menu-note{font-size:10px;color:var(--faint);padding:2px 8px 4px}
+
+/* Tabs */
+.tabs{display:inline-flex;align-self:flex-start;gap:2px;height:28px;padding:2px;margin:0 24px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px}
+.tab{height:22px;padding:0 11px;border-radius:5px;display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted)}
+.tab:hover{color:var(--fg)}
+.tab.on{background:var(--surface-selected);color:var(--fg);box-shadow:var(--shadow-1)}
+.tab .phase{font-family:var(--mono);font-size:9px;color:var(--faint)}
+
+/* Workbench */
+.workbench{flex:1;min-height:0;display:grid;grid-template-columns:232px minmax(0,1fr);gap:12px;padding:0 24px 16px}
+.workbench.single{grid-template-columns:minmax(0,1fr)}
+.workbench.with-chat{grid-template-columns:232px minmax(0,1fr) 360px}
+.workbench.single.with-chat{grid-template-columns:minmax(0,1fr) 360px}
+.panel{min-height:0;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.tree-panel{min-width:0}
+.tree-tools{padding:9px;display:flex;flex-direction:column;gap:7px;border-bottom:1px solid var(--border);flex:none}
+.filter-row{display:flex;gap:5px}
+.filter-row .select{flex:1;min-width:0}
+.tree-scroll{flex:1;overflow:auto;padding:5px}
+.tree-row{display:flex;align-items:center;gap:5px;height:30px;padding:0 5px;border-radius:6px;min-width:0;cursor:default}
+.tree-row:hover{background:var(--surface-hover)}
+.tree-row.on{background:var(--surface-selected)}
+.tree-row .chev{width:16px;height:16px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;color:var(--faint);flex:none}
+.tree-row .chev:hover{background:var(--border);color:var(--fg)}
+.tree-row .chev svg{width:11px;height:11px;transition:transform .12s}
+.tree-row .chev.open svg{transform:rotate(180deg)}
+.chev-space{width:16px;flex:none}
+.dot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--faint)}
+.dot.reviewing{background:var(--amber)}
+.dot.approved{background:var(--fg-2)}
+.dot.in_progress{background:var(--brand)}
+.dot.verifying{background:var(--amber)}
+.dot.done{background:var(--green)}
+.dot.rejected,.dot.obsolete{background:var(--red)}
+.key{font-family:var(--mono);font-size:10px;color:var(--faint);flex:none}
+.ttl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.tree-row .path{font-size:9.5px;color:var(--faint);margin-left:2px;flex:none;max-width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row-end{margin-left:auto;display:flex;align-items:center;gap:3px;flex:none}
+.chip{height:17px;padding:0 5px;border:1px solid var(--border);border-radius:5px;display:inline-flex;align-items:center;gap:4px;font-size:9.5px;color:var(--muted);white-space:nowrap;line-height:1}
+.chip.gap{color:var(--amber);border-color:var(--amber-line);background:var(--amber-soft)}
+.chip.waiver{color:var(--faint)}
+.chip.ai{color:var(--purple);border-color:var(--purple-line);background:var(--purple-soft)}
+.chip.done{color:var(--green);border-color:var(--green-line);background:var(--green-soft)}
+.avatar{width:16px;height:16px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:8.5px;font-weight:700;color:#fff;flex:none;letter-spacing:-.02em}
+.avatar.big{width:22px;height:22px;font-size:10px}
+.avatar.a{background:#6b7fd7}.avatar.b{background:#c47a57}.avatar.c{background:#5f9e78}.avatar.d{background:#8b7bb8}
+.avatar-stack{display:inline-flex;align-items:center}
+.avatar-stack .avatar{margin-left:-4px;border:1px solid var(--surface)}
+.avatar-stack .avatar:first-child{margin-left:0}
+.avatar-stack .more{font-family:var(--mono);font-size:9px;color:var(--faint);margin-left:2px}
+
+
+/* 需求会话（复用 Chat 的语法：气泡 / 提案卡 / composer） */
+.chat-panel{min-width:0}
+.chat-head{display:flex;align-items:center;gap:7px;padding:10px 11px;border-bottom:1px solid var(--border);flex:none}
+.ai-avatar{width:22px;height:22px;border-radius:50%;background:var(--purple-soft);border:1px solid var(--purple-line);color:var(--purple);display:inline-flex;align-items:center;justify-content:center;font-size:8.5px;font-weight:700;flex:none}
+.chat-title{min-width:0;flex:1}
+.chat-title .t{font-size:12px;font-weight:600}
+.chat-title .sub{font-size:10px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.chat-ctx{display:flex;gap:8px;flex-wrap:wrap;padding:6px 11px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:9px;color:var(--faint);flex:none}
+.chat-body{flex:1;min-height:0;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:9px;background:var(--surface)}
+.msg{display:flex;align-items:flex-start;gap:6px;min-width:0}
+.msg.user{justify-content:flex-end}
+.msg-col{min-width:0;flex:1;display:flex;flex-direction:column;align-items:flex-start}
+.bubble{max-width:88%;padding:7px 9px;border-radius:10px;background:var(--surface-hover);font-size:11.5px;line-height:1.6;white-space:pre-wrap;color:var(--fg-2);width:fit-content}
+.msg.user .bubble{background:var(--brand);color:var(--brand-fg);margin-left:auto}
+.proposal{border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:8px;margin-top:5px;width:100%}
+.proposal.applied{font-size:10.5px;color:var(--faint);padding:6px 8px;margin-top:5px;width:100%}
+.proposal-head{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--fg);margin-bottom:3px}
+.prop-row{display:flex;align-items:flex-start;gap:6px;padding:3px 0;font-size:11px;line-height:1.55;color:var(--fg-2);cursor:pointer}
+.prop-row input{margin:2px 0 0;accent-color:var(--purple)}
+.proposal-grant{margin-top:6px;padding-top:5px;border-top:1px dashed var(--border)}
+.help-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 0;font-size:11px;color:var(--fg-2);border-bottom:1px solid var(--border)}
+.help-row:last-of-type{border-bottom:0}
+.result-row{display:flex;align-items:center;gap:6px;width:100%;padding:5px 0;border-bottom:1px solid var(--border);text-align:left;font-size:11px;color:var(--fg-2)}
+.result-row:last-of-type{border-bottom:0}
+.result-row:hover{color:var(--fg);background:var(--surface-hover)}
+.result-row .prop-meta{margin-left:auto;flex:none}
+.proposal-foot{display:flex;justify-content:flex-end;gap:6px;margin-top:6px}
+.finding{display:flex;gap:5px;font-size:10.5px;line-height:1.55;padding:2px 0;color:var(--muted)}
+.finding b{font-weight:600;flex:none}
+.finding.blocker b{color:var(--red)}
+.finding.warn b{color:var(--amber)}
+.finding.ok b{color:var(--green)}
+.chat-quick{display:flex;gap:4px;flex-wrap:wrap;padding:7px 10px;border-top:1px solid var(--border);flex:none}
+.chat-quick button{height:22px;padding:0 7px;border:1px solid var(--border);border-radius:5px;font-size:10px;color:var(--muted)}
+.chat-quick button:hover{background:var(--surface-hover);color:var(--fg)}
+.chat-composer{display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--border);flex:none}
+.chat-composer .input{flex:1;height:28px}
+.chat-input{height:auto;min-height:28px;max-height:88px;resize:none;padding:5px 8px;line-height:1.45;font-family:inherit}
+.chat-composer .btn{height:28px;align-self:flex-end}
+.typing-row{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--faint);padding:2px 0 0 28px}
+.typing-dots{font-family:var(--mono);letter-spacing:1px;color:var(--purple)}
+.bubble.streaming:after{content:"";display:inline-block;width:2px;height:11px;background:var(--fg-2);margin-left:2px;vertical-align:-1px;animation:blink 1s steps(2) infinite}
+.msg-actions{display:flex;gap:6px;margin-top:3px;opacity:0;transition:opacity .12s}
+.msg:hover .msg-actions{opacity:1}
+.msg-actions button{font-size:9.5px;color:var(--faint)}
+.msg-actions button:hover{color:var(--fg)}
+@keyframes blink{50%{opacity:0}}
+
+/* Empty states */
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:46px 18px;text-align:center;color:var(--muted);font-size:11.5px}
+.empty h3{margin:0;font-size:13px;font-weight:600;color:var(--fg)}
+.inline-empty{padding:6px 2px;font-size:11.5px;color:var(--faint)}
+
+/* Detail */
+.detail-panel{min-width:0}
+.detail-scroll{flex:1;overflow:auto;padding:15px 18px 28px}
+.crumbs{display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-family:var(--mono);font-size:10px;color:var(--faint)}
+.crumbs button{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.crumbs button:hover{color:var(--fg);text-decoration:underline}
+.crumbs b{font-weight:600;color:var(--fg-2)}
+.detail-title{margin-top:7px}
+.detail-key{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.title-row{display:flex;align-items:flex-start;gap:8px}
+.title-row h2{flex:1;min-width:0;margin:2px 0 0;font-size:17px;line-height:1.35;font-weight:600;letter-spacing:-.01em}
+.chat-entry{margin-top:1px;color:var(--muted);flex:none}
+.chat-entry.on{background:var(--surface-selected);color:var(--fg)}
+.link{font-size:inherit;color:var(--fg);text-decoration:underline;margin-left:4px}
+.link:hover{color:var(--brand)}
+.meta{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:9px;font-size:11.5px;color:var(--muted)}
+.meta .select{height:24px}
+.meta .prio{font-family:var(--mono);font-size:10.5px;color:var(--fg-2)}
+.impl{display:flex;align-items:center;gap:7px;margin-top:10px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface-hover);font-size:11.5px;min-height:34px;flex-wrap:wrap}
+.impl .label{font-size:10px;letter-spacing:.05em;color:var(--faint);font-family:var(--mono)}
+.impl .sep{color:var(--faint)}
+.msg-name{font-size:9.5px;color:var(--faint);margin-bottom:2px}
+.path{display:flex;align-items:center;gap:3px;flex-wrap:wrap;margin:0 0 5px;font-size:9.5px;color:var(--faint)}
+.path button{height:19px;padding:0 5px;border:1px solid var(--border);border-radius:4px;font-size:9px;color:var(--muted);display:inline-flex;align-items:center;gap:3px}
+.path button:hover{background:var(--surface-hover);color:var(--fg)}
+.path button b{font-family:var(--mono);font-size:8.5px;color:var(--faint)}
+.path > span{color:var(--faint)}
+.flash{outline:2px solid var(--purple);outline-offset:2px;border-radius:6px;transition:outline-color .2s}
+.prop-meta{font-size:9.5px;color:var(--faint);font-family:var(--mono);line-height:1.5}
+.prop-row b{font-weight:600;color:var(--fg-2)}
+.prop-main{min-width:0;flex:1}
+.mini-check{display:inline-flex;align-items:center;gap:4px;font-size:9.5px;color:var(--muted);margin-top:2px}
+.mini-check input{accent-color:var(--purple);margin:0}
+.impl .who{display:inline-flex;align-items:center;gap:4px;color:var(--fg-2)}
+.impl .count{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+.impl .spacer{flex:1}
+.gate{margin-top:10px;padding:8px 10px;border:1px solid var(--amber-line);background:var(--amber-soft);border-radius:6px;display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--amber)}
+.gate button{color:inherit;text-decoration:underline;font-size:11.5px;margin-left:auto;white-space:nowrap}
+.md{margin-top:13px;font-size:13px;line-height:1.7;color:var(--fg-2);white-space:pre-wrap}
+.kv{display:flex;flex-direction:column;gap:3px;margin-top:9px;font-size:12px;color:var(--fg-2)}
+.kv .k{font-size:10px;color:var(--faint);font-family:var(--mono);letter-spacing:.03em}
+.kv .box{border:1px solid var(--border);border-radius:6px;padding:6px 8px;background:var(--surface-hover);color:var(--fg-2);white-space:pre-wrap}
+.sec{margin-top:16px;border-top:1px solid var(--border);padding-top:10px}
+.sec-head{display:flex;align-items:center;gap:7px;height:22px}
+.sec-head h3{margin:0;font-size:11.5px;font-weight:600;color:var(--fg)}
+.sec-head .count{font-family:var(--mono);font-size:10px;color:var(--faint)}
+.sec-head .chev{margin-left:auto;width:18px;height:18px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;color:var(--faint)}
+.sec-head .chev:hover{background:var(--surface-hover);color:var(--fg)}
+.sec-head .chev svg{width:11px;height:11px;transition:transform .12s}
+.sec-head .chev.open svg{transform:rotate(180deg)}
+.acc-row{display:flex;align-items:flex-start;gap:7px;padding:4px 0;font-size:12.5px;color:var(--fg-2)}
+.acc-row input{margin:3px 0 0;accent-color:var(--brand)}
+.acc-row.done span{color:var(--faint);text-decoration:line-through}
+.acc-row.needs{background:var(--amber-soft);border-radius:4px;padding-left:5px}
+.inline-add{width:100%;height:26px;margin-top:4px;border:0;border-bottom:1px dashed var(--border-strong);background:transparent;font-size:11.5px;color:var(--fg);outline:none}
+.inline-add::placeholder{color:var(--faint)}
+.child-row{display:flex;align-items:center;gap:6px;height:26px;padding:0 2px;border-radius:5px;font-size:11.5px;cursor:pointer;min-width:0}
+.child-row:hover{background:var(--surface-hover)}
+.child-row .ttl{font-size:11.5px}
+.task-row{display:flex;align-items:center;gap:7px;padding:5px 0;font-size:11.5px;border-bottom:1px solid var(--border)}
+.task-row:last-child{border-bottom:0}
+.task-row .task-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-row .task-meta{margin-left:auto;display:flex;gap:6px;align-items:center;font-family:var(--mono);font-size:9.5px;color:var(--faint);flex:none}
+.tl{display:flex;flex-direction:column;gap:5px;margin-top:5px}
+.tl-item{display:flex;gap:8px;font-size:11.5px;color:var(--muted);line-height:1.45}
+.tl-time{font-family:var(--mono);font-size:9.5px;color:var(--faint);width:78px;flex:none;padding-top:1px}
+.create-row{display:flex;align-items:center;gap:4px;padding:4px;border:1px solid var(--border);border-radius:6px;background:var(--surface);margin:3px 0}
+.create-row .select{height:24px;width:62px;flex:none;padding:0 4px}
+.create-row .input{height:24px;flex:1}
+.create-row .hint{font-size:9.5px;color:var(--faint);max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.create-row .hint.bad{color:var(--amber)}
+
+/* View tools */
+.view-tools{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:9px 11px;border-bottom:1px solid var(--border);flex:none}
+.view-tools .spacer{flex:1}
+.view-note{font-size:10.5px;color:var(--faint)}
+.check{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted);white-space:nowrap}
+.check input{accent-color:var(--brand);margin:0}
+.legend{display:flex;gap:9px;flex-wrap:wrap;font-size:10.5px;color:var(--faint)}
+.legend b{font-weight:500;color:var(--muted)}
+
+/* Board */
+.board-wrap{flex:1;min-height:0;overflow:auto;display:flex;gap:9px;padding:11px}
+.board-col{width:206px;flex:none;min-height:0;display:flex;flex-direction:column;background:var(--surface-hover);border:1px solid var(--border);border-radius:8px}
+.board-col-head{display:flex;align-items:center;gap:6px;padding:7px 8px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:var(--fg-2);flex:none}
+.board-col-head .n{font-family:var(--mono);font-size:9.5px;color:var(--faint);font-weight:400;margin-left:auto}
+.board-cards{flex:1;overflow:auto;display:flex;flex-direction:column;gap:6px;padding:6px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px;cursor:pointer;min-width:0}
+.card:hover{border-color:var(--border-strong)}
+.card-key{font-family:var(--mono);font-size:9.5px;color:var(--faint);display:flex;align-items:center;gap:4px}
+.card-title{font-size:12px;line-height:1.4;color:var(--fg);margin-top:3px}
+.card-foot{display:flex;align-items:center;gap:5px;margin-top:7px;font-size:9.5px;color:var(--faint);font-family:var(--mono);min-height:16px}
+.card-foot .unassigned{color:var(--amber)}
+.card-foot .spacer{flex:1}
+
+/* Matrix */
+.matrix-wrap{flex:1;min-height:0;overflow:auto;padding:11px}
+table.matrix{width:100%;min-width:720px;border-collapse:separate;border-spacing:0;font-size:11.5px}
+.matrix th{position:sticky;top:0;z-index:2;background:var(--surface);border-bottom:1px solid var(--border);padding:6px 8px;text-align:left;font-size:10px;letter-spacing:.05em;color:var(--faint);font-weight:500;font-family:var(--mono)}
+.matrix td{border-bottom:1px solid var(--border);padding:5px 8px;vertical-align:middle;height:34px}
+.matrix tr.group td{background:var(--surface-hover);font-size:11.5px;font-weight:600;color:var(--fg);height:30px;border-bottom:1px solid var(--border)}
+.matrix tr.group:hover td{background:var(--surface-selected)}
+.matrix .group-key{font-family:var(--mono);font-size:10px;color:var(--muted);margin-right:5px}
+.mx-chip{display:inline-flex;align-items:center;gap:5px;height:22px;max-width:100%;padding:0 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);cursor:pointer;font-size:10.5px;color:var(--fg-2)}
+.mx-chip:hover{border-color:var(--border-strong);color:var(--fg)}
+.mx-chip .ttl{font-size:10.5px;max-width:150px}
+.mx-chip .dot{width:5px;height:5px}
+.mx-miss{color:var(--faint);font-family:var(--mono);font-size:10px}
+.mx-add{display:inline-flex;align-items:center;gap:3px;height:22px;padding:0 5px;border:1px dashed var(--border-strong);border-radius:5px;font-size:9.5px;color:var(--muted)}
+.mx-add:hover{color:var(--fg);border-color:var(--muted)}
+.mx-add svg{width:10px;height:10px}
+.mx-waiver{font-size:9.5px;color:var(--faint);border:1px solid var(--border);border-radius:5px;padding:2px 5px;white-space:nowrap}
+.mx-input{width:100%;height:24px;border:1px solid var(--border-strong);border-radius:5px;padding:0 5px;background:var(--surface);font-size:10.5px;outline:none}
+
+/* Gantt */
+.gantt-wrap{flex:1;min-height:0;overflow:auto;padding:11px}
+.gantt{min-width:880px}
+.gantt-head{display:grid;grid-template-columns:240px minmax(600px,1fr);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2;background:var(--surface)}
+.gantt-head .left{padding:6px 8px;font-size:10px;color:var(--faint);font-family:var(--mono)}
+.gantt-days{display:grid;grid-template-columns:repeat(14,1fr);border-left:1px solid var(--border)}
+.gantt-day{border-right:1px solid var(--border);padding:6px 3px;font-family:var(--mono);font-size:9px;color:var(--faint);text-align:center}
+.gantt-group{display:grid;grid-template-columns:240px minmax(600px,1fr);border-bottom:1px solid var(--border);background:var(--surface-hover)}
+.gantt-group .left{padding:5px 8px;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px}
+.gantt-group .right{border-left:1px solid var(--border)}
+.gantt-row{display:grid;grid-template-columns:240px minmax(600px,1fr);border-bottom:1px solid var(--border);min-height:32px}
+.gantt-row:hover{background:var(--surface-hover)}
+.gantt-left{display:flex;align-items:center;gap:5px;padding:0 8px;min-width:0;cursor:pointer}
+.gantt-left .ttl{font-size:11px}
+.gantt-track{position:relative;border-left:1px solid var(--border);background-image:repeating-linear-gradient(to right,transparent,transparent calc(100%/14 - 1px),var(--border) calc(100%/14 - 1px),var(--border) calc(100%/14))}
+.bar{position:absolute;top:9px;height:14px;border-radius:4px;background:var(--brand);opacity:.82}
+.bar.done{background:var(--green)}
+.bar.draft{background:var(--faint)}
+.today-line{position:absolute;top:0;bottom:0;width:1px;background:var(--amber);opacity:.65;z-index:1}
+.unscheduled{margin-top:12px;border-top:1px solid var(--border);padding-top:8px}
+.unscheduled h4{margin:0 0 4px;font-size:11px;font-weight:600;color:var(--fg)}
+.unscheduled .u-row{display:flex;align-items:center;gap:6px;height:26px;font-size:11px;color:var(--muted);cursor:pointer;border-radius:5px;padding:0 4px}
+.unscheduled .u-row:hover{background:var(--surface-hover);color:var(--fg)}
+
+/* Drawers */
+.scrim{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.16)}
+.drawer{position:fixed;top:0;right:0;bottom:0;z-index:51;width:380px;display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--border);box-shadow:var(--shadow-float)}
+.drawer.wide{width:460px}
+.drawer-head{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--border);flex:none}
+.drawer-head .t{font-size:12px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.drawer-head .sub{font-family:var(--mono);font-size:10px;color:var(--faint)}
+.drawer-head .spacer{flex:1}
+.drawer-body{flex:1;min-height:0;overflow:auto;padding:13px 14px}
+.drawer-body.no-pad{padding:0}
+.drawer-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:9px 14px;border-top:1px solid var(--border);flex:none}
+.drawer-foot .spacer{flex:1}
+.drawer .detail-scroll{padding:14px}
+.field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.field label{font-size:10px;color:var(--faint);font-family:var(--mono);letter-spacing:.04em}
+.field .select,.field .input{width:100%}
+.radio-row{display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid var(--border);border-radius:6px;margin-bottom:5px;cursor:pointer;font-size:11.5px}
+.radio-row:hover{background:var(--surface-hover)}
+.radio-row.on{border-color:var(--brand);background:var(--brand-soft)}
+.radio-row .mark{width:12px;height:12px;border-radius:50%;border:1px solid var(--border-strong);flex:none;display:inline-flex;align-items:center;justify-content:center}
+.radio-row.on .mark{border-color:var(--brand)}
+.radio-row.on .mark:after{content:"";width:6px;height:6px;border-radius:50%;background:var(--brand)}
+.radio-row .meta{margin-left:auto;font-family:var(--mono);font-size:9.5px;color:var(--faint)}
+.level-row{display:flex;align-items:center;gap:7px;padding:6px 0;border-bottom:1px solid var(--border);font-size:11.5px}
+.level-row:last-child{border-bottom:0}
+.level-row .lv{font-family:var(--mono);font-size:10px;color:var(--faint);width:22px}
+.level-row .name{color:var(--fg-2)}
+.level-row .locked{font-size:9.5px;color:var(--faint);margin-left:auto}
+.chain{display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-family:var(--mono);font-size:10px;color:var(--muted);margin:7px 0 10px}
+.chain b{color:var(--fg);font-weight:600}
+.impact{border:1px solid var(--amber-line);background:var(--amber-soft);border-radius:6px;padding:8px;font-size:11px;color:var(--amber);line-height:1.6}
+.impact b{font-family:var(--mono)}
+.gates{display:flex;flex-direction:column;gap:4px;margin-top:9px}
+.gate-row{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--muted)}
+.gate-row .lv{font-family:var(--mono);font-size:9.5px;color:var(--faint);width:22px}
+.gate-row .tag{font-size:9.5px;border:1px solid var(--border);border-radius:4px;padding:0 4px;color:var(--faint)}
+.bot-row{display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid var(--border);border-radius:6px;margin-bottom:5px;cursor:pointer;font-size:11.5px}
+.bot-row:hover{background:var(--surface-hover)}
+.bot-row.on{border-color:var(--brand);background:var(--brand-soft)}
+.bot-row .role{font-size:9.5px;color:var(--faint);margin-left:auto}
+.bot-row .load{font-family:var(--mono);font-size:9.5px;color:var(--faint)}
+.ai-modes{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}
+.ai-mode{height:24px;padding:0 8px;border:1px solid var(--border);border-radius:5px;font-size:10.5px;color:var(--muted)}
+.ai-mode.on{background:var(--surface-selected);color:var(--fg);border-color:var(--border-strong)}
+.ai-mode:disabled{opacity:.45;cursor:not-allowed}
+.ai-preview{border:1px solid var(--border);border-radius:6px;padding:8px;background:var(--surface-hover);font-size:11px;color:var(--fg-2);line-height:1.65}
+.ai-preview .line{display:flex;gap:6px;margin:3px 0}
+.ai-preview .line input{margin:3px 0 0;accent-color:var(--purple)}
+.ai-preview .f{border-left:2px solid var(--border);padding-left:7px;margin:5px 0}
+.ai-preview .f.blocker{border-color:var(--red)}
+.ai-preview .f.warn{border-color:var(--amber)}
+.ai-preview .f.ok{border-color:var(--green)}
+.ai-preview .f b{font-weight:600;color:var(--fg)}
+.ctx{font-family:var(--mono);font-size:9.5px;color:var(--faint);line-height:1.55;margin-top:8px;word-break:break-all}
+.note{font-size:10.5px;color:var(--faint);line-height:1.55;margin-top:7px}
+.warn-note{font-size:10.5px;color:var(--amber);line-height:1.55;margin-top:7px}
+.seg{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--border);border-radius:6px;background:var(--surface)}
+.seg button{height:22px;padding:0 7px;border-radius:4px;font-size:10.5px;color:var(--muted)}
+.seg button.on{background:var(--surface-selected);color:var(--fg)}
+
+/* Toast */
+.toast-root{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:90}
+.toast{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;background:var(--brand);color:var(--brand-fg);box-shadow:var(--shadow-float);font-size:11.5px;white-space:nowrap}
+.toast button{color:inherit;text-decoration:underline;font-size:11.5px}
+
+@media (max-width:1280px){
+  .workbench.with-chat{grid-template-columns:206px minmax(0,1fr) 340px}
+}
+@media (max-width:1100px){
+  .head,.overview{padding-left:16px;padding-right:16px}
+  .tabs{margin-left:16px;margin-right:16px}
+  .workbench{padding:0 16px 12px;grid-template-columns:206px minmax(0,1fr)}
+  .workbench.with-chat{grid-template-columns:206px minmax(0,1fr)}
+  .chat-panel{position:fixed;top:0;right:0;bottom:0;width:380px;z-index:60;border-radius:0;box-shadow:var(--shadow-float)}
+  .head .sub{display:none}
+}
+@media (max-width:900px){
+  .workbench{grid-template-columns:1fr;grid-template-rows:250px minmax(0,1fr)}
+  .workbench.with-chat{grid-template-columns:1fr;grid-template-rows:250px minmax(0,1fr)}
+  .board-col{width:190px}
+  .drawer{width:100%}
+  .chat-panel{width:100%}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail" aria-label="主导航">
+    <button class="rail-btn" title="工作台" aria-label="工作台"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V5M9 13h.01M15 13h.01M9 16h6"/></svg><span>工作台</span></button>
+    <button class="rail-btn" title="场景" aria-label="场景"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11M15 9v11"/></svg><span>场景</span></button>
+    <button class="rail-btn" title="知识" aria-label="知识"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 4h9l5 5v11H5z"/><path d="M14 4v5h5M8 13h8M8 17h5"/></svg><span>知识</span></button>
+    <button class="rail-btn" title="人物" aria-label="人物"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="8" r="3.4"/><path d="M5 20a7 7 0 0 1 14 0"/></svg><span>人物</span></button>
+    <button class="rail-btn" title="插件" aria-label="插件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 3v18M4 7.5l8 4.5 8-4.5"/></svg><span>插件</span></button>
+    <div class="rail-bottom">
+      <div class="rail-sep"></div>
+      <button class="rail-btn" title="小A同学 · 全局助手（⌘⇧A）" aria-label="小A同学" data-action="assistant-home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3v4M12 17v4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M3 12h4M17 12h4M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/></svg><span>小A同学</span></button>
+      <button class="rail-btn" title="说明" aria-label="说明"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.4 2.3c-.7.3-.9.9-.9 1.7M12 17h.01"/></svg><span>说明</span></button>
+      <button class="rail-btn" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>设置</span></button>
+    </div>
+  </nav>
+  <main class="main">
+  <header class="head">
+    <div>
+      <h1>需求</h1>
+      <p class="sub">按项目维护需求链，层级可裁剪 · ⌘⇧A 随时问小A同学 · 原型（数据在内存，刷新还原）</p>
+    </div>
+    <div class="head-actions">
+      <select class="select" id="projectSelect" aria-label="切换项目" title="切换项目">
+        <option>CMH · Cockpit Harness</option>
+        <option>OPS · 运维台</option>
+      </select>
+      <button class="btn primary" data-action="new">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        新建需求
+      </button>
+      <div class="menu-wrap">
+        <button class="icon-btn" data-action="menu" title="更多" aria-label="更多" aria-haspopup="menu">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+        </button>
+        <div class="menu" id="pageMenu" hidden>
+          <button data-menu="tailor">裁剪与字段</button>
+          <div class="sep"></div>
+          <button data-menu="export">导出 Markdown</button>
+          <button data-menu="check">数据自检</button>
+          <div class="menu-note">原型：导出 / 自检只提示，不落盘</div>
+        </div>
+      </div>
+      <button class="icon-btn" data-action="theme" title="切换亮色 / 暗色" aria-label="切换亮色 / 暗色">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z"/></svg>
+      </button>
+    </div>
+  </header>
+  <div class="overview" id="overview"></div>
+  <div class="tabs" id="tabs" role="tablist"></div>
+  <div class="workbench" id="workbench"></div>
+  </main>
+</div>
+<div id="drawerRoot"></div>
+<div class="toast-root" id="toastRoot"></div>
+
+<script>
+window.onerror = function (m, s, l, c) {
+  var p = document.createElement("pre");
+  p.id = "js-error";
+  p.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:999;background:#fee;color:#900;padding:8px;font:12px monospace;white-space:pre-wrap;max-width:90vw";
+  p.textContent = "JS ERROR: " + m + " @ " + l + ":" + c;
+  document.body.appendChild(p);
+};
+</script>
+<script>
+(() => {
+  "use strict";
+
+  const LEVELS = ["rr", "ir", "sr", "us"];
+  const LV = {
+    rr: { name: "RR", label: "原始需求" },
+    ir: { name: "IR", label: "初始需求" },
+    sr: { name: "SR", label: "系统需求" },
+    us: { name: "US", label: "用户故事" },
+  };
+  const STATUS = {
+    draft: { label: "草稿", cat: "unstarted" },
+    reviewing: { label: "待评审", cat: "unstarted" },
+    approved: { label: "已批准", cat: "started" },
+    in_progress: { label: "实现中", cat: "started" },
+    verifying: { label: "待验收", cat: "started" },
+    done: { label: "已完成", cat: "done" },
+    rejected: { label: "已拒绝", cat: "closed" },
+    obsolete: { label: "已废弃", cat: "closed" },
+  };
+  const STATUS_ORDER = ["draft", "reviewing", "approved", "in_progress", "verifying", "done", "rejected", "obsolete"];
+  const BOARD_COLS = ["draft", "reviewing", "approved", "in_progress", "verifying", "done"];
+  const TPL = {
+    light: { label: "轻量", levels: ["rr", "us"] },
+    standard: { label: "标准", levels: ["rr", "sr", "us"] },
+    full: { label: "完整", levels: ["rr", "ir", "sr", "us"] },
+  };
+  const DAY = 86400000;
+  const NOW = Date.now();
+
+  const ICON = {
+    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+    chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
+    close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+    spark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 3v4M12 17v4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M3 12h4M17 12h4M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/></svg>',
+    bot: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V5M9 13h.01M15 13h.01M9 16h6"/></svg>',
+    chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a7 7 0 0 1-7 7H9l-4 3v-4.5A7 7 0 0 1 9 5h4a7 7 0 0 1 7 7z"/></svg>',
+  };
+
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const shortKey = (k) => String(k || "").replace(/^[A-Z]+-/, "");
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const fmt = (ts) => {
+    const d = new Date(ts);
+    return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  };
+  const fmtDay = (ts) => {
+    const d = new Date(ts);
+    return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  };
+  const startOfDay = (ts) => { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); };
+
+  // ── mock ───────────────────────────────────────────────────────────
+  const bots = [
+    { id: "a1", name: "小A同学", initial: "A", role: "supervisor", hue: "a" },
+    { id: "b1", name: "小B", initial: "B", role: "worker", hue: "b" },
+    { id: "b2", name: "小C", initial: "C", role: "worker", hue: "c" },
+  ];
+
+  const item = (o) => ({ acceptance: [], links: [], events: [], ai: false, ...o });
+
+  const items = [
+    item({
+      id: "rr-01", seq: 1, key: "CMH-RR-01", level: "rr", parentId: null,
+      title: "客户反馈：会话超过 200 轮后卡顿", status: "approved", priority: "P0", owner: "张", source: "客户",
+      requester: "李经理", body: "客户在长会话里滚动明显掉帧，尤其超过 200 轮之后。\n\n希望先能看见卡在哪，再谈怎么优化。",
+      events: [{ at: NOW - 20 * DAY, text: "李经理提出" }, { at: NOW - 18 * DAY, text: "状态：草稿 → 已批准" }],
+    }),
+    item({
+      id: "ir-01", seq: 2, key: "CMH-IR-01", level: "ir", parentId: "rr-01",
+      title: "范围：只读历史会话，不改存储", status: "approved", priority: "P0", owner: "张", source: "客户",
+      scope: "只读历史记录 + 前端渲染优化；不改消息存储结构，不引入新的数据库。",
+      outOfScope: "消息分页协议重写、云端同步、消息搜索。",
+      body: "先把「看见卡点」做出来，存储改造留到下一期。",
+      events: [{ at: NOW - 17 * DAY, text: "从 RR-01 拆出" }, { at: NOW - 16 * DAY, text: "状态：草稿 → 已批准" }],
+    }),
+    item({
+      id: "sr-01", seq: 3, key: "CMH-SR-01", level: "sr", parentId: "ir-01",
+      title: "打开 200 轮会话首屏 ≤1.5s", status: "approved", priority: "P0", owner: "王",
+      impact: "Chat / 会话加载 / MessageList",
+      acceptance: [
+        { text: "当打开 200 轮会话时，首屏可交互 ≤1.5s", done: true },
+        { text: "当加载中时，显示骨架屏且不阻塞滚动", done: true },
+      ],
+      events: [{ at: NOW - 15 * DAY, text: "从 IR-01 拆出" }, { at: NOW - 14 * DAY, text: "状态：草稿 → 已批准" }],
+    }),
+    item({
+      id: "us-01", seq: 4, key: "CMH-US-01", level: "us", parentId: "sr-01",
+      title: "作为值班，打开历史会话能定位到出错轮次", status: "in_progress", priority: "P0", owner: "王",
+      role: "值班工程师", value: "不用逐屏翻聊天记录，直接看见哪一轮失败",
+      body: "错误轮次要能高亮，并能复制 trace id。",
+      acceptance: [
+        { text: "Given 200 轮会话 / When 打开 / Then 3s 内看到错误轮", done: true },
+        { text: "错误轮可一键复制 trace id", done: false },
+      ],
+      planStart: NOW - 3 * DAY, planEnd: NOW + 2 * DAY,
+      events: [{ at: NOW - 13 * DAY, text: "从 SR-01 切出" }, { at: NOW - 12 * DAY, text: "状态：草稿 → 已批准" }, { at: NOW - 11 * DAY, text: "派给 小B · 任务 #121" }],
+    }),
+    item({
+      id: "us-02", seq: 5, key: "CMH-US-02", level: "us", parentId: "sr-01",
+      title: "作为研发，能回放失败轮次", status: "draft", priority: "P2", owner: "王",
+      role: "研发", value: "复现用户看到的失败，而不是只看日志",
+      body: "回放需要能定位到同一轮，并在本地重跑一次。",
+      planStart: null, planEnd: null,
+      events: [{ at: NOW - 12 * DAY, text: "从 SR-01 切出" }],
+    }),
+    item({
+      id: "us-04", seq: 6, key: "CMH-US-04", level: "us", parentId: "sr-01",
+      title: "作为研发，能复制慢请求的 trace id", status: "in_progress", priority: "P1", owner: "王",
+      role: "研发", value: "把聊天里的慢请求和日志对起来",
+      acceptance: [{ text: "复制 trace id 后可直接粘贴到日志检索", done: true }],
+      planStart: NOW, planEnd: NOW + 4 * DAY,
+      events: [{ at: NOW - 10 * DAY, text: "从 SR-01 切出" }, { at: NOW - 9 * DAY, text: "派给 小C · 任务 #123" }],
+    }),
+    item({
+      id: "sr-02", seq: 7, key: "CMH-SR-02", level: "sr", parentId: "ir-01",
+      title: "滚动历史时帧 ≤16ms", status: "approved", priority: "P1", owner: "王",
+      impact: "Chat / MessageList / 滚动",
+      acceptance: [{ text: "滚动历史消息 p95 帧 ≤16ms", done: false }],
+      waiver: { forLevel: "us", rule: "no_user_story", reason: "由 SR-02 直接验收，不拆 US", by: "张", at: NOW - 8 * DAY },
+      events: [{ at: NOW - 15 * DAY, text: "从 IR-01 拆出" }, { at: NOW - 8 * DAY, text: "记录豁免：不拆 US，由 SR 直接验收" }],
+    }),
+    item({
+      id: "ir-02", seq: 8, key: "CMH-IR-02", level: "ir", parentId: "rr-01",
+      title: "卡顿数据要可观测", status: "draft", priority: "P2", owner: "张", source: "客户",
+      scope: "先定义卡顿指标，再决定采集方式。",
+      outOfScope: "全量前端性能监控平台。",
+      body: "没有指标就无法判断优化是否有效。",
+      events: [{ at: NOW - 9 * DAY, text: "从 RR-01 拆出" }],
+    }),
+    item({
+      id: "rr-02", seq: 9, key: "CMH-RR-02", level: "rr", parentId: null,
+      title: "内部：周报要能自动汇总本周运行", status: "approved", priority: "P1", owner: "陈", source: "内部",
+      requester: "陈", body: "每周五自动生成本周运行、失败、成本的汇总，不再手抄。",
+      events: [{ at: NOW - 8 * DAY, text: "陈提出" }, { at: NOW - 7 * DAY, text: "状态：草稿 → 已批准" }],
+    }),
+    item({
+      id: "rr-03", seq: 10, key: "CMH-RR-03", level: "rr", parentId: null,
+      title: "客户：失败运行要能看到失败原因", status: "reviewing", priority: "P1", owner: "陈", source: "客户",
+      requester: "周工", body: "失败不能只显示「失败」，要能看到错误分类和原始输出。",
+      events: [{ at: NOW - 6 * DAY, text: "周工提出" }],
+    }),
+    item({
+      id: "ir-03", seq: 11, key: "CMH-IR-03", level: "ir", parentId: "rr-03",
+      title: "失败卡片统一展示错误分类", status: "reviewing", priority: "P1", owner: "陈", source: "客户",
+      scope: "失败卡展示 errorClass + 原文 + 重试入口。",
+      outOfScope: "错误自动归因、智能修复建议。",
+      body: "先把失败说清楚，再谈自动处理。",
+      events: [{ at: NOW - 5 * DAY, text: "从 RR-03 拆出" }],
+    }),
+    item({
+      id: "sr-03", seq: 12, key: "CMH-SR-03", level: "sr", parentId: "ir-03",
+      title: "失败运行显示 errorClass + 原文", status: "approved", priority: "P1", owner: "王",
+      impact: "Run 详情 / 失败卡 / 复制",
+      acceptance: [
+        { text: "失败运行显示 errorClass", done: true },
+        { text: "失败卡可复制错误原文", done: false },
+      ],
+      events: [{ at: NOW - 4 * DAY, text: "从 IR-03 拆出" }, { at: NOW - 3 * DAY, text: "状态：草稿 → 已批准" }],
+    }),
+    item({
+      id: "us-03", seq: 13, key: "CMH-US-03", level: "us", parentId: "sr-03",
+      title: "作为值班，失败卡能复制错误原文", status: "approved", priority: "P1", owner: "王",
+      role: "值班工程师", value: "把错误原文贴给研发，不用截图",
+      acceptance: [
+        { text: "失败卡可复制错误原文", done: true },
+        { text: "复制内容包含 errorClass", done: true },
+      ],
+      planStart: NOW + 1 * DAY, planEnd: NOW + 5 * DAY,
+      events: [{ at: NOW - 3 * DAY, text: "从 SR-03 切出" }, { at: NOW - 2 * DAY, text: "状态：草稿 → 已批准" }],
+    }),
+  ];
+
+  const tasks = [
+    { id: "t1", key: "#121", reqId: "us-01", botId: "b1", kind: "deliver", status: "running", title: "实现错误轮定位与高亮", startedAt: NOW - 12 * 60000 },
+    { id: "t2", key: "#122", reqId: "us-01", botId: "b2", kind: "verify", status: "todo", title: "验证 200 轮会话定位" },
+    { id: "t3", key: "#123", reqId: "us-04", botId: "b2", kind: "deliver", status: "running", title: "实现 trace id 复制", startedAt: NOW - 4 * 60000 },
+  ];
+
+  const state = {
+    project: { name: "Cockpit Harness", alias: "CMH" },
+    assistantId: "a1",
+    bots,
+    items,
+    tasks,
+    profile: { template: "full", levels: [...LEVELS] },
+    selectedId: "us-01",
+    expanded: new Set(["rr-01", "ir-01", "sr-01", "rr-03", "ir-03", "sr-03"]),
+    collapsed: new Set(),
+    tab: "pool",
+    filters: { query: "", level: "all", status: "all" },
+    matrixGapOnly: false,
+    boardLevel: "us",
+    boardBot: "all",
+    boardGapOnly: false,
+    creating: null,
+    gateError: null,
+    drawer: null,
+    tailoringDraft: null,
+    assign: null,
+    chatOpen: true,
+    chatMode: "requirement",
+    chats: {},
+    homeChat: [],
+    chatDraft: "",
+    chatSeq: 1,
+    chatAutoScroll: true,
+    mandate: {},
+    mandateDraft: false,
+    pending: null,
+    detailFrom: null,
+    toast: null,
+    toastTimer: null,
+    undo: null,
+    menuOpen: false,
+    resetDetail: false,
+    focus: null,
+    seq: 20,
+    taskSeq: 124,
+  };
+
+  // ── helpers ────────────────────────────────────────────────────────
+  const enabled = () => state.profile.levels;
+  const deliveryLevel = () => enabled()[enabled().length - 1] || "us";
+  const byId = (id) => state.items.find((i) => i.id === id) || null;
+  const visible = (i) => !!i && enabled().includes(i.level);
+  const visibleItems = () => state.items.filter(visible);
+  const indexOfLevel = (lv) => enabled().indexOf(lv);
+  const nextLevel = (lv) => {
+    const i = indexOfLevel(lv);
+    return i >= 0 ? enabled()[i + 1] || null : null;
+  };
+  const prevLevel = (lv) => {
+    const i = indexOfLevel(lv);
+    return i > 0 ? enabled()[i - 1] : null;
+  };
+  const parentOf = (it) => {
+    let p = it && it.parentId ? byId(it.parentId) : null;
+    while (p && !visible(p)) p = p.parentId ? byId(p.parentId) : null;
+    return p;
+  };
+  const childrenOf = (it) => visibleItems().filter((x) => { const p = parentOf(x); return p && p.id === it.id; });
+  const roots = () => visibleItems().filter((x) => !parentOf(x));
+  const ancestors = (it) => {
+    const out = [];
+    let cur = it;
+    while (cur) { out.unshift(cur); cur = parentOf(cur); }
+    return out;
+  };
+  const deliverTasks = (id) => state.tasks.filter((t) => t.reqId === id && t.kind === "deliver");
+  const verifyTasks = (id) => state.tasks.filter((t) => t.reqId === id && t.kind === "verify");
+  // 实现者/任务聚合走 raw 子项：裁剪掉某一层时，隐藏层上的任务不能凭空消失
+  const rawChildren = (it) => state.items.filter((i) => i.parentId === it.id);
+  const collectDeliverTasks = (it) => {
+    const out = [...deliverTasks(it.id)];
+    for (const c of rawChildren(it)) out.push(...collectDeliverTasks(c));
+    return out;
+  };
+  const collectVerifyTasks = (it) => {
+    const out = [...verifyTasks(it.id)];
+    for (const c of rawChildren(it)) out.push(...collectVerifyTasks(c));
+    return out;
+  };
+  const botsOf = (list) => {
+    const ids = [...new Set(list.map((t) => t.botId).filter(Boolean))];
+    return ids.map((id) => state.bots.find((b) => b.id === id)).filter(Boolean);
+  };
+  const implementers = (it) => botsOf(collectDeliverTasks(it));
+  const assistant = () => state.bots.find((b) => b.id === state.assistantId) || null;
+  const mandateOf = (it) => (it ? state.mandate[it.id] || {} : {});
+  const taskStats = (it) => {
+    const list = collectDeliverTasks(it);
+    return { total: list.length, done: list.filter((t) => t.status === "done").length };
+  };
+  const isDelivery = (it) => it.level === deliveryLevel();
+  const gapOf = (it) => {
+    if (!visible(it)) return null;
+    if ((it.level === "sr" || it.level === "us") && !(it.acceptance || []).length) return { type: "acceptance", label: "缺验收" };
+    if (isDelivery(it) && it.status === "approved" && collectDeliverTasks(it).length === 0) return { type: "unplanned", label: "未派活" };
+    if (it.level !== deliveryLevel() && !it.waiver && childrenOf(it).length === 0) return { type: "downstream", label: "缺下游" };
+    return null;
+  };
+  const gapCount = () => visibleItems().filter((i) => gapOf(i)).length;
+
+  const statusLabel = (s) => (STATUS[s] || STATUS.draft).label;
+  const templateOf = (levels) => {
+    const key = levels.join(",");
+    for (const [k, v] of Object.entries(TPL)) if (v.levels.join(",") === key) return k;
+    return "custom";
+  };
+  const templateLabel = (levels) => {
+    const t = templateOf(levels);
+    return t === "custom" ? "自定义" : TPL[t].label;
+  };
+  const chainLabel = (levels) => levels.map((l) => LV[l].name).join(" → ");
+  const levelName = (lv) => LV[lv].name;
+
+  function avatar(b, big) {
+    if (!b) return "";
+    return `<span class="avatar ${big ? "big" : ""} ${b.hue}" title="${esc(b.name)}">${esc(b.initial || b.name.slice(-1))}</span>`;
+  }
+  function avatarStack(list, max = 2) {
+    if (!list.length) return "";
+    const shown = list.slice(0, max).map((b) => avatar(b)).join("");
+    return `<span class="avatar-stack">${shown}${list.length > max ? `<span class="more">+${list.length - max}</span>` : ""}</span>`;
+  }
+  function dot(status) { return `<span class="dot ${status}" title="${statusLabel(status)}"></span>`; }
+  function gapChip(it) {
+    if (it.waiver) return `<span class="chip waiver" title="${esc(it.waiver.reason)}">已豁免</span>`;
+    const g = gapOf(it);
+    return g ? `<span class="chip gap">${g.label}</span>` : "";
+  }
+
+  function ensureSelection() {
+    const vis = visibleItems();
+    if (!vis.length) { state.selectedId = null; return; }
+    let cur = byId(state.selectedId);
+    while (cur && !visible(cur)) cur = cur.parentId ? byId(cur.parentId) : null;
+    if (!cur) {
+      state.selectedId = vis[0].id;
+      state.resetDetail = true;
+    } else if (cur.id !== state.selectedId) {
+      state.selectedId = cur.id;
+      state.resetDetail = true;
+    }
+    if (state.filters.level !== "all" && !enabled().includes(state.filters.level)) state.filters.level = "all";
+    if (!enabled().includes(state.boardLevel)) state.boardLevel = deliveryLevel();
+  }
+
+  // ── status / create / assign ───────────────────────────────────────
+  function gateMissing(it, next) {
+    if (next === "approved") {
+      if (it.level === "rr" && !it.source) return { key: "source", text: "RR 批准前必须有来源" };
+      if (it.level === "ir" && (!it.scope || !it.outOfScope)) return { key: "scope", text: "IR 批准前必须有范围和范围外" };
+      if ((it.level === "sr" || it.level === "us") && !(it.acceptance || []).length) return { key: "acceptance", text: "批准前需要至少 1 条可判定验收" };
+    }
+    if (next === "in_progress" && !collectDeliverTasks(it).length) return { key: "tasks", text: "开始实现前需要先派活（建 deliver 任务）" };
+    if (next === "verifying") {
+      const list = collectDeliverTasks(it);
+      if (list.length && list.some((t) => t.status !== "done")) return { key: "tasks", text: "还有 deliver 任务没完成，不能进入待验收" };
+    }
+    if (next === "done") {
+      const acc = it.acceptance || [];
+      if (!acc.length) return { key: "acceptance", text: "没有验收判据，不能标记完成" };
+      if (acc.some((a) => !a.done)) return { key: "acceptance", text: "还有验收判据没勾选，不能标记完成" };
+    }
+    return null;
+  }
+  function setStatus(id, next) {
+    const it = byId(id);
+    if (!it || it.status === next) return;
+    const missing = gateMissing(it, next);
+    if (missing) {
+      state.gateError = { id, ...missing };
+      state.focus = missing.key === "acceptance" ? "[data-accept-input]" : null;
+      render();
+      return;
+    }
+    const old = it.status;
+    it.status = next;
+    it.events.push({ at: Date.now(), text: `状态：${statusLabel(old)} → ${statusLabel(next)}` });
+    state.gateError = null;
+    render();
+  }
+  function addItem({ level, parentId, title, ai = false, select = true }) {
+    if (!level || !title) return null;
+    if (level !== "rr" && !parentId) return null;
+    state.seq += 1;
+    const n = state.items.filter((i) => i.level === level).length + 1;
+    const it = item({
+      id: `i-${state.seq}`, seq: state.seq, key: `${state.project.alias}-${levelName(level)}-${pad2(n)}`,
+      level, parentId: parentId || null, title: String(title).trim().slice(0, 200),
+      status: "draft", priority: "P2", owner: "", source: level === "rr" ? "内部" : "",
+      body: "", acceptance: [], links: [], ai,
+      events: [{ at: Date.now(), text: ai ? "AI 生成草稿" : "创建" }],
+    });
+    state.items.push(it);
+    if (parentId) state.expanded.add(parentId);
+    if (select) { state.selectedId = it.id; state.resetDetail = true; }
+    return it;
+  }
+
+  function openCreate() {
+    const cur = byId(state.selectedId);
+    let level, parentId;
+    if (!cur) {
+      level = "rr"; parentId = null;
+    } else if (isDelivery(cur)) {
+      level = cur.level; parentId = parentOf(cur) ? parentOf(cur).id : null;
+    } else {
+      level = nextLevel(cur.level); parentId = cur.id;
+    }
+    if (!level) { level = "rr"; parentId = null; }
+    state.creating = { context: "tree", level, parentId, title: "" };
+    state.focus = "[data-create-input]";
+    render();
+  }
+  function parentForLevel(level, anchorId) {
+    if (level === "rr") return null;
+    let a = anchorId ? byId(anchorId) : null;
+    const li = LEVELS.indexOf(level);
+    while (a && LEVELS.indexOf(a.level) >= li) a = a.parentId ? byId(a.parentId) : null;
+    const prev = prevLevel(level);
+    if (a && prev && a.level === prev) return a;
+    return null;
+  }
+  function createFromState(el) {
+    const c = state.creating;
+    if (!c) return;
+    const title = String((el && el.value) || c.title || "").trim();
+    if (!title) return;
+    const it = addItem({ level: c.level, parentId: c.parentId, title, select: c.context !== "matrix" });
+    if (!it) {
+      toast("先建上一级需求");
+      return;
+    }
+    state.creating = null;
+    if (c.context === "matrix") toast(`${shortKey(it.key)} 已创建`);
+    render();
+  }
+  function cancelCreate() {
+    if (!state.creating) return;
+    state.creating = null;
+    render();
+  }
+
+  function openAssign(id, from) {
+    const it = byId(id);
+    if (!it) return;
+    state.assign = { id, botId: "b1", title: it.title, workspace: "project", runNow: false, from: from || "pool" };
+    state.drawer = { type: "assign" };
+    render();
+  }
+  function confirmAssign() {
+    const a = state.assign;
+    const it = a ? byId(a.id) : null;
+    if (!a || !it) return;
+    const bot = state.bots.find((b) => b.id === a.botId) || state.bots[0];
+    state.taskSeq += 1;
+    const task = {
+      id: `t-${state.taskSeq}`, key: `#${state.taskSeq}`, reqId: it.id, botId: bot ? bot.id : null,
+      kind: "deliver", status: a.runNow ? "running" : "todo", title: String(a.title || it.title).slice(0, 120),
+    };
+    state.tasks.push(task);
+    it.events.push({ at: Date.now(), text: `派给 ${bot ? bot.name : "未指定"} · 任务 ${task.key}` });
+    if (it.status === "approved") it.status = "in_progress";
+    if (state.gateError && state.gateError.id === it.id) state.gateError = null;
+    const from = a.from;
+    state.assign = null;
+    state.drawer = from === "detail" ? { type: "detail", id: it.id } : null;
+    toast(`已派给 ${bot ? bot.name : "未指定"} · 任务 ${task.key}`);
+    render();
+  }
+
+  function aiAcceptance(it) {
+    if (it.level === "us") {
+      return [
+        `Given 200 轮会话 / When 打开回放 / Then 3s 内定位到失败轮`,
+        `When 点击失败轮 / Then 可复制 trace id 与 errorClass`,
+      ];
+    }
+    return [
+      `当打开 200 轮会话时，首屏可交互 ≤1.5s`,
+      `当滚动历史时，p95 帧 ≤16ms，且不丢滚动位置`,
+    ];
+  }
+  function aiChildren(it) {
+    const next = nextLevel(it.level);
+    if (!next) return [];
+    return [
+      `AI 草稿：${it.title} 的失败路径`,
+      `AI 草稿：${it.title} 的可观测性`,
+    ].map((x) => x.slice(0, 90));
+  }
+  function aiTasks(it) {
+    return [
+      `实现「${it.title}」的最小切片`,
+      `补一条失败路径的验收与回归`,
+    ];
+  }
+  function aiFindings(it) {
+    const out = [];
+    if ((it.level === "sr" || it.level === "us") && !(it.acceptance || []).length) out.push({ level: "blocker", text: "验收判据为空，无法判定完成" });
+    if (isDelivery(it) && it.status === "approved" && !collectDeliverTasks(it).length) out.push({ level: "warn", text: "没有 deliver 任务，尚未派活" });
+    if (it.level !== deliveryLevel() && !it.waiver && childrenOf(it).length === 0) out.push({ level: "blocker", text: "没有下游需求，链条在这里断了" });
+    if (["in_progress", "verifying"].includes(it.status)) {
+      const left = (it.acceptance || []).filter((a) => !a.done).length;
+      if (left) out.push({ level: "warn", text: `还有 ${left} 条验收判据没勾选` });
+    }
+    if (it.status === "approved" && (it.acceptance || []).some((a) => /尽快|友好|优化|良好/.test(a.text))) out.push({ level: "warn", text: "验收里有模糊词（尽快 / 友好 / 优化），无法判定" });
+    if (!out.length) out.push({ level: "ok", text: "未发现阻塞问题；仍建议人工确认验收口径" });
+    return out;
+  }
+
+  // ── 助手会话（全局助手 Bot，复用 Chat 界面） ───────────────────────
+  const workspaceLabel = (w) => w === "worktree" ? "新 worktree" : w === "existing" ? "已有工作区" : "项目根";
+  function dispatchPlan(it) {
+    return {
+      kind: "dispatch",
+      items: [
+        { title: `${it.title} · 实现`, botId: "b1", workspace: "project", runNow: false, checked: true },
+        { title: `${it.title} · 失败路径`, botId: "b2", workspace: "worktree", runNow: false, checked: true },
+      ],
+    };
+  }
+  function createDispatchTasks(it, items, via) {
+    let n = 0;
+    items.filter((x) => x.checked !== false).forEach((x) => {
+      state.taskSeq += 1;
+      const b = state.bots.find((bot) => bot.id === x.botId);
+      state.tasks.push({ id: `t-${state.taskSeq}`, key: `#${state.taskSeq}`, reqId: it.id, botId: x.botId, kind: "deliver", status: x.runNow ? "running" : "todo", title: x.title, workspace: x.workspace });
+      it.events.push({ at: Date.now(), text: `助手${via || ""}派给 ${b ? b.name : "未指定"} · 任务 #${state.taskSeq}${x.runNow ? " · 已开跑" : ""}` });
+      n += 1;
+    });
+    if (n && it.status === "approved") it.status = "in_progress";
+    if (n) { state.chatAutoScroll = true; toast(`已派 ${n} 个任务`); }
+    return n;
+  }
+  function nextMsgId() { state.chatSeq += 1; return `m-${state.chatSeq}`; }
+  function ensureChat(it) {
+    if (!it) return [];
+    if (state.chats[it.id]) return state.chats[it.id];
+    const msgs = [];
+    const impl = collectDeliverTasks(it);
+    if ((it.level === "sr" || it.level === "us") && !(it.acceptance || []).length) {
+      msgs.push({ id: nextMsgId(), role: "assistant", text: `这条 ${shortKey(it.key)} 还没有验收判据。我按上游和正文起了 2 条，你勾选后再应用。`, proposal: { kind: "acceptance", items: aiAcceptance(it).map((text) => ({ text, checked: true })) } });
+    } else if (it.level !== deliveryLevel() && childrenOf(it).length === 0) {
+      msgs.push({ id: nextMsgId(), role: "assistant", text: `这条 ${shortKey(it.key)} 还没有下游。要我拆出 2 条 ${levelName(nextLevel(it.level))} 草稿吗？`, proposal: { kind: "children", items: aiChildren(it).map((title) => ({ title, checked: true })) } });
+    } else if (isDelivery(it) && it.status === "approved" && !impl.length) {
+      msgs.push({ id: nextMsgId(), role: "assistant", text: `这条 ${shortKey(it.key)} 已批准，但还没派活。我可以拆成 2 个任务，分别给小B和小C；工作区和是否开跑由你定。`, proposal: dispatchPlan(it) });
+    } else {
+      msgs.push({ id: nextMsgId(), role: "assistant", text: `我读过了 ${shortKey(it.key)}。你可以说「补验收」「拆下游」「派活」「看进度」或「检查质量」，也可以直接问别的。` });
+    }
+    state.chats[it.id] = msgs;
+    return msgs;
+  }
+
+
+  function helpItems() {
+    return [
+      { text: "项目页 → 添加项目", target: "projects" },
+      { text: "需求页 → ＋ 新建需求", target: "pool" },
+      { text: "看板：按状态看交付", target: "board" },
+      { text: "追溯矩阵：看断链", target: "matrix" },
+      { text: "详情「问小A同学」→ 让助手补验收 / 派活", target: "chat" },
+      { text: "裁剪与字段 → 改层级", target: "tailor" },
+    ];
+  }
+  function ensureHomeChat() {
+    if (state.homeChat.length) return state.homeChat;
+    state.homeChat.push({ id: nextMsgId(), role: "assistant", text: "我是小A同学。可以问软件怎么用、跨项目汇总，或让我给某个需求派活。", proposal: { kind: "overview", items: homeOverviewItems() } });
+    return state.homeChat;
+  }
+  function homeOverviewItems() {
+    const vis = visibleItems();
+    const gaps = vis.filter((i) => gapOf(i)).length;
+    const unassigned = vis.filter((i) => isDelivery(i) && i.status === "approved" && !collectDeliverTasks(i).length).length;
+    return [
+      { text: `CMH · ${vis.length} 条需求 · ${gaps} 个缺口 · ${unassigned} 条未派活`, target: "pool", label: "需求池" },
+      { text: "看板：按状态看交付层", target: "board", label: "打开看板" },
+      { text: "追溯矩阵：看断链在哪", target: "matrix", label: "打开矩阵" },
+      { text: "裁剪与字段：改层级 / 影响预览", target: "tailor", label: "打开裁剪" },
+    ];
+  }
+  function homeQuickHtml() {
+    return [
+      `<button data-chat-quick="help">怎么用</button>`,
+      `<button data-chat-quick="unassigned">哪些没派活</button>`,
+      `<button data-chat-quick="acceptance">哪些验收没过</button>`,
+      `<button data-chat-quick="gaps">看缺口</button>`,
+      `<button data-home-go="board">打开看板</button>`,
+      `<button data-home-go="tailor">裁剪</button>`,
+    ].join("");
+  }
+  function homeResults(kind) {
+    const vis = visibleItems();
+    if (kind === "unassigned") {
+      const list = vis.filter((i) => isDelivery(i) && i.status === "approved" && !collectDeliverTasks(i).length);
+      return { title: "未派活", list, meta: "已批准 · 没有 deliver 任务", focus: "assign" };
+    }
+    if (kind === "acceptance") {
+      const list = vis.filter((i) => (i.level === "sr" || i.level === "us") && (i.acceptance || []).some((a) => !a.done));
+      return { title: "验收没过", list, meta: (i) => `${(i.acceptance || []).filter((a) => !a.done).length} 条未勾`, focus: "acc" };
+    }
+    const list = vis.filter((i) => gapOf(i));
+    return { title: "缺口", list, meta: (i) => gapOf(i)?.label || "", focus: "children" };
+  }
+  function homeReply(kind) {
+    if (kind === "help") {
+      return { id: nextMsgId(), role: "assistant", text: "先说你要做什么。常用入口：", proposal: { kind: "help", items: helpItems() } };
+    }
+    if (kind === "board") return { id: nextMsgId(), role: "assistant", text: "已打开看板。", navigate: "board" };
+    if (kind === "tailor") return { id: nextMsgId(), role: "assistant", text: "已打开裁剪与字段。", navigate: "tailor" };
+    if (kind === "unassigned" || kind === "acceptance" || kind === "gaps") {
+      const r = homeResults(kind);
+      if (!r.list.length) return { id: nextMsgId(), role: "assistant", text: `当前没有${r.title}。` };
+      return { id: nextMsgId(), role: "assistant", text: `当前 ${r.list.length} 条：`, proposal: { kind: "results", title: r.title, items: r.list.map((i) => ({ reqId: i.id, text: `${shortKey(i.key)} ${i.title}`, meta: typeof r.meta === "function" ? r.meta(i) : r.meta, focus: r.focus })) } };
+    }
+    return { id: nextMsgId(), role: "assistant", text: "我可以帮你查「哪些没派活 / 哪些验收没过 / 哪里断链」，也可以「打开看板 / 裁剪」，或者直接问怎么用。" };
+  }
+  function askHome(kind) {
+    if (state.pending) { toast("先停止当前回复"); return; }
+    state.chatMode = "home";
+    state.chatOpen = true;
+    state.chatAutoScroll = true;
+    const prompts = { help: "这个软件怎么用", unassigned: "哪些需求还没派活", acceptance: "哪些验收没过", gaps: "哪里断链了", board: "打开看板", tailor: "打开裁剪" };
+    state.homeChat.push({ id: nextMsgId(), role: "user", text: prompts[kind] || "帮我看看" });
+    const reply = homeReply(kind);
+    reply.steps = pathForHome(kind);
+    if (reply.navigate) { state.homeChat.pop(); navigateTo(reply.navigate); return; }
+    state.focus = "[data-chat-input]";
+    streamReply(state.homeChat, reply);
+  }
+  function sendHomeChat(text) {
+    if (state.pending) { toast("先停止当前回复"); return; }
+    const v = String(text || "").trim();
+    if (!v) return;
+    state.homeChat.push({ id: nextMsgId(), role: "user", text: v });
+    const kind = /怎么用|用法|帮助|教程|指南|设置在哪/.test(v) ? "help"
+      : /看板/.test(v) ? "board"
+      : /裁剪|层级/.test(v) ? "tailor"
+      : /验收/.test(v) ? "acceptance"
+      : /缺口|断链/.test(v) ? "gaps"
+      : /没派活|未派活|哪些/.test(v) ? "unassigned"
+      : "none";
+    const reply = homeReply(kind);
+    reply.steps = pathForHome(kind);
+    state.chatDraft = "";
+    state.chatAutoScroll = true;
+    if (reply.navigate) { state.homeChat.pop(); navigateTo(reply.navigate); return; }
+    state.focus = "[data-chat-input]";
+    streamReply(state.homeChat, reply);
+  }
+
+  function focusTarget(target) {
+    if (!target) return;
+    if (["pool", "board", "matrix", "plan", "tailor", "chat", "projects"].includes(target)) { navigateTo(target); return; }
+    const map = { impl: ".impl", assign: "[data-assign]", acc: "[data-accept-input]", tasks: '[data-section="tasks"]', children: '[data-section="children"]', filters: ".filter-row", new: '[data-action="new"]', chatInput: "[data-chat-input]" };
+    const el = document.querySelector(map[target] || "");
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.classList.add("flash");
+    if (target === "acc" || target === "chatInput") { try { el.focus(); } catch {} }
+    setTimeout(() => el.classList.remove("flash"), 1500);
+  }
+  function pathFor(kind, it) {
+    const map = {
+      acceptance: [{ label: "读取上游", target: "pool" }, { label: "起草验收", target: "acc" }],
+      children: [{ label: "读取需求", target: "pool" }, { label: "拆下游", target: "children" }],
+      dispatch: [{ label: "读取需求", target: "pool" }, { label: "检查 Bot 负载", target: "impl" }, { label: "生成派活计划", target: "assign" }],
+      status: [{ label: "读取任务", target: "tasks" }, { label: "汇总状态", target: "tasks" }],
+      stop: [{ label: "找出运行中的 run", target: "tasks" }, { label: "生成停 run 提案", target: "tasks" }],
+      close: [{ label: "检查 deliver", target: "tasks" }, { label: "检查验收", target: "acc" }, { label: "检查 verify", target: "tasks" }],
+      check: [{ label: "读取字段", target: "acc" }, { label: "按规则检查", target: "acc" }],
+      help: [{ label: "匹配 Guide / 当前页面", target: "chatInput" }],
+    };
+    return map[kind] || [];
+  }
+  function pathForHome(kind) {
+    const map = {
+      unassigned: [{ label: "读取全部需求", target: "pool" }, { label: "过滤未派活", target: "filters" }],
+      acceptance: [{ label: "读取需求", target: "pool" }, { label: "检查验收", target: "acc" }],
+      gaps: [{ label: "检查父子链", target: "matrix" }, { label: "标记缺口", target: "matrix" }],
+      help: [{ label: "匹配 Guide / 当前页面", target: "chatInput" }],
+    };
+    return map[kind] || [];
+  }
+
+  function navigateTo(target, focus) {
+    if (target === "tailor") { state.chatOpen = false; openTailor(); return; }
+    if (target === "chat") { state.chatMode = "requirement"; state.chatOpen = true; state.chatAutoScroll = true; state.focus = "[data-chat-input]"; render(); return; }
+    if (target === "projects") { toast("原型：项目页在 rail「工作台」里；先切项目再建需求"); return; }
+    if (["pool", "board", "matrix", "plan"].includes(target)) {
+      state.tab = target;
+      state.chatOpen = false;
+      render();
+      if (focus) setTimeout(() => focusTarget(focus), 80);
+    }
+  }
+
+  function chatPanelHtml() {
+    const home = state.chatMode === "home";
+    const it = byId(state.selectedId) || visibleItems()[0];
+    if (!home && !it) return "";
+    const msgs = home ? ensureHomeChat() : ensureChat(it);
+    const sup = assistant();
+    const chain = home ? "全部项目" : ancestors(it).map((x) => shortKey(x.key)).join(" → ");
+    const tabName = { pool: "需求池", board: "看板", plan: "计划", matrix: "追溯矩阵" }[state.tab] || state.tab;
+    const filterChips = [
+      state.filters.level !== "all" ? `层级 ${levelName(state.filters.level)}` : "",
+      state.filters.status !== "all" ? `状态 ${statusLabel(state.filters.status)}` : "",
+      state.filters.query.trim() ? `搜索「${state.filters.query.trim().slice(0, 8)}」` : "",
+    ].filter(Boolean);
+    return `<aside class="panel chat-panel">
+      <div class="chat-head">
+        ${sup ? avatar(sup, true) : `<span class="ai-avatar">AI</span>`}
+        <div class="chat-title"><div class="t">${esc(sup ? sup.name : "未指派")}</div><div class="sub">${home ? "全局助手 · 全部项目" : `全局助手 · ${shortKey(it.key)}`}</div></div>
+        <button class="icon-btn" data-chat-new title="新会话" aria-label="新会话">${ICON.plus}</button>
+        <button class="icon-btn" data-chat-close title="关闭会话" aria-label="关闭会话">${ICON.close}</button>
+      </div>
+      <div class="chat-ctx"><span>${chain}</span><span class="chip">${tabName}</span>${filterChips.map((f) => `<span class="chip">${esc(f)}</span>`).join("")}<span>${home ? "跨项目汇总 · 只读查询" : mandateOf(it).dispatch ? `<span class="chip done">已授权 · 本会话派活</span> <button class="link" data-mandate-revoke>撤销</button>` : "可派活 · 需你批准"}</span></div>
+      <div class="chat-body" id="chatBody">${msgs.map((m) => chatMsgHtml(m, it)).join("")}${state.pending ? `<div class="typing-row"><span class="typing-dots">···</span><span>小A同学正在处理</span><button class="btn tiny" data-chat-stop>停止</button></div>` : ""}</div>
+      <div class="chat-quick">${home ? homeQuickHtml() : chatQuickHtml(it)}</div>
+      <div class="chat-composer">
+        <textarea class="input chat-input" data-chat-input rows="1" placeholder="${home ? "问小A同学：怎么用 / 哪些没派活 / 打开看板…" : "问小A同学：怎么用 / 补验收 / 派活 / 看进度…"}" aria-label="给助手发消息">${esc(state.chatDraft)}</textarea>
+        <button class="btn primary tiny" data-chat-send>发送</button>
+      </div>
+    </aside>`;
+  }
+
+  function chatMsgHtml(m, it) {
+    if (m.role === "user") return `<div class="msg user"><div class="bubble">${esc(m.text)}</div></div>`;
+    const sup = assistant();
+    const path = m.steps && m.steps.length
+      ? `<div class="path">${m.steps.map((st, i) => `<button data-path-target="${st.target}"><b>${i + 1}</b> ${esc(st.label)}</button>`).join("<span>→</span>")}</div>`
+      : "";
+    const actions = !m.streaming && m.text
+      ? `<div class="msg-actions"><button data-copy-msg="${m.id}">复制</button><button data-retry-msg="${m.id}">重试</button></div>`
+      : "";
+    return `<div class="msg">${sup ? avatar(sup, true) : `<span class="ai-avatar">AI</span>`}<div class="msg-col"><div class="msg-name">${esc(sup ? `${sup.name} · 全局助手` : "AI")}</div>${path}${m.text ? `<div class="bubble ${m.streaming ? "streaming" : ""}">${esc(m.text)}</div>` : ""}${m.proposal ? proposalHtml(m) : ""}${actions}</div></div>`;
+  }
+
+  function proposalHtml(m) {
+    const p = m.proposal;
+    const chipName = (assistant() || {}).name || "助手";
+    if (p.applied) {
+      const text = p.kind === "dispatch" ? `已派 ${p.appliedCount || 0} 个任务 · 等执行 / 验收`
+        : p.kind === "stop" ? `已停止 ${p.appliedCount || 0} 个 run · 任务可改派`
+        : p.kind === "close" ? "已关闭需求"
+        : `已应用 ${p.appliedCount || 0} 条 · 仍是草稿，要人批准才算数`;
+      return `<div class="proposal applied">${text}</div>`;
+    }
+    if (p.dismissed) return `<div class="proposal applied">已忽略，没有改任何数据</div>`;
+    const title = p.kind === "acceptance" ? "建议补的验收判据"
+      : p.kind === "children" ? `建议拆出的 ${levelName(nextLevel(byId(state.selectedId).level))} 草稿`
+      : p.kind === "dispatch" ? "派活计划"
+      : p.kind === "status" ? "任务进度"
+      : p.kind === "stop" ? "停 run 提案"
+      : p.kind === "close" ? "关闭提案"
+      : p.kind === "help" ? "用法"
+      : p.kind === "overview" ? "全部项目"
+      : p.kind === "results" ? (p.title || "结果")
+      : "检查结果";
+    let rows = "";
+    if (p.kind === "check") {
+      rows = p.items.map((f) => `<div class="finding ${f.level}"><b>${f.level === "blocker" ? "阻塞" : f.level === "warn" ? "建议" : "通过"}</b> ${esc(f.text)}</div>`).join("");
+    } else if (p.kind === "status") {
+      rows = p.items.map((x) => {
+        const t = x.task;
+        const b = state.bots.find((bot) => bot.id === x.botId);
+        return `<div class="prop-row"><span>${b ? avatar(b) : ""}</span><span>${esc(t.key)} ${esc(t.title)}<br><span class="prop-meta">${esc(b ? b.name : "未指定")} · ${t.kind === "verify" ? "验收" : "实现"} · ${t.status === "running" ? "运行中" : t.status === "done" ? "完成" : t.status === "cancelled" ? "已停止" : "待开跑"}</span></span></div>`;
+      }).join("");
+    } else if (p.kind === "dispatch") {
+      rows = p.items.map((x, i) => {
+        const b = state.bots.find((bot) => bot.id === x.botId);
+        return `<div class="prop-row"><input type="checkbox" data-prop-check="${m.id}:${i}" ${x.checked ? "checked" : ""}/><div class="prop-main"><b>${esc(x.title)}</b><div class="prop-meta">${b ? avatar(b) : ""} ${esc(b ? b.name : "未指定")} · ${workspaceLabel(x.workspace)}</div><label class="mini-check"><input type="checkbox" data-dispatch-run="${m.id}:${i}" ${x.runNow ? "checked" : ""}/> 立即开跑</label></div></div>`;
+      }).join("");
+    } else if (p.kind === "stop") {
+      rows = p.items.map((x, i) => {
+        const t = x.task;
+        const b = state.bots.find((bot) => bot.id === x.botId);
+        const mins = t.startedAt ? Math.max(1, Math.round((Date.now() - t.startedAt) / 60000)) : null;
+        return `<div class="prop-row"><input type="checkbox" data-prop-check="${m.id}:${i}" ${x.checked ? "checked" : ""}/><div class="prop-main"><b>${esc(t.key)} ${esc(t.title)}</b><div class="prop-meta">${b ? avatar(b) : ""} ${esc(b ? b.name : "未指定")} · ${t.status === "running" ? "运行中" : t.status === "cancelled" ? "已停止" : t.status === "done" ? "完成" : "待开跑"}${mins ? ` · ${mins}m` : ""}</div><div class="prop-meta">原因：${esc(x.reason || "你要求停止")}</div></div></div>`;
+      }).join("");
+    } else if (p.kind === "close") {
+      rows = p.items.map((text) => `<div class="finding ${p.canClose ? "ok" : "warn"}"><b>${p.canClose ? "通过" : "不能关"}</b> ${esc(text)}</div>`).join("");
+    } else if (p.kind === "help") {
+      rows = p.items.map((x) => `<div class="help-row"><span>${esc(x.text)}</span><button class="btn tiny" data-help-open="${esc(x.target)}">带我去</button></div>`).join("");
+    } else if (p.kind === "overview") {
+      rows = p.items.map((x) => `<div class="help-row"><span>${esc(x.text)}</span><button class="btn tiny" data-home-go="${esc(x.target)}">${esc(x.label)}</button></div>`).join("");
+    } else if (p.kind === "results") {
+      rows = p.items.map((x) => `<button class="result-row" data-result-select="${x.reqId}" data-focus="${x.focus || ""}"><span class="key">${esc(x.text.split(" ")[0])}</span><span class="ttl">${esc(x.text.split(" ").slice(1).join(" "))}</span><span class="prop-meta">${esc(x.meta)}</span></button>`).join("");
+    } else {
+      rows = p.items.map((x, i) => `<label class="prop-row"><input type="checkbox" data-prop-check="${m.id}:${i}" ${x.checked ? "checked" : ""}/><span>${esc(x.text || x.title)}</span></label>`).join("");
+    }
+    const foot = (p.kind === "check" || p.kind === "status" || p.kind === "help" || p.kind === "overview" || p.kind === "results")
+      ? `<button class="btn tiny" data-prop-dismiss="${m.id}">知道了</button>`
+      : p.kind === "close"
+        ? (p.canClose
+          ? `<button class="btn tiny" data-prop-dismiss="${m.id}">取消</button><button class="btn primary tiny" data-prop-apply="${m.id}">批准关闭</button>`
+          : `<button class="btn tiny" data-prop-dismiss="${m.id}">知道了</button>`)
+        : p.kind === "stop"
+          ? `<button class="btn tiny" data-prop-dismiss="${m.id}">取消</button><button class="btn primary tiny" data-prop-apply="${m.id}">批准停止</button>`
+          : `<button class="btn tiny" data-prop-dismiss="${m.id}">忽略</button><button class="btn primary tiny" data-prop-apply="${m.id}">${p.kind === "dispatch" ? "批准并派活" : "应用选中"}</button>`;
+    const grant = p.kind === "dispatch"
+      ? `<div class="proposal-grant"><label class="mini-check"><input type="checkbox" data-mandate-session="${m.id}" ${state.mandateDraft ? "checked" : ""}/> 本会话内自动派活（可撤销）</label></div>`
+      : "";
+    return `<div class="proposal"><div class="proposal-head"><span class="chip">${esc(chipName)}</span>${title}</div>${rows}${grant}<div class="proposal-foot">${foot}</div></div>`;
+  }
+
+  function chatQuickHtml(it) {
+    const chips = [["help", "怎么用"]];
+    if (it.level === "sr" || it.level === "us") chips.push(["acceptance", "补验收"]);
+    if (nextLevel(it.level)) chips.push(["children", `拆 ${levelName(nextLevel(it.level))}`]);
+    if (isDelivery(it) && ["approved", "in_progress", "verifying"].includes(it.status) && !collectDeliverTasks(it).length) chips.push(["dispatch", "派活"]);
+    chips.push(["status", "看进度"]);
+    if ([...collectDeliverTasks(it), ...collectVerifyTasks(it)].some((t) => t.status === "running")) chips.push(["stop", "停跑"]);
+    chips.push(["check", "检查质量"]);
+    return chips.map(([k, label]) => `<button data-chat-quick="${k}">${label}</button>`).join("");
+  }
+
+  function chatReply(it, kind) {
+    if (kind === "acceptance") {
+      if (it.level !== "sr" && it.level !== "us") return { id: nextMsgId(), role: "assistant", text: "这一层没有验收判据；先拆到 SR / US，再来补验收。" };
+      if (it.status === "approved") return { id: nextMsgId(), role: "assistant", text: "已批准的需求不允许 AI 覆盖正文 / 验收。要新建一条草稿吗？" };
+      return { id: nextMsgId(), role: "assistant", text: "我按上游和正文起了 2 条，勾选后应用：", proposal: { kind: "acceptance", items: aiAcceptance(it).map((text) => ({ text, checked: true })) } };
+    }
+    if (kind === "children") {
+      if (!nextLevel(it.level)) return { id: nextMsgId(), role: "assistant", text: "这是交付层，没有下游需求。要我派活吗？" };
+      return { id: nextMsgId(), role: "assistant", text: `我按这一层拆了 2 条 ${levelName(nextLevel(it.level))} 草稿：`, proposal: { kind: "children", items: aiChildren(it).map((title) => ({ title, checked: true })) } };
+    }
+    if (kind === "dispatch") {
+      if (!isDelivery(it)) return { id: nextMsgId(), role: "assistant", text: "先拆到交付层，再派活；我可以先出下游草稿。" };
+      if (it.status === "draft" || it.status === "reviewing") return { id: nextMsgId(), role: "assistant", text: "批准后才能派活；现在先把验收写清楚。" };
+      const existing = collectDeliverTasks(it);
+      if (mandateOf(it).dispatch) {
+        const plan = dispatchPlan(it);
+        const n = createDispatchTasks(it, plan.items, "按授权");
+        return { id: nextMsgId(), role: "assistant", text: `已按你的授权派活：小B / 小C（${n} 个任务）。`, proposal: { ...plan, applied: true, appliedCount: n } };
+      }
+      if (existing.length) {
+        return { id: nextMsgId(), role: "assistant", text: `已经有 ${existing.length} 个实现任务在跑；要加派、改派还是先看进度？`, proposal: { kind: "status", items: existing.map((t) => ({ task: t, botId: t.botId })) } };
+      }
+      return { id: nextMsgId(), role: "assistant", text: "我可以拆成 2 个任务，分别给小B和小C；工作区和是否开跑由你定，批准后我才派。", proposal: dispatchPlan(it) };
+    }
+    if (kind === "stop") {
+      const running = [...collectDeliverTasks(it), ...collectVerifyTasks(it)].filter((t) => t.status === "running");
+      if (!running.length) return { id: nextMsgId(), role: "assistant", text: "现在没有运行中的任务；已完成或待开跑的任务不能停。" };
+      return { id: nextMsgId(), role: "assistant", text: `有 ${running.length} 个运行中任务。停之前先看状态：`, proposal: { kind: "stop", items: running.map((t) => ({ task: t, botId: t.botId, reason: "你要求停止", checked: true })) } };
+    }
+    if (kind === "close") {
+      const missing = [];
+      const impl = collectDeliverTasks(it);
+      const acc = it.acceptance || [];
+      const ver = collectVerifyTasks(it);
+      const openImpl = impl.filter((t) => t.status !== "done").length;
+      const openAcc = acc.filter((a) => !a.done).length;
+      const openVer = ver.filter((t) => t.status !== "done").length;
+      if (!impl.length) missing.push("还没有 deliver 任务");
+      else if (openImpl) missing.push(`${openImpl} 个实现任务未完成`);
+      if (!(it.level === "sr" || it.level === "us")) missing.push("这一层没有验收判据");
+      else if (!acc.length) missing.push("还没有验收判据");
+      else if (openAcc) missing.push(`${openAcc} 条验收判据没勾选`);
+      if (openVer) missing.push(`${openVer} 个验收任务未完成`);
+      if (missing.length) return { id: nextMsgId(), role: "assistant", text: `还不能关。先看任务情况：`, proposal: { kind: "close", canClose: false, items: missing } };
+      return { id: nextMsgId(), role: "assistant", text: "任务和验收都齐了，可以提交关闭；确认后我关：", proposal: { kind: "close", canClose: true, items: ["所有 deliver 已完成", "验收判据已全部勾选", "验收任务已完成"] } };
+    }
+    if (kind === "status") {
+      const impl = collectDeliverTasks(it);
+      const verify = collectVerifyTasks(it);
+      if (!impl.length && !verify.length) return { id: nextMsgId(), role: "assistant", text: "这条还没派活。要出一个派活计划吗？" };
+      return { id: nextMsgId(), role: "assistant", text: `当前 ${impl.length} 个实现任务、${verify.length} 个验收任务：`, proposal: { kind: "status", items: [...impl, ...verify].map((t) => ({ task: t, botId: t.botId })) } };
+    }
+    if (kind === "help") {
+      return { id: nextMsgId(), role: "assistant", text: "先说你要做什么。常用入口：", proposal: { kind: "help", items: helpItems() } };
+    }
+    if (kind === "check") {
+      return { id: nextMsgId(), role: "assistant", text: "只读检查，不改任何字段：", proposal: { kind: "check", items: aiFindings(it) } };
+    }
+    return { id: nextMsgId(), role: "assistant", text: "我先读一遍上游、验收和关联任务。你可以说「补验收」「拆下游」「派活」「看进度」或「检查质量」。" };
+  }
+
+  function stopStream() {
+    const p = state.pending;
+    if (!p) return;
+    clearInterval(p.timer);
+    p.msg.streaming = false;
+    p.msg.stopped = true;
+    p.msg.text = (p.msg.text || "") + " …已停止";
+    state.pending = null;
+    state.chatAutoScroll = true;
+    render();
+  }
+  function streamReply(msgs, reply) {
+    if (state.pending) stopStream();
+    const msg = { id: nextMsgId(), role: "assistant", text: "", streaming: true, steps: reply.steps || [], proposal: null };
+    msgs.push(msg);
+    const full = String(reply.text || "");
+    state.pending = { msg, full, i: 0, timer: null };
+    state.chatAutoScroll = true;
+    if (!full) {
+      msg.streaming = false;
+      msg.proposal = reply.proposal || null;
+      state.pending = null;
+      render();
+      return;
+    }
+    state.pending.timer = setInterval(() => {
+      const p = state.pending;
+      if (!p || p.msg !== msg) return;
+      p.i = Math.min(full.length, p.i + 2);
+      msg.text = full.slice(0, p.i);
+      state.chatAutoScroll = true;
+      if (p.i >= full.length) {
+        clearInterval(p.timer);
+        msg.streaming = false;
+        msg.proposal = reply.proposal || null;
+        state.pending = null;
+      }
+      render();
+    }, 28);
+    render();
+  }
+
+  function askChat(kind) {
+    if (state.pending) { toast("先停止当前回复"); return; }
+    const it = byId(state.selectedId);
+    if (!it) return;
+    state.chatOpen = true;
+    state.chatAutoScroll = true;
+    const msgs = ensureChat(it);
+    const existing = msgs.find((m) => m.proposal && m.proposal.kind === kind && !m.proposal.applied && !m.proposal.dismissed);
+    if (existing && !["check", "status", "stop", "close"].includes(kind)) {
+      state.chatOpen = true;
+      state.chatAutoScroll = true;
+      state.focus = "[data-chat-input]";
+      render();
+      return;
+    }
+    const prompts = {
+      help: "这个软件怎么用",
+      acceptance: "帮我补两条验收判据",
+      children: "拆出下游草稿",
+      dispatch: "把这条拆成任务派给小B和小C",
+      status: "看看谁在跑、谁卡住了",
+      stop: "把小B 跑着的任务停掉",
+      close: "这条需求可以关了吗",
+      check: "检查一下这条需求有没有缺口",
+    };
+    msgs.push({ id: nextMsgId(), role: "user", text: prompts[kind] || "帮我看看这条需求" });
+    const reply = chatReply(it, kind);
+    reply.steps = pathFor(kind, it);
+    state.drawer = null;
+    state.focus = "[data-chat-input]";
+    streamReply(msgs, reply);
+  }
+
+  function sendChat(text) {
+    if (state.pending) { toast("先停止当前回复"); return; }
+    const it = byId(state.selectedId);
+    const v = String(text || "").trim();
+    if (!it || !v) return;
+    const msgs = ensureChat(it);
+    msgs.push({ id: nextMsgId(), role: "user", text: v });
+    const kind = /怎么用|用法|帮助|教程|指南|设置在哪|guide/.test(v) ? "help"
+      : /验收/.test(v) ? "acceptance"
+      : /拆.*下游|下游|拆.*IR|拆.*SR|拆.*US/.test(v) ? "children"
+      : /关|关闭|结项|完成这条/.test(v) ? "close"
+      : /停|取消|终止/.test(v) ? "stop"
+      : /派活|派一个|再派|交给|让小|分配给|给小|加派|改派/.test(v) ? "dispatch"
+      : /进度|卡住|状态|谁在|跑/.test(v) ? "status"
+      : /任务/.test(v) ? "dispatch"
+      : /检查|质量|风险|缺口/.test(v) ? "check"
+      : "none";
+    const reply = chatReply(it, kind);
+    reply.steps = pathFor(kind, it);
+    state.chatDraft = "";
+    state.chatAutoScroll = true;
+    state.focus = "[data-chat-input]";
+    streamReply(msgs, reply);
+  }
+
+  function retryMessage(mid) {
+    if (state.pending) { toast("先停止当前回复"); return; }
+    const home = state.chatMode === "home";
+    const it = byId(state.selectedId);
+    const msgs = home ? state.homeChat : (it ? ensureChat(it) : []);
+    const idx = msgs.findIndex((x) => x.id === mid);
+    if (idx < 0) return;
+    let u = -1;
+    for (let i = idx - 1; i >= 0; i -= 1) if (msgs[i].role === "user") { u = i; break; }
+    if (u < 0) return;
+    const text = msgs[u].text;
+    msgs.splice(u);
+    if (home) sendHomeChat(text); else sendChat(text);
+  }
+
+  function applyProposal(mid) {
+    const it = byId(state.selectedId);
+    if (!it) return;
+    const msgs = ensureChat(it);
+    const m = msgs.find((x) => x.id === mid);
+    const p = m && m.proposal;
+    if (!p || p.applied || p.dismissed || p.kind === "check" || p.kind === "status") return;
+    if (p.kind === "close") {
+      if (!p.canClose) return;
+      it.status = "done";
+      it.events.push({ at: Date.now(), text: "助手按任务与验收结果提交关闭，人已确认" });
+      p.applied = true; p.appliedCount = 1;
+      state.chatAutoScroll = true;
+      toast("已关闭需求");
+      render();
+      return;
+    }
+    const chosen = p.items.filter((x) => x.checked);
+    if (!chosen.length) { toast("没有勾选任何条目"); return; }
+    if (p.kind === "acceptance") {
+      chosen.forEach((x) => it.acceptance.push({ text: x.text, done: false }));
+      it.events.push({ at: Date.now(), text: `AI 起草验收判据（${chosen.length} 条）` });
+      if (state.gateError && state.gateError.id === it.id) state.gateError = null;
+    } else if (p.kind === "children") {
+      chosen.forEach((x) => addItem({ level: nextLevel(it.level), parentId: it.id, title: x.title, ai: true, select: false }));
+      state.expanded.add(it.id);
+      it.events.push({ at: Date.now(), text: `AI 生成下游草稿（${chosen.length} 条）` });
+    } else if (p.kind === "dispatch") {
+      const n = createDispatchTasks(it, chosen, "批准");
+      if (state.mandateDraft) {
+        state.mandate[it.id] = { dispatch: true };
+        state.mandateDraft = false;
+        toast("已授权：本会话内自动派活");
+      }
+      p.applied = true; p.appliedCount = n;
+      state.chatAutoScroll = true;
+      if (state.gateError && state.gateError.id === it.id) state.gateError = null;
+      render();
+      return;
+    } else if (p.kind === "stop") {
+      chosen.forEach((x) => {
+        x.task.status = "cancelled";
+        const b = state.bots.find((bot) => bot.id === x.botId);
+        it.events.push({ at: Date.now(), text: `助手停止 ${b ? b.name : "未指定"} · 任务 ${x.task.key}（${x.reason || "人确认"}）` });
+      });
+      p.applied = true; p.appliedCount = chosen.length;
+      state.chatAutoScroll = true;
+      toast(`已停止 ${chosen.length} 个 run`);
+      render();
+      return;
+    }
+    p.applied = true;
+    p.appliedCount = chosen.length;
+    state.chatAutoScroll = true;
+    toast(`已应用 ${chosen.length} 条 AI 草稿`);
+    render();
+  }
+
+  function dismissProposal(mid) {
+    const it = byId(state.selectedId);
+    if (!it) return;
+    const msgs = ensureChat(it);
+    const m = msgs.find((x) => x.id === mid);
+    if (!m || !m.proposal || m.proposal.applied) return;
+    m.proposal.dismissed = true;
+    if (m.proposal.kind === "dispatch") state.mandateDraft = false;
+    state.chatAutoScroll = true;
+    render();
+  }
+
+  // ── tailoring ──────────────────────────────────────────────────────
+  function openTailor() {
+    state.tailoringDraft = [...state.profile.levels];
+    state.drawer = { type: "tailor" };
+    render();
+  }
+  function setTemplate(key) {
+    if (!state.tailoringDraft) return;
+    if (key === "custom") return;
+    state.tailoringDraft = [...TPL[key].levels];
+    render();
+  }
+  function toggleLevel(lv) {
+    if (!state.tailoringDraft || lv === "rr") return;
+    const set = new Set(state.tailoringDraft);
+    if (set.has(lv)) set.delete(lv); else set.add(lv);
+    state.tailoringDraft = LEVELS.filter((l) => set.has(l));
+    render();
+  }
+  function reparentCount(lv) {
+    const draft = state.tailoringDraft || [];
+    return state.items.filter((i) => enabled().includes(i.level) && draft.includes(i.level) && i.level !== "rr" && (() => {
+      let p = i.parentId ? byId(i.parentId) : null;
+      while (p) {
+        if (p.level === lv) return true;
+        if (draft.includes(p.level)) return false;
+        p = p.parentId ? byId(p.parentId) : null;
+      }
+      return false;
+    })()).length;
+  }
+  function saveTailor() {
+    const draft = state.tailoringDraft || [];
+    if (draft.length < 2) return;
+    const prev = [...state.profile.levels];
+    if (draft.join(",") === prev.join(",")) { state.drawer = null; render(); return; }
+    state.profile.levels = [...draft];
+    state.profile.template = templateOf(draft);
+    ensureSelection();
+    state.drawer = null;
+    state.undo = { kind: "levels", prev };
+    toast(`已改为 ${templateLabel(draft)}（${chainLabel(draft)}）`, true);
+    render();
+  }
+  function undoLast() {
+    if (!state.undo || state.undo.kind !== "levels") return;
+    state.profile.levels = [...state.undo.prev];
+    state.profile.template = templateOf(state.profile.levels);
+    state.undo = null;
+    state.toast = null;
+    ensureSelection();
+    toast("已撤销裁剪");
+    render();
+  }
+
+  // ── render ─────────────────────────────────────────────────────────
+  function render() {
+    ensureSelection();
+    const active = document.activeElement;
+    const chatFocused = !!(active && active.matches && active.matches("[data-chat-input]"));
+    const chatCaret = chatFocused ? active.selectionStart : null;
+    const treeTop = document.querySelector("#treeScroll")?.scrollTop || 0;
+    const detailTop = document.querySelector("#detailScroll")?.scrollTop || 0;
+    const drawerTop = document.querySelector(".drawer .detail-scroll")?.scrollTop || 0;
+    const chatTop = document.querySelector("#chatBody")?.scrollTop || 0;
+
+    renderOverview();
+    renderTabs();
+    renderWorkbench();
+    renderDrawer();
+    renderToast();
+    renderMenu();
+
+    const t2 = document.querySelector("#treeScroll"); if (t2) t2.scrollTop = treeTop;
+    const d2 = document.querySelector("#detailScroll"); if (d2) d2.scrollTop = state.resetDetail ? 0 : detailTop;
+    const dd = document.querySelector(".drawer .detail-scroll"); if (dd) dd.scrollTop = drawerTop;
+    const cb = document.querySelector("#chatBody");
+    if (cb) cb.scrollTop = state.chatAutoScroll ? cb.scrollHeight : chatTop;
+    if (state.chatAutoScroll) state.chatAutoScroll = false;
+    state.resetDetail = false;
+    if (chatFocused) {
+      const input = document.querySelector("[data-chat-input]");
+      if (input) { input.focus(); if (chatCaret != null) { try { input.setSelectionRange(chatCaret, chatCaret); } catch {} } }
+    }
+    focusPending();
+  }
+
+  function renderOverview() {
+    const vis = visibleItems();
+    const approved = vis.filter((i) => i.status === "approved").length;
+    const reviewing = vis.filter((i) => i.status === "reviewing").length;
+    const gaps = vis.filter((i) => gapOf(i)).length;
+    const unassigned = vis.filter((i) => isDelivery(i) && i.status === "approved" && !collectDeliverTasks(i).length).length;
+    document.getElementById("overview").innerHTML = `
+      <span>需求 <b>${vis.length}</b></span><span class="sep">·</span>
+      <span>已批准 <b>${approved}</b></span><span class="sep">·</span>
+      <span>待评审 <b>${reviewing}</b></span><span class="sep">·</span>
+      <span class="${gaps ? "warn" : ""}">未覆盖 <b>${gaps}</b></span><span class="sep">·</span>
+      <span class="${unassigned ? "warn" : ""}">未派活 <b>${unassigned}</b></span>
+    `;
+  }
+
+  function renderTabs() {
+    const tabs = [
+      { id: "pool", label: "需求池", phase: "" },
+      { id: "board", label: "看板", phase: "M2" },
+      { id: "plan", label: "计划", phase: "M3" },
+      { id: "matrix", label: "追溯矩阵", phase: "" },
+    ];
+    document.getElementById("tabs").innerHTML = tabs.map((t) => `
+      <button class="tab ${state.tab === t.id ? "on" : ""}" data-tab="${t.id}" role="tab" aria-selected="${state.tab === t.id}">
+        ${t.label}${t.phase ? `<span class="phase">${t.phase}</span>` : ""}
+      </button>`).join("");
+  }
+
+  function renderWorkbench() {
+    const wb = document.getElementById("workbench");
+    const chat = state.chatOpen ? chatPanelHtml() : "";
+    if (state.tab === "pool") {
+      wb.className = "workbench" + (state.chatOpen ? " with-chat" : "");
+      wb.innerHTML = treeHtml() + detailPanelHtml() + chat;
+    } else {
+      wb.className = "workbench single" + (state.chatOpen ? " with-chat" : "");
+      wb.innerHTML = (state.tab === "board" ? boardHtml() : state.tab === "plan" ? ganttHtml() : matrixHtml()) + chat;
+    }
+  }
+
+  function isFiltering() {
+    return !!state.filters.query.trim() || state.filters.level !== "all" || state.filters.status !== "all";
+  }
+  function matches(it) {
+    const q = state.filters.query.trim().toLowerCase();
+    if (q && !(`${it.title} ${it.key} ${it.body || ""}`.toLowerCase().includes(q))) return false;
+    if (state.filters.level !== "all" && it.level !== state.filters.level) return false;
+    if (state.filters.status !== "all" && it.status !== state.filters.status) return false;
+    return true;
+  }
+
+  function treeHtml() {
+    return `<aside class="panel tree-panel">
+      <div class="tree-tools">
+        <input class="input" data-search placeholder="搜索标题 / key / 正文" value="${esc(state.filters.query)}" aria-label="搜索需求" />
+        <div class="filter-row">
+          <select class="select" data-filter-level aria-label="按层级筛选">
+            <option value="all">全部层级</option>
+            ${enabled().map((lv) => `<option value="${lv}" ${state.filters.level === lv ? "selected" : ""}>${levelName(lv)}</option>`).join("")}
+          </select>
+          <select class="select" data-filter-status aria-label="按状态筛选">
+            <option value="all">全部状态</option>
+            ${STATUS_ORDER.map((s) => `<option value="${s}" ${state.filters.status === s ? "selected" : ""}>${statusLabel(s)}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="tree-scroll" id="treeScroll">${treeRowsHtml()}</div>
+    </aside>`;
+  }
+
+  function createRowHtml(context, level, parentId, compact) {
+    const parent = parentId ? byId(parentId) : null;
+    const valid = level === "rr" || !!parent;
+    return `<div class="create-row">
+      ${compact ? "" : `<select class="select" data-create-level aria-label="新建层级">${enabled().map((l) => `<option value="${l}" ${l === level ? "selected" : ""}>${levelName(l)}</option>`).join("")}</select>`}
+      <input class="input" data-create-input placeholder="${valid ? "标题，回车创建" : "先建上一级"}" value="${esc(state.creating?.title || "")}" ${valid ? "" : "disabled"} aria-label="新需求标题" />
+      <span class="hint ${valid ? "" : "bad"}">${level === "rr" ? "根" : parent ? `父 ${shortKey(parent.key)}` : "缺父项"}</span>
+    </div>`;
+  }
+
+  function treeRowsHtml() {
+    const out = [];
+    if (state.creating?.context === "tree") out.push(createRowHtml("tree", state.creating.level, state.creating.parentId, false));
+    const flat = isFiltering();
+    const list = flat ? visibleItems().filter(matches).sort((a, b) => a.seq - b.seq) : null;
+    if (flat) {
+      if (!list.length) return out.join("") + `<div class="inline-empty">没有匹配的需求</div>`;
+      for (const it of list) {
+        const path = ancestors(it).slice(0, -1).map((a) => shortKey(a.key)).join(" / ");
+        out.push(treeRowHtml(it, 0, false, path));
+      }
+      return out.join("");
+    }
+    const walk = (it, depth) => {
+      out.push(treeRowHtml(it, depth, true, ""));
+      if (state.expanded.has(it.id)) for (const c of childrenOf(it)) walk(c, depth + 1);
+    };
+    const rs = roots();
+    if (!rs.length) return out.join("") + `<div class="inline-empty">还没有需求。点右上「新建需求」开始。</div>`;
+    for (const r of rs) walk(r, 0);
+    return out.join("");
+  }
+
+  function treeRowHtml(it, depth, canExpand, path) {
+    const kids = childrenOf(it);
+    const open = state.expanded.has(it.id);
+    const on = state.selectedId === it.id;
+    const impl = isDelivery(it) ? implementers(it) : [];
+    return `<div class="tree-row ${on ? "on" : ""}" data-select="${it.id}" style="padding-left:${5 + depth * 14}px" title="${esc(it.title)}">
+      ${canExpand && kids.length
+        ? `<button class="chev ${open ? "open" : ""}" data-expand="${it.id}" title="${open ? "收起" : "展开"}" aria-label="${open ? "收起" : "展开"}" aria-expanded="${open}">${ICON.chev}</button>`
+        : `<span class="chev-space"></span>`}
+      ${dot(it.status)}
+      <span class="key">${shortKey(it.key)}</span>
+      <span class="ttl">${esc(it.title)}</span>
+      ${path ? `<span class="path" title="${esc(path)}">${esc(path)}</span>` : ""}
+      <span class="row-end">${impl.length ? avatarStack(impl) : ""}${it.ai ? `<span class="chip ai">AI</span>` : ""}${gapChip(it)}</span>
+    </div>`;
+  }
+
+  function detailPanelHtml() {
+    const it = byId(state.selectedId) || visibleItems()[0];
+    if (!it) return `<section class="panel detail-panel"><div class="empty"><h3>还没有需求</h3><div>从一个客户原话或一条内部想法开始。</div><button class="btn tiny" data-action="new">${ICON.plus} 新建需求</button></div></section>`;
+    return `<section class="panel detail-panel"><div class="detail-scroll" id="detailScroll">${detailHtml(it)}</div></section>`;
+  }
+
+  function detailHtml(it) {
+    const chain = ancestors(it);
+    const sup = assistant();
+    const impl = implementers(it);
+    const stats = taskStats(it);
+    const tasks = collectDeliverTasks(it);
+    const accNeeds = state.gateError && state.gateError.id === it.id && state.gateError.key === "acceptance";
+    return `
+      <div class="crumbs">
+        ${chain.map((n, i) => `<button data-select="${n.id}" title="${esc(n.title)}">${shortKey(n.key)}</button>${i < chain.length - 1 ? "<span>→</span>" : ""}`).join("")}
+      </div>
+      <div class="detail-title">
+        <div class="detail-key">${esc(it.key)}${it.ai ? ` · <span class="chip ai">AI 草稿</span>` : ""}</div>
+        <div class="title-row">
+          <h2>${esc(it.title)}</h2>
+          <button class="btn tiny chat-entry ${state.chatOpen ? "on" : ""}" data-chat-toggle title="问小A同学" aria-label="问小A同学" aria-pressed="${state.chatOpen}">${ICON.chat} 问小A同学</button>
+        </div>
+      </div>
+      <div class="meta">
+        <select class="select" data-status="${it.id}" aria-label="状态">
+          ${STATUS_ORDER.map((s) => `<option value="${s}" ${it.status === s ? "selected" : ""}>${statusLabel(s)}</option>`).join("")}
+        </select>
+        <span class="prio">${esc(it.priority || "P2")}</span>
+        <span>负责人 ${esc(it.owner || "—")}</span>
+        ${it.waiver ? `<span class="chip waiver" title="${esc(it.waiver.reason)}">已豁免</span>` : ""}
+      </div>
+      <div class="impl">
+        <span class="label">助手</span>
+        ${sup ? `${avatar(sup)}<span class="who">${esc(sup.name)}</span>` : `<span class="who" style="color:var(--faint)">未指派</span>`}
+        <span class="sep">·</span>
+        <span class="label">实现</span>
+        ${impl.length
+          ? `${avatarStack(impl, 3)}<span class="who">${impl.map((b) => esc(b.name)).join(" / ")}</span><span class="count">${stats.done}/${stats.total} 任务</span>`
+          : isDelivery(it)
+            ? (it.status === "draft" || it.status === "reviewing"
+              ? `<span class="who" style="color:var(--faint)">批准后派活</span>`
+              : `<span class="who" style="color:var(--amber)">未派活</span>`)
+            : `<span class="who" style="color:var(--faint)">${childrenOf(it).length ? "子项未派活" : "未派活"}</span>`}
+        ${!isDelivery(it) && tasks.length ? `<span class="count">汇总自子项</span>` : ""}
+        <span class="spacer"></span>
+        ${isDelivery(it) ? `<button class="btn tiny" data-assign="${it.id}" ${it.status === "draft" || it.status === "reviewing" ? 'disabled title="批准后才能派活"' : ""}>${ICON.bot} 派活</button>` : ""}
+      </div>
+      ${state.gateError && state.gateError.id === it.id ? `<div class="gate">${esc(state.gateError.text)}<button data-fix-gate="${it.id}">去补</button></div>` : ""}
+      <div class="md">${esc(it.body || "（暂无正文）")}</div>
+      ${levelFieldsHtml(it)}
+      ${(it.level === "sr" || it.level === "us") ? secHtml(it, "acc", "验收判据", (it.acceptance || []).length, acceptanceHtml(it, accNeeds)) : ""}
+      ${secHtml(it, "children", "子需求", childrenOf(it).length, childrenHtml(it))}
+      ${secHtml(it, "links", "关联", (it.links || []).length, linksHtml(it))}
+      ${secHtml(it, "tasks", "任务", tasks.length + collectVerifyTasks(it).length, tasksHtml(it))}
+      ${secHtml(it, "timeline", "时间线", (it.events || []).length, timelineHtml(it))}
+    `;
+  }
+
+  function levelFieldsHtml(it) {
+    if (it.level === "rr") {
+      return `<div class="kv"><span class="k">提出人</span><span class="box">${esc(it.requester || "—")}</span></div>
+        <div class="kv"><span class="k">来源</span><span class="box">${esc(it.source || "—")} · 原话保留在正文</span></div>`;
+    }
+    if (it.level === "ir") {
+      return `<div class="kv"><span class="k">范围</span><span class="box">${esc(it.scope || "—")}</span></div>
+        <div class="kv"><span class="k">范围外</span><span class="box">${esc(it.outOfScope || "—")}</span></div>`;
+    }
+    if (it.level === "sr") {
+      return `<div class="kv"><span class="k">影响模块</span><span class="box">${esc(it.impact || "—")}</span></div>`;
+    }
+    return `<div class="kv"><span class="k">角色 / 价值</span><span class="box">${esc(it.role || "—")} · ${esc(it.value || "—")}</span></div>`;
+  }
+
+  function secHtml(it, name, title, count, body) {
+    const key = `${it.id}:${name}`;
+    const open = !state.collapsed.has(key);
+    return `<section class="sec" data-section="${name}">
+      <div class="sec-head"><h3>${title}</h3><span class="count">${count}</span>
+        <button class="chev ${open ? "open" : ""}" data-sec="${key}" title="${open ? "收起" : "展开"}" aria-label="${open ? "收起" : "展开"}" aria-expanded="${open}">${ICON.chev}</button>
+      </div>
+      ${open ? body : ""}
+    </section>`;
+  }
+
+  function acceptanceHtml(it, needs) {
+    const rows = (it.acceptance || []).map((a, i) => `
+      <div class="acc-row ${a.done ? "done" : ""} ${needs && !a.done ? "needs" : ""}">
+        <input type="checkbox" ${a.done ? "checked" : ""} data-acc="${it.id}:${i}" aria-label="验收判据 ${i + 1}" />
+        <span>${esc(a.text)}</span>
+      </div>`).join("");
+    return `${rows || `<div class="inline-empty">还没有验收判据。批准 / 完成前至少要有一条。<button class="link" data-chat-ask="acceptance">问小A同学补一条</button></div>`}
+      <input class="inline-add" data-accept-input placeholder="输入一条可判定的验收，回车添加" aria-label="添加验收判据" />`;
+  }
+
+  function childrenHtml(it) {
+    const next = nextLevel(it.level);
+    if (!next) return `<div class="inline-empty">这是当前裁剪下的交付层，没有下游需求。</div>`;
+    const kids = childrenOf(it);
+    const rows = kids.map((c) => `
+      <div class="child-row" data-select="${c.id}">
+        ${dot(c.status)}<span class="key">${shortKey(c.key)}</span><span class="ttl">${esc(c.title)}</span>
+        <span class="row-end">${isDelivery(c) ? avatarStack(implementers(c)) : ""}${gapChip(c)}</span>
+      </div>`).join("");
+    const creating = state.creating?.context === "detail" && state.creating.parentId === it.id;
+    return `${rows || `<div class="inline-empty">还没有 ${levelName(next)}。</div>`}
+      ${creating ? createRowHtml("detail", next, it.id, true) : `<button class="btn tiny" data-create-child="${it.id}">${ICON.plus} 新建 ${levelName(next)}</button>`}`;
+  }
+
+  function linksHtml(it) {
+    const links = (it.links || []).map((l) => {
+      const target = byId(l.toId);
+      if (!target) return "";
+      return `<div class="child-row" data-select="${target.id}">${dot(target.status)}<span class="key">${shortKey(target.key)}</span><span class="ttl">${esc(target.title)}</span><span class="row-end"><span class="chip">${esc(l.kind)}</span></span></div>`;
+    }).join("");
+    return links || `<div class="inline-empty">没有横向关联。父子关系在「子需求」里。</div>`;
+  }
+
+  function tasksHtml(it) {
+    const list = [...collectDeliverTasks(it), ...collectVerifyTasks(it)];
+    if (!list.length) {
+      const hint = !isDelivery(it)
+        ? "只有交付层能派活；先把需求拆到交付层。"
+        : it.status === "draft" || it.status === "reviewing"
+          ? "批准后才能派活。"
+          : "没有任务。可以点「派活」建一条。";
+      return `<div class="inline-empty">${hint}</div>`;
+    }
+    return list.map((t) => {
+      const b = state.bots.find((x) => x.id === t.botId);
+      const src = byId(t.reqId);
+      return `<div class="task-row">${avatar(b)}<span class="chip">${t.kind === "verify" ? "验收" : "实现"}</span>${src && src.id !== it.id ? `<span class="key">${shortKey(src.key)}</span>` : ""}<span class="task-title">${esc(t.title)}</span><span class="task-meta"><span>${t.key}</span><span>${t.status === "running" ? "运行中" : t.status === "done" ? "完成" : t.status === "cancelled" ? "已停止" : "待开跑"}</span></span></div>`;
+    }).join("");
+  }
+
+  function timelineHtml(it) {
+    const list = [...(it.events || [])].sort((a, b) => b.at - a.at);
+    if (!list.length) return `<div class="inline-empty">还没有事件。</div>`;
+    return `<div class="tl">${list.map((e) => `<div class="tl-item"><span class="tl-time">${fmt(e.at)}</span><span>${esc(e.text)}</span></div>`).join("")}</div>`;
+  }
+
+  // ── board ──────────────────────────────────────────────────────────
+  function boardHtml() {
+    const lv = enabled().includes(state.boardLevel) ? state.boardLevel : deliveryLevel();
+    let list = visibleItems().filter((i) => i.level === lv);
+    if (state.boardBot === "none") list = list.filter((i) => collectDeliverTasks(i).length === 0);
+    else if (state.boardBot !== "all") list = list.filter((i) => collectDeliverTasks(i).some((t) => t.botId === state.boardBot));
+    if (state.boardGapOnly) list = list.filter((i) => gapOf(i));
+    const cols = BOARD_COLS.map((s) => ({ s, items: list.filter((i) => i.status === s).sort((a, b) => a.seq - b.seq) }));
+    return `<section class="panel">
+      <div class="view-tools">
+        <select class="select" data-board-level aria-label="看板层级">
+          ${enabled().map((l) => `<option value="${l}" ${l === lv ? "selected" : ""}>${levelName(l)}</option>`).join("")}
+        </select>
+        <select class="select" data-board-bot aria-label="按实现者筛选">
+          <option value="all" ${state.boardBot === "all" ? "selected" : ""}>全部实现者</option>
+          <option value="none" ${state.boardBot === "none" ? "selected" : ""}>未派活</option>
+          ${state.bots.map((b) => `<option value="${b.id}" ${state.boardBot === b.id ? "selected" : ""}>${esc(b.name)}</option>`).join("")}
+        </select>
+        <label class="check"><input type="checkbox" data-board-gap ${state.boardGapOnly ? "checked" : ""} /> 只看缺口</label>
+        <span class="spacer"></span>
+        <span class="view-note">M2 静态帧：拖拽与闸门未实现</span>
+      </div>
+      <div class="board-wrap">
+        ${cols.map((c) => `
+          <div class="board-col">
+            <div class="board-col-head">${dot(c.s)} ${statusLabel(c.s)}<span class="n">${c.items.length}</span></div>
+            <div class="board-cards">
+              ${c.items.map(boardCard).join("") || `<div class="inline-empty">—</div>`}
+            </div>
+          </div>`).join("")}
+      </div>
+    </section>`;
+  }
+  function boardCard(it) {
+    const impl = implementers(it);
+    const stats = taskStats(it);
+    return `<article class="card" data-open-drawer="${it.id}" title="打开详情">
+      <div class="card-key">${shortKey(it.key)} ${it.ai ? `<span class="chip ai">AI</span>` : ""}</div>
+      <div class="card-title">${esc(it.title)}</div>
+      <div class="card-foot">
+        ${impl.length
+          ? `${avatarStack(impl)}<span>${stats.done}/${stats.total}</span>`
+          : isDelivery(it) && ["approved", "in_progress", "verifying"].includes(it.status)
+            ? `<span class="unassigned">未派活</span>` : `<span>—</span>`}
+        <span class="spacer"></span>
+        ${gapOf(it) && !(gapOf(it).type === "unplanned" && !impl.length) ? `<span class="chip gap">${gapOf(it).label}</span>` : ""}
+        ${(it.acceptance || []).length ? `<span>${(it.acceptance || []).length} 验收</span>` : ""}
+      </div>
+    </article>`;
+  }
+
+  // ── gantt ──────────────────────────────────────────────────────────
+  function ganttHtml() {
+    const lv = deliveryLevel();
+    const list = visibleItems().filter((i) => i.level === lv);
+    const scheduled = list.filter((i) => i.planStart && i.planEnd);
+    const unscheduled = list.filter((i) => !i.planStart || !i.planEnd);
+    const rangeStart = startOfDay(NOW - 3 * DAY);
+    const days = 14;
+    const headers = Array.from({ length: days }, (_, i) => {
+      const d = rangeStart + i * DAY;
+      return `<div class="gantt-day">${i % 2 === 0 ? fmtDay(d) : ""}</div>`;
+    }).join("");
+    const groups = new Map();
+    for (const it of scheduled) {
+      const root = ancestors(it)[0] || it;
+      if (!groups.has(root.id)) groups.set(root.id, { root, list: [] });
+      groups.get(root.id).list.push(it);
+    }
+    const todayPct = ((startOfDay(NOW) - rangeStart) / DAY) / days * 100;
+    const body = [...groups.values()].map((g) => `
+      <div class="gantt-group"><div class="left">${dot(g.root.status)}<span class="key">${shortKey(g.root.key)}</span><span class="ttl">${esc(g.root.title)}</span></div><div class="right"></div></div>
+      ${g.list.sort((a, b) => a.seq - b.seq).map((it) => {
+        const s = Math.max(startOfDay(it.planStart), rangeStart);
+        const e = Math.min(startOfDay(it.planEnd) + DAY, rangeStart + days * DAY);
+        const left = Math.max(0, (s - rangeStart) / DAY / days * 100);
+        const width = Math.max(2, (e - s) / DAY / days * 100);
+        const impl = implementers(it);
+        return `<div class="gantt-row">
+          <div class="gantt-left" data-open-drawer="${it.id}">${dot(it.status)}${impl.length ? avatarStack(impl, 1) : ""}<span class="key">${shortKey(it.key)}</span><span class="ttl">${esc(it.title)}</span></div>
+          <div class="gantt-track"><div class="today-line" style="left:${todayPct}%"></div><div class="bar ${it.status}" style="left:${left}%;width:${width}%"></div></div>
+        </div>`;
+      }).join("")}`).join("");
+    return `<section class="panel">
+      <div class="view-tools">
+        <span class="view-note">M3 静态帧：日期 / 依赖 / 拖拽未实现</span>
+        <span class="spacer"></span>
+        <span class="view-note">今天 ${fmtDay(NOW)}</span>
+      </div>
+      <div class="gantt-wrap">
+        ${scheduled.length ? `<div class="gantt">
+          <div class="gantt-head"><div class="left">需求</div><div class="gantt-days">${headers}</div></div>
+          ${body}
+        </div>` : `<div class="empty"><h3>还没有排期</h3><div>给交付层设置起止日期后，这里才会出现时间线。</div></div>`}
+        <div class="unscheduled">
+          <h4>未排期 ${unscheduled.length}</h4>
+          ${unscheduled.map((it) => `<div class="u-row" data-open-drawer="${it.id}">${dot(it.status)}<span class="key">${shortKey(it.key)}</span><span class="ttl">${esc(it.title)}</span><span class="spacer" style="flex:1"></span><span class="chip">未排期</span></div>`).join("") || `<div class="inline-empty">全部已排期。</div>`}
+        </div>
+      </div>
+    </section>`;
+  }
+
+  // ── matrix ────────────────────────────────────────────────────────
+  function buildPaths() {
+    const out = [];
+    const walk = (it, chain) => {
+      const next = nextLevel(it.level);
+      const kids = childrenOf(it);
+      if (!next || !kids.length) { out.push([...chain, it]); return; }
+      for (const k of kids) walk(k, [...chain, it]);
+    };
+    for (const r of roots()) walk(r, []);
+    return out;
+  }
+  function pathHasGap(path) {
+    for (const lv of enabled().slice(1)) {
+      const idx = enabled().indexOf(lv);
+      const found = path.find((i) => i.level === lv);
+      if (found) continue;
+      const prev = [...path].reverse().find((i) => enabled().indexOf(i.level) < idx);
+      if (prev && enabled().indexOf(prev.level) === idx - 1 && prev.waiver && prev.waiver.forLevel === lv) continue;
+      return true;
+    }
+    return false;
+  }
+  function matrixHtml() {
+    const paths = buildPaths();
+    const shown = state.matrixGapOnly ? paths.filter(pathHasGap) : paths;
+    const groups = new Map();
+    for (const p of shown) {
+      const root = p[0];
+      if (!groups.has(root.id)) groups.set(root.id, { root, paths: [] });
+      groups.get(root.id).paths.push(p);
+    }
+    const cols = enabled().slice(1);
+    return `<section class="panel">
+      <div class="view-tools">
+        <label class="check"><input type="checkbox" data-matrix-gap ${state.matrixGapOnly ? "checked" : ""} /> 只看缺口</label>
+        <div class="legend"><span><b>✓</b> 已批准</span><span><b>○</b> 进行中</span><span><b>—</b> 缺</span><span><b>已豁免</b> 有理由不补</span></div>
+        <span class="spacer"></span>
+        <span class="view-note">行 = 一条需求链；分支缺口单独成行</span>
+      </div>
+      <div class="matrix-wrap">
+        ${shown.length ? `<table class="matrix">
+          <thead><tr>${cols.map((lv) => `<th>${levelName(lv)}</th>`).join("")}</tr></thead>
+          <tbody>
+            ${[...groups.values()].map((g) => `
+              <tr class="group"><td colspan="${cols.length}"><span class="group-key">${shortKey(g.root.key)}</span>${esc(g.root.title)} ${dot(g.root.status)} ${gapChip(g.root)}</td></tr>
+              ${g.paths.map((p) => `<tr>${cols.map((lv) => matrixCell(p, lv)).join("")}</tr>`).join("")}
+            `).join("")}
+          </tbody>
+        </table>` : `<div class="empty"><h3>没有要看的链路</h3><div>${state.matrixGapOnly ? "当前没有缺口。" : "先在需求池建一条 RR。"}</div></div>`}
+      </div>
+    </section>`;
+  }
+  function matrixCell(path, lv) {
+    const it = path.find((i) => i.level === lv);
+    if (it) {
+      return `<td><button class="mx-chip" data-open-drawer="${it.id}" title="${esc(it.title)} · ${statusLabel(it.status)}">
+        ${dot(it.status)}<span class="key">${shortKey(it.key)}</span><span class="ttl">${esc(it.title)}</span>
+        ${gapOf(it) ? `<span class="chip gap">${gapOf(it).label}</span>` : ""}
+      </button></td>`;
+    }
+    const idx = enabled().indexOf(lv);
+    const prev = [...path].reverse().find((i) => enabled().indexOf(i.level) < idx);
+    const immediate = prev && enabled().indexOf(prev.level) === idx - 1;
+    if (immediate && prev.waiver && prev.waiver.forLevel === lv) {
+      return `<td><span class="mx-waiver" title="${esc(prev.waiver.reason)}">已豁免</span></td>`;
+    }
+    if (immediate && state.creating?.context === "matrix" && state.creating.level === lv && state.creating.parentId === prev.id) {
+      return `<td><input class="mx-input" data-create-input placeholder="标题，回车创建" value="${esc(state.creating.title || "")}" aria-label="新建 ${levelName(lv)}" /></td>`;
+    }
+    if (immediate) {
+      return `<td><button class="mx-add" data-matrix-add="${lv}" data-parent="${prev.id}" title="在 ${shortKey(prev.key)} 下新建 ${levelName(lv)}">${ICON.plus} 新建</button></td>`;
+    }
+    return `<td><span class="mx-miss" title="先补上一级">—</span></td>`;
+  }
+
+  // ── drawers ───────────────────────────────────────────────────────
+  function renderDrawer() {
+    const root = document.getElementById("drawerRoot");
+    const d = state.drawer;
+    if (!d) { root.innerHTML = ""; return; }
+    let html = "";
+    if (d.type === "detail") {
+      const it = byId(d.id);
+      if (!it) { state.drawer = null; root.innerHTML = ""; return; }
+      html = `<aside class="drawer wide">
+        <div class="drawer-head"><span class="t">${esc(it.title)}</span><span class="sub">${shortKey(it.key)}</span><span class="spacer"></span><button class="icon-btn" data-close-drawer title="关闭" aria-label="关闭">${ICON.close}</button></div>
+        <div class="drawer-body no-pad"><div class="detail-scroll">${detailHtml(it)}</div></div>
+      </aside>`;
+    } else if (d.type === "tailor") {
+      html = tailorDrawer();
+    } else if (d.type === "assign") {
+      html = assignDrawer();
+    }
+    root.innerHTML = `<div class="scrim" data-close-drawer></div>${html}`;
+  }
+
+  function tailorDrawer() {
+    const draft = state.tailoringDraft || [...enabled()];
+    const tpl = templateOf(draft);
+    const impact = [];
+    for (const lv of enabled()) {
+      if (!draft.includes(lv) && lv !== "rr") {
+        const n = state.items.filter((i) => i.level === lv && enabled().includes(i.level)).length;
+        const r = reparentCount(lv);
+        impact.push(`关掉 ${levelName(lv)}：<b>${n}</b> 条需求隐藏，<b>${r}</b> 条子需求上挂到 ${draft.includes(prevLevel(lv)) ? levelName(prevLevel(lv)) : levelName(draft.filter((x) => LEVELS.indexOf(x) < LEVELS.indexOf(lv)).pop() || "rr")}`);
+      }
+    }
+    return `<aside class="drawer">
+      <div class="drawer-head"><span class="t">裁剪与字段</span><span class="sub">${esc(state.project.alias)}</span><span class="spacer"></span><button class="icon-btn" data-close-drawer title="关闭" aria-label="关闭">${ICON.close}</button></div>
+      <div class="drawer-body">
+        <div class="field"><label>模板</label>
+          ${[["light", "轻量", "RR → US"], ["standard", "标准", "RR → SR → US"], ["full", "完整", "RR → IR → SR → US"], ["custom", "自定义", "按下面开关"]].map(([k, name, desc]) => `
+            <div class="radio-row ${tpl === k ? "on" : ""}" data-template="${k}">
+              <span class="mark"></span><span>${name}</span><span class="meta">${desc}</span>
+            </div>`).join("")}
+        </div>
+        <div class="field"><label>层级</label>
+          ${LEVELS.map((lv) => `<div class="level-row">
+            <span class="lv">${levelName(lv)}</span><span class="name">${LV[lv].label}</span>
+            ${lv === "rr" ? `<span class="locked">固定开启</span>` : `<label class="check" style="margin-left:auto"><input type="checkbox" data-toggle-level="${lv}" ${draft.includes(lv) ? "checked" : ""} /> 启用</label>`}
+          </div>`).join("")}
+          <div class="chain">${draft.map((lv) => `<b>${levelName(lv)}</b>`).join("<span>→</span>")}</div>
+          ${draft.length < 2 ? `<div class="warn-note">至少保留 2 层。</div>` : ""}
+        </div>
+        ${impact.length ? `<div class="impact">${impact.join("<br>")}<br><span style="opacity:.8">关层不会删除数据；重新开启会恢复原位。</span></div>` : `<div class="note">当前层级没有被关闭。</div>`}
+        <div class="gates">
+          ${draft.map((lv) => `<div class="gate-row"><span class="lv">${levelName(lv)}</span><span class="tag">${lv === "rr" || lv === "ir" ? "需评审" : "不评审"}</span><span class="tag">${lv === "sr" || lv === "us" ? "验收 ≥1" : "无验收"}</span></div>`).join("")}
+        </div>
+        <div class="note">原型说明：模板 / 层开关会即时改变树、看板、计划与矩阵；字段闸门只做了验收与派活两条。</div>
+      </div>
+      <div class="drawer-foot"><button class="btn" data-close-drawer>取消</button><button class="btn primary" data-save-tailor ${draft.length < 2 ? "disabled" : ""}>保存</button></div>
+    </aside>`;
+  }
+
+  function assignDrawer() {
+    const a = state.assign;
+    const it = a ? byId(a.id) : null;
+    if (!a || !it) return "";
+    return `<aside class="drawer">
+      <div class="drawer-head"><span class="t">派活</span><span class="sub">${shortKey(it.key)}</span><span class="spacer"></span><button class="icon-btn" data-close-drawer title="关闭" aria-label="关闭">${ICON.close}</button></div>
+      <div class="drawer-body">
+        <div class="field"><label>给谁</label>
+          ${state.bots.map((b) => `<div class="bot-row ${a.botId === b.id ? "on" : ""}" data-assign-bot="${b.id}">
+            ${avatar(b, true)}<span>${esc(b.name)}</span><span class="role">${b.role === "supervisor" ? "全局助手 · 拆解" : "员工"}</span>
+            <span class="load">${collectDeliverTasks(it).filter((t) => t.botId === b.id).length} 个任务</span>
+          </div>`).join("")}
+        </div>
+        <div class="field"><label>工作区</label>
+          <select class="select" data-assign-workspace>
+            <option value="project" ${a.workspace === "project" ? "selected" : ""}>项目根 · ${esc(state.project.name)}</option>
+            <option value="worktree" ${a.workspace === "worktree" ? "selected" : ""}>新建 worktree</option>
+            <option value="existing" ${a.workspace === "existing" ? "selected" : ""}>${esc((state.bots.find((b) => b.id === a.botId) || {}).name || "Bot")} 已有工作区</option>
+          </select>
+        </div>
+        <div class="field"><label>任务标题</label><input class="input" data-assign-title value="${esc(a.title)}" /></div>
+        <div class="field"><label>验收（跟随需求）</label>
+          <div class="ai-preview">${(it.acceptance || []).map((x) => `<div class="line"><span>·</span><span>${esc(x.text)}</span></div>`).join("") || `<span style="color:var(--amber)">还没有验收判据；派活后仍然不能批准。</span>`}</div>
+        </div>
+        <label class="check" style="margin-top:4px"><input type="checkbox" data-assign-run ${a.runNow ? "checked" : ""} /> 建完立即开跑（默认只建任务，由 Bot 自己领）</label>
+        <div class="note">需求上不存「负责 Bot」；实现者是下面这条 deliver 任务上 botId 的聚合。改派只改任务。</div>
+      </div>
+      <div class="drawer-foot"><button class="btn" data-close-drawer>取消</button><button class="btn primary" data-assign-confirm>派活</button></div>
+    </aside>`;
+  }
+
+  function renderToast() {
+    const root = document.getElementById("toastRoot");
+    if (!state.toast) { root.innerHTML = ""; return; }
+    root.innerHTML = `<div class="toast"><span>${esc(state.toast.text)}</span>${state.toast.undo ? `<button data-undo>撤销</button>` : ""}</div>`;
+  }
+  function toast(text, undo) {
+    state.toast = { text, undo: !!undo };
+    if (state.toastTimer) clearTimeout(state.toastTimer);
+    state.toastTimer = setTimeout(() => { state.toast = null; renderToast(); }, 4200);
+    renderToast();
+  }
+
+  function renderMenu() {
+    const menu = document.getElementById("pageMenu");
+    if (menu) menu.hidden = !state.menuOpen;
+  }
+
+  function focusPending() {
+    const sel = state.focus;
+    state.focus = null;
+    if (!sel) return;
+    requestAnimationFrame(() => {
+      const list = document.querySelectorAll(sel);
+      const el = list[list.length - 1];
+      if (!el) return;
+      el.focus();
+      if (el.setSelectionRange && typeof el.value === "string") el.setSelectionRange(el.value.length, el.value.length);
+    });
+  }
+
+  // ── events ────────────────────────────────────────────────────────
+  document.addEventListener("click", (e) => {
+    const t = e.target;
+
+    const close = t.closest("[data-close-drawer]");
+    if (close) { state.drawer = null; state.assign = null; render(); return; }
+
+    const cheat = t.closest("[data-expand]");
+    if (cheat) {
+      const id = cheat.getAttribute("data-expand");
+      if (state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id);
+      render();
+      return;
+    }
+
+    const tab = t.closest("[data-tab]");
+    if (tab) { state.tab = tab.getAttribute("data-tab"); state.drawer = null; render(); return; }
+
+    const menuBtn = t.closest('[data-action="menu"]');
+    if (menuBtn) { state.menuOpen = !state.menuOpen; renderMenu(); return; }
+    if (!t.closest(".menu-wrap")) state.menuOpen = false;
+    renderMenu();
+
+    const mi = t.closest("[data-menu]");
+    if (mi) {
+      state.menuOpen = false;
+      const what = mi.getAttribute("data-menu");
+      if (what === "tailor") openTailor();
+      else if (what === "export") toast("原型：已生成 Markdown（不落盘）");
+      else if (what === "check") toast("数据自检：0 处断链（原型）");
+      return;
+    }
+
+    const act = t.closest("[data-action]");
+    if (act) {
+      const what = act.getAttribute("data-action");
+      if (what === "new") openCreate();
+      else if (what === "assistant-home") { state.chatMode = "home"; state.chatOpen = true; state.chatAutoScroll = true; render(); }
+      else if (what === "theme") {
+        const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+        document.documentElement.dataset.theme = next;
+        try { localStorage.setItem("cmh.proto.theme", next); } catch {}
+      }
+      return;
+    }
+
+    const sel = t.closest("[data-select]");
+    if (sel) {
+      const id = sel.getAttribute("data-select");
+      if (state.selectedId !== id) { state.selectedId = id; state.resetDetail = true; state.chatAutoScroll = true; state.mandateDraft = false; }
+      state.drawer = null;
+      state.gateError = null;
+      render();
+      return;
+    }
+
+    const chatToggle = t.closest("[data-chat-toggle]");
+    if (chatToggle) {
+      const fromDrawer = !!t.closest(".drawer");
+      if (fromDrawer) state.drawer = null;
+      state.chatMode = "requirement";
+      state.chatOpen = !state.chatOpen || fromDrawer;
+      state.chatAutoScroll = true;
+      render();
+      return;
+    }
+
+    const chatClose = t.closest("[data-chat-close]");
+    if (chatClose) { state.chatOpen = false; render(); return; }
+
+    const chatStop = t.closest("[data-chat-stop]");
+    if (chatStop) { stopStream(); return; }
+
+    const chatNew = t.closest("[data-chat-new]");
+    if (chatNew) {
+      if (state.chatMode === "home") state.homeChat = [];
+      else { const it = byId(state.selectedId); if (it) delete state.chats[it.id]; }
+      state.chatDraft = "";
+      render();
+      return;
+    }
+
+    const copyMsg = t.closest("[data-copy-msg]");
+    if (copyMsg) {
+      const it = byId(state.selectedId);
+      const msgs = state.chatMode === "home" ? state.homeChat : (it ? ensureChat(it) : []);
+      const m = msgs.find((x) => x.id === copyMsg.getAttribute("data-copy-msg"));
+      if (m?.text) { navigator.clipboard?.writeText(m.text).catch(() => {}); toast("已复制"); }
+      return;
+    }
+
+    const retryMsg = t.closest("[data-retry-msg]");
+    if (retryMsg) { retryMessage(retryMsg.getAttribute("data-retry-msg")); return; }
+
+    const chatAsk = t.closest("[data-chat-ask]");
+    if (chatAsk) { askChat(chatAsk.getAttribute("data-chat-ask")); return; }
+
+    const chatQuick = t.closest("[data-chat-quick]");
+    if (chatQuick) { const k = chatQuick.getAttribute("data-chat-quick"); if (state.chatMode === "home") askHome(k); else askChat(k); return; }
+
+    const chatSend = t.closest("[data-chat-send]");
+    if (chatSend) { if (state.chatMode === "home") sendHomeChat(state.chatDraft); else sendChat(state.chatDraft); return; }
+
+    const helpOpen = t.closest("[data-help-open]");
+    if (helpOpen) { const target = helpOpen.getAttribute("data-help-open"); navigateTo(target, target === "pool" ? "new" : null); return; }
+
+    const pathStep = t.closest("[data-path-target]");
+    if (pathStep) { focusTarget(pathStep.getAttribute("data-path-target")); return; }
+
+    const homeGo = t.closest("[data-home-go]");
+    if (homeGo) { navigateTo(homeGo.getAttribute("data-home-go")); return; }
+
+    const resultSelect = t.closest("[data-result-select]");
+    if (resultSelect) {
+      state.selectedId = resultSelect.getAttribute("data-result-select");
+      state.tab = "pool";
+      state.chatMode = "requirement";
+      state.chatOpen = true;
+      state.resetDetail = true;
+      state.chatAutoScroll = true;
+      const focus = resultSelect.getAttribute("data-focus");
+      render();
+      if (focus) setTimeout(() => focusTarget(focus), 90);
+      return;
+    }
+
+    const propApply = t.closest("[data-prop-apply]");
+    if (propApply) { applyProposal(propApply.getAttribute("data-prop-apply")); return; }
+
+    const propDismiss = t.closest("[data-prop-dismiss]");
+    if (propDismiss) { dismissProposal(propDismiss.getAttribute("data-prop-dismiss")); return; }
+
+    const mandateRevoke = t.closest("[data-mandate-revoke]");
+    if (mandateRevoke) {
+      const it = byId(state.selectedId);
+      if (it) state.mandate[it.id] = {};
+      toast("已撤销本会话授权");
+      render();
+      return;
+    }
+
+    const open = t.closest("[data-open-drawer]");
+    if (open) { state.drawer = { type: "detail", id: open.getAttribute("data-open-drawer") }; render(); return; }
+
+    const assign = t.closest("[data-assign]");
+    if (assign) { openAssign(assign.getAttribute("data-assign"), t.closest(".drawer") ? "detail" : "pool"); return; }
+
+    const sec = t.closest("[data-sec]");
+    if (sec) {
+      const key = sec.getAttribute("data-sec");
+      if (state.collapsed.has(key)) state.collapsed.delete(key); else state.collapsed.add(key);
+      render();
+      return;
+    }
+
+    const child = t.closest("[data-create-child]");
+    if (child) {
+      const it = byId(child.getAttribute("data-create-child"));
+      if (!it) return;
+      const next = nextLevel(it.level);
+      if (!next) return;
+      state.creating = { context: "detail", level: next, parentId: it.id, title: "" };
+      state.focus = "[data-create-input]";
+      render();
+      return;
+    }
+
+    const mx = t.closest("[data-matrix-add]");
+    if (mx) {
+      state.creating = { context: "matrix", level: mx.getAttribute("data-matrix-add"), parentId: mx.getAttribute("data-parent"), title: "" };
+      state.focus = "[data-create-input]";
+      render();
+      return;
+    }
+
+    const fix = t.closest("[data-fix-gate]");
+    if (fix) {
+      const id = fix.getAttribute("data-fix-gate");
+      const ge = state.gateError;
+      if (ge && ge.key === "tasks") { openAssign(id, "pool"); return; }
+      if (ge && ge.key === "acceptance") { state.focus = "[data-accept-input]"; render(); return; }
+      toast("该字段在原型里只读；实现时会聚焦到对应输入");
+      return;
+    }
+
+    const tpl = t.closest("[data-template]");
+    if (tpl) { setTemplate(tpl.getAttribute("data-template")); return; }
+
+    const bot = t.closest("[data-assign-bot]");
+    if (bot) { state.assign.botId = bot.getAttribute("data-assign-bot"); render(); return; }
+
+    const confirm = t.closest("[data-assign-confirm]");
+    if (confirm) { confirmAssign(); return; }
+
+    const save = t.closest("[data-save-tailor]");
+    if (save) { saveTailor(); return; }
+
+    const undo = t.closest("[data-undo]");
+    if (undo) { undoLast(); return; }
+  });
+
+  document.addEventListener("change", (e) => {
+    const t = e.target;
+    if (t.matches("[data-status]")) { setStatus(t.getAttribute("data-status"), t.value); return; }
+    if (t.matches("[data-filter-level]")) { state.filters.level = t.value; render(); return; }
+    if (t.matches("[data-filter-status]")) { state.filters.status = t.value; render(); return; }
+    if (t.matches("[data-board-level]")) { state.boardLevel = t.value; render(); return; }
+    if (t.matches("[data-board-bot]")) { state.boardBot = t.value; render(); return; }
+    if (t.matches("[data-board-gap]")) { state.boardGapOnly = t.checked; render(); return; }
+    if (t.matches("[data-matrix-gap]")) { state.matrixGapOnly = t.checked; render(); return; }
+    if (t.matches("[data-create-level]")) {
+      if (!state.creating) return;
+      state.creating.level = t.value;
+      state.creating.parentId = parentForLevel(t.value, state.creating.parentId || state.selectedId);
+      state.focus = "[data-create-input]";
+      render();
+      return;
+    }
+    if (t.matches("[data-acc]")) {
+      const [id, idx] = t.getAttribute("data-acc").split(":");
+      const it = byId(id);
+      if (it && it.acceptance[idx]) { it.acceptance[idx].done = t.checked; render(); }
+      return;
+    }
+    if (t.matches("[data-assign-workspace]")) { state.assign.workspace = t.value; render(); return; }
+    if (t.matches("[data-assign-run]")) { state.assign.runNow = t.checked; return; }
+    if (t.matches("[data-toggle-level]")) { toggleLevel(t.getAttribute("data-toggle-level")); return; }
+    if (t.matches("[data-mandate-session]")) { state.mandateDraft = t.checked; return; }
+    if (t.matches("[data-prop-check]")) {
+      const [mid, idx] = t.getAttribute("data-prop-check").split(":");
+      const it = byId(state.selectedId);
+      if (!it) return;
+      const m = ensureChat(it).find((x) => x.id === mid);
+      if (m && m.proposal && m.proposal.items[idx]) m.proposal.items[idx].checked = t.checked;
+      return;
+    }
+    if (t.matches("[data-dispatch-run]")) {
+      const [mid, idx] = t.getAttribute("data-dispatch-run").split(":");
+      const it = byId(state.selectedId);
+      if (!it) return;
+      const m = ensureChat(it).find((x) => x.id === mid);
+      if (m && m.proposal && m.proposal.items[idx]) { m.proposal.items[idx].runNow = t.checked; render(); }
+      return;
+    }
+    if (t.matches("#projectSelect")) { t.selectedIndex = 0; toast("原型只有一个项目；实现时这里切项目 = 换整棵树"); return; }
+  });
+
+  document.addEventListener("input", (e) => {
+    const t = e.target;
+    if (t.matches("[data-search]")) {
+      state.filters.query = t.value;
+      state.focus = "[data-search]";
+      render();
+      return;
+    }
+    if (t.matches("[data-create-input]") && state.creating) { state.creating.title = t.value; return; }
+    if (t.matches("[data-assign-title]") && state.assign) { state.assign.title = t.value; return; }
+    if (t.matches("[data-chat-input]")) { state.chatDraft = t.value; return; }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    const t = e.target;
+    const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName);
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "a") {
+      e.preventDefault();
+      state.chatOpen = !state.chatOpen;
+      if (state.chatOpen) state.chatMode = state.selectedId ? "requirement" : "home";
+      state.chatAutoScroll = true;
+      render();
+      return;
+    }
+
+    if (t.matches("[data-create-input]")) {
+      if (e.key === "Enter") { e.preventDefault(); createFromState(t); return; }
+      if (e.key === "Escape") { e.preventDefault(); cancelCreate(); return; }
+    }
+    if (t.matches("[data-chat-input]")) {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (state.chatMode === "home") sendHomeChat(t.value); else sendChat(t.value); return; }
+      if (e.key === "Enter" && e.shiftKey) return;
+    }
+    if (t.matches("[data-accept-input]")) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const v = t.value.trim();
+        if (!v) return;
+        const it = byId(state.selectedId);
+        if (!it) return;
+        it.acceptance.push({ text: v, done: false });
+        it.events.push({ at: Date.now(), text: "新增验收判据" });
+        state.gateError = null;
+        t.value = "";
+        state.focus = "[data-accept-input]";
+        render();
+        return;
+      }
+    }
+    if (e.key === "Escape") {
+      if (state.creating) { cancelCreate(); return; }
+      if (state.drawer) { state.drawer = null; state.assign = null; render(); return; }
+      if (state.menuOpen) { state.menuOpen = false; renderMenu(); return; }
+    }
+    if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && e.key === "c") {
+      e.preventDefault();
+      openCreate();
+    }
+  });
+
+  // init theme
+  try {
+    const q = new URLSearchParams(location.search);
+    const saved = q.get("theme") || localStorage.getItem("cmh.proto.theme");
+    if (saved === "dark" || saved === "light") document.documentElement.dataset.theme = saved;
+  } catch {}
+  render();
+})();
+</script>
+</body>
+</html>

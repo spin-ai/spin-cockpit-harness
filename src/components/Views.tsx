@@ -17,8 +17,8 @@ const PROJECT_STATUS: Record<ProjectStatus, string> = {
   planned: "计划中", in_progress: "进行中", paused: "已暂停", completed: "已完成", cancelled: "已取消",
 };
 
-export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask }: {
-  state: State; now: number; act: Act; notify: (m: string) => void; onAdd: () => void; onSwitch: (id: string) => void; onNewTask: (id: string) => void;
+export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask, onOpenRequirements }: {
+  state: State; now: number; act: Act; notify: (m: string) => void; onAdd: () => void; onSwitch: (id: string) => void; onNewTask: (id: string) => void; onOpenRequirements: (id?: string) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -88,6 +88,7 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask }
         <button className="btn tiny primary" disabled={isActive} onClick={() => onSwitch(p.id)}>{isActive ? "使用中" : "打开"}</button>
         <button className="btn tiny" onClick={() => onNewTask(p.id)} title="在当前项目中新建任务">＋ 任务</button>
         <RowMenu title="更多项目操作">
+          <button onClick={() => onOpenRequirements(p.id)}>需求</button>
           <button onClick={() => act("revealProject", { id: p.id })}>在 Finder 中显示</button>
           <button onClick={() => setSceneProject(p)}>执行配置</button>
           <button onClick={() => startRename(p)}>重命名</button>
@@ -118,6 +119,7 @@ export function Projects({ state, now, act, notify, onAdd, onSwitch, onNewTask }
               { id: "list", label: (<><ListIcon size={14} /> {t("action.list")}</>), title: "列表视图" },
             ]}
           />
+          <button className="btn" onClick={() => onOpenRequirements(active?.id)}>需求</button>
           <button className="btn primary" onClick={onAdd}>＋ {t("action.addProject")}</button>
         </div>}
       />

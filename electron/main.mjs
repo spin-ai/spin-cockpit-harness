@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 import { fileURLToPath } from "node:url";
 import { formatToolContent, normalizeToolStatus, toolFamily, toolOutputText } from "./tool-format.mjs";
 import { openDb, DEFAULT_SETTINGS } from "./db.mjs";
+import { normalizeAcceptance, normalizeLevel, keyPrefix, nextRequirementKey, statusGate, validateParent } from "./requirements/core.mjs";
 import { safeStorage } from "electron";
 import { AcpClient, dshPathEnv } from "./acp.mjs";
 import { createKnowledge } from "./knowledge/index.mjs";
@@ -7259,12 +7260,88 @@ const actions = {
     store.addEvent("project.status", `project.status ${project.name} → ${status}`);
     return project;
   },
+  requirementCreate: ({ projectId = "", level = "ir", parentId = null, title = "", body = "" } = {}) => {
+    const normalized = normalizeLevel(level);
+    if (!normalized) throw new Error(`未知需求层级：${level}`);
+    const project = projectId ? store.state.projects.find((p) => p.id === projectId) : activeProject();
+    if (!project) throw new Error("项目不存在");
+    const parent = parentId ? (store.state.requirements || []).find((r) => r.id === parentId) : null;
+    if (parentId && !parent) throw new Error("父需求不存在");
+    const parentCheck = validateParent({ level: normalized, parent, projectId: project.id });
+    if (!parentCheck.ok) throw new Error(parentCheck.error);
+    const cleanTitle = String(title || "").trim().replace(/\s+/g, " ").slice(0, 200);
+    if (!cleanTitle) throw new Error("标题不能为空");
+    const id = store.nextId("r");
+    const req = {
+      id, projectId: project.id, key: nextRequirementKey(store.state.requirements || [], project.id, normalized, keyPrefix(project)),
+      level: normalized, parentId: parent ? parent.id : null, title: cleanTitle, body: String(body || ""),
+      status: "draft", priority: "P2", owner: "", source: "", requester: "",
+      scope: "", outOfScope: "", impact: "", role: "", value: "",
+      acceptance: [], tags: [], createdAt: Date.now(), updatedAt: Date.now(),
+    };
+    if (!store.state.requirements) store.state.requirements = [];
+    store.state.requirements.push(req);
+    store.addEvent("requirement.created", `requirement.created ${req.key} ${req.title}`);
+    return req;
+  },
+  requirementUpdate: ({ id, title, body, priority, owner, source, requester, scope, outOfScope, impact, role, value, acceptance, tags } = {}) => {
+    const req = (store.state.requirements || []).find((r) => r.id === id);
+    if (!req) throw new Error("需求不存在");
+    const changed = [];
+    if (typeof title === "string") {
+      const next = title.trim().replace(/\s+/g, " ").slice(0, 200);
+      if (!next) throw new Error("标题不能为空");
+      if (next !== req.title) { req.title = next; changed.push("title"); }
+    }
+    for (const [key, value] of Object.entries({ body, priority, owner, source, requester, scope, outOfScope, impact, role, value })) {
+      if (typeof value === "string" && value !== req[key]) { req[key] = value; changed.push(key); }
+    }
+    if (acceptance !== undefined) {
+      const next = normalizeAcceptance(acceptance);
+      if (JSON.stringify(next) !== JSON.stringify(req.acceptance || [])) { req.acceptance = next; changed.push("acceptance"); }
+    }
+    if (Array.isArray(tags)) {
+      const next = tags.map((t) => String(t).trim()).filter(Boolean).slice(0, 12);
+      if (JSON.stringify(next) !== JSON.stringify(req.tags || [])) { req.tags = next; changed.push("tags"); }
+    }
+    req.updatedAt = Date.now();
+    if (changed.length) store.addEvent("requirement.updated", `requirement.updated ${req.key} ${changed.join(",")}`);
+    return req;
+  },
+  requirementSetStatus: ({ id, status } = {}) => {
+    const req = (store.state.requirements || []).find((r) => r.id === id);
+    if (!req) throw new Error("需求不存在");
+    const children = (store.state.requirements || []).filter((r) => r.parentId === req.id);
+    const gate = statusGate(req, status, { children });
+    if (!gate.ok) {
+      const err = new Error(gate.error || "状态不能推进");
+      err.missing = gate.missing;
+      throw err;
+    }
+    req.status = status;
+    req.updatedAt = Date.now();
+    store.addEvent("requirement.status", `requirement.status ${req.key} → ${status}`);
+    return req;
+  },
+  requirementDelete: ({ id } = {}) => {
+    const list = store.state.requirements || [];
+    const req = list.find((r) => r.id === id);
+    if (!req) throw new Error("需求不存在");
+    if (req.status !== "draft") throw new Error("只有草稿能删除；已批准的需求请置为已废弃");
+    const children = list.filter((r) => r.parentId === req.id);
+    if (children.length) throw new Error(`还有 ${children.length} 条子需求，不能删除`);
+    store.state.requirements = list.filter((r) => r.id !== req.id);
+    store.addEvent("requirement.deleted", `requirement.deleted ${req.key}`);
+    return { ok: true };
+  },
   removeProject: ({ id }) => {
     const project = store.state.projects.find((p) => p.id === id);
     if (!project) throw new Error("项目不存在");
     if (store.state.projects.length <= 1) throw new Error("至少保留一个项目");
     const count = store.state.todos.filter((t) => t.projectId === id).length;
     if (count) throw new Error(`项目下还有 ${count} 个任务，不能移除`);
+    const reqCount = (store.state.requirements || []).filter((r) => r.projectId === id).length;
+    if (reqCount) throw new Error(`项目下还有 ${reqCount} 条需求，不能移除`);
     store.state.projects = store.state.projects.filter((p) => p.id !== id);
     if (store.state.activeProjectId === id) {
       const fallback = store.state.projects[0];

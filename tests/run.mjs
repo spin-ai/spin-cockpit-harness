@@ -32,6 +32,7 @@ const GROUPS = {
   memory: ["memory.test.mjs"],
   im: ["feishu.test.mjs", "im-pairing.test.mjs"],
   bot: ["bot/run.mjs"],
+  requirements: ["requirements/core.test.mjs"],
 };
 
 const rawArgs = process.argv.slice(2);

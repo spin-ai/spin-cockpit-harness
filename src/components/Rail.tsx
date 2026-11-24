@@ -9,7 +9,7 @@ import { useT } from "../i18n";
  * Git 在工作台的右栏「文件 / 会话 / Git」里。
  * 插件自己的视图（视觉解析…）不单独占 rail：它们是「插件市场」里的条目。
  */
-type View = "workspace" | "terminal" | "scene" | "projects" | "bots" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "plugins" | "bot";
+type View = "workspace" | "terminal" | "scene" | "projects" | "requirements" | "bots" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "plugins" | "bot";
 
 const icon = (name: string) => {
   const common = { width: 19, height: 19, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };

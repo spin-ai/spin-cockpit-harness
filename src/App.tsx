@@ -7,6 +7,7 @@ import { TerminalPanel } from "./components/TerminalPanel";
 import { FilePanel } from "./components/FilePanel";
 import { GitView } from "./components/GitView";
 import { Projects } from "./components/Views";
+import { Requirements } from "./components/Requirements";
 import { ApprovalModal } from "./components/ApprovalModal";
 import { ConfirmHost } from "./components/ConfirmHost";
 import { CommandPalette, type Command } from "./components/CommandPalette";
@@ -28,7 +29,7 @@ import { SceneWorkspace } from "./components/SceneWorkspace";
 import { requestTerminalAdopt, requestTerminalAt } from "./terminal-events";
 import { THEMES, isDarkTheme, resolveTheme } from "./themes";
 
-type View = "workspace" | "terminal" | "scene" | "projects" | "bots" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "plugins" | "bot";
+type View = "workspace" | "terminal" | "scene" | "projects" | "requirements" | "bots" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "plugins" | "bot";
 type PaneId = "todo" | "terminal" | "files";
 const COLLAPSED_PANE_W = 34;
 
@@ -427,6 +428,11 @@ export default function App() {
     setView((v) => (v === "workspace" ? v : "terminal"));
   }, [act]);
 
+  const openRequirements = useCallback(async (projectId?: string) => {
+    if (projectId && projectId !== state?.activeProjectId) await act("switchProject", { id: projectId });
+    setView("requirements");
+  }, [act, state?.activeProjectId]);
+
   const newTaskInProject = useCallback(async (id: string) => {
     if (id !== state?.activeProjectId) await switchProject(id);
     setView("terminal");
@@ -496,6 +502,7 @@ export default function App() {
       { id: "view-terminal", label: "工作台：项目 / 终端 / 任务表", group: "导航", run: () => setView("terminal") },
       { id: "view-scene", label: "场景", group: "导航", run: () => setView("scene") },
       { id: "view-projects", label: "项目花名册（统计 / 场景 / 切换）", group: "导航", run: () => setView("projects") },
+      { id: "view-requirements", label: "需求（IR → SR → US）", group: "导航", run: () => void openRequirements() },
       { id: "view-stats", label: "统计", group: "导航", hint: "设置 → 统计", run: () => openSettingsSection("stats") },
       { id: "view-hosts", label: "主机", group: "导航", hint: "设置 → 主机", run: () => openSettingsSection("hosts") },
       { id: "view-git", label: "Git / 源码管理", group: "导航", run: () => setView("git") },
@@ -555,7 +562,7 @@ export default function App() {
     }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state?.projects, state?.todos, state?.threads, state?.activeProjectId, newThread, dispatchInWorkspace, openTodoFromPalette, openThreadFromPalette, addProject, switchProject, act]);
+  }, [state?.projects, state?.todos, state?.threads, state?.activeProjectId, newThread, dispatchInWorkspace, openTodoFromPalette, openThreadFromPalette, addProject, switchProject, openRequirements, act]);
 
   useEffect(() => {
     // 自定义菜单去掉了 Select All 角色（否则 ⌘A 会被应用菜单吞掉，终端无法选择缓冲区）。
@@ -771,7 +778,8 @@ export default function App() {
             />
           </div>
         )}
-        {view === "projects" && <div className="wide"><Projects state={state} now={now} act={act} notify={notify} onAdd={() => void addProject()} onSwitch={(id) => void switchProject(id)} onNewTask={(id) => void newTaskInProject(id)} /></div>}
+        {view === "projects" && <div className="wide"><Projects state={state} now={now} act={act} notify={notify} onAdd={() => void addProject()} onSwitch={(id) => void switchProject(id)} onNewTask={(id) => void newTaskInProject(id)} onOpenRequirements={(id) => void openRequirements(id)} /></div>}
+        {view === "requirements" && <div className="wide"><Requirements state={state} act={act} notify={notify} onBack={() => setView("projects")} /></div>}
         {view === "git" && <div className="wide"><GitView state={state} notify={notify} /></div>}
         {view === "settings" && <div className="wide settings-wide"><Settings state={state} act={act} notify={notify} now={now} onOpenTodo={(id) => void openTodoFromPalette(id)} initialSection={settingsSection} /></div>}
         {view === "guide" && <div className="wide guide-wiki-wide"><Guide pageId={guidePage} /></div>}
