@@ -195,7 +195,7 @@
 | SR-Chat-03 | **草稿持久化**：`bot_drafts(botId, threadId, text, attachments, updatedAt)`；输入 500ms 节流写；上限 8k 字符；发送成功即清；同一 bot 多 thread 各一份                                                      | ✅ `bot_ui` 表 + `saveBotUi` 单行写 | IR-Chat-07，改    |
 | SR-Chat-04 | **阅读位置**：`bot_ui.scroll = { turnId, offset }`；滚动采样 500ms 写一次；打开会话时按 `turnId` 定位，**还原公式 `contentTop - offset`**（2026-11-24 修正符号错误），每次切回来都还原 | ✅（`offset` 语义：那一轮的视口内 y） | US-Chat-06 |
 | SR-Chat-05 | **重试**：`botRetry({ turnId })` 复用原 `turn.input` + 原 `threadId`，新建一轮（不改写原轮）；同一轮重复点击幂等（带 `retryOf`）                                                                            | ✅ `botRetry`：复用原话 + 原会话，`trigger.kind=retry` 指回原轮 | IR-Chat-06，改    |
-| SR-Chat-06 | **反馈**：`bot_turns.feedback ∈ {up, down}` + `botFeedback({ turnId, value })`，同一轮可改不可叠加 | ✗ 还没有列与动作（先用重试 / 分支处置） | IR-Chat-06 |
+| SR-Chat-06 | **反馈**：`bot_turns.feedback ∈ {up, down, null}` + `botFeedback({ turnId, value })`；同一轮可改不可叠加，再点同一个即撤销；只 `UPDATE` 一列，不整行替换 | ✅ 2026-11-24（`saveBotFeedback` / `botFeedback` / 消息 `⋯`） | IR-Chat-06 |
 | SR-Chat-07 | **用量字段**：`turn.cost` 增 `ttftMs`（首个增量时间）与 `model`；UI 只读，不估算费用                                                                                                                | ✅ tokens / ms / ttftMs / model | IR-Chat-06/09，改 |
 | SR-Chat-08 | **中断语义**：abort → `decision = "interrupted"`，`reply` 保留已生成前缀（≤4000 字）；UI 显示「已停止」；叫停**立刻**收掉本地临时态（发送键马上回来），再刷回合账 | ✅ 2026-11-24（`cancel()` finally 清 streaming / busy，`load()` 取 interrupted 回合） | IR-Chat-01 |
 | SR-Chat-09 | **上下文估计**：不另造 `botContextEstimate`；用上一轮落库的真实账（`turn.context`：chars / memoryUsedPct / memoryLines / history），窗口未知就不给百分比；**点这一行去轨迹**看上下文构成 | ✅ 见 SR-Chat-18 | IR-Chat-09 |

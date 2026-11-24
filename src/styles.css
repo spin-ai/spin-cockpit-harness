@@ -4014,7 +4014,7 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
 .bot-new-menu{width:100%}
 .bot-new-menu>.bot-new{width:100%;display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer}
 .bot-new:hover{border-color:var(--border-strong);background:var(--surface-hover);color:var(--fg)}
-.bot-main{display:flex;flex-direction:column;gap:12px;min-width:0}
+.bot-main{display:flex;flex-direction:column;gap:12px;min-width:0;position:relative}
 /* Chats：照搬 ORCA 的会话列表（搜索 + 新会话 + 一条会话一行） */
 .bot-chats{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0}
 .bot-chats-head{display:flex;align-items:center;gap:12px;min-width:0}

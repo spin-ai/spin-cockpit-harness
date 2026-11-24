@@ -1337,6 +1337,11 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                   if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); const item = mentionItems[mentionIndex]; if (item) insertMention(item.alias); return; }
                   if (e.key === "Escape") { e.preventDefault(); setMentionDismissed(true); return; }
                 }
+                if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+                  e.preventDefault();
+                  setSearchOpen(true);
+                  return;
+                }
                 if (e.key === "Escape") {
                   // 先撤掉待发送的界面上下文，其次才是停止这次运行（Esc 是聊天里最顺手的停键）
                   if (context) { e.preventDefault(); onClearContext(); return; }

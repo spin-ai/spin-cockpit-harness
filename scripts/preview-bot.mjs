@@ -157,6 +157,11 @@ const MOCK = String.raw`
       else if (type === "botRetry") result = { ok: true };
       // 和主进程 db.saveBotUi 一样「按字段合并」：只写 scroll 时不能把草稿清空，反之亦然
       else if (type === "botGroupRetry") result = { ok: true };
+      else if (type === "botFeedback") {
+        const t = snapshot.turns.find((x) => x.id === payload.turnId);
+        if (t) t.feedback = t.feedback === payload.value ? null : payload.value;
+        result = { ok: true, turnId: payload.turnId, feedback: t?.feedback || null };
+      }
       else if (type === "botUiSave") { const prev = draftStore[payload.key] || { draft: "", scroll: null }; draftStore[payload.key] = { draft: payload.draft !== undefined ? payload.draft : prev.draft, scroll: payload.scroll !== undefined ? payload.scroll : prev.scroll, updatedAt: Date.now() }; result = { ok: true }; }
       else if (type === "botGroupSend") {
         // 模拟群聊：先落自己的话，再逐个成员流式回（和主进程 botGroupSend 一样）
@@ -587,17 +592,25 @@ check("群聊：自己的话立刻出现（不等后端）", await ev(`Boolean(w
 check("群聊：没人开口时有「正在想」行", await ev(`!!document.querySelector(".ds-typing")`), JSON.stringify((await text(".bot-stream")).slice(-160)));
 await sleep(250);
 check("群聊：后端回声到了就不再画乐观气泡（不重复）", await ev(`!document.querySelector(".ds-pending")`));
-check("群聊：逐字流式可见（不等整段）", (await text(".ds-streaming")).includes("先说一半"));
-// 流式块存在的时间窗很短（mock 是分段吐的）：在同一段脚本里轮询到就返回，避免两次往返之间它已经收尾
-const streamStop = await ev(`(async () => {
-  for (let i = 0; i < 80; i++) {
-    const btn = document.querySelector(".ds-streaming .ds-action-text");
-    if (btn) return true;
+// 流式块存在的时间窗很短（mock 是分段吐的）：一次轮询里把「逐字可见」和「块上能停止」都记下来，
+// 分两次读会在两次 CDP 往返之间正好错过它
+const streamSeen = await ev(`(async () => {
+  let partial = false;
+  let stop = false;
+  for (let i = 0; i < 120; i++) {
+    const el = document.querySelector(".ds-streaming");
+    if (el) {
+      if ((el.textContent || "").includes("先说一半")) partial = true;
+      if (el.querySelector(".ds-action-text")) stop = true;
+      if (partial && stop) break;
+    }
     await new Promise((r) => setTimeout(r, 20));
   }
-  return false;
+  return JSON.stringify({ partial, stop });
 })()`);
-check("群聊：流式块上能「停止」", streamStop === true);
+const streamSeenObj = JSON.parse(streamSeen || "{}");
+check("群聊：逐字流式可见（不等整段）", streamSeenObj.partial === true, streamSeen);
+check("群聊：流式块上能「停止」", streamSeenObj.stop === true, streamSeen);
 await shot(path.join(OUT, "bot-group-stream.png"));
 await sleep(700);
 check("群聊：跑完后落库、临时态收干净", (await text(".bot-stream")).includes("先说一半，说完了。") && await ev(`!document.querySelector(".ds-pending") && !document.querySelector(".ds-streaming")`), JSON.stringify((await text(".bot-stream")).slice(-160)));
@@ -842,6 +855,64 @@ check("重试：点了用 turnId 调 botRetry", retryObj.after === retryObj.befo
 // 压缩卡：更早的对话被折成摘要时，转录里有一条系统注记（不是消息）
 const digestText = await text(".ds-digest");
 check("压缩卡：标明「已压缩 · 只作背景」", /已压缩/.test(digestText) && /摘要/.test(digestText), digestText);
+
+// 反馈：⋯ 里有赞 / 踩，评完这一轮带「已赞」标记（同一轮再点同一个 = 撤销）
+await run(`
+  const row = document.querySelector(".ds-assistant .ds-actions .row-menu-trigger");
+  if (!row) throw new Error("消息动作里没有更多菜单");
+  row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 120));
+  const btn = [...document.querySelectorAll(".row-menu-pop button")].find((b) => b.textContent.trim() === "赞");
+  if (!btn) throw new Error("菜单里没有赞");
+  btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  for (let i = 0; i < 30 && !/已赞/.test(document.querySelector(".ds-assistant .ds-actions")?.parentElement?.textContent || ""); i++) await new Promise((r) => setTimeout(r, 20));
+  return true;`);
+const fb = await ev(`(() => {
+  const c = window.__calls.filter((x) => x.type === "botFeedback");
+  const rows = [...document.querySelectorAll(".ds-assistant")].map((el) => (el.querySelector(".ds-actions")?.parentElement?.textContent || "").slice(-40));
+  return JSON.stringify({ calls: c.length, value: c.at(-1)?.payload?.value || "", rows, marked: rows.some((t) => /已赞/.test(t)) });
+})()`);
+const fbObj = JSON.parse(fb || "{}");
+check("反馈：赞写回 botFeedback", fbObj.calls >= 1 && fbObj.value === "up", fb);
+check("反馈：评过的这一轮带「已赞」标记", fbObj.marked === true, fb);
+
+// 会话内查找：⌘F 面板命中 + 点击跳到消息并闪一下
+await run(`
+  const row = document.querySelector(".ds-assistant .ds-actions .row-menu-trigger");
+  if (row) row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 80));
+  const input = [...document.querySelectorAll(".ds-composer textarea")].find((t) => t.getBoundingClientRect().width > 0);
+  if (input) input.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 200));
+  return true;`);
+const searchUi = await ev(`(() => {
+  const panel = document.querySelector(".chat-search");
+  return JSON.stringify({ open: Boolean(panel), hits: panel ? panel.querySelectorAll(".chat-search-hit").length : 0 });
+})()`);
+const searchObj = JSON.parse(searchUi || "{}");
+check("会话内查找：⌘F 打开面板", searchObj.open === true, searchUi);
+await run(`
+  const panel = document.querySelector(".chat-search");
+  const box = panel?.querySelector(".chat-search-input");
+  if (!box) throw new Error("没有查找输入框");
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+  setter.call(box, "第 17");
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 250));
+  return true;`);
+const hitsCount = await ev(`document.querySelectorAll(".chat-search-hit").length`);
+check("会话内查找：命中列出来", Number(hitsCount) > 0, String(hitsCount));
+await run(`
+  const hit = document.querySelector(".chat-search-hit");
+  if (hit) hit.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 250));
+  return true;`);
+check("会话内查找：点击跳到那一条并闪一下", await ev(`!!document.querySelector(".chat-flash")`));
+await run(`
+  const close = document.querySelector('.chat-search [aria-label="关闭查找"]');
+  if (close) close.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 120));
+  return true;`);
 
 // 上下文账：composer 上方一行，显示字符数与记忆占比；>80% 用琥珀文字（不铺底色）
 const ctxText = await text(".ds-context");

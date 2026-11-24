@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS coordination_scenes (id TEXT PRIMARY KEY, name TEXT, 
 CREATE TABLE IF NOT EXISTS terminals (id TEXT PRIMARY KEY, project_id TEXT, todo_id TEXT, run_id TEXT, agent_id TEXT, cwd TEXT, kind TEXT, title TEXT, status TEXT, exit_code INTEGER, output_tail TEXT, created_at INTEGER, ended_at INTEGER, host_id TEXT);
 -- 人格 bot：身份（人格卡）/ 策略 / 配额都存在档案里；回合另表，便于按时间查与清理
 CREATE TABLE IF NOT EXISTS bots (id TEXT PRIMARY KEY, name TEXT, avatar TEXT, avatar_class TEXT, persona TEXT, capability TEXT, channels TEXT, policy TEXT, budget TEXT, status TEXT, muted_until INTEGER, created_at INTEGER, updated_at INTEGER, skills TEXT, project_id TEXT, host_id TEXT, team TEXT);
-CREATE TABLE IF NOT EXISTS bot_turns (id TEXT PRIMARY KEY, bot_id TEXT, channel TEXT, trigger TEXT, input TEXT, injected TEXT, reply TEXT, decision TEXT, reason TEXT, run_id TEXT, cost TEXT, created_at INTEGER, thread_id TEXT, trace TEXT);
+CREATE TABLE IF NOT EXISTS bot_turns (id TEXT PRIMARY KEY, bot_id TEXT, channel TEXT, trigger TEXT, input TEXT, injected TEXT, reply TEXT, decision TEXT, reason TEXT, run_id TEXT, cost TEXT, created_at INTEGER, thread_id TEXT, trace TEXT, feedback TEXT);
 -- 群聊（参考 ORCA 的 bot group）：群、成员、消息；replyMode 决定一句话发给谁
 CREATE TABLE IF NOT EXISTS bot_groups (id TEXT PRIMARY KEY, name TEXT, reply_mode TEXT, created_at INTEGER, updated_at INTEGER, last_read_at INTEGER, threads TEXT, memo TEXT, reads TEXT, sessions TEXT);
 CREATE TABLE IF NOT EXISTS bot_group_members (group_id TEXT, bot_id TEXT, PRIMARY KEY (group_id, bot_id));
@@ -197,6 +197,8 @@ export async function openDb(dir, { onTranscript } = {}) {
     // 一轮为什么停（轮数 / 循环 / 预算 / 超时）+ 上下文占用（给 UI 看「它带了多少东西」）
     "ALTER TABLE bot_turns ADD COLUMN stop_reason TEXT",
     "ALTER TABLE bot_turns ADD COLUMN context TEXT",
+    // 人对这一轮的评价：up / down / null（改同一轮可覆盖，不叠加）
+    "ALTER TABLE bot_turns ADD COLUMN feedback TEXT",
     // 日程建议：模型只出草稿，人点「建日程」后才写 routines
     "ALTER TABLE bot_turns ADD COLUMN routine_proposal TEXT",
     // 群聊交接：这一轮把活交给了谁（审计 + 防双答）
@@ -387,7 +389,7 @@ export async function openDb(dir, { onTranscript } = {}) {
     reply: r.reply || "", decision: r.decision || "silent", reason: r.reason || "",
     runId: r.run_id || null, todoId: r.todo_id || null, proposal: J(r.proposal, null), tools: J(r.tools, []), trace: J(r.trace, []),
     threadId: r.thread_id || null, stopReason: r.stop_reason || "", context: J(r.context, {}), routineProposal: J(r.routine_proposal, null), handoff: J(r.handoff, null),
-    cost: J(r.cost, {}), createdAt: r.created_at || 0,
+    cost: J(r.cost, {}), feedback: r.feedback || null, createdAt: r.created_at || 0,
   })).reverse();
   state.botItems = rows("SELECT * FROM bot_items ORDER BY created_at").map((r) => ({
     id: r.id, botId: r.bot_id, seq: r.seq || 0, title: r.title || "", body: r.body || "",
@@ -552,11 +554,11 @@ export async function openDb(dir, { onTranscript } = {}) {
     // 显式列名：todo_id / proposal 是后加的列，物理上在 cost / created_at 之后；
     // 以前按位置写会把 cost/created_at/todo_id/proposal 整个错位（todo_id 变成 cost 的 JSON）
     for (const t of state.botTurns || []) run(
-      "INSERT INTO bot_turns (id,bot_id,channel,trigger,input,injected,reply,decision,reason,run_id,cost,created_at,todo_id,proposal,tools,thread_id,trace,stop_reason,context,routine_proposal,handoff) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO bot_turns (id,bot_id,channel,trigger,input,injected,reply,decision,reason,run_id,cost,created_at,todo_id,proposal,tools,thread_id,trace,stop_reason,context,routine_proposal,handoff,feedback) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [t.id, t.botId, t.channel || "local", JSON.stringify(t.trigger || {}), t.input || "", JSON.stringify(t.injected || []),
         t.reply || "", t.decision || "silent", t.reason || "", t.runId || null, JSON.stringify(t.cost || {}),
         t.createdAt || Date.now(), t.todoId || null, t.proposal ? JSON.stringify(t.proposal) : null, JSON.stringify(t.tools || []), t.threadId || null, JSON.stringify(t.trace || []),
-        t.stopReason || "", t.context ? JSON.stringify(t.context) : null, t.routineProposal ? JSON.stringify(t.routineProposal) : null, t.handoff ? JSON.stringify(t.handoff) : null],
+        t.stopReason || "", t.context ? JSON.stringify(t.context) : null, t.routineProposal ? JSON.stringify(t.routineProposal) : null, t.handoff ? JSON.stringify(t.handoff) : null, t.feedback || null],
     );
     // 显式列名：这张表只增不改，但显式列名让以后加列不必担心物理列序
     for (const w of state.botWorkspaces || []) run(
@@ -650,16 +652,25 @@ export async function openDb(dir, { onTranscript } = {}) {
   const saveBotTurn = (row) => {
     if (!row?.id) return;
     run(
-      "INSERT OR REPLACE INTO bot_turns (id,bot_id,channel,trigger,input,injected,reply,decision,reason,run_id,cost,created_at,todo_id,proposal,tools,thread_id,trace) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT OR REPLACE INTO bot_turns (id,bot_id,channel,trigger,input,injected,reply,decision,reason,run_id,cost,created_at,todo_id,proposal,tools,thread_id,trace,feedback) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [row.id, row.botId, row.channel || "local", JSON.stringify(row.trigger || {}), row.input || "", JSON.stringify(row.injected || []),
         row.reply || "", row.decision || "silent", row.reason || "", row.runId || null, JSON.stringify(row.cost || {}),
-        row.createdAt || Date.now(), row.todoId || null, row.proposal ? JSON.stringify(row.proposal) : null, JSON.stringify(row.tools || []), row.threadId || null, JSON.stringify(row.trace || [])],
+        row.createdAt || Date.now(), row.todoId || null, row.proposal ? JSON.stringify(row.proposal) : null, JSON.stringify(row.tools || []), row.threadId || null, JSON.stringify(row.trace || []), row.feedback || null],
     );
   };
   /**
    * 聊天面的小状态（草稿 / 阅读位置）：只写这一行。
    * 草稿每 500ms 写一次，走整库 persist 会把这个库写热。
    */
+  /** 赞 / 踩只改一列（不整行替换）：同一轮可改不可叠加，null = 撤掉评价 */
+  const saveBotFeedback = (id, value = null) => {
+    const row = (state.botTurns || []).find((t) => t.id === String(id || ""));
+    if (!row) return null;
+    row.feedback = value || null;
+    run("UPDATE bot_turns SET feedback=? WHERE id=?", [row.feedback, row.id]);
+    return row;
+  };
+
   const saveBotUi = (k, patch = {}) => {
     if (!k) return;
     const prev = state.botUi?.[k] || { draft: "", scroll: null, updatedAt: 0 };
@@ -683,5 +694,5 @@ export async function openDb(dir, { onTranscript } = {}) {
   };
 
   if (migrated) persist();
-  return { db, state, persist, flush, close, nextId, addEvent, addMessage, updateMessage, saveBotTurn, saveGroupMessage, saveBotUi, file };
+  return { db, state, persist, flush, close, nextId, addEvent, addMessage, updateMessage, saveBotTurn, saveGroupMessage, saveBotUi, saveBotFeedback, file };
 }

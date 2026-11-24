@@ -157,7 +157,7 @@ try {
     proposal: { title: "建议" }, cost: { total: 3 }, createdAt: 1700000000000, threadId: "th-rt",
     stopReason: "达到 8 轮工具上限", context: { chars: 1234, memory: 600, digest: true },
     routineProposal: { name: "早报", kind: "daily", prompt: "汇总" },
-    handoff: { to: "b2", toName: "小B", task: "查部署" } });
+    handoff: { to: "b2", toName: "小B", task: "查部署" }, feedback: "up" });
   rt.state.botRevisions.push({ id: "rev-rt", botId: "bot-rt", at: 1700000000000, by: "owner", data: { name: "旧名字", persona: { mission: "旧职责" } } });
   rt.state.botEvents.push({ id: "ev-rt", botId: "bot-rt", source: "github", key: "pr:1", title: "PR #1", url: "https://x", at: 1700000000000, seen: false });
   rt.state.botGroups.push({ id: "grp-rt", name: "发布群", replyMode: { kind: "mentions", pace: "serial" }, memberIds: ["bot-rt"],
@@ -187,6 +187,7 @@ try {
   assert.equal(turn?.createdAt, 1700000000000, "bot_turns.created_at 要能往返");
   assert.equal(turn?.threadId, "th-rt", "bot_turns.thread_id 要能往返（多会话靠它分组）");
   assert.equal(turn?.stopReason, "达到 8 轮工具上限", "bot_turns.stop_reason 要能往返");
+  assert.equal(turn?.feedback, "up", "bot_turns.feedback 要能往返（赞 / 踩只改一列）");
   assert.deepEqual(turn?.context, { chars: 1234, memory: 600, digest: true }, "bot_turns.context 要能往返");
   assert.equal(turn?.routineProposal?.name, "早报", "bot_turns.routine_proposal 要能往返");
   assert.equal(turn?.handoff?.to, "b2", "bot_turns.handoff 要能往返");

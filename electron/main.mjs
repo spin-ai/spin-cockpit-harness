@@ -6166,6 +6166,20 @@ const actions = {
     store.persist(); broadcast();
     return { messages: out };
   },
+  /** 消息反馈：赞 / 踩只改一列；再点同一个值就是撤销（同一轮可改不可叠加） */
+  botFeedback: async ({ turnId, value } = {}) => {
+    const id = String(turnId || "");
+    const row = (store.state.botTurns || []).find((t) => t.id === id);
+    if (!row) throw new Error("找不到这一轮");
+    const want = value === "up" || value === "down" ? value : null;
+    const next = row.feedback === want ? null : want;
+    if (typeof store.saveBotFeedback === "function") store.saveBotFeedback(id, next);
+    else { row.feedback = next; store.persist(); }
+    store.addEvent("bot.feedback", `bot.feedback ${row.botId} ${id} ${next || "clear"}`);
+    broadcast();
+    return { ok: true, turnId: id, feedback: next };
+  },
+
   /** 群聊单条重试：只让原成员重答同一句，追加一条新消息（meta.retryOf 指回原条） */
   botGroupRetry: async ({ messageId } = {}) => {
     const msg = (store.state.botGroupMessages || []).find((m) => m.id === String(messageId || ""));

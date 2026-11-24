@@ -55,6 +55,8 @@ type Turn = {
   trigger?: { kind?: string; ref?: string }; input?: string;
   injected?: { layer: string; id: string; title: string }[];
   reply?: string; decision?: "answered" | "replied" | "reported" | "noted" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted" | "watching" | "quiet";
+  /** 人对这一轮的评价（up / down；null = 没评） */
+  feedback?: "up" | "down" | null;
   /** noted 回合：这句话是哪个执行体回的（终端 / 对话里的 agent） */
   from?: string | null;
   todoId?: string | null;
@@ -987,6 +989,10 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   const [threadRenaming, setThreadRenaming] = useState<{ id: string; title: string } | null>(null);
   /** 1:1：自己刚发出去的那句先就地显示；回合落库后让位 */
   const [pendingUser, setPendingUser] = useState<{ text: string; at: number } | null>(null);
+  /** 会话内查找（⌘F）：命中按时间倒序，点一条跳到对应回合并闪一下 */
+  const [botSearchOpen, setBotSearchOpen] = useState(false);
+  const [botSearchQ, setBotSearchQ] = useState("");
+  const [flashTurn, setFlashTurn] = useState<string | null>(null);
   /** 发送失败留在这里：对话里的失败卡用它重试（有回合就按 turnId 重跑，没有就重发原文） */
   const [failRetry, setFailRetry] = useState<{ text: string; turnId: string | null } | null>(null);
   const groupIdRef = useRef("");
@@ -1418,6 +1424,26 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     stickRef.current = false;
     root.scrollTo({ top: el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop - 8, behavior: "smooth" });
   };
+  const botSearchHits = useMemo(() => {
+    const q = botSearchQ.trim().toLowerCase();
+    if (!q) return [];
+    return turns
+      .filter((t) => `${t.input || ""} ${t.reply || ""} ${t.reason || ""}`.toLowerCase().includes(q))
+      .slice(-12)
+      .reverse()
+      .map((t) => ({
+        id: t.id,
+        label: t.decision === "replied" ? "你" : "它",
+        text: String(t.reply || t.input || t.reason || "").replace(/\s+/g, " ").slice(0, 120),
+        at: t.createdAt,
+      }));
+  }, [turns, botSearchQ]);
+  const jumpToTurnFlash = (id: string) => {
+    jumpToTurn(id);
+    setFlashTurn(id);
+    window.setTimeout(() => setFlashTurn((cur) => (cur === id ? null : cur)), 900);
+  };
+
   const answered = turns.filter((t) => t.decision === "answered");
   const lastInjected = [...answered].reverse().find((t) => (t.injected || []).length)?.injected || [];
   const lastContext = [...turns].reverse().find((t) => t.context)?.context || null;
@@ -1940,6 +1966,18 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     finally { setBusy(""); }
   };
 
+  /** 赞 / 踩：同一轮可改，再点同一个就是撤销。先把本地这一轮改掉，再刷全量（点完立刻有反馈） */
+  const feedbackTurn = async (turnId: string, value: "up" | "down") => {
+    try {
+      const res = (await act("botFeedback", { turnId, value })) as { feedback?: "up" | "down" | null } | null;
+      const next = res?.feedback ?? null;
+      setSnapshot((prev) => (prev
+        ? { ...prev, turns: (prev.turns || []).map((t) => (t.id === turnId ? { ...t, feedback: next } : t)) }
+        : prev));
+      await load();
+    } catch (err) { notify(String((err as Error)?.message || err)); }
+  };
+
   /** 失败卡的重试：有回合就重跑那一轮；没有回合（发送即失败）就把原文再发一次 */
   const retryFail = async () => {
     if (busy) return;
@@ -1948,9 +1986,14 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     if (failRetry?.text) { await send(failRetry.text); return; }
   };
 
-  // Esc = 停止当前生成；⌘⇧C = 复制最近一条回答（聊天面里最常按的两个键）
+  // Esc = 停止当前生成；⌘F = 会话内查找；⌘⇧C = 复制最近一条回答（聊天面里最常按的三个键）
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f" && !isGroup && chatView === "chat") {
+        event.preventDefault();
+        setBotSearchOpen(true);
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "c") {
         const lastReply = [...turns].reverse().find((t) => ["replied", "answered", "reported", "asked"].includes(t.decision || ""))?.reply;
         if (!lastReply) return;
@@ -3051,6 +3094,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
             <div className="bot-chat-tabs">
               <button className={chatView === "chat" ? "on" : ""} onClick={() => setChatView("chat")}>{t("bot.chat", "对话")}</button>
               <button className={chatView === "trajectory" ? "on" : ""} onClick={() => setChatView("trajectory")}>{t("bot.trajectory", "轨迹")}</button>
+              <button className="icon-btn" title="在对话里查找（⌘F）" aria-label="在对话里查找" aria-expanded={botSearchOpen} onClick={() => setBotSearchOpen(true)}><SearchIcon size={14} /></button>
             </div>
           )}
           {(isGroup || openThreadId) ? (
@@ -3081,7 +3125,36 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
           <div className="bot-chat-tabs">
             <button className={chatView === "chat" ? "on" : ""} onClick={() => setChatView("chat")}>{t("bot.chat", "对话")}</button>
             <button className={chatView === "trajectory" ? "on" : ""} onClick={() => setChatView("trajectory")}>{t("bot.trajectory", "轨迹")}</button>
+            {!isGroup && <button className="icon-btn" title="在对话里查找（⌘F）" aria-label="在对话里查找" aria-expanded={botSearchOpen} onClick={() => setBotSearchOpen(true)}><SearchIcon size={14} /></button>}
           </div>
+          {botSearchOpen && chatView === "chat" && (
+            <div className="chat-search" role="search">
+              <input
+                autoFocus
+                className="chat-search-input"
+                value={botSearchQ}
+                placeholder="在对话里查找…"
+                aria-label="在对话里查找"
+                onChange={(e) => setBotSearchQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") { e.preventDefault(); setBotSearchOpen(false); }
+                  if (e.key === "Enter" && botSearchHits[0]) { e.preventDefault(); jumpToTurnFlash(botSearchHits[0].id); }
+                }}
+              />
+              <span className="chat-search-count">{botSearchQ.trim() ? `${botSearchHits.length} 条` : ""}</span>
+              {botSearchHits.length > 0 && (
+                <div className="chat-search-hits">
+                  {botSearchHits.map((hit) => (
+                    <button key={hit.id} className="chat-search-hit" onClick={() => jumpToTurnFlash(hit.id)}>
+                      <span className="ds-tag">{hit.label}</span>
+                      <span className="ellipsis">{hit.text}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button className="icon-btn" title="关闭查找" aria-label="关闭查找" onClick={() => { setBotSearchOpen(false); setBotSearchQ(""); }}><XIcon size={14} /></button>
+            </div>
+          )}
           {chatView === "trajectory" ? (
             <TrajectoryView records={trajectoryRecords(turns, state)} focusTurnId={trajectoryTurn} onJump={(id) => { setChatView("chat"); setTimeout(() => jumpToTurn(id), 30); }} />
           ) : (
@@ -3108,6 +3181,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
             onKeyDown={(event) => {
               // 键盘上翻也算读者意图：PgUp / ↑ / Home 立刻退出跟随
               if (["PageUp", "ArrowUp", "Home"].includes(event.key)) stickRef.current = false;
+              if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") { event.preventDefault(); setBotSearchOpen(true); }
             }}
           >
             {!isGroup && !turns.length && (
@@ -3314,7 +3388,23 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                     )}
                     <button className="ds-action" title="引用这条继续问" aria-label="引用这条继续问" onClick={() => quote(turn.reply || "")}><QuoteIcon size={14} /></button>
                     {openThreadId && <button className="ds-action" title="复制到新会话，换个说法重开" aria-label="分支到新会话" onClick={() => forkChat(openThreadId)}><GitIcon size={14} /></button>}
+                    {!isGroup && (
+                      <RowMenu title="更多（评价 / 用量）">
+                        <button onClick={() => void feedbackTurn(turn.id, "up")} title="这一轮值得再看">
+                          {turn.feedback === "up" ? "已赞 · 再点取消" : "赞"}
+                        </button>
+                        <button onClick={() => void feedbackTurn(turn.id, "down")} title="这一轮不行，记下来">
+                          {turn.feedback === "down" ? "已踩 · 再点取消" : "踩"}
+                        </button>
+                        <div className="row-menu-info">
+                          <div><span>用量</span><em className="mono">{turn.cost?.tokens ? `${turn.cost.tokens} tokens` : "未上报"}{turn.cost?.ms ? ` · ${(turn.cost.ms / 1000).toFixed(1)}s` : ""}</em></div>
+                          {turn.cost?.ttftMs ? <div><span>TTFT</span><em className="mono">{turn.cost.ttftMs}ms</em></div> : null}
+                          {turn.cost?.model ? <div><span>模型</span><em>{turn.cost.model}</em></div> : null}
+                        </div>
+                      </RowMenu>
+                    )}
                     <span className="ds-time">{hm(turn.createdAt)}</span>
+                    {turn.feedback && <span className="ds-usage">{turn.feedback === "up" ? "已赞" : "已踩"}</span>}
                     {typeof turn.cost?.tokens === "number" && turn.cost.tokens > 0 && (
                       <span className="ds-usage">
                         {turn.cost.tokens >= 1000 ? `${(turn.cost.tokens / 1000).toFixed(1)}k` : turn.cost.tokens} tokens
@@ -3353,7 +3443,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
 
               if (turn.decision === "replied") {
                 return (
-                  <div className="ds-turn" role="article" aria-label={`${bot?.name || "助手"} · ${hm(turn.createdAt)}`} data-turn-id={turn.id} key={row.key}>
+                  <div className={`ds-turn${flashTurn === turn.id ? " chat-flash" : ""}`} role="article" aria-label={`${bot?.name || "助手"} · ${hm(turn.createdAt)}`} data-turn-id={turn.id} key={row.key}>
                     <div className="ds-user">
                       <div className="ds-bubble">{turn.input}</div>
                       <div className="ds-actions ds-actions-user">
@@ -3369,7 +3459,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
               }
 
               return (
-                <div className="ds-assistant" role="article" aria-label={`${bot?.name || "助手"} · ${hm(turn.createdAt)}`} data-turn-id={turn.id} key={row.key}>
+                <div className={`ds-assistant${flashTurn === turn.id ? " chat-flash" : ""}`} role="article" aria-label={`${bot?.name || "助手"} · ${hm(turn.createdAt)}`} data-turn-id={turn.id} key={row.key}>
                   {bubble}
                 </div>
               );
