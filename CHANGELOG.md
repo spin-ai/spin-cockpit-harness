@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Changed（清理 A：重复的 helper 与死代码）
+- **时间格式收口**：`src/ui.ts` 新增 `hm(ts, { date })` / `hhmmss(ts)`，替掉 4 份 `hm`、2 份 `hhmmss` 的各写一遍；Bot 页保留「不是今天带月/日」的行为（本地 `botTime`），其余页面只要 hh:mm
+- **文案表收口**：新增 `src/labels.ts`（`CAP_LABEL` / `DECISION_LABEL`），替掉 Bot 页 / 机器人总览 / 舞台检查器三份副本；顺带统一两处措辞（「主动开口」→「主动」、「回你」→「回复」）
+- **文件 chip 收口**：新增 `src/components/FileChip.tsx`，替掉 Bot 页与 TaskChat 两份实现（默认在对话内预览，给了 `onOpen` 就交给它）
+- **删死组件**：`src/office/OfficeActor.tsx`（91 行）、`src/office/OfficeBoard.tsx`（56 行）已无人引用（舞台实际用 `RobotArt` / `OfficeStage`），连带的 56 行 CSS 与 4 个 keyframes 一起删
+- **删死导出**：`useLang`（无调用点）
+- 净化：`tsc --noUnusedLocals --noUnusedParameters` 0 处；`window.confirm` 全仓 0 处（只剩 `ConfirmHost` 里的一行注释）
+
 ### Fixed（介绍视频：换成 Safari / iOS 能播的编码）
 - **60 秒介绍视频重编码**：原来是 `yuvj420p` + `color_range=pc` + `bt470bg`（还缺 transfer/primaries）。Chrome 能播，Safari / iOS 常见黑屏或拒绝播放。改成 `yuv420p` + `tv` + `bt709`（primaries / transfer / matrix 全部写入），High@4.1、faststart、AAC 原音轨不变；对照原片 PSNR 平均 44.3 dB
 

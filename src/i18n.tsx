@@ -352,10 +352,6 @@ export function LangProvider({ lang, children }: { lang: Lang; children: ReactNo
   return <Ctx.Provider value={lang}>{children}</Ctx.Provider>;
 }
 
-export function useLang() {
-  return useContext(Ctx);
-}
-
 /** 只翻译界面 chrome（标题 / 导航 / 页签 / 页头按钮）；正文与用户内容保持原语言 */
 export function useT() {
   const lang = useContext(Ctx);

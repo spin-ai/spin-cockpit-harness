@@ -2,6 +2,8 @@ import type { CSSProperties } from "react";
 import type { OfficeActor, OfficeModel, OfficeTone } from "./model";
 import { RobotArt } from "./RobotArt";
 import { XIcon } from "../components/Icons";
+import { CAP_LABEL, DECISION_LABEL } from "../labels";
+import { hhmmss } from "../ui";
 import type { SceneMotion } from "./SceneConfigPanel";
 import { a11yChecks, motionOf, poseLabel, triggerOf, ZONE_LABEL } from "./motion";
 
@@ -9,12 +11,6 @@ type Act = (type: string, payload?: unknown) => Promise<unknown>;
 
 const ACTIVE = new Set(["queued", "running", "waiting_input", "waiting_plan", "waiting_children"]);
 /** 回合决策：舞台上「转人工 / 被拦 / 沉默」也是状态，不只是没说话 */
-const DECISION_LABEL: Record<string, string> = {
-  answered: "主动开口", replied: "回你", reported: "汇报", asked: "先问一句",
-  silent: "沉默", blocked: "被拦", escalated: "转人工", watching: "监视中",
-  streaming: "生成中", interrupted: "被打断",
-};
-const CAP_LABEL: Record<string, string> = { read: "只读", dispatch: "可起任务", work: "能执行" };
 const DELEGATION_STATUS: Record<string, string> = {
   proposed: "待批准", queued: "排队", running: "进行中", waiting_input: "等待确认",
   completed: "已完成", accepted: "已接受", rework: "返工", failed: "失败", cancelled: "已取消",
@@ -24,7 +20,6 @@ const RUN_STATUS: Record<string, string> = {
   waiting_children: "等待子任务", completed: "完成", failed: "失败", cancelled: "已取消", interrupted: "中断",
 };
 const tokenText = (n: number | null | undefined) => n == null ? "未上报" : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-const hhmmss = (ts: number) => new Date(ts).toLocaleTimeString("zh-CN", { hour12: false });
 
 function toneClass(tone: OfficeTone) {
   return tone === "lead" ? "idle" : tone === "neutral" ? "idle" : tone;

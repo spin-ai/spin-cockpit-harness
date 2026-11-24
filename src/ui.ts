@@ -100,3 +100,18 @@ export function missingKeyInfo(text: string | null | undefined): { envVars: stri
   const provider = (value.match(/provider route "([^"]+)"/) || [])[1] || null;
   return { envVars: envVars.length ? envVars : ["DEEPSEEK_API_KEY"], provider };
 }
+
+/** 时间戳 → hh:mm。`date: true` 时不是今天就带上「月/日」前缀；没值给「—」。 */
+export function hm(ts: number | undefined, opts: { date?: boolean } = {}) {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  const clock = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (!opts.date) return clock;
+  const same = new Date().toDateString() === d.toDateString();
+  return `${same ? "" : `${d.getMonth() + 1}/${d.getDate()} `}${clock}`;
+}
+
+/** 时间戳 → hh:mm:ss（轨迹 / 详情用） */
+export function hhmmss(ts: number) {
+  return new Date(ts).toLocaleTimeString([], { hour12: false });
+}

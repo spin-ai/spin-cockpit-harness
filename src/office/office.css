@@ -368,7 +368,6 @@
 
 /* 坐姿 / 站姿：坐的人缩放并压在桌面下（桌面 z-index 更高），站的人完整可见 */
 .off-actor.zone-desk, .off-actor.zone-lead{transform:translate(-50%,-100%) scale(.84);z-index:2}
-.off-actor.zone-desk .off-robot, .off-actor.zone-lead .off-robot{filter:drop-shadow(0 1px 2px rgba(0,0,0,.18))}
 .off-actor.zone-approval, .off-actor.zone-review, .off-actor.zone-tea, .off-actor.zone-standby{transform:translate(-50%,-100%) scale(1);z-index:6}
 .off-stage.hide-labels .off-actor.zone-desk .off-act-chip{display:none}
 
@@ -464,43 +463,13 @@
 .off-actor.zone-approval,.off-actor.zone-review,.off-actor.zone-tea,.off-actor.zone-standby{z-index:6}
 .off-actor.selected .off-nameplate{border-color:var(--border-strong);background:var(--surface);box-shadow:var(--shadow-1)}
 .off-actor.walking{z-index:20}
-.off-actor.walking .off-robot{animation:offWalk .32s ease-in-out infinite alternate!important}
-.off-robot{width:64px;height:88px;display:block;filter:drop-shadow(0 6px 6px rgba(0,0,0,.10))}
-.off-r-shadow{fill:rgba(0,0,0,.10)}
-.off-r-antenna{stroke:var(--border-strong);stroke-width:1.1}
-.off-r-tip{fill:var(--off-accent)}
-.off-r-body{fill:color-mix(in srgb,var(--fg) 88%,var(--surface));stroke:var(--border-strong);stroke-width:1.1}
-:root[data-mode="dark"] .off-r-body{fill:color-mix(in srgb,var(--fg) 78%,var(--surface))}
-.off-r-gloss{fill:color-mix(in srgb,var(--surface) 70%,transparent);opacity:.5}
-.off-r-visor{fill:var(--surface);stroke:var(--border-strong);stroke-width:.7}
-:root[data-mode="dark"] .off-r-visor{fill:color-mix(in srgb,var(--off-screen) 86%,var(--fg) 10%)}
-.off-r-eye{fill:var(--off-accent)}
-.off-r-happy{fill:none;stroke:var(--off-accent);stroke-width:1.7;stroke-linecap:round}
-.off-r-char{fill:var(--off-accent);font:700 11px var(--mono)}
-.off-r-scarf{fill:var(--off-accent);opacity:.92}
-.off-r-arm{fill:color-mix(in srgb,var(--fg) 88%,var(--surface));stroke:var(--border-strong);stroke-width:1}
-:root[data-mode="dark"] .off-r-arm{fill:color-mix(in srgb,var(--fg) 78%,var(--surface))}
-.off-r-badge{fill:var(--off-accent)}
-.off-r-paper{fill:var(--surface);stroke:var(--purple);stroke-width:1}
 .off-nameplate{order:-3;display:inline-flex;flex-direction:column;align-items:center;gap:1px;padding:3px 9px 4px;border:1px solid var(--border);border-radius:10px;background:var(--surface);box-shadow:var(--shadow-1);white-space:nowrap;max-width:150px;margin-bottom:3px;overflow:hidden}
 .off-name-sub{display:inline-flex;align-items:center;gap:4px}
 .off-nameplate .off-role{font-style:normal;font-size:9px;color:var(--faint);flex:none}
-.off-actor .off-bubble{order:-2}
 .off-actor .off-act-chip{order:-2}
 .off-nameplate b{font-size:11px;font-weight:600;color:var(--fg);overflow:hidden;text-overflow:ellipsis;max-width:132px}
 .off-nameplate em{font-size:10px;font-style:normal;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
 .off-nameplate .off-dot{width:5px;height:5px;border-radius:50%;background:var(--off-accent);flex:none}
-.off-bubble{position:absolute;left:50%;top:-10px;transform:translateX(-50%);z-index:6;height:23px;padding:0 8px;border-radius:99px;display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:500;white-space:nowrap;border:1px solid var(--border);background:var(--surface);box-shadow:var(--off-shadow-soft)}
-.off-bubble b{font:700 11px var(--mono)}
-.off-bubble.wait{color:var(--amber);border-color:var(--amber-line);background:var(--amber-soft)}
-.off-bubble.fail{color:var(--red);border-color:var(--red-line);background:var(--red-soft)}
-.off-bubble.review{color:var(--purple);border-color:var(--purple-line);background:var(--purple-soft)}
-.off-actor.pose-working .off-robot{animation:offBob 2.6s ease-in-out infinite}
-.off-actor.pose-working .off-r-arm.r{animation:offType .52s ease-in-out infinite alternate;transform-origin:43px 39px}
-.off-actor.pose-waiting .off-robot{animation:offSway 3.2s ease-in-out infinite}
-.off-actor.pose-failed .off-robot{transform:rotate(-7deg) translateY(2px)}
-.off-actor.pose-review .off-robot,.off-actor.pose-lead .off-robot{animation:offBob 3.6s ease-in-out infinite}
-.off-actor.pose-lead .off-r-tip{animation:offPulse 2.8s ease-in-out infinite}
 
 /* legend */
 .off-legend{flex:none;height:27px;display:flex;align-items:center;gap:12px;padding:0 2px;font-size:11px;color:var(--muted);min-width:0;overflow:hidden}
@@ -514,7 +483,6 @@
 .off-inspector{position:absolute;right:8px;top:0;bottom:33px;width:340px;z-index:30;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-float);display:flex;flex-direction:column;overflow:hidden}
 .off-insp-head{display:flex;align-items:flex-start;gap:9px;min-width:0;padding:12px 13px 10px;border-bottom:1px solid var(--border)}
 .off-insp-avatar{width:36px;height:36px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-hover);display:grid;place-items:center;flex:none;position:relative;overflow:hidden}
-.off-insp-avatar .off-robot{width:24px;height:32px;filter:none}
 .off-insp-avatar::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--off-accent)}
 .off-insp-title{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
 .off-insp-title b{font-size:14px;font-weight:600;line-height:1.3}
@@ -578,10 +546,6 @@
 @keyframes offBlink{0%,49%{opacity:1}50%,100%{opacity:.25}}
 @keyframes offFlow{to{stroke-dashoffset:-20}}
 @keyframes offSteam{0%{transform:translateY(2px);opacity:0}30%{opacity:.55}100%{transform:translateY(-9px);opacity:0}}
-@keyframes offBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-1.5px)}}
-@keyframes offType{from{transform:translateY(0)}to{transform:translateY(-2px)}}
-@keyframes offSway{0%,100%{transform:rotate(-1deg)}50%{transform:rotate(1deg)}}
-@keyframes offWalk{from{transform:translateY(0) rotate(-1.5deg)}to{transform:translateY(-3px) rotate(1.5deg)}}
 [data-motion="off"] .off-stage *,
 [data-motion="off"] .off-actor{animation:none!important;transition:none!important}
 [data-motion="off"] .off-steam{display:none}
@@ -830,23 +794,6 @@
 
 /* ── 进展看板：不点开也能看出在做什么 ───────────────────────── */
 .off-body.has-board .off-stage-wrap{height:calc(100vh - 235px - 118px)}
-.off-board{flex:none;display:flex;flex-direction:column;gap:6px;margin-bottom:8px;min-width:0}
-.off-board-head{display:flex;align-items:center;gap:10px;font-size:11px;color:var(--muted)}
-.off-board-head b{font-size:11.5px;font-weight:600;color:var(--fg-2)}
-.off-board-rows{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
-.off-board-card{flex:none;width:250px;display:flex;flex-direction:column;gap:4px;padding:9px 11px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);text-align:left;cursor:pointer;color:var(--fg-2);font-size:11px;min-width:0;position:relative;overflow:hidden}
-.off-board-card:hover{background:var(--surface-hover)}
-.off-board-card.on{border-color:var(--brand);box-shadow:inset 0 0 0 1px var(--brand)}
-.off-board-card.tone-run::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--green)}
-.off-board-card.tone-wait::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--amber)}
-.off-board-card.tone-fail::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--red)}
-.off-board-card.tone-review::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--purple)}
-.off-board-top{display:flex;align-items:center;gap:8px;min-width:0}
-.off-board-top b{font-weight:600;color:var(--fg);font-size:12px}
-.off-board-act{color:var(--muted);font-size:11px;line-height:1.35}
-.off-board-act b{margin-right:5px;color:var(--fg);font-weight:600}
-.off-board-card.tone-run .off-board-act{color:var(--fg-2)}
-.off-board-sub{color:var(--faint);font-size:10px}
 
 /* 状态药丸：舞台上和看板上通用 */
 .off-status-pill{flex:none;margin-left:auto;padding:1px 6px;border-radius:999px;font-style:normal;font-size:10px;line-height:15px;border:1px solid transparent;white-space:nowrap}
@@ -855,10 +802,7 @@
 .off-status-pill.fail{background:var(--red-soft);color:var(--red);border-color:color-mix(in srgb,var(--red) 30%,transparent)}
 .off-status-pill.review{background:var(--purple-soft);color:var(--purple);border-color:color-mix(in srgb,var(--purple) 30%,transparent)}
 .off-status-pill.idle{background:var(--surface-hover);color:var(--muted);border-color:var(--border)}
-.off-board-card.tone-run .off-status-pill::before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:currentColor;margin-right:5px;vertical-align:1px}
 @media (prefers-reduced-motion: no-preference){
-  .off-board-card.tone-run .off-status-pill::before{animation:off-pulse 1.6s ease-in-out infinite}
-  @keyframes off-pulse{0%,100%{opacity:1}50%{opacity:.35}}
 }
 
 /* 舞台上的「正在做什么」小条 */

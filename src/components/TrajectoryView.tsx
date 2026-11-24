@@ -1,11 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeftIcon, CopyCheckIcon, CopyIcon } from "./Icons";
-
-/** 时间戳 → hh:mm（轨迹账本与聊天时间同源格式） */
-const hm = (ts: number) => {
-  const d = new Date(ts);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-};
+import { hm } from "../ui";
 
 /** 一条轨迹记录：输入 / 思考 / 模型请求 / 工具 / 终端（bot 回合与任务 run 共用） */
 export interface TrajectoryRecord {

@@ -6,9 +6,14 @@ import { PageHeader } from "./PageHeader";
 import { RowMenu } from "./RowMenu";
 import { CheckSquareIcon, CopyIcon, FileTextIcon, GitIcon, LinkIcon, ListIcon, PencilIcon, PlusIcon, QuoteIcon, RefreshIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, XIcon } from "./Icons";
 import { FAMILY_UNIT, FAMILY_VERB, STATUS_LABEL, familyOf, formatDuration, humanArgs, isFileLike, objectOf, runsOfFamily, statusOf, summarizeFamilies, turnStatusOf, type ToolFamily, type ToolStatus } from "../tool-family";
-import { requestFilePreview } from "../terminal-events";
 import { ToolFamilyIcon } from "./ToolFamilyIcon";
 import { UndoBar, type UndoAction } from "./UndoBar";
+import { FileChip } from "./FileChip";
+import { CAP_LABEL, DECISION_LABEL } from "../labels";
+import { hm } from "../ui";
+
+/** Bot 页的时间：不是今天就带「月/日」前缀（其它页面只要 hh:mm） */
+const botTime = (ts: number) => hm(ts, { date: true });
 import { TrajectoryView, type TrajectoryRecord } from "./TrajectoryView";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "./Icons";
 import { useT } from "../i18n";
@@ -349,7 +354,7 @@ function ItemsPanel({ botId, act, notify, refresh }: { botId: string; act: Act; 
               </div>
               {(detail.events || []).slice(-4).map((ev) => (
                 <div className="bot-item-event tiny faint" key={ev.id}>
-                  <span className="mono">{hm(ev.at)}</span>
+                  <span className="mono">{botTime(ev.at)}</span>
                   <span>{ev.author === "owner" ? "你" : "它"}：{ev.text}</span>
                 </div>
               ))}
@@ -602,18 +607,6 @@ function ToolCard({ step, child = false, preview, previewRoot }: { step: TraceSt
   );
 }
 
-/** 文件 chip：默认在对话里展开预览（给了 onOpen 就交给它，卡片里还有「在标签里打开」） */
-function FileChip({ path, onOpen }: { path: string; onOpen?: () => void }) {
-  const name = path.split("/").filter(Boolean).pop() || path;
-  const short = name.length > 28 ? `${name.slice(0, 26)}…` : name;
-  return (
-    <span className="ds-file-chip" title={path}>
-      <FileTextIcon size={14} />
-      <button className="ds-file-chip-name" onClick={(e) => { e.stopPropagation(); if (onOpen) onOpen(); else requestFilePreview({ rel: path, name }); }}>{short}</button>
-    </span>
-  );
-}
-
 function BotTrace({ turn, state, label, preview, previewRoot }: { turn: Turn; state?: State | null; label: string; preview?: BotPreviewApi; previewRoot?: string }) {
   const [showAll, setShowAll] = useState(false);
   const steps = traceStepsOf(turn, state);
@@ -758,7 +751,6 @@ const fmtChars = (n?: number) => {
   return String(Math.round(v));
 };
 
-const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "汇报", watching: "监视中", noted: "收到回话", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工", quiet: "没说什么" };
 /** 工具名 → 「正在查 / 正在改」；标签来自主进程下发的工具目录，找不到再按家族兜底 */
 const toolLabel = (tool?: string, meta?: { label?: string; risk?: string }) => {
   const name = tool || "";
@@ -768,7 +760,6 @@ const toolLabel = (tool?: string, meta?: { label?: string; risk?: string }) => {
   return `正在${verb}${name ? ` · ${name}` : ""}`;
 };
 const GLYPH: Record<string, string> = { asked: "?", streaming: "…", interrupted: "⏸", silent: "·", blocked: "✕", escalated: "↗", quiet: "·", noted: "↩" };
-const CAP_LABEL: Record<string, string> = { read: "只读", dispatch: "可起任务", work: "能执行" };
 const NOTIFY_ROWS = [
   ["proactive", "主动开口", "它自己觉得值得说时"],
   ["needPermission", "需要你决定", "提问卡片 / 转人工"],
@@ -784,12 +775,6 @@ const dayLabel = (ts: number) => {
   if (d.toDateString() === today.toDateString()) return "今天";
   if (d.toDateString() === yesterday.toDateString()) return "昨天";
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
-};
-
-const hm = (ts: number) => {
-  const d = new Date(ts);
-  const same = new Date().toDateString() === d.toDateString();
-  return `${same ? "" : `${d.getMonth() + 1}/${d.getDate()} `}${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
 
 /**
@@ -830,7 +815,7 @@ function GroupFileChips({ message, root }: { message: BotGroupMessage; root?: st
 const GroupMessageRow = memo(function GroupMessageRow({ m, senderName, state, previewRoot }: { m: BotGroupMessage; senderName?: string; state?: State | null; previewRoot?: string }) {
   if (m.author === "owner") {
     return (
-      <div className="ds-user" role="article" aria-label={`你 · ${hm(m.createdAt)}`}>
+      <div className="ds-user" role="article" aria-label={`你 · ${botTime(m.createdAt)}`}>
         {m.text && <div className="ds-bubble">{m.text}</div>}
         {(m.meta?.attachments?.length ?? 0) > 0 && (
           <div className="bot-attach-row">
@@ -839,7 +824,7 @@ const GroupMessageRow = memo(function GroupMessageRow({ m, senderName, state, pr
             ))}
           </div>
         )}
-        <div className="ds-actions ds-actions-user"><span className="ds-time">{hm(m.createdAt)}</span></div>
+        <div className="ds-actions ds-actions-user"><span className="ds-time">{botTime(m.createdAt)}</span></div>
       </div>
     );
   }
@@ -848,10 +833,10 @@ const GroupMessageRow = memo(function GroupMessageRow({ m, senderName, state, pr
   }
   const spoke = ["answered", "replied", "reported", "asked"].includes(m.decision);
   return (
-    <div className="ds-assistant" role="article" aria-label={`${m.botName || senderName || "机器人"} · ${hm(m.createdAt)}`}>
+    <div className="ds-assistant" role="article" aria-label={`${m.botName || senderName || "机器人"} · ${botTime(m.createdAt)}`}>
       <div className="ds-bot-attr">
         <b>{m.botName || senderName}</b>
-        <span className="ds-time">{hm(m.createdAt)}</span>
+        <span className="ds-time">{botTime(m.createdAt)}</span>
         <span className={`ds-tag ${spoke ? "ai" : ""}`}>{DECISION_LABEL[m.decision] || (spoke ? "回复" : "沉默")}</span>
       </div>
       {spoke
@@ -2295,8 +2280,8 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                         <span className="tiny faint">
                           {r.when}
                           {r.mode === "in-chat" ? " · 等它空下来再跑" : " · 到点就跑"}
-                          {r.due ? " · 到点了" : r.nextAt ? ` · 下次 ${hm(r.nextAt)}` : ""}
-                          {r.lastFiredAt ? ` · 上次 ${hm(r.lastFiredAt)}` : " · 还没跑过"}
+                          {r.due ? " · 到点了" : r.nextAt ? ` · 下次 ${botTime(r.nextAt)}` : ""}
+                          {r.lastFiredAt ? ` · 上次 ${botTime(r.lastFiredAt)}` : " · 还没跑过"}
                         </span>
                         {r.prompt && <span className="tiny faint ellipsis" title={r.prompt}>要它做：{r.prompt}</span>}
                         {r.lastError && <span className="tiny faint">上次失败：{r.lastError}</span>}
@@ -3030,7 +3015,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                           <span className="ellipsis">{snippetOf(chat.id) || chat.last || "还没有消息"}</span>
                         </button>
                         {workersOf(chat.id).length > 0 && <span className="tiny faint">{workersOf(chat.id).length} 条执行</span>}
-                        <span className="tiny faint mono">{hm(chat.lastAt || chat.updatedAt)}</span>
+                        <span className="tiny faint mono">{botTime(chat.lastAt || chat.updatedAt)}</span>
                         <RowMenu title="会话操作">
                           <button onClick={() => setRenamingChat({ id: chat.id, title: chat.title })}>重命名</button>
                           <button onClick={() => forkChat(chat.id)}>从这里分支</button>
@@ -3084,7 +3069,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                   <b>{sender}</b>
                   <span>第 {hit.index} 轮</span>
                   <span className="spacer" />
-                  <span className="mono">{hm(turn.createdAt)}</span>
+                  <span className="mono">{botTime(turn.createdAt)}</span>
                 </div>
                 <p className="ds-turn-peek-text">{text || "这一轮没有说话"}</p>
               </div>
@@ -3278,7 +3263,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 const label = row.turns.length === 1 ? noun : `${noun} ${row.turns.length} 次`;
                 const first = row.turns[0];
                 const last = row.turns[row.turns.length - 1];
-                const span = row.turns.length === 1 ? hm(first.createdAt) : `${hm(first.createdAt)}–${hm(last.createdAt)}`;
+                const span = row.turns.length === 1 ? botTime(first.createdAt) : `${botTime(first.createdAt)}–${botTime(last.createdAt)}`;
                 return (
                   <details className="ds-process ds-quiet" key={row.key}>
                     <summary className="ds-process-head">
@@ -3307,7 +3292,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                               </div>
                             </details>
                           </span>
-                          <span className="ds-tool-time">{hm(t.createdAt)}</span>
+                          <span className="ds-tool-time">{botTime(t.createdAt)}</span>
                         </div>
                       ))}
                     </div>
@@ -3403,7 +3388,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                         </div>
                       </RowMenu>
                     )}
-                    <span className="ds-time">{hm(turn.createdAt)}</span>
+                    <span className="ds-time">{botTime(turn.createdAt)}</span>
                     {turn.feedback && <span className="ds-usage">{turn.feedback === "up" ? "已赞" : "已踩"}</span>}
                     {typeof turn.cost?.tokens === "number" && turn.cost.tokens > 0 && (
                       <span className="ds-usage">
@@ -3443,11 +3428,11 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
 
               if (turn.decision === "replied") {
                 return (
-                  <div className={`ds-turn${flashTurn === turn.id ? " chat-flash" : ""}`} role="article" aria-label={`${bot?.name || "助手"} · ${hm(turn.createdAt)}`} data-turn-id={turn.id} key={row.key}>
+                  <div className={`ds-turn${flashTurn === turn.id ? " chat-flash" : ""}`} role="article" aria-label={`${bot?.name || "助手"} · ${botTime(turn.createdAt)}`} data-turn-id={turn.id} key={row.key}>
                     <div className="ds-user">
                       <div className="ds-bubble">{turn.input}</div>
                       <div className="ds-actions ds-actions-user">
-                        <span className="ds-time">{hm(turn.createdAt)}</span>
+                        <span className="ds-time">{botTime(turn.createdAt)}</span>
                         <button className="ds-action" title="复制这条消息" aria-label="复制这条消息" onClick={() => void window.harness.clipboardWrite(turn.input || "")}><CopyIcon size={14} /></button>
                       </div>
                     </div>
@@ -3459,7 +3444,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
               }
 
               return (
-                <div className={`ds-assistant${flashTurn === turn.id ? " chat-flash" : ""}`} role="article" aria-label={`${bot?.name || "助手"} · ${hm(turn.createdAt)}`} data-turn-id={turn.id} key={row.key}>
+                <div className={`ds-assistant${flashTurn === turn.id ? " chat-flash" : ""}`} role="article" aria-label={`${bot?.name || "助手"} · ${botTime(turn.createdAt)}`} data-turn-id={turn.id} key={row.key}>
                   {bubble}
                 </div>
               );

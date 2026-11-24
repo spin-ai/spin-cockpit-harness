@@ -2,9 +2,10 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import { confirmDialog } from "./ConfirmHost";
 import type { Delegation, ElementContext, Message, MissionPlanRecord, Run, State, Thread, Todo } from "../types";
 import { RUN_STATUS, STATUS, agentOf, duration, lastRun, missingKeyInfo, timeAgo } from "../ui";
-import { CheckSquareIcon, ChevronDownIcon, CopyCheckIcon, CopyIcon, FileTextIcon, PanelExpandIcon, PanelRestoreIcon, PencilIcon, PlusIcon, RefreshIcon, SendIcon, SparkleIcon, WrenchIcon } from "./Icons";
+import { CheckSquareIcon, ChevronDownIcon, CopyCheckIcon, CopyIcon, PanelExpandIcon, PanelRestoreIcon, PencilIcon, PlusIcon, RefreshIcon, SendIcon, SparkleIcon, WrenchIcon } from "./Icons";
 import { requestTerminalAdopt } from "../terminal-events";
 import { RowMenu } from "./RowMenu";
+import { FileChip } from "./FileChip";
 import { templateOf } from "../office/templates";
 import { XIcon } from "./Icons";
 import { FAMILY_LABEL, FAMILY_UNIT, FAMILY_VERB, STATUS_LABEL, familyOf, formatDuration, isFileLike, objectOf, runsOfFamily, statusOf, summarizeFamilies, turnStatusOf, type ToolFamily, type ToolStatus } from "../tool-family";
@@ -1931,18 +1932,6 @@ function ToolRow({ message: m, now, copied, onCopy, onRetry, preview, previewRoo
       {preview.target?.owner === m.id && <InlinePreviewCard target={preview.target} onClose={preview.close} />}
       {m.delivery === "failed" && <button className="ds-delivery failed" onClick={onRetry}>投递失败 · 重发</button>}
     </>
-  );
-}
-
-/** 文件 chip：点击在预览面板打开 */
-function FileChip({ path, onOpen }: { path: string; onOpen: (target: string) => void }) {
-  const name = path.split("/").filter(Boolean).pop() || path;
-  const short = name.length > 28 ? `${name.slice(0, 26)}…` : name;
-  return (
-    <span className="ds-file-chip" title={path}>
-      <FileTextIcon size={14} />
-      <button className="ds-file-chip-name" onClick={(e) => { e.stopPropagation(); onOpen(path); }}>{short}</button>
-    </span>
   );
 }
 

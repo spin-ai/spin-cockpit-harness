@@ -7,6 +7,7 @@ import { OfficeStage, STAGE_SIZE } from "../office/OfficeStage";
 import { OfficeInspector } from "../office/OfficeInspector";
 import { RobotArt } from "../office/RobotArt";
 import { XIcon } from "./Icons";
+import { hhmmss } from "../ui";
 import { RowMenu } from "./RowMenu";
 import { EyeIcon, EyeOffIcon, WrenchIcon } from "./Icons";
 import { SceneConfigPanel, DEFAULT_MOTION, motionOf, STAGE_VIEW_LABEL, CARRIER_VIEWS, WARROOM_VIEWS, type ScenePrefs, type SceneMotion } from "../office/SceneConfigPanel";
@@ -46,7 +47,6 @@ interface ChangeEvent {
 const TONE_PRIORITY: Record<OfficeTone, number> = { fail: 0, wait: 1, review: 2, run: 3, lead: 4, neutral: 5 };
 
 const hhmm = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-const hhmmss = (ts: number) => new Date(ts).toLocaleTimeString([], { hour12: false });
 
 function LightCard({ page, model, now, onPick }: {
   page: typeof LIGHTS[number];

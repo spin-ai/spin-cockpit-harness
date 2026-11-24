@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { hm } from "../ui";
+import { CAP_LABEL, DECISION_LABEL } from "../labels";
 import { confirmDialog } from "./ConfirmHost";
 import type { Bot, BotRoutine, BotTurn, State } from "../types";
 import { EmptyState } from "./EmptyState";
@@ -20,12 +22,6 @@ type Template = {
   routine?: { kind: string; name?: string; atHour?: number; everyMs?: number } | null;
 };
 
-const CAP_LABEL: Record<string, string> = { read: "只读", dispatch: "可起任务", work: "能执行" };
-const DECISION_LABEL: Record<string, string> = {
-  answered: "主动开口", replied: "回复", reported: "汇报", asked: "先问一句",
-  silent: "沉默", blocked: "被拦", escalated: "转人工", watching: "监视中",
-  streaming: "生成中", interrupted: "被打断",
-};
 const HOUR = 3_600_000;
 
 const timeAgo = (ts: number | undefined, now: number) => {
@@ -35,12 +31,6 @@ const timeAgo = (ts: number | undefined, now: number) => {
   if (diff < HOUR) return `${Math.round(diff / 60_000)} 分钟`;
   if (diff < 24 * HOUR) return `${Math.round(diff / HOUR)} 小时`;
   return `${Math.round(diff / (24 * HOUR))} 天`;
-};
-
-const hm = (ts: number | undefined) => {
-  if (!ts) return "—";
-  const d = new Date(ts);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
 
 /**
