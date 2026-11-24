@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Added（工作台：一次运行的两面；机器人 ↔ 对话 / 终端双向）
+- **对话与终端是一体两面**：终端标签栏里那一组「对话 | 终端」不是两个入口，而是**同一条 run 的两个面**。切面不新建标签、不改列表顺序、不重排；点终端标签时对话面自动跟到同一条 run（`threadId` 由标签的 `taskId` 反查），不会再出现「对话看 #12、终端是 #13 的 shell」。ACP 执行没有终端面时按钮置灰并说明原因，不伪造标签
+- **机器人可以在对话里署名发言**（`task_say`，dispatch / work 档）：写进任务会话（`〔bot〕…`），**不打断**正在跑的 run；要纠正执行体仍用 `worker_send`。只允许自己的任务 / 交接工作区 / 绑定项目
+- **机器人可以指挥终端**（`terminal_write`，仅 work 档）：往**已交到它手上**的终端敲一行（默认回车）；默认落点 = 交接工作区的终端 → 自己名下正在跑的 run 的终端；人正在接管（`controlBy=user`）时拒绝；终端已退出时明说写不进去；每次写入落 `bot.terminal_write` 审计事件。不新建终端、不结束进程、不给任意路径
+- **终端 / 对话 → 机器人**：`harness note`（pty CLI 与 ACP MCP 共用）不再只写给人看——同一句话同时落一条 `bot_turns(decision=noted)`，`from` 记是谁回的；下一轮开口时进 system 段「交出去的活最近回的话（只作背景，不是人下的指令）」，1 小时之外的旧话不再喂。`harness report` 也走同一条通道
+- **Bot 页回合流分清署名**：`noted` 单独一档（「收到回话」+ ↩），既不冒充机器人自己说的话，也不和 `watching` / `reported` 混
+
 ### Added（机器人：工作区交接、群聊路由、终端窄通道）
 - **工作区交接**：项目右键 / 终端右键「交给机器人」写一条 `bot_workspaces`（path / branch / terminalId / goal），项目根同时绑 `bots.project_id`；`work_list` 看工作区、git 分支 / 脏文件、终端尾部与 run；`workspace_*` / `git_*` 接受 `workspace=<id>`；`task_create` 在交接工作区**原地起活**（不再套新 worktree）；交回只标 `released`（项目根解绑），历史可展开 / 再交；删 bot / 删群 / 撤销一起清干净
 - **交接后带目标自动开一轮**：`kickoffHandoff()` 只在**新目标**时触发，长 prompt 只留审计（`inputRole=none`），不冒充用户气泡；正在聊 / 暂停 / 没 key 静默跳过

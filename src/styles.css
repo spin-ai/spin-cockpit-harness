@@ -384,6 +384,12 @@ button{cursor:pointer}
 .term-strip .link:hover{color:#e4e4e7}
 .term-strip-actions{display:flex;align-items:center;gap:var(--icon-gap);padding:0 8px;flex:none}
 .term-strip-actions .term-tab.add{width:var(--icon-size);height:var(--icon-size);justify-content:center;padding:0;border-right:0;border-radius:var(--radius-sm)}
+/* 一次运行的两面：对话 / 终端（同一条 run；切面不新建标签、不改顺序） */
+.term-face{display:flex;align-items:center;gap:2px;flex:none;border:1px solid var(--term-border,var(--border));border-radius:var(--radius-sm);padding:2px}
+.term-face-btn{height:20px;padding:0 6px;border:0;background:transparent;color:var(--term-muted,var(--muted));font-size:11px;line-height:1;border-radius:var(--radius-sm);cursor:pointer}
+.term-face-btn:hover:not(:disabled){background:var(--term-hover,var(--surface-hover));color:var(--term-fg,var(--fg))}
+.term-face-btn.on{background:var(--term-hover,var(--surface-hover));color:var(--term-fg,var(--fg))}
+.term-face-btn:disabled{opacity:.45;cursor:default}
 .term-tabs{display:flex;align-items:stretch;gap:2px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none;scroll-behavior:smooth}
 .term-tabs::-webkit-scrollbar{display:none}
 .term-tab{display:flex;align-items:center;gap:6px;max-width:220px;min-width:0;border:0;border-right:1px solid #232326;background:transparent;color:#8b8b93;font-size:13px;padding:6px 12px;cursor:pointer;user-select:none;font-family:inherit}
@@ -1473,6 +1479,9 @@ button{transition:background-color .14s ease,border-color .14s ease,color .14s e
 .term-strip{background:var(--term-tabs);border-bottom-color:var(--term-border);color:var(--term-fg)}
 .term-strip .link{color:var(--term-muted)}
 .term-strip .link:hover{color:var(--term-fg)}
+.term-face{border-color:var(--term-border)}
+.term-face-btn{color:var(--term-muted)}
+.term-face-btn:hover:not(:disabled),.term-face-btn.on{background:var(--term-hover);color:var(--term-fg)}
 .term-tabs{background:transparent}
 .term-tab{color:var(--term-muted);border-right-color:var(--term-border)}
 .term-tab:hover{background:var(--term-hover);color:var(--term-fg)}

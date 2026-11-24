@@ -53,7 +53,9 @@ type Turn = {
   id: string; botId: string; channel?: string;
   trigger?: { kind?: string; ref?: string }; input?: string;
   injected?: { layer: string; id: string; title: string }[];
-  reply?: string; decision?: "answered" | "replied" | "reported" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted" | "watching" | "quiet";
+  reply?: string; decision?: "answered" | "replied" | "reported" | "noted" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted" | "watching" | "quiet";
+  /** noted 回合：这句话是哪个执行体回的（终端 / 对话里的 agent） */
+  from?: string | null;
   todoId?: string | null;
   runId?: string | null;
   proposal?: { title: string; desc: string; dismissed?: boolean; acceptedAt?: number } | null;
@@ -734,7 +736,7 @@ type Snapshot = {
   itemCounts?: BotItemCounts;
 };
 
-const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "汇报", watching: "监视中", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工", quiet: "没说什么" };
+const DECISION_LABEL: Record<string, string> = { answered: "主动", reported: "汇报", watching: "监视中", noted: "收到回话", asked: "先问一句", streaming: "生成中", interrupted: "被打断", silent: "沉默", blocked: "被拦", escalated: "转人工", quiet: "没说什么" };
 /** 工具名 → 「正在查 / 正在改」；标签来自主进程下发的工具目录，找不到再按家族兜底 */
 const toolLabel = (tool?: string, meta?: { label?: string; risk?: string }) => {
   const name = tool || "";
@@ -743,7 +745,7 @@ const toolLabel = (tool?: string, meta?: { label?: string; risk?: string }) => {
   const verb = family === "read" ? "读" : family === "edit" ? "改" : family === "run" ? "跑" : family === "net" ? "看网页" : family === "search" ? "查" : "用工具";
   return `正在${verb}${name ? ` · ${name}` : ""}`;
 };
-const GLYPH: Record<string, string> = { asked: "?", streaming: "…", interrupted: "⏸", silent: "·", blocked: "✕", escalated: "↗", quiet: "·" };
+const GLYPH: Record<string, string> = { asked: "?", streaming: "…", interrupted: "⏸", silent: "·", blocked: "✕", escalated: "↗", quiet: "·", noted: "↩" };
 const CAP_LABEL: Record<string, string> = { read: "只读", dispatch: "可起任务", work: "能执行" };
 const NOTIFY_ROWS = [
   ["proactive", "主动开口", "它自己觉得值得说时"],
@@ -3117,6 +3119,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                             <span>{t.reason || "—"}</span>
                             {t.decision === "interrupted" && t.reply && <span className="ds-quiet-partial">「{t.reply}」</span>}
                             {t.decision === "quiet" && t.reply && <span className="ds-quiet-partial">「{t.reply}」</span>}
+                            {t.decision === "noted" && t.reply && <span className="ds-quiet-partial">{t.from ? `${t.from}：` : ""}「{t.reply}」</span>}
                             <details className="bot-why">
                               <summary>为什么</summary>
                               <div className="bot-why-body">

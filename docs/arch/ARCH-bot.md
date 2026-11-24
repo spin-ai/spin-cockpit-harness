@@ -1,4 +1,4 @@
-> 层：架构 · 状态：部分落地 · 核对：2026-11-22 · 覆盖：多个人格 bot 的身份、记忆、主动开口与起任务边界
+> 层：架构 · 状态：部分落地 · 核对：2026-11-24 · 覆盖：多个人格 bot 的身份、记忆、主动开口、起任务边界与双向通信
 
 # Arch · Bot（人格 bot）
 
@@ -74,7 +74,7 @@
 | **头像**：人格卡里选 emoji（不存图片），带底色档位 | `Bot.tsx` §persona |
 | **会话正文**：agent 回复走 `RichText`（与 Chat 窗口同一套 Markdown / 代码卡 / 列表），用户消息保留纯文本气泡；视觉规范见 `ARCH-chat-ui` | `RichText` / `src/components/TaskChat.tsx` |
 | **回合可恢复（bot 侧）**：被动回复先落一条 `decision: "streaming"`，增量每 800ms 节流刷新；成功后同一条改成 `replied`，取消 / 报错则删掉；**应用被杀**留下的 `streaming` 在下次 `ensureSeed()` 收成 `interrupted` 并保留半截正文 | `reply()` / `ensureSeed()` / Bot 页「被打断」行 |
-| **只读工具（function calling）**：`read` 档也下发只读工具（记忆 / 资料 / 任务 / 运行 / 同僚 / 工作区 / git / run_log）**+ 只写自己的记忆**；`dispatch` / `work` 再加 `task_create` / `todo_update`；`work` 且打开无人值守时再加 `run_start`。工具最多 8 轮、单轮默认 2048 token、工具轮温度 0.3；同一工具同参数 3 次或总调用 24 次强制停，停因落 `bot_turns.stop_reason`。模型自己编一个没注册的工具会被回一条 tool 错误让它改口，不会执行；网关不支持 tools 时自动退回纯对话。用过的工具留痕在 `bot_turns.tools` | `electron/bot/tools.mjs` / `chatStreamWithTools()` / `botReadTool()` |
+| **只读工具（function calling）**：`read` 档也下发只读工具（记忆 / 资料 / 任务 / 运行 / 同僚 / 工作区 / git / run_log）**+ 只写自己的记忆**；`dispatch` / `work` 再加 `task_create` / `todo_update` / `task_say`（在对话里署名说一句）；`work` 再加 `terminal_write`（往交到手上的终端敲一行），打开无人值守时再加 `run_start`。工具最多 8 轮、单轮默认 2048 token、工具轮温度 0.3；同一工具同参数 3 次或总调用 24 次强制停，停因落 `bot_turns.stop_reason`。模型自己编一个没注册的工具会被回一条 tool 错误让它改口，不会执行；网关不支持 tools 时自动退回纯对话。用过的工具留痕在 `bot_turns.tools` | `electron/bot/tools.mjs` / `chatStreamWithTools()` / `botReadTool()` |
 | **观察面（2026-11-22）**：`workspace_list` / `workspace_read` / `workspace_grep` / `git_status` / `git_log` / `git_diff` / `run_log` 七个只读工具；路径锁在项目根内（含 realpath 防符号链接逃逸），拒绝 `.env` / 密钥 / 二进制 / 超大文件，搜索跳过 `.git`、`node_modules`、`dist` 等 | `electron/bot/workspace.mjs` / `botReadTool()` |
 | **上下文编译器（2026-11-22）**：`compileContext()` 分区拼人格 / 记忆 / 同僚目录 / 规则，回报每区占用；记忆预算 2400 → 8000 字符；本轮回合按 query 相关度上浮；超过 24 条消息把最近 10 条之外压成摘要（`threads.digest`，纯函数、不额外调模型）；当前时间与当前项目也写进 system（算“20 分钟后”不用猜） | `compileContext()` / `historyDigest()` / `memory.inject({ query })` |
 | **自己的记忆能写（2026-11-22）**：`memory_write` / `memory_forget` 只写 `owner=bot:<id>`，走 `noteAdd`（待确认观察）而不是直接 L4；密钥/令牌命中直接拒写；删除只能删自己的 | `botReadTool()` 的 `memory_write` / `memory_forget` |
@@ -107,6 +107,7 @@
 | **职责卡（persona.duty）**：目标 / 范围 / 交付物 / 不做什么 / 汇报口径，与 `mission`、`role` 一起进 system prompt —— 只写人设不写职责，PM 和 DE-A 在模型眼里是同一个人 | `buildSystemPrompt()` / Bot 页「职责卡」 |
 | **记忆写入按 bot 落 owner**：bot 起的 run（`todo.botId`）经 MCP 写记忆时默认 `owner=bot:<id>`，读侧 `inject({ owner })` 只看「共享 + 自己」；人手开的 run 仍写共享层 | `startWikiMcpServer()` 的 `ownerOf()` |
 
+| **双向通信（2026-11-24）**：执行体（pty / ACP）中途 `harness note` 的话同时落成 `bot_turns(decision=noted, from)`，`recentNotes()` 取 1 小时内 ≤4 条进 system 背景段（标注不是指令）；反方向 `task_say`（对话里署名发言，不打断 run）与 `terminal_write`（work 档，只写已交接 / 自己 run 的终端，接管中拒绝）| `deliverWorkerNote()` / `noted()` / `recentNotes()` / `botReadToolNow()` / `src/components/Bot.tsx`（`noted` 单独一档）|
 | **工作区交接（2026-11-23）**：项目右键 / 终端右键「交给机器人」写一条 `bot_workspaces`（path / branch / terminalId / goal），项目根交接同时绑 `bots.project_id`；`work_list` 看工作区、git 分支 / 脏文件、终端尾部与 run；`workspace_*` / `git_*` 接受 `workspace=<id>`，`task_create` 在那里原地起活（`worktree skipped: handed-workspace`），`worker_send` 可给活着的 worker 发话；带新目标交接会自动开一轮；交回只标 `released` 并解绑项目，历史可展开 / 再交 | `electron/bot/index.mjs` 的 `handOff` / `releaseWorkspace` / `soulMarkdown`、`electron/main.mjs`、`src/components/Bot.tsx` 工作区栏、`docs/arch/ARCH-bot-workspace.md` |
 | **SOUL.md 镜像（2026-11-23）**：`userData/bots/<id>/SOUL.md` 由档案生成（职责卡 / 语气 / Never / 能力），与 MEMORY.md 同一口径（只读、手改不回写）；bot 保存 / 模板 / 恢复 / 交接后刷新 | `soulMarkdown()` / `syncBotFiles()` / `botHomeOpen` / Bot 页「主目录」 |
 

@@ -166,6 +166,8 @@ const MOCK = String.raw`
     onBotPhase: () => () => {}, onBotGroupMessage: () => () => {},
     onState: (cb) => { emit = cb; setTimeout(() => cb(state), 0); return () => {}; },
     onPluginChatDraft: () => () => {}, onPluginNotify: () => () => {}, onPluginOpenView: () => () => {},
+    // App 会用 onBotPatch 做作用域增量渲染；mock 里给一个空订阅，否则 Proxy 兜底返回 async 函数，cleanup 时 offPatch() 报错
+    onBotPatch: (_cb) => () => {},
     onTerminalAdopt: () => () => {}, onQuickCapture: () => () => {},
     onTerminalData: () => () => {}, onTerminalUrl: () => () => {}, onTerminalExit: () => () => {},
     onQuickCaptureSubmit: () => () => {}, onImPaired: () => () => {},
