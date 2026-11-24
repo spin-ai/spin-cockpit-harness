@@ -109,6 +109,18 @@ try {
 // 未签名包：去掉隔离属性，避免双击被拦
 spawnSync("xattr", ["-dr", "com.apple.quarantine", DEST], { encoding: "utf8" });
 
+// 补一次 ad-hoc 签名。electron-builder 跳过签名时（identity 为 null），Electron 自带的
+// linker-signed 签名和重打后的资源对不上，`spctl` 会报 “code has no resources but signature
+// indicates they must be present”，macOS 因此缓存不了校验结果，新拷贝的 700MB+ 包首次启动要
+// 重新验一遍完整性（表现就是“启动中”卡很久）。
+const sign = spawnSync("codesign", ["--force", "--deep", "--sign", "-", DEST], { encoding: "utf8" });
+if (sign.status !== 0) {
+  console.log(`[install] ad-hoc 签名失败（不影响运行，但首次启动会慢）：${String(sign.stderr || "").trim().split("\n")[0]}`);
+} else {
+  const verify = spawnSync("codesign", ["--verify", "--deep", "--strict", DEST], { encoding: "utf8" });
+  console.log(verify.status === 0 ? "[install] ad-hoc 签名 OK" : `[install] 签名校验未过：${String(verify.stderr || "").trim().split("\n")[0]}`);
+}
+
 const version = plist(DEST, "CFBundleShortVersionString") || "unknown";
 const dsh = path.join(DEST, "Contents", "Resources", "dsh", "dsh");
 let dshVersion = "未内置";

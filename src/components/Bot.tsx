@@ -4,7 +4,8 @@ import { createPortal } from "react-dom";
 import { EmptyState } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
 import { RowMenu } from "./RowMenu";
-import { CheckSquareIcon, CopyIcon, FileTextIcon, GitIcon, LinkIcon, ListIcon, PencilIcon, PlusIcon, QuoteIcon, RefreshIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, XIcon } from "./Icons";
+import { CheckSquareIcon, CopyIcon, FileTextIcon, LinkIcon, PencilIcon, PlusIcon, QuoteIcon, RefreshIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, XIcon } from "./Icons";
+import { ArrowUpRightIcon, CheckIcon, DotIcon, PauseIcon, QuestionIcon, ReplyIcon } from "./Icons";
 import { FAMILY_UNIT, FAMILY_VERB, STATUS_LABEL, familyOf, formatDuration, humanArgs, isFileLike, objectOf, runsOfFamily, statusOf, summarizeFamilies, turnStatusOf, type ToolFamily, type ToolStatus } from "../tool-family";
 import { ToolFamilyIcon } from "./ToolFamilyIcon";
 import { UndoBar, type UndoAction } from "./UndoBar";
@@ -59,7 +60,7 @@ type Turn = {
   id: string; botId: string; channel?: string;
   trigger?: { kind?: string; ref?: string }; input?: string;
   injected?: { layer: string; id: string; title: string }[];
-  reply?: string; decision?: "answered" | "replied" | "reported" | "noted" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted" | "watching" | "quiet";
+  reply?: string; decision?: "answered" | "replied" | "reported" | "noted" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted" | "failed" | "watching" | "quiet";
   /** 人对这一轮的评价（up / down；null = 没评） */
   feedback?: "up" | "down" | null;
   /** noted 回合：这句话是哪个执行体回的（终端 / 对话里的 agent） */
@@ -607,17 +608,16 @@ function ToolCard({ step, child = false, preview, previewRoot }: { step: TraceSt
   );
 }
 
-function BotTrace({ turn, state, label, preview, previewRoot }: { turn: Turn; state?: State | null; label: string; preview?: BotPreviewApi; previewRoot?: string }) {
+function BotTrace({ turn, state, preview, previewRoot }: { turn: Turn; state?: State | null; preview?: BotPreviewApi; previewRoot?: string }) {
   const [showAll, setShowAll] = useState(false);
   const steps = traceStepsOf(turn, state);
   const run = turn.runId ? state?.runs?.find((r) => r.id === turn.runId) : undefined;
-  // 这一轮干了什么：读 2 个文件 · 改 1 处 · 跑 1 条命令；再带上状态与耗时
+  // 这一轮干了什么：读 2 个文件 · 改 1 处 · 跑 1 条命令。
+  // 说话人 / 时间 / 状态 / 耗时统一在回合头（ds-bot-attr）：这里不再拼第二份，也不再用「已完成」顶替身份
   const summary = summarizeFamilies(steps.map((step) => step.family || familyOf(null, { title: step.title })));
   const traceState = turnStatusOf(steps.map((step) => step.status || (step.ok === false ? "failed" : "done")));
-  const dur = formatDuration(turn.cost?.ms);
-  const stateWord = traceState === "failed" ? "失败" : traceState === "stopped" ? "已停止" : traceState === "denied" ? "被拒" : "";
-  const headLabel = [stateWord || label, summary, dur].filter(Boolean).join(" · ");
-  if (!steps.length) return <div className="ds-turn-head"><span>{label}</span></div>;
+  if (!steps.length) return null;
+  const headLabel = summary;
   const visible = showAll || steps.length <= 20 ? steps : steps.slice(steps.length - 20);
   const hidden = steps.length - visible.length;
   return (
@@ -728,6 +728,8 @@ function TraceDetails({ runId, botName, state }: { runId?: string | null; botNam
 type Snapshot = {
   bots: Bot[]; turns: Turn[]; routines?: Routine[]; routineStatus?: Routine[];
   asks?: Ask[];
+  /** 群里的提问卡片（1:1 的 asks 只覆盖 bot_turns；群消息的 ask 落在 meta.ask） */
+  groupAsks?: { messageId: string; groupId: string; threadId: string; botId: string | null; botName: string; text: string; createdAt: number }[];
   botThreads?: Record<string, string>;
   /** 每个 bot 的会话列表：默认会话 + 自己新开的 */
   botChats?: Record<string, Chat[]>;
@@ -759,7 +761,26 @@ const toolLabel = (tool?: string, meta?: { label?: string; risk?: string }) => {
   const verb = family === "read" ? "读" : family === "edit" ? "改" : family === "run" ? "跑" : family === "net" ? "看网页" : family === "search" ? "查" : "用工具";
   return `正在${verb}${name ? ` · ${name}` : ""}`;
 };
-const GLYPH: Record<string, string> = { asked: "?", streaming: "…", interrupted: "⏸", silent: "·", blocked: "✕", escalated: "↗", quiet: "·", noted: "↩" };
+/** 决策图标：以前这里是 GLYPH 字符（? ⏸ ✕ ↗ ↩ ·），字符不当图标用 */
+const DECISION_ICON = {
+  asked: QuestionIcon, streaming: SparkleIcon, interrupted: PauseIcon, silent: DotIcon,
+  blocked: XIcon, escalated: ArrowUpRightIcon, quiet: DotIcon, noted: ReplyIcon,
+} as const;
+const DecisionIcon = ({ decision, size = 13 }: { decision?: string; size?: number }) => {
+  const Ico = DECISION_ICON[(decision || "silent") as keyof typeof DECISION_ICON] || DotIcon;
+  return <Ico size={size} />;
+};
+
+/** 流式中的「已 Xs」：自己 tick，不让整棵树每 500ms 重画 */
+function Elapsed({ since }: { since: number }) {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => force((n) => n + 1), 500);
+    return () => window.clearInterval(id);
+  }, []);
+  const secs = Math.max(0, Math.round((Date.now() - since) / 1000));
+  return <span className="ds-dur mono" title="这次回复已经跑了多久">{secs}s</span>;
+}
 const NOTIFY_ROWS = [
   ["proactive", "主动开口", "它自己觉得值得说时"],
   ["needPermission", "需要你决定", "提问卡片 / 转人工"],
@@ -812,10 +833,11 @@ function GroupFileChips({ message, root }: { message: BotGroupMessage; root?: st
   );
 }
 
-const GroupMessageRow = memo(function GroupMessageRow({ m, senderName, state, previewRoot }: { m: BotGroupMessage; senderName?: string; state?: State | null; previewRoot?: string }) {
+const GroupMessageRow = memo(function GroupMessageRow({ m, senderName, avatar, avatarClass, state, previewRoot, onQuote, flash = false }: { m: BotGroupMessage; senderName?: string; avatar?: string; avatarClass?: string; state?: State | null; previewRoot?: string; onQuote?: (text: string) => void; flash?: boolean }) {
+  const t = useT();
   if (m.author === "owner") {
     return (
-      <div className="ds-user" role="article" aria-label={`你 · ${botTime(m.createdAt)}`}>
+      <div className={`ds-user${flash ? " chat-flash" : ""}`} data-turn-id={m.id} role="article" aria-label={`你 · ${botTime(m.createdAt)}`}>
         {m.text && <div className="ds-bubble">{m.text}</div>}
         {(m.meta?.attachments?.length ?? 0) > 0 && (
           <div className="bot-attach-row">
@@ -824,29 +846,39 @@ const GroupMessageRow = memo(function GroupMessageRow({ m, senderName, state, pr
             ))}
           </div>
         )}
-        <div className="ds-actions ds-actions-user"><span className="ds-time">{botTime(m.createdAt)}</span></div>
+        <div className="ds-actions ds-actions-user">
+          <span className="ds-time">{botTime(m.createdAt)}</span>
+          <button className="ds-action" title={t("bot.act.copyInput", "复制这条消息")} aria-label={t("bot.act.copyInput", "复制这条消息")} onClick={() => void window.harness.clipboardWrite(m.text)}><CopyIcon size={14} /></button>
+        </div>
       </div>
     );
   }
   if (m.author === "system") {
-    return <div className="ds-system-note" role="note">{m.text}</div>;
+    return <div className={`ds-system-note${flash ? " chat-flash" : ""}`} data-turn-id={m.id} role="note">{m.text}</div>;
   }
   const spoke = ["answered", "replied", "reported", "asked"].includes(m.decision);
   return (
-    <div className="ds-assistant" role="article" aria-label={`${m.botName || senderName || "机器人"} · ${botTime(m.createdAt)}`}>
+    <div className={`ds-assistant${flash ? " chat-flash" : ""}`} data-turn-id={m.id} role="article" aria-label={`${m.botName || senderName || "机器人"} · ${botTime(m.createdAt)}`}>
       <div className="ds-bot-attr">
+        <span className={`bot-avatar ${avatarClass || "a"}`} aria-hidden="true">{(avatar || m.botName || senderName || "机").slice(0, 1)}</span>
         <b>{m.botName || senderName}</b>
         <span className="ds-time">{botTime(m.createdAt)}</span>
         <span className={`ds-tag ${spoke ? "ai" : ""}`}>{DECISION_LABEL[m.decision] || (spoke ? "回复" : "沉默")}</span>
       </div>
       {spoke
         ? <div className="ds-assistant-body"><RichText text={m.text} /></div>
-        : <div className="ds-system-note">{m.text || "没有开口"}<span> · 沉默也留痕</span></div>}
+        : <div className="ds-system-note">{m.text || t("bot.group.noReply", "没有开口")}<span> · {t("bot.group.silentKeep", "沉默也留痕")}</span></div>}
       {spoke && <GroupFileChips message={m} root={previewRoot} />}
+      {spoke && (
+        <div className="ds-actions">
+          <button className="ds-action" title={t("bot.act.copyReply", "复制这条回复")} aria-label={t("bot.act.copyReply", "复制这条回复")} onClick={() => void window.harness.clipboardWrite(m.text)}><CopyIcon size={14} /></button>
+          {onQuote && <button className="ds-action" title={t("bot.act.quote", "引用这条继续问")} aria-label={t("bot.act.quote", "引用这条继续问")} onClick={() => onQuote(m.text)}><QuoteIcon size={14} /></button>}
+        </div>
+      )}
       {m.decision === "failed" && (
         <div className="ds-fail-actions">
-          <button className="btn tiny primary" onClick={() => void window.harness.action("botGroupRetry", { messageId: m.id })} title="只让这个成员重答同一句">重试这一条</button>
-          <span className="ds-fail-hint">只重跑它自己，不叫醒别人</span>
+          <button className="btn tiny primary" onClick={() => void window.harness.action("botGroupRetry", { messageId: m.id })} title={t("bot.group.retryOneTitle", "只让这个成员重答同一句")}>{t("bot.group.retryOne", "重试这一条")}</button>
+          <span className="ds-fail-hint">{t("bot.group.retryHint", "只重跑它自己，不叫醒别人")}</span>
         </div>
       )}
       <TraceDetails runId={m.meta?.runId} botName={m.botName} state={state} />
@@ -952,6 +984,10 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   const [attachments, setAttachments] = useState<{ name: string; path: string; text: string }[]>([]);
   /** 群聊里打 @ 弹出的成员选择器（ORCA 的 mention targets） */
   const [mentionAt, setMentionAt] = useState<{ at: number; query: string } | null>(null);
+  /** 选择器里当前高亮的那一项（末位固定是 everyone） */
+  const [mentionPick, setMentionPick] = useState(0);
+  /** 被 Esc 关掉的那个 @ 的偏移：同一个 token 不再自动弹回来（换位置 / 再打一个 @ 才会） */
+  const mentionMutedRef = useRef(-1);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   /** 递增就重挂「名字」输入框并聚焦（新建 bot 后立刻改名，不用再找入口） */
   const [renameFocus, setRenameFocus] = useState(0);
@@ -959,7 +995,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   const [routineDraft, setRoutineDraft] = useState<{
     kind: "daily" | "every" | "once" | "watch"; name: string; prompt: string; atHour: number; minutes: number; onceAt: string; path: string;
   } | null>(null);
-  const [streaming, setStreaming] = useState<{ botId: string; text: string; phase: "thinking" | "tool" | "streaming"; tool?: string } | null>(null);
+  const [streaming, setStreaming] = useState<{ botId: string; text: string; phase: "thinking" | "tool" | "streaming"; tool?: string; at: number; thought?: string } | null>(null);
   /** 群聊：每个成员一条流式块（主进程逐个回，不能只存一条） */
   const [groupStream, setGroupStream] = useState<{ botId: string; name: string; text: string }[]>([]);
   /** 群聊：还没吐字但已经在想的成员（thinking / tool） */
@@ -1001,7 +1037,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
       const dt = Math.max(8, Math.min(64, now - revealLastRef.current));
       revealLastRef.current = now;
       const st = revealRef.current;
-      const budget = Math.max(1, Math.round(dt * 0.06)); // ~60 字/秒，短回复约 0.8s 长出来
+      const budget = Math.max(1, Math.round(dt * 0.16)); // ~160 字/秒：只压掉「整段突然出现」，不额外拖慢
       let more = false;
       if (st.one.shown < st.one.target.length) {
         const left = st.one.target.length - st.one.shown;
@@ -1054,17 +1090,27 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
 
   /** 增量通知：这个 bot 有新切片就重读快照；别的 bot 变了不打扰这一栏 */
   const botPatchAt = state?.botChanged && state.botChanged.botId === botId ? state.botChanged.at : 0;
+  /** 群聊不在 botSnapshot 里（它来自 state.botGroups）：校验「选中的是谁」时要认它，否则会把人踢回第一个 bot */
+  const groupIdsRef = useRef<Set<string>>(new Set());
+  groupIdsRef.current = new Set((state?.botGroups ?? []).map((g) => g.id));
 
   const load = useCallback(async () => {
     try {
-      const next = (await act("botSnapshot", {})) as Snapshot | null;
+      // 两个查询互不依赖：并行发，别串成两次往返（每轮回合结束都会走一次）
+      const [next, ov] = await Promise.all([
+        act("botSnapshot", {}) as Promise<Snapshot | null>,
+        act("memoryOverview", {}) as Promise<{ byLayer?: Record<string, number>; notes?: number; injectable?: number } | null>,
+      ]);
       if (next) {
         setSnapshot(next);
-        setBotId((current) => current || (initialBotId && next.bots.some((b) => b.id === initialBotId) ? initialBotId : "") || next.bots[0]?.id || "");
+        // 选中的还在就用它（群聊也算）；被删了才退回 initialBotId / 第一个 bot
+        setBotId((current) => {
+          if (current && (next.bots.some((b) => b.id === current) || groupIdsRef.current.has(current))) return current;
+          if (initialBotId && next.bots.some((b) => b.id === initialBotId)) return initialBotId;
+          return next.bots[0]?.id || "";
+        });
       }
-      const ov = (await act("memoryOverview", {})) as { byLayer?: Record<string, number>; notes?: number; injectable?: number } | null;
       if (ov) setMemoryOverview(ov);
-
     } catch (err) {
       setError(String((err as Error)?.message || err));
     }
@@ -1074,15 +1120,18 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   // 这个 bot 有新切片（回合 / 会话 / 台账）才重读快照；500ms 已由主进程合并
   useEffect(() => { if (botPatchAt) void load(); }, [botPatchAt, load]);
   // 记忆行模型：行数 / 来源 / 装载截断（和 system 里同一份行，切 bot 或增量后重读）
+  // 群聊 / 已删掉的 bot 不在 snapshot.bots 里（botId 也承载群聊 id）：这时没有「记忆行」这回事，
+  // 不能拿它去问主进程 —— 会回「bot 不存在」并在右下角弹一张报错卡
+  const memBotId = botId && (snapshot?.bots ?? []).some((b) => b.id === botId) ? botId : "";
   useEffect(() => {
-    if (!botId) return;
+    if (!memBotId) { setMemLines(null); return; }
     let cancelled = false;
     void (async () => {
-      const ml = (await act("botMemoryLines", { botId })) as typeof memLines;
+      const ml = (await act("botMemoryLines", { botId: memBotId })) as typeof memLines;
       if (!cancelled) setMemLines(ml);
     })();
     return () => { cancelled = true; };
-  }, [act, botId, botPatchAt]);
+  }, [act, memBotId, botPatchAt]);
 
   // 流式增量：主进程已经按 ~16ms 合并过；渲染层再按帧合并，一帧最多一次 setState。
   // 之前每个 token 都 setGroupStream，整个 BotConsole（整段历史）会跟着 reconcile，长会话必卡。
@@ -1137,6 +1186,20 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
 
   // 相位 / 工具 / 群消息：让「发出去之后」立刻有可见状态，而不是等首 token。
   useEffect(() => {
+    const offThought = window.harness.onBotThought?.((p) => {
+      if (!p?.delta) return;
+      if (p.groupId) {
+        if (p.groupId !== groupIdRef.current) return;
+        setGroupPhases((prev) => prev); // 群聊的思考暂不进相位，避免和「正在查」抢位置
+        return;
+      }
+      setStreaming((prev) => {
+        if (!prev || prev.botId !== p.botId) return prev;
+        // 只留尾部：思考可以很长，DOM 里没必要留全文
+        const next = `${prev.thought || ""}${p.delta}`;
+        return { ...prev, thought: next.length > 4000 ? next.slice(-4000) : next };
+      });
+    });
     const offPhase = window.harness.onBotPhase?.((p) => {
       if (!p) return;
       if (p.groupId) {
@@ -1160,7 +1223,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
         if (p.phase === "done") return prev;
         const phase = p.phase === "tool" ? "tool" : "thinking";
         if (prev && prev.botId === p.botId) return { ...prev, phase, tool: p.tool ?? prev.tool };
-        return { botId: p.botId, text: "", phase, tool: p.tool };
+        return { botId: p.botId, text: "", phase, tool: p.tool, at: Date.now() };
       });
     });
     const offTool = window.harness.onBotTool?.((p) => {
@@ -1192,7 +1255,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
         return next;
       });
     });
-    return () => { offPhase?.(); offTool?.(); offMessage?.(); };
+    return () => { offThought?.(); offPhase?.(); offTool?.(); offMessage?.(); };
   }, []);
 
   const groups = state?.botGroups ?? [];
@@ -1350,11 +1413,12 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
         lastDay = day;
         lastSender = "";
       }
-      const isMessage = ["answered", "replied", "reported", "asked"].includes(turn.decision || "answered");
+      // failed / interrupted 也带你说的那句话：不然一旦报错或叫停，你那句就凭空从转录里消失了
+      const isMessage = ["answered", "replied", "reported", "asked", "failed", "interrupted"].includes(turn.decision || "answered");
       if (!isMessage) { quiet.push(turn); continue; }
       flush();
       // 一问一答里「你」先出现，所以这一组从你开始；bot 连续说才合并
-      const sender = turn.decision === "replied" ? "you" : turn.botId;
+      const sender = ["replied", "failed", "interrupted"].includes(turn.decision || "") ? "you" : turn.botId;
       out.push({ kind: "msg", key: turn.id, turn, cont: lastSender === sender && sender !== "you" });
       lastSender = sender;
     }
@@ -1364,6 +1428,29 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   const railTurns = useMemo(
     () => rows.filter((r) => r.kind === "msg").map((r, i) => ({ id: r.turn.id, index: i + 1, turn: r.turn })),
     [rows],
+  );
+  /**
+   * 回合轨的统一形状：1:1 一条对方回复算一轮；群聊里一轮 = 你发的那一句（后面跟一堆成员的回复）。
+   * 群聊要是按每条消息画，几十条就成了一把尺子，反而找不到「我问的那件事」。
+   */
+  const railMarks = useMemo<{ id: string; index: number; sender: string; text: string; at: number }[]>(() => {
+    if (isGroup) {
+      return groupMessages
+        .filter((m) => m.author === "owner" && (m.threadId || "") === (groupThreadId || ""))
+        .map((m, i) => ({ id: m.id, index: i + 1, sender: "你", text: String(m.text || ""), at: m.createdAt }));
+    }
+    return railTurns.map(({ id, index, turn }) => ({
+      id,
+      index,
+      sender: turn.decision === "replied" ? "你" : (snapshot?.bots.find((b) => b.id === turn.botId)?.name || "机器人"),
+      text: String(turn.reply || turn.input || turn.reason || ""),
+      at: turn.createdAt,
+    }));
+  }, [isGroup, groupMessages, groupThreadId, railTurns, snapshot?.bots]);
+  /** 压缩注记只说一次：它是会话状态（所有后续回合都带 digest），不是每一轮发生的事 */
+  const firstDigestTurnId = useMemo(
+    () => turns.find((t) => t.context?.digest)?.id || "",
+    [turns],
   );
   /** 窗口化：只渲染最后 renderBlocks 个块，上面留一个「加载更早的回合」 */
   const hiddenRows = Math.max(0, rows.length - renderBlocks);
@@ -1412,6 +1499,18 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   const botSearchHits = useMemo(() => {
     const q = botSearchQ.trim().toLowerCase();
     if (!q) return [];
+    if (isGroup) {
+      return groupMessages
+        .filter((m) => String(m.text || "").toLowerCase().includes(q))
+        .slice(-12)
+        .reverse()
+        .map((m) => ({
+          id: m.id,
+          label: m.author === "owner" ? "你" : (m.botName || botOf(m.botId ?? undefined)?.name || "成员"),
+          text: String(m.text || "").replace(/\s+/g, " ").slice(0, 120),
+          at: m.createdAt,
+        }));
+    }
     return turns
       .filter((t) => `${t.input || ""} ${t.reply || ""} ${t.reason || ""}`.toLowerCase().includes(q))
       .slice(-12)
@@ -1422,7 +1521,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
         text: String(t.reply || t.input || t.reason || "").replace(/\s+/g, " ").slice(0, 120),
         at: t.createdAt,
       }));
-  }, [turns, botSearchQ]);
+  }, [turns, botSearchQ, isGroup, groupMessages, botOf]);
   const jumpToTurnFlash = (id: string) => {
     jumpToTurn(id);
     setFlashTurn(id);
@@ -1446,6 +1545,79 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     () => (group ? members.filter((m) => group.memberIds.includes(m.id)) : []),
     [group, members],
   );
+  /** 光标处的 @ 片段：@ 前必须是行首 / 空白，且 query 里不能有空白——有空格就说明已经在写正文了 */
+  const syncMention = (value: string, caret: number) => {
+    // 1:1 里也能 @：它不是「谁回」，而是「把这个地址交给当前 bot」（ORCA 的 bot: 地址做法）
+
+    const before = value.slice(0, caret);
+    const at = before.lastIndexOf("@");
+    if (at < 0) mentionMutedRef.current = -1;
+    const open = at >= 0 && at !== mentionMutedRef.current
+      && (at === 0 || /\s/.test(before[at - 1])) && !/\s/.test(before.slice(at + 1));
+    setMentionAt((prev) => {
+      if (!open) return prev === null ? prev : null;
+      const query = before.slice(at + 1);
+      return prev && prev.at === at && prev.query === query ? prev : { at, query };
+    });
+    setMentionPick((prev) => (prev === 0 ? prev : 0));
+  };
+  /** 命中项不截断：成员多的时候靠弹层自己滚，不做「只给 6 个」 */
+  const mentionSource = useMemo(
+    () => (isGroup ? groupMembers : members.filter((m) => m.id !== bot?.id)),
+    [isGroup, groupMembers, members, bot?.id],
+  );
+  const mentionHits = useMemo(() => {
+    if (!mentionAt) return [];
+    const q = mentionAt.query.toLowerCase();
+    return mentionSource.filter((m) => {
+      const short = String(m.name).split("·")[0].trim().toLowerCase();
+      return !q || m.name.toLowerCase().includes(q) || short.includes(q);
+    });
+  }, [mentionAt, mentionSource]);
+  /** 正文里点到的机器人：1:1 发送时按「@短名 / @全名」找回 id（只认真实存在、且不是自己） */
+  const mentionedBotsIn = (text: string) => {
+    const body = String(text || "");
+    const hits: { id: string; name: string }[] = [];
+    const needle = (n: string) => {
+      const safe = String(n || "").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return Boolean(safe) && new RegExp(`(^|[^\\w@])@${safe}(?![\\w.])`).test(body);
+    };
+    for (const m of members) {
+      if (m.id === bot?.id) continue;
+      const short = String(m.name).split("·")[0].trim();
+      if (needle(short) || needle(String(m.name))) hits.push({ id: m.id, name: m.name });
+      if (hits.length >= 4) break;
+    }
+    return hits;
+  };
+  const mentionTotal = mentionHits.length;
+  const mentionActive = mentionPick >= mentionTotal ? mentionTotal : mentionPick;
+  /** 短名撞车时插全名，否则发送端会按「写法有歧义」把整句拒掉 */
+  const mentionHandle = (name: string) => {
+    const short = String(name).split("·")[0].trim();
+    const clash = mentionSource.some((m) => m.name !== name && String(m.name).split("·")[0].trim() === short);
+    return clash ? String(name).trim() : short;
+  };
+  const insertMention = (name: string | null) => {
+    if (!mentionAt) return;
+    const inserted = `@${name === null ? "everyone" : mentionHandle(name)} `;
+    const head = draft.slice(0, mentionAt.at);
+    const tail = draft.slice(mentionAt.at + 1 + mentionAt.query.length);
+    const caret = head.length + inserted.length;
+    setDraft(`${head}${inserted}${tail}`);
+    setMentionAt(null);
+    setMentionPick(0);
+    mentionMutedRef.current = -1;
+    // 点选不能把焦点从输入框拿走：插完把光标放到插入内容后面
+    requestAnimationFrame(() => {
+      const el = composerRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(caret, caret);
+      el.style.height = "auto";
+      el.style.height = `${Math.min(120, el.scrollHeight)}px`;
+    });
+  };
   const replyMode = group?.replyMode ?? { kind: "mentions" as const };
   const setReplyMode = (mode: { kind: "bot" | "all" | "mentions"; botId?: string; pace?: "serial" | "parallel" }) => {
     if (!group) return;
@@ -1578,6 +1750,9 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     if (isGroup && group) {
       const files = attachments;
       setDraft("");
+      setMentionAt(null);
+      setMentionPick(0);
+      mentionMutedRef.current = -1;
       setAttachments([]);
       setError("");
       // 自己的话和「正在回」的占位立刻出来：群里每个成员都要想一会儿，不能整段空白
@@ -1606,6 +1781,8 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     }
     const sendTo = bot?.id;
     if (!sendTo) return;
+    // 1:1 里 @ 到的人：给主进程结构化 id，不靠它去解析文本（重名 / 改名都不会拐错人）
+    const mentions = isGroup ? [] : mentionedBotsIn(text);
     // 附件拼在正文后面：网关只吃文本，所以把文件内容当上下文带过去，并在正文里留出处
     const withFiles = attachments.length
       ? `${text}\n\n${attachments.map((a) => `附件 ${a.name}（${a.path}）\n\`\`\`\n${a.text.slice(0, 4000)}\n\`\`\``).join("\n\n")}`
@@ -1616,10 +1793,10 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     // 自己的话立刻上屏；bot 回合结束、落库后由 awaitingUserEcho 自动让位
     setPendingUser({ text, at: Date.now() });
     revealRef.current.one = { target: "", shown: 0 };
-    setStreaming({ botId: sendTo, text: "", phase: "thinking" });
+    setStreaming({ botId: sendTo, text: "", phase: "thinking", at: Date.now() });
     stickRef.current = true;
     try {
-      const res = await window.harness.action("botChat", { botId: sendTo, text: withFiles, threadId: openThreadId ?? undefined }) as { ok?: boolean; result?: unknown; error?: string } | null;
+      const res = await window.harness.action("botChat", { botId: sendTo, text: withFiles, threadId: openThreadId ?? undefined, mentions }) as { ok?: boolean; result?: unknown; error?: string } | null;
       if (!res?.ok) throw new Error(String(res?.error || "没有返回结果"));
       await load();
     } catch (err) {
@@ -1798,13 +1975,17 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     if (!id) return "默认模型";
     return modelCatalog.find((m) => m.id === id)?.name || id;
   })();
+  /** 思考档：快速会关掉模型思考（首字最快）并压到 2 轮工具；标在模型旁边，别让人到处找 */
+  const effortBadge = bot?.effort === "quick" ? t("bot.effort.quick", "快速")
+    : bot?.effort === "deep" ? t("bot.effort.deep", "深入")
+      : "";
 
   /** 待处理：把「必须人点头」的东西收成一个队列（审批 / 建议 / 计划 / 提问 / 待验收）。
    *  必须在早期 return 之前算，否则 hook 数量会随渲染变化（React #310）。 */
   const needs = useMemo(() => {
     const rows: { id: string; kind: string; title: string; hint?: string; action?: "accept" | "terminal"; turnId?: string; actionLabel?: string }[] = [];
     for (const a of state?.approvals ?? []) {
-      rows.push({ id: `ap-${a.id}`, kind: "审批", title: a.title || a.description || "需要授权", hint: "桌面弹窗里确认" });
+      rows.push({ id: `ap-${a.id}`, kind: "审批", title: a.title || a.description || "需要授权", hint: "右下角队列里批，或去会话看上下文" });
     }
     const WEEK = 7 * 86400000;
     const nowMs = Date.now();
@@ -1915,6 +2096,22 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     }
   };
 
+  /** 群聊里只停一个成员：别人继续（composer 上的「停止」仍是全体） */
+  const stopMember = async (botId: string) => {
+    const name = groupMembers.find((m) => m.id === botId)?.name || "这个成员";
+    try { await act("botCancel", { botId }); } catch (err) { notify(String((err as Error)?.message || err)); }
+    finally {
+      setGroupStream((prev) => prev.filter((s) => s.botId !== botId));
+      setGroupPhases((prev) => {
+        if (!(botId in prev)) return prev;
+        const next = { ...prev };
+        delete next[botId];
+        return next;
+      });
+      notify(`已叫停 ${name}，其他人继续`);
+    }
+  };
+
   const cancel = async () => {
     try {
       if (isGroup && (groupStream.length || busy === "group")) {
@@ -1974,7 +2171,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
   // Esc = 停止当前生成；⌘F = 会话内查找；⌘⇧C = 复制最近一条回答（聊天面里最常按的三个键）
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f" && !isGroup && chatView === "chat") {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f" && chatView === "chat") {
         event.preventDefault();
         setBotSearchOpen(true);
         return;
@@ -2306,10 +2503,10 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                   ))
                   : <p className="bot-note">还没有自动化。加一条：它会在到点时自己开口，跑过的每一次都记在会话里。</p>}
                 <div className="row" style={{ marginTop: 10, gap: 8 }}>
-                  <button className="btn tiny" disabled={Boolean(busy)} onClick={() => startRoutine("daily")}>＋ 每天</button>
-                  <button className="btn tiny" disabled={Boolean(busy)} onClick={() => startRoutine("every")}>＋ 每隔</button>
-                  <button className="btn tiny" disabled={Boolean(busy)} onClick={() => startRoutine("once")}>＋ 一次</button>
-                  <button className="btn tiny" disabled={Boolean(busy)} onClick={() => startRoutine("watch")}>＋ 变化才跑</button>
+                  <button className="btn tiny" disabled={Boolean(busy)} onClick={() => startRoutine("daily")}><PlusIcon size={12} /> 每天</button>
+                  <button className="btn tiny" disabled={Boolean(busy)} onClick={() => startRoutine("every")}><PlusIcon size={12} /> 每隔</button>
+                  <button className="btn tiny" disabled={Boolean(busy)} onClick={() => startRoutine("once")}><PlusIcon size={12} /> 一次</button>
+                  <button className="btn tiny" disabled={Boolean(busy)} onClick={() => startRoutine("watch")}><PlusIcon size={12} /> 变化才跑</button>
                 </div>
                 {routineDraft && (
                   <div className="bot-routine-form">
@@ -2436,7 +2633,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 </div>
                 <p className="bot-note">
                   {bot?.capability === "work"
-                    ? `能执行：执行体是 ${(snapshot.agents || []).find((a) => a.id === bot?.executorAgentId)?.name || "未绑定的 Agent"}（CLI Agent）；点「开跑」会起它能跑的 run，跑完回流一条汇报。`
+                    ? `能执行：执行体是 ${(snapshot.agents || []).find((a) => a.id === bot?.executorAgentId)?.name || "未绑定的 Agent"}（CLI Agent）；点「开跑」会起它能跑的 run，跑完回流一条汇报。会不会逐条问由任务上的审批档决定：逐条问 → 每步等你批（10 分钟没人处理按拒绝），本任务放行 → dsh 不再问。`
                     : "可起任务 ≠ 自己动手：bot 只能提议建 todo，起 run 仍要你在桌面确认。"}
                 </p>
                 {(() => {
@@ -2639,7 +2836,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                     onBlur={(e) => void savePolicy({ standing: { ...standingCfg, maxRunsPerHour: Math.max(1, Math.min(20, Number(e.target.value) || 1)) } })}
                   />
                 </label>
-                <p className="bot-note">只允许启动「已建好、属于绑定项目」的任务；不开就是全部要人点「开跑」。</p>
+                <p className="bot-note">只允许启动「已建好、属于绑定项目」的任务；不开就是全部要人点「开跑」。任务要先在 composer 里设成「审批 · 本任务放行」——无人值守没人点审批，逐条问的任务起来只会卡住。</p>
                 <div className="bot-label" style={{ marginTop: 14 }}>通知</div>
                 {NOTIFY_ROWS.map(([key, label, hint]) => {
                   const on = notifyCfg[key] !== false;
@@ -2783,7 +2980,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                   onChange={(event) => setChatQuery(event.target.value)}
                   aria-label="搜索会话"
                 />
-                <button className="btn tiny primary" onClick={newChat} disabled={Boolean(busy)}>＋ {t("bot.newChat", "新会话")}</button>
+                <button className="btn tiny primary" onClick={newChat} disabled={Boolean(busy)}><PlusIcon size={12} /> {t("bot.newChat", "新会话")}</button>
               </div>
               {!chats.length && (
                 <div className="bot-empty">
@@ -2850,7 +3047,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                   <div className="bot-label">计划 · {bot.plan.goal || "未命名"}</div>
                   {bot.plan.steps.map((step, index) => (
                     <div className="bot-mem-row" key={`${index}-${step.text}`}>
-                      <span className="mono">{step.status === "done" ? "✓" : step.status === "doing" ? "→" : step.status === "blocked" ? "!" : index + 1}</span>
+                      <span className="mono ds-step-mark">{step.status === "done" ? <CheckIcon size={12} /> : step.status === "doing" ? <ChevronRightIcon size={12} /> : step.status === "blocked" ? <XIcon size={12} /> : index + 1}</span>
                       <span className={step.status === "done" ? "faint" : ""}>{step.text}</span>
                     </div>
                   ))}
@@ -3039,39 +3236,36 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
           </section>
         )}
         <main className="bot-main">
-          {!isGroup && chatView === "chat" && railTurns.length > 1 && (
-            <nav className="ds-turn-rail" aria-label="回合导航">
-              {railTurns.map((t) => (
+          {chatView === "chat" && railMarks.length > 2 && (
+            <nav className="ds-turn-rail" aria-label={t("bot.rail.nav", "回合导航")}>
+              {railMarks.map((mark) => (
                 <button
-                  key={t.id}
-                  className={`ds-turn-mark ${t.id === activeTurnId ? "on" : ""}${busy && t === railTurns[railTurns.length - 1] ? " running" : ""}`}
-                  onClick={() => jumpToTurn(t.id)}
-                  onMouseEnter={(event) => showPeek(t.id, event.currentTarget)}
-                  onFocus={(event) => showPeek(t.id, event.currentTarget)}
+                  key={mark.id}
+                  className={`ds-turn-mark ${mark.id === activeTurnId ? "on" : ""}${busy && mark.id === railMarks[railMarks.length - 1]?.id ? " running" : ""}`}
+                  onClick={() => jumpToTurn(mark.id)}
+                  onMouseEnter={(event) => showPeek(mark.id, event.currentTarget)}
+                  onFocus={(event) => showPeek(mark.id, event.currentTarget)}
                   onMouseLeave={() => setPeek(null)}
                   onBlur={() => setPeek(null)}
-                  title={`第 ${t.index} 轮`}
-                  aria-label={`跳到第 ${t.index} 轮`}
-                  aria-current={t.id === activeTurnId ? "true" : undefined}
+                  title={t("bot.rail.turn", "第 {n} 轮").replace("{n}", String(mark.index))}
+                  aria-label={t("bot.rail.jump", "跳到第 {n} 轮").replace("{n}", String(mark.index))}
+                  aria-current={mark.id === activeTurnId ? "true" : undefined}
                 />
               ))}
             </nav>
           )}
-          {!isGroup && chatView === "chat" && peek && (() => {
-            const hit = railTurns.find((t) => t.id === peek.id);
+          {chatView === "chat" && peek && (() => {
+            const hit = railMarks.find((t) => t.id === peek.id);
             if (!hit) return null;
-            const turn = hit.turn;
-            const sender = turn.decision === "replied" ? "你" : (snapshot.bots.find((b) => b.id === turn.botId)?.name || "机器人");
-            const text = (turn.reply || turn.input || turn.reason || "").trim();
             return (
               <div className="ds-turn-peek" style={{ top: peek.top }} role="presentation">
                 <div className="ds-turn-peek-head">
-                  <b>{sender}</b>
+                  <b>{hit.sender}</b>
                   <span>第 {hit.index} 轮</span>
                   <span className="spacer" />
-                  <span className="mono">{botTime(turn.createdAt)}</span>
+                  <span className="mono">{botTime(hit.at)}</span>
                 </div>
-                <p className="ds-turn-peek-text">{text || "这一轮没有说话"}</p>
+                <p className="ds-turn-peek-text">{hit.text.trim() || "这一轮没有说话"}</p>
               </div>
             );
           })()}
@@ -3079,7 +3273,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
             <div className="bot-chat-tabs">
               <button className={chatView === "chat" ? "on" : ""} onClick={() => setChatView("chat")}>{t("bot.chat", "对话")}</button>
               <button className={chatView === "trajectory" ? "on" : ""} onClick={() => setChatView("trajectory")}>{t("bot.trajectory", "轨迹")}</button>
-              <button className="icon-btn" title="在对话里查找（⌘F）" aria-label="在对话里查找" aria-expanded={botSearchOpen} onClick={() => setBotSearchOpen(true)}><SearchIcon size={14} /></button>
+              <button className="icon-btn" title={t("bot.search.open", "在对话里查找（⌘F）")} aria-label={t("bot.search.label", "在对话里查找")} aria-expanded={botSearchOpen} onClick={() => setBotSearchOpen(true)}><SearchIcon size={14} /></button>
             </div>
           )}
           {(isGroup || openThreadId) ? (
@@ -3087,7 +3281,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
           {isGroup && (
             <div className="bot-chat-bar">
               <b className="ellipsis">{groups.find((g) => g.id === botId)?.name || "群聊"}</b>
-              <span className="tiny faint">{members.length} 个成员</span>
+              <span className="tiny faint">{t("bot.group.members", "{n} 个成员").replace("{n}", String(members.length))}</span>
               <span className="spacer" />
             </div>
           )}
@@ -3096,9 +3290,12 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
               <button className="btn tiny" onClick={() => setOpenThreadId(null)} title="返回会话列表" aria-label="返回会话列表">
                 <ChevronLeftIcon size={14} />
               </button>
-              <b className="ellipsis">{chats.find((c) => c.id === openThreadId)?.title || "会话"}</b>
+              <span className={`bot-avatar ${bot?.avatarClass || "a"}`} aria-hidden="true">{bot?.avatar || (bot?.name || "机").slice(0, 1)}</span>
+              <b className="ellipsis">{bot?.name || "机器人"}</b>
+              <span className="bot-chat-bar-sep" aria-hidden="true">·</span>
+              <span className="bot-chat-bar-thread ellipsis" title="会话名">{chats.find((c) => c.id === openThreadId)?.title || "会话"}</span>
               <span className="spacer" />
-              <button className="btn tiny" onClick={newChat} disabled={Boolean(busy)}>＋ {t("bot.newChat", "新会话")}</button>
+              <button className="btn tiny" onClick={newChat} disabled={Boolean(busy)}><PlusIcon size={12} /> {t("bot.newChat", "新会话")}</button>
               <RowMenu title="会话操作">
                 <button onClick={() => { const c = chats.find((x) => x.id === openThreadId); setRenamingChat({ id: openThreadId, title: c?.title || "会话" }); setOpenThreadId(null); }}>重命名</button>
                 <button onClick={() => forkChat(openThreadId)}>从这里分支</button>
@@ -3110,7 +3307,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
           <div className="bot-chat-tabs">
             <button className={chatView === "chat" ? "on" : ""} onClick={() => setChatView("chat")}>{t("bot.chat", "对话")}</button>
             <button className={chatView === "trajectory" ? "on" : ""} onClick={() => setChatView("trajectory")}>{t("bot.trajectory", "轨迹")}</button>
-            {!isGroup && <button className="icon-btn" title="在对话里查找（⌘F）" aria-label="在对话里查找" aria-expanded={botSearchOpen} onClick={() => setBotSearchOpen(true)}><SearchIcon size={14} /></button>}
+            <button className="icon-btn" title={t("bot.search.open", "在对话里查找（⌘F）")} aria-label={t("bot.search.label", "在对话里查找")} aria-expanded={botSearchOpen} onClick={() => setBotSearchOpen(true)}><SearchIcon size={14} /></button>
           </div>
           {botSearchOpen && chatView === "chat" && (
             <div className="chat-search" role="search">
@@ -3118,8 +3315,8 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 autoFocus
                 className="chat-search-input"
                 value={botSearchQ}
-                placeholder="在对话里查找…"
-                aria-label="在对话里查找"
+                placeholder={t("bot.search.placeholder", "在对话里查找…")}
+                aria-label={t("bot.search.label", "在对话里查找")}
                 onChange={(e) => setBotSearchQ(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Escape") { e.preventDefault(); setBotSearchOpen(false); }
@@ -3137,7 +3334,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                   ))}
                 </div>
               )}
-              <button className="icon-btn" title="关闭查找" aria-label="关闭查找" onClick={() => { setBotSearchOpen(false); setBotSearchQ(""); }}><XIcon size={14} /></button>
+              <button className="icon-btn" title={t("bot.search.close", "关闭查找")} aria-label={t("bot.search.close", "关闭查找")} onClick={() => { setBotSearchOpen(false); setBotSearchQ(""); }}><XIcon size={14} /></button>
             </div>
           )}
           {chatView === "trajectory" ? (
@@ -3166,7 +3363,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
             onKeyDown={(event) => {
               // 键盘上翻也算读者意图：PgUp / ↑ / Home 立刻退出跟随
               if (["PageUp", "ArrowUp", "Home"].includes(event.key)) stickRef.current = false;
-              if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") { event.preventDefault(); setBotSearchOpen(true); }
+              if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") { event.preventDefault(); if (!isGroup) setBotSearchOpen(true); }
             }}
           >
             {!isGroup && !turns.length && (
@@ -3201,8 +3398,12 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 key={m.id}
                 m={m}
                 senderName={botOf(m.botId ?? undefined)?.name}
+                avatar={botOf(m.botId ?? undefined)?.avatar}
+                avatarClass={botOf(m.botId ?? undefined)?.avatarClass}
                 state={state}
                 previewRoot={previewRootForBot}
+                onQuote={quote}
+                flash={flashTurn === m.id}
               />
             ))}
             {/* 群聊：自己刚发的那句 + 每个正在回的成员一块（逐字长出来） */}
@@ -3214,15 +3415,18 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
             {isGroup && awaitingOwnerEcho && (
               <div className="ds-user ds-pending">
                 <div className="ds-bubble">{pendingOwner?.text}</div>
-                <div className="ds-actions ds-actions-user"><span className="ds-time">发送中…</span></div>
+                <div className="ds-actions ds-actions-user"><span className="ds-time">{t("bot.sending", "发送中…")}</span></div>
               </div>
             )}
             {isGroup && groupStream.map((s) => (
               <div className="ds-assistant ds-streaming" key={`gs-${s.botId}`} aria-live="polite">
                 <div className="ds-bot-attr">
+                  <span className={`bot-avatar ${botOf(s.botId)?.avatarClass || "a"}`} aria-hidden="true">
+                    {botOf(s.botId)?.avatar || (s.name || botOf(s.botId)?.name || "机").slice(0, 1)}
+                  </span>
                   <b>{s.name || botOf(s.botId)?.name || "机器人"}</b>
-                  <span className="ds-tag">回你</span>
-                  <button className="ds-action-text" onClick={() => void cancel()}>停止</button>
+                  <span className="ds-tag">{t("bot.state.replyYou", "回你")}</span>
+                  <button className="ds-action-text" title={`只叫停 ${s.name || "这个成员"}，其他人继续`} onClick={() => void stopMember(s.botId)}>停止</button>
                 </div>
                 <div className="ds-assistant-body">{s.text || "\u00a0"}<span className="ds-caret" /></div>
               </div>
@@ -3233,13 +3437,13 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
               .map(([botId, p]) => (
                 <div className="ds-typing" key={`gp-${botId}`} aria-live="polite">
                   <span className="ds-caret" />
-                  <span>{p.name || botOf(botId)?.name || "成员"} · {p.phase === "tool" ? toolLabel(p.tool, toolMeta[p.tool || ""]) : "正在想…"}</span>
+                  <span>{p.name || botOf(botId)?.name || "成员"} · {p.phase === "tool" ? toolLabel(p.tool, toolMeta[p.tool || ""]) : t("bot.state.thinking", "正在想…")}</span>
                 </div>
               ))}
             {isGroup && busy === "group" && !groupStream.length && !groupPhaseCount && (
               <div className="ds-typing" aria-live="polite">
                 <span className="ds-caret" />
-                <span>等成员回…</span>
+                <span>{t("bot.group.waiting", "等成员回…")}</span>
               </div>
             )}
             {!isGroup && hiddenRows > 0 && (
@@ -3271,12 +3475,11 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                       <span className="ds-process-label">{label}</span>
                       <span className="ds-sep" aria-hidden />
                       <span className="ds-process-summary mono">{span}</span>
-                      <span className="ds-process-count">{row.turns.length}</span>
                     </summary>
                     <div className="ds-process-body">
                       {row.turns.map((t) => (
                         <div className="ds-quiet-row" key={t.id}>
-                          <span className="ds-row-icon" aria-hidden>{GLYPH[t.decision || "silent"] || "·"}</span>
+                          <span className="ds-row-icon" aria-hidden><DecisionIcon decision={t.decision} /></span>
                           <span className="ds-quiet-main">
                             <b>{DECISION_LABEL[t.decision || "silent"] || t.decision}</b>
                             <span>{t.reason || "—"}</span>
@@ -3284,7 +3487,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                             {t.decision === "quiet" && t.reply && <span className="ds-quiet-partial">「{t.reply}」</span>}
                             {t.decision === "noted" && t.reply && <span className="ds-quiet-partial">{t.from ? `${t.from}：` : ""}「{t.reply}」</span>}
                             <details className="bot-why">
-                              <summary>为什么</summary>
+                              <summary>为什么<ChevronDownIcon size={12} className="ds-why-chev" /></summary>
                               <div className="bot-why-body">
                                 <div><span>触发源</span><b className="mono">{t.trigger?.kind || "tick"}{t.trigger?.ref ? ` · ${t.trigger.ref}` : ""}</b></div>
                                 <div><span>注入记忆</span><b>{t.injected?.length ? t.injected.map((m) => `[${m.layer}] ${m.title}`).join("；") : "没有注入（沉默/被拦不组装上下文）"}</b></div>
@@ -3301,22 +3504,61 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
               }
 
               const turn = row.turn;
-              // 只传决策词；摘要与耗时由 BotTrace 按结构化步骤拼（不再写死「，用时 N 秒」）
-              const headLabel = turn.decision === "reported" ? "已汇报"
-                : turn.decision === "asked" ? "已提问"
-                  : turn.decision === "interrupted" ? "已中断"
-                    : "已完成";
-              const turnHeadText = headLabel;
+              // 说话人：这一轮真正开口的 bot（不是页面级 bot，也不是会话标题）
+              const turnBot = botOf(turn.botId) || bot;
+              const turnSteps = traceStepsOf(turn, state);
+              const turnTrace = turnStatusOf(turnSteps.map((s) => s.status || (s.ok === false ? "failed" : "done")));
+              // 回合头 = 人 + 时间 + 状态 + 耗时：不再用「已完成」顶替身份
+              const headLabel = turn.decision === "failed" ? t("bot.state.failed", "没回")
+                : turnTrace === "failed" ? t("bot.state.traceFailed", "失败")
+                  : turnTrace === "stopped" ? t("bot.state.stopped", "已停止")
+                    : turnTrace === "denied" ? t("bot.state.denied", "被拒")
+                      : turn.decision === "reported" ? t("bot.state.reported", "已汇报")
+                        : turn.decision === "asked" ? t("bot.state.asked", "已提问")
+                          : turn.decision === "interrupted" ? t("bot.state.interrupted", "已中断")
+                            : t("bot.state.done", "已完成");
+              const turnDur = formatDuration(turn.cost?.ms);
+              const spoke = turn.decision === "replied" || turn.decision === "reported" || turn.decision === "asked";
               const bubble = (
                 <>
-                  {turn.context?.digest && (
-                    <div className="ds-digest" role="note" title="更早的对话被折成一段背景摘要，不再逐条注入">
-                      <span className="ds-tag">已压缩</span>
-                      <span>更早的对话{typeof turn.context.history === "number" ? `（保留最近 ${turn.context.history} 条）` : ""}折成摘要，只作背景</span>
+                  <div className="ds-bot-attr">
+                    {!row.cont && (
+                      <span className={`bot-avatar ${turnBot?.avatarClass || "a"}`} aria-hidden="true">
+                        {turnBot?.avatar || (turnBot?.name || "机").slice(0, 1)}
+                      </span>
+                    )}
+                    <b>{turnBot?.name || "机器人"}</b>
+                    <span className="ds-time">{botTime(turn.createdAt)}</span>
+                    <span className={`ds-tag ${spoke ? "ai" : turn.decision === "failed" ? "bad" : ""}`}>{headLabel}</span>
+                    {turnDur && <span className="ds-dur mono" title={t("bot.turnDuration", "这一轮从开始到结束")}>{turnDur}</span>}
+                  </div>
+                  {/* 压缩注记只在压缩边界说一次：之后的每一轮都带 digest，但那是会话状态，不是每轮发生的事 */}
+                  {turn.context?.digest && turn.id === firstDigestTurnId && (
+                    <div className="ds-digest" role="note" title={t("bot.digest.title", "更早的对话被折成一段背景摘要，不再逐条注入")}>
+                      <span className="ds-tag">{t("bot.digest.tag", "已压缩")}</span>
+                      <span>{t("bot.digest.text", "更早的对话折成摘要，只作背景")}</span>
                     </div>
                   )}
-                  <BotTrace turn={turn} state={state} label={turnHeadText} preview={inlinePreview} previewRoot={previewRootForBot} />
-                  <div className="ds-assistant-body"><RichText text={turn.reply || ""} /></div>
+                  <BotTrace turn={turn} state={state} preview={inlinePreview} previewRoot={previewRootForBot} />
+                  {turn.decision === "failed" ? (
+                    /* 没回也要留痕：原因在转录里（刷新也还在），不用回到屏幕底部找报错卡 */
+                    <div className="ds-fail-row" role="alert">
+                      <div className="ds-fail-row-head">
+                        <span className="ds-fail-tag">{t("bot.state.failed", "没回")}</span>
+                        <span className="ds-fail-msg" title={turn.reason || t("bot.fail.empty", "模型没有返回内容")}>{turn.reason || t("bot.fail.empty", "模型没有返回内容")}</span>
+                        <span className="ds-spacer" />
+                        <button className="ds-action" title={t("bot.act.copyReason", "复制原因")} aria-label={t("bot.act.copyReason", "复制原因")} onClick={() => void window.harness.clipboardWrite(turn.reason || "")}><CopyIcon size={14} /></button>
+                      </div>
+                      <div className="ds-fail-actions">
+                        {turn.input && (
+                          <button className="btn tiny" disabled={Boolean(busy)} onClick={() => void retryTurn(turn.id)} title={t("bot.fail.retryTitle", "复用这句话再发一次")}>{t("bot.act.retryShort", "重试")}</button>
+                        )}
+                        <span className="ds-fail-hint">{t("bot.fail.hint", "草稿已保留；这一轮留在记录里，刷新也还在")}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="ds-assistant-body"><RichText text={turn.reply || ""} /></div>
+                  )}
                   {turn.decision === "asked" && (
                     <div className="ds-system-note">你回一句就会成为它的职责（人格卡 → 职责），以后随时能改。</div>
                   )}
@@ -3363,32 +3605,31 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                     </div>
                   )}
                   <div className="ds-actions">
-                    <button className="ds-action" title="复制这条回复" aria-label="复制这条回复" onClick={() => void window.harness.clipboardWrite(turn.reply || "")}><CopyIcon size={14} /></button>
-                    {/* 轨迹入口放在这一轮的动作里：不是只能从页签进，且进来就定位到这一轮 */}
-                    <button className="ds-action" title="看这一轮的轨迹" aria-label="看这一轮的轨迹" onClick={() => { setTrajectoryTurn(turn.id); setChatView("trajectory"); }}>
-                      <ListIcon size={14} />
-                    </button>
+                    <button className="ds-action" title={t("bot.act.copyReply", "复制这条回复")} aria-label={t("bot.act.copyReply", "复制这条回复")} onClick={() => void window.harness.clipboardWrite(turn.reply || "")}><CopyIcon size={14} /></button>
                     {turn.input && (
-                      <button className="ds-action" title="重试这一轮（复用原话）" aria-label="重试这一轮" disabled={Boolean(busy)} onClick={() => void retryTurn(turn.id)}><RefreshIcon size={14} /></button>
+                      <button className="ds-action" title={t("bot.act.retry", "重试这一轮（复用原话）")} aria-label={t("bot.act.retryAria", "重试这一轮")} disabled={Boolean(busy)} onClick={() => void retryTurn(turn.id)}><RefreshIcon size={14} /></button>
                     )}
-                    <button className="ds-action" title="引用这条继续问" aria-label="引用这条继续问" onClick={() => quote(turn.reply || "")}><QuoteIcon size={14} /></button>
-                    {openThreadId && <button className="ds-action" title="复制到新会话，换个说法重开" aria-label="分支到新会话" onClick={() => forkChat(openThreadId)}><GitIcon size={14} /></button>}
-                    {!isGroup && (
-                      <RowMenu title="更多（评价 / 用量）">
-                        <button onClick={() => void feedbackTurn(turn.id, "up")} title="这一轮值得再看">
-                          {turn.feedback === "up" ? "已赞 · 再点取消" : "赞"}
-                        </button>
-                        <button onClick={() => void feedbackTurn(turn.id, "down")} title="这一轮不行，记下来">
-                          {turn.feedback === "down" ? "已踩 · 再点取消" : "踩"}
-                        </button>
-                        <div className="row-menu-info">
-                          <div><span>用量</span><em className="mono">{turn.cost?.tokens ? `${turn.cost.tokens} tokens` : "未上报"}{turn.cost?.ms ? ` · ${(turn.cost.ms / 1000).toFixed(1)}s` : ""}</em></div>
-                          {turn.cost?.ttftMs ? <div><span>TTFT</span><em className="mono">{turn.cost.ttftMs}ms</em></div> : null}
-                          {turn.cost?.model ? <div><span>模型</span><em>{turn.cost.model}</em></div> : null}
-                        </div>
-                      </RowMenu>
-                    )}
-                    <span className="ds-time">{botTime(turn.createdAt)}</span>
+                    <button className="ds-action" title={t("bot.act.quote", "引用这条继续问")} aria-label={t("bot.act.quote", "引用这条继续问")} onClick={() => quote(turn.reply || "")}><QuoteIcon size={14} /></button>
+                    {/* 一行只留 4 个：轨迹 / 分支 / 评价 / 用量都进菜单 */}
+                    <RowMenu title={t("bot.act.more", "更多（轨迹 / 分支 / 评价 / 用量）")}>
+                      <button onClick={() => { setTrajectoryTurn(turn.id); setChatView("trajectory"); }}>{t("bot.act.trace", "看这一轮的轨迹")}</button>
+                      {openThreadId && <button onClick={() => forkChat(openThreadId)} title={t("bot.act.branchHint", "复制到新会话，换个说法重开")}>{t("bot.act.branch", "复制到新会话")}</button>}
+                      {!isGroup && (
+                        <>
+                          <button onClick={() => void feedbackTurn(turn.id, "up")} title={t("bot.act.up", "赞")}>
+                            {turn.feedback === "up" ? t("bot.act.upOn", "已赞 · 再点取消") : t("bot.act.up", "赞")}
+                          </button>
+                          <button onClick={() => void feedbackTurn(turn.id, "down")} title={t("bot.act.down", "踩")}>
+                            {turn.feedback === "down" ? t("bot.act.downOn", "已踩 · 再点取消") : t("bot.act.down", "踩")}
+                          </button>
+                          <div className="row-menu-info">
+                            <div><span>用量</span><em className="mono">{turn.cost?.tokens ? `${turn.cost.tokens} tokens` : "未上报"}{turn.cost?.ms ? ` · ${(turn.cost.ms / 1000).toFixed(1)}s` : ""}</em></div>
+                            {turn.cost?.ttftMs ? <div><span>TTFT</span><em className="mono">{turn.cost.ttftMs}ms</em></div> : null}
+                            {turn.cost?.model ? <div><span>模型</span><em>{turn.cost.model}</em></div> : null}
+                          </div>
+                        </>
+                      )}
+                    </RowMenu>
                     {turn.feedback && <span className="ds-usage">{turn.feedback === "up" ? "已赞" : "已踩"}</span>}
                     {typeof turn.cost?.tokens === "number" && turn.cost.tokens > 0 && (
                       <span className="ds-usage">
@@ -3398,22 +3639,22 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                     )}
                   </div>
                   <details className="bot-why">
-                    <summary>为什么说</summary>
+                    <summary>{t("bot.why.long", "为什么说")}<ChevronDownIcon size={12} className="ds-why-chev" /></summary>
                     <div className="bot-why-body">
-                      <div><span>触发源</span><b className="mono">{turn.trigger?.kind || "—"}{turn.trigger?.ref ? ` · ${turn.trigger.ref}` : ""}</b></div>
+                      <div><span>{t("bot.why.trigger", "触发源")}</span><b className="mono">{turn.trigger?.kind || "—"}{turn.trigger?.ref ? ` · ${turn.trigger.ref}` : ""}</b></div>
                       <div>
-                        <span>注入记忆</span>
+                        <span>{t("bot.why.injected", "注入记忆")}</span>
                         <b>
                           {(turn.injected || []).length
                             ? (turn.injected || []).map((m) => <span className="bot-mem-chip" key={`${m.layer}-${m.id}`}><em>{m.layer}</em>{m.title}</span>)
-                            : "这一轮没有注入"}
+                            : t("bot.why.none", "这一轮没有注入")}
                         </b>
                       </div>
-                      <div><span>成本</span><b className="mono">{turn.cost?.tokens ? `${turn.cost.tokens} tokens` : "—"}{turn.cost?.ms ? ` · ${(turn.cost.ms / 1000).toFixed(1)}s` : ""}</b></div>
-                      {turn.stopReason && <div><span>停止</span><b>{turn.stopReason}</b></div>}
+                      <div><span>{t("bot.why.cost", "成本")}</span><b className="mono">{turn.cost?.tokens ? `${turn.cost.tokens} tokens` : "—"}{turn.cost?.ms ? ` · ${(turn.cost.ms / 1000).toFixed(1)}s` : ""}</b></div>
+                      {turn.stopReason && <div><span>{t("bot.why.stop", "停止")}</span><b>{turn.stopReason}</b></div>}
                       {turn.context && (
                         <div>
-                          <span>上下文</span>
+                          <span>{t("bot.why.context", "上下文")}</span>
                           <b className="mono">
                             {turn.context.chars ?? 0} 字符 · 记忆 {turn.context.memory ?? 0}
                             {turn.context.digest ? " · 含摘要" : ""}
@@ -3426,9 +3667,10 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 </>
               );
 
-              if (turn.decision === "replied") {
+              // 带你那句话的回合：回答 / 被打断 / 没回——后两种以前只画半条，你说的那句会从转录里消失
+              if (["replied", "interrupted", "failed"].includes(turn.decision || "") && turn.input) {
                 return (
-                  <div className={`ds-turn${flashTurn === turn.id ? " chat-flash" : ""}`} role="article" aria-label={`${bot?.name || "助手"} · ${botTime(turn.createdAt)}`} data-turn-id={turn.id} key={row.key}>
+                  <div className={`ds-turn${flashTurn === turn.id ? " chat-flash" : ""}`} role="article" aria-label={`${turnBot?.name || "机器人"} · ${botTime(turn.createdAt)}`} data-turn-id={turn.id} key={row.key}>
                     <div className="ds-user">
                       <div className="ds-bubble">{turn.input}</div>
                       <div className="ds-actions ds-actions-user">
@@ -3444,7 +3686,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
               }
 
               return (
-                <div className={`ds-assistant${flashTurn === turn.id ? " chat-flash" : ""}`} role="article" aria-label={`${bot?.name || "助手"} · ${botTime(turn.createdAt)}`} data-turn-id={turn.id} key={row.key}>
+                <div className={`ds-assistant${flashTurn === turn.id ? " chat-flash" : ""}`} role="article" aria-label={`${turnBot?.name || "机器人"} · ${botTime(turn.createdAt)}`} data-turn-id={turn.id} key={row.key}>
                   {bubble}
                 </div>
               );
@@ -3452,25 +3694,47 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
             {!isGroup && awaitingUserEcho && (
               <div className="ds-user ds-pending">
                 <div className="ds-bubble">{pendingUser?.text}</div>
-                <div className="ds-actions ds-actions-user"><span className="ds-time">发送中…</span></div>
+                <div className="ds-actions ds-actions-user"><span className="ds-time">{t("bot.sending", "发送中…")}</span></div>
               </div>
             )}
             {!isGroup && streaming && (botOf(streaming.botId) || bot) && (
               <div className="ds-assistant ds-streaming" aria-live="polite">
                 <div className="ds-bot-attr">
+                  <span className={`bot-avatar ${(botOf(streaming.botId) || bot)?.avatarClass || "a"}`} aria-hidden="true">
+                    {(botOf(streaming.botId) || bot)?.avatar || ((botOf(streaming.botId) || bot)?.name || "机").slice(0, 1)}
+                  </span>
                   <b>{(botOf(streaming.botId) || bot)?.name}</b>
-                  <span className="ds-tag">回你</span>
+                  <span className="ds-tag">{t("bot.state.replyYou", "回你")}</span>
+                  <Elapsed since={streaming.at} />
                   <button className="ds-action-text" onClick={() => void act("botCancel", { botId: streaming.botId })}>停止</button>
                 </div>
+                {/* 推理模型的思考流：正文没出来之前直接摊开（这就是「它在想什么」），
+                    正文开始后收成一行「思考 · N 字」，点开还能看 */}
+                {streaming.thought
+                  ? (streaming.text
+                    ? (
+                      <details className="ds-live-thought is-collapsed">
+                        <summary>{t("bot.think.live", "思考")} · {streaming.thought.length} {t("bot.think.chars", "字")}</summary>
+                        <div className="ds-live-thought-body">{streaming.thought}</div>
+                      </details>
+                    )
+                    : (
+                      <div className="ds-live-thought">
+                        <span className="ds-live-thought-head">{t("bot.think.live", "思考")}</span>
+                        <div className="ds-live-thought-body">{streaming.thought.length > 900 ? `…${streaming.thought.slice(-900)}` : streaming.thought}</div>
+                      </div>
+                    ))
+                  : null}
                 <div className="ds-assistant-body">
                   {streaming.text
                     ? <>{streaming.text}<span className="ds-caret" /></>
-                    : <span className="ds-thinking">{streaming.phase === "tool" ? toolLabel(streaming.tool, toolMeta[streaming.tool || ""]) : "正在想…"}</span>}
+                    : <span className="ds-thinking">{streaming.phase === "tool" ? toolLabel(streaming.tool, toolMeta[streaming.tool || ""]) : t("bot.state.thinking", "正在想…")}</span>}
                 </div>
               </div>
             )}
             {/* 失败卡就在这次对话的位置：原因 + 重试（重试复用同一句，草稿不动） */}
-            {error && (
+            {/* 临时报错卡：主进程已把这一轮落成 failed 时不再重复画一遍（转录里那条自己带原因） */}
+            {error && !turns.some((t) => t.decision === "failed" && (!failRetry?.text || String(t.input || "").startsWith(failRetry.text.slice(0, 40)))) && (
               <div className="ds-fail" role="alert">
                 <div className="ds-fail-head">
                   <span className="ds-fail-tag">没回</span>
@@ -3502,63 +3766,43 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
           </div>
 
           {(() => {
-            const asks = (snapshot.asks || []).filter((a) => a.botId === bot?.id);
+            // 群聊的提问来自群成员：话题里挂着的都算；1:1 仍按 bot 过滤
+            const asks = isGroup
+              ? (snapshot.groupAsks || [])
+                  .filter((a) => a.groupId === group?.id && (a.threadId || "") === (groupThreadId || ""))
+                  .map((a) => ({ key: a.messageId, from: a.botName, text: a.text, dismiss: () => act("botGroupAskDismiss", { messageId: a.messageId }) }))
+              : (snapshot.asks || [])
+                  .filter((a) => a.botId === bot?.id)
+                  .map((a) => ({ key: a.turnId, from: "", text: a.text, dismiss: () => act("botAskDismiss", { turnId: a.turnId }) }));
             if (!asks.length) return null;
             return (
               <div className="bot-ask">
                 {asks.slice(0, 2).map((a) => (
-                  <div className="bot-ask-row" key={a.turnId}>
-                    <span className="bot-ask-mark">?</span>
-                    <span className="bot-ask-text">{a.text}</span>
+                  <div className="bot-ask-row" key={a.key}>
+                    <span className="bot-ask-mark" aria-hidden="true"><QuestionIcon size={13} /></span>
+                    <span className="bot-ask-text">{a.from ? <b>{a.from}：</b> : null}{a.text}</span>
                     <button className="btn tiny" onClick={() => composerRef.current?.focus()}>回答</button>
                     <button
                       className="btn tiny"
-                      onClick={() => void run("ask", async () => { await act("botAskDismiss", { turnId: a.turnId }); notify("已划掉这张卡片"); })}
+                      onClick={() => void run("ask", async () => { await a.dismiss(); notify("已划掉这张卡片"); })}
                     >
                       先不管
                     </button>
                   </div>
                 ))}
+                {asks.length > 2 && <span className="bot-ask-hint">还有 {asks.length - 2} 个问题挂着</span>}
                 <span className="bot-ask-hint">直接回一句就算答了；卡片不挡聊天，挂着也能继续说别的。</span>
               </div>
             );
           })()}
 
-          {isGroup && mentionAt && (() => {
-            const q = mentionAt.query.toLowerCase();
-            const hits = groupMembers.filter((m) => !q || m.name.toLowerCase().includes(q) || String(m.name).split("·")[0].trim().toLowerCase().includes(q)).slice(0, 6);
-            const insert = (name: string) => {
-              const handle = String(name).split("·")[0].trim();
-              const head = draft.slice(0, mentionAt.at);
-              const tail = draft.slice(mentionAt.at + 1 + mentionAt.query.length);
-              setDraft(`${head}@${handle} ${tail}`);
-              setMentionAt(null);
-            };
-            return (
-              <div className="im-mentions">
-                {hits.map((m) => (
-                  <button key={m.id} className="im-mention" onClick={() => insert(m.name)} title={`${m.name}${m.persona?.mission ? ` · ${m.persona.mission}` : ""}`}>
-                    <span className={`bot-avatar ${m.avatarClass || "a"}`}>{m.avatar || m.name.slice(0, 1)}</span>
-                    <b>{String(m.name).split("·")[0].trim()}</b>
-                    <span className="tiny faint ellipsis">
-                      {m.persona?.mission || "还没写职责"}
-                      {m.status !== "active" ? " · 已暂停" : m.mutedUntil && m.mutedUntil > Date.now() ? " · 静音中" : ""}
-                    </span>
-                  </button>
-                ))}
-                <button className="im-mention" onClick={() => { const head = draft.slice(0, mentionAt.at); const tail = draft.slice(mentionAt.at + 1 + mentionAt.query.length); setDraft(`${head}@everyone ${tail}`); setMentionAt(null); }}>
-                  <span className="bot-avatar group">@</span><b>everyone</b><span className="tiny faint">全体成员</span>
-                </button>
-              </div>
-            );
-          })()}
           {isGroup && (
             <div className="im-target">
-              <span className="im-target-k">谁回</span>
+              <span className="im-target-k">{t("bot.group.who", "谁回")}</span>
               <div className="seg">
-                <button className={replyMode.kind === "mentions" ? "on" : ""} onClick={() => setReplyMode({ kind: "mentions" })} title="只有被 @ 到的成员回复；没 @ 就没人回，只记你的话">@ 谁谁回</button>
-                <button className={replyMode.kind === "all" ? "on" : ""} onClick={() => setReplyMode({ kind: "all" })} title="每个成员都回一句">全体</button>
-                <button className={replyMode.kind === "bot" ? "on" : ""} onClick={() => setReplyMode({ kind: "bot" })} title="固定由一个成员回复">固定</button>
+                <button className={replyMode.kind === "mentions" ? "on" : ""} onClick={() => setReplyMode({ kind: "mentions" })} title="只有被 @ 到的成员回复；没 @ 就没人回，只记你的话">{t("bot.group.mentions", "@ 谁谁回")}</button>
+                <button className={replyMode.kind === "all" ? "on" : ""} onClick={() => setReplyMode({ kind: "all" })} title="每个成员都回一句">{t("bot.group.all", "全体")}</button>
+                <button className={replyMode.kind === "bot" ? "on" : ""} onClick={() => setReplyMode({ kind: "bot" })} title="固定由一个成员回复">{t("bot.group.fixed", "固定")}</button>
               </div>
               {replyMode.kind === "bot" && (
                 <select className="dispatch-agent" value={replyMode.botId} onChange={(e) => setReplyMode({ kind: "bot", botId: e.target.value })}>
@@ -3598,43 +3842,108 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
               ].filter(Boolean).join(" · ")}
               onClick={() => setChatView("trajectory")}
             >
-              <span>上下文 {fmtChars(lastContext.chars)} 字符</span>
-              <span>记忆 {Math.round(lastContext.memoryUsedPct || 0)}%{lastContext.memoryLines?.budget ? ` · ${fmtChars(lastContext.memory)}/${fmtChars(lastContext.memoryLines.budget)}` : ""}</span>
-              {typeof lastContext.history === "number" && <span>历史 {lastContext.history} 条</span>}
-              {lastContext.digest && <span>已压缩</span>}
+              <span>{t("bot.ctx.context", "上下文")} {fmtChars(lastContext.chars)} 字符</span>
+              <span>{t("bot.ctx.memory", "记忆")} {Math.round(lastContext.memoryUsedPct || 0)}%{lastContext.memoryLines?.budget ? ` · ${fmtChars(lastContext.memory)}/${fmtChars(lastContext.memoryLines.budget)}` : ""}</span>
+              {typeof lastContext.history === "number" && <span>{t("bot.ctx.history", "历史")} {lastContext.history} 条</span>}
+              {lastContext.digest && <span>{t("bot.digest.tag", "已压缩")}</span>}
             </button>
           )}
           <div className="ds-composer">
+            {/* @ 选择器：浮在 composer 上方，不占转录高度；命中项不截断，靠弹层自己滚 */}
+            {mentionAt && (
+              <div className="im-mention-pop" id="im-mention-list" role="listbox" aria-label="选择群成员">
+                <div className="im-mention-pop-head">
+                  <span className="mono ellipsis">{mentionAt.query ? `@${mentionAt.query}` : isGroup ? t("bot.mention.pick", "@ 选人") : t("bot.mention.pickBot", "@ 选机器人")}</span>
+                  <span className="faint">{mentionTotal} {isGroup ? t("bot.mention.people", "人") : t("bot.mention.bots", "个")}</span>
+                </div>
+                <div className="im-mention-pop-list">
+                  {mentionHits.map((m, i) => (
+                    <button
+                      key={m.id}
+                      id={`im-mention-${m.id}`}
+                      role="option"
+                      aria-selected={i === mentionActive}
+                      className={`im-mention${i === mentionActive ? " on" : ""}`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onMouseEnter={() => setMentionPick(i)}
+                      onClick={() => insertMention(m.name)}
+                      title={`${m.name}${m.persona?.mission ? ` · ${m.persona.mission}` : ""}`}
+                    >
+                      <span className={`bot-avatar ${m.avatarClass || "a"}`}>{m.avatar || m.name.slice(0, 1)}</span>
+                      <b>{String(m.name).split("·")[0].trim()}</b>
+                      <span className="tiny faint ellipsis">
+                        {m.persona?.mission || "还没写职责"}
+                        {m.status !== "active" ? " · 已暂停" : m.mutedUntil && m.mutedUntil > Date.now() ? " · 静音中" : ""}
+                      </span>
+                    </button>
+                  ))}
+                  {isGroup && (
+                    <button
+                      id="im-mention-everyone"
+                      role="option"
+                      aria-selected={mentionActive === mentionTotal}
+                      className={`im-mention${mentionActive === mentionTotal ? " on" : ""}`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onMouseEnter={() => setMentionPick(mentionTotal)}
+                      onClick={() => insertMention(null)}
+                    >
+                      <span className="bot-avatar group">@</span><b>everyone</b><span className="tiny faint">{t("bot.mention.everyone", "全体成员")}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
             <textarea
               className="ds-composer-input"
               ref={composerRef}
               aria-label={isGroup ? "在群里说一句" : "说点什么"}
+              aria-autocomplete="list"
+              aria-expanded={Boolean(mentionAt)}
+              aria-controls={mentionAt ? "im-mention-list" : undefined}
+              aria-activedescendant={mentionAt
+                ? (isGroup && mentionActive >= mentionTotal ? "im-mention-everyone" : mentionHits[mentionActive] ? `im-mention-${mentionHits[mentionActive].id}` : undefined)
+                : undefined}
               value={draft}
               rows={1}
               placeholder={isGroup
-                ? "在群里说一句；@名字 指定谁回，@everyone 全体"
+                ? t("bot.ph.group", "在群里说一句；@名字 指定谁回，@everyone 全体")
                 : bot?.persona?.mission
-                  ? `跟 ${bot?.name || "bot"} 说点什么`
-                  : `告诉 ${bot?.name || "bot"}：你负责…（第一句话会成为职责）`}
+                  ? t("bot.ph.say", "跟 {bot} 说点什么 · ＋ 带文本文件").replace("{bot}", bot?.name || "bot")
+                  : t("bot.ph.first", "告诉 {bot}：你负责…（第一句话会成为职责）").replace("{bot}", bot?.name || "bot")}
               onChange={(event) => {
                 setDraft(event.target.value);
-                // 群里输入 @ 时打开选择器：@ 前面必须是行首或空白，避免邮箱地址误触
-                if (isGroup) {
-                  const caret = event.target.selectionStart ?? event.target.value.length;
-                  const before = event.target.value.slice(0, caret);
-                  const at = before.lastIndexOf("@");
-                  const touch = at >= 0 && (at === 0 || /\s/.test(before[at - 1]));
-                  setMentionAt(touch ? { at, query: before.slice(at + 1) } : null);
-                }
+                syncMention(event.target.value, event.target.selectionStart ?? event.target.value.length);
                 const el = event.currentTarget;
                 el.style.height = "auto";
                 el.style.height = `${Math.min(120, el.scrollHeight)}px`;
               }}
+              onSelect={(event) => syncMention(event.currentTarget.value, event.currentTarget.selectionStart ?? 0)}
+              onBlur={() => { setMentionAt(null); mentionMutedRef.current = -1; }}
               onCompositionStart={() => { composingRef.current = true; }}
               onCompositionEnd={() => { composingRef.current = false; }}
               onKeyDown={(event) => {
                 // 中文输入法：候选态的回车只上屏（Chromium 会同时给 keyCode 229 与 isComposing）
                 if (composingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+                // @ 选择器打开时：↑↓ 选、Enter / Tab 插入、Esc 关掉；回车不能直接把半截 @ 发出去
+                if (mentionAt) {
+                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    const dir = event.key === "ArrowDown" ? 1 : -1;
+                    setMentionPick((mentionActive + dir + mentionTotal + 1) % (mentionTotal + 1));
+                    return;
+                  }
+                  if (event.key === "Enter" || event.key === "Tab") {
+                    event.preventDefault();
+                    insertMention(isGroup && mentionActive >= mentionTotal ? null : mentionHits[mentionActive]?.name ?? null);
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    mentionMutedRef.current = mentionAt.at;
+                    setMentionAt(null);
+                    return;
+                  }
+                }
                 if (event.key !== "Enter" || event.shiftKey) return;
                 const mod = event.metaKey || event.ctrlKey;
                 const enterToSend = state?.settings?.enterToSend ?? true;
@@ -3645,15 +3954,13 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
             />
             <div className="ds-composer-bar">
               <div className="ds-composer-tools">
-                <button className="ds-add" onClick={() => void pickAttachments()} disabled={attachments.length >= 3} title="把文本文件带进上下文" aria-label="附件"><PlusIcon size={14} /></button>
-                {isGroup && <span className="ds-chip static" title="输入 @名字 指定谁回">@ 谁回</span>}
-                <span className="ds-chip static">{isGroup ? "群聊" : bot?.role === "supervisor" ? "主管" : "员工"}</span>
+                <button className="ds-add" onClick={() => void pickAttachments()} disabled={attachments.length >= 3} title={attachments.length ? t("bot.attach.more", "再添加（已 {n}/3）").replace("{n}", String(attachments.length)) : t("bot.attach.add", "把文本文件带进上下文（≤3 个）")} aria-label={t("bot.attach", "附件")}><PlusIcon size={14} /></button>
               </div>
               <div className="ds-composer-trailing">
                 {!isGroup && (
                   <button
                     className="ds-model"
-                    title="这个机器人的模型"
+                    title={t("bot.model.title", "这个机器人的模型与思考档（思考档在设置 → 身份里改）")}
                     aria-label="选择模型"
                     aria-haspopup="menu"
                     aria-expanded={Boolean(modelMenu)}
@@ -3664,12 +3971,13 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                     }}
                   >
                     {currentModelName}
+                    {effortBadge && <span className="ds-effort">{effortBadge}</span>}
                     <ChevronDownIcon size={11} />
                   </button>
                 )}
                 {streaming || groupStream.length || (isGroup && busy === "group")
-                  ? <button className="ds-action-text" onClick={() => void cancel()}>停止</button>
-                  : <button className="ds-send" disabled={!draft.trim() && !attachments.length} onClick={() => void send()} title="发送" aria-label="发送"><SendIcon size={16} /></button>}
+                  ? <button className="ds-action-text" onClick={() => void cancel()}>{t("bot.stop", "停止")}</button>
+                  : <button className="ds-send" disabled={!draft.trim() && !attachments.length} onClick={() => void send()} title={t("bot.send", "发送")} aria-label={t("bot.send", "发送")}><SendIcon size={16} /></button>}
               </div>
             </div>
           </div>
@@ -3776,7 +4084,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 </div>
               )
             ))}
-            <button className="btn tiny" style={{ marginTop: 6 }} disabled={Boolean(busy)} onClick={() => void newGroupThread()}>＋ 新话题</button>
+            <button className="btn tiny" style={{ marginTop: 6 }} disabled={Boolean(busy)} onClick={() => void newGroupThread()}><PlusIcon size={12} /> 新话题</button>
             <div className="bot-label" style={{ marginTop: 10 }}>{t("bot.groupMembers", "群成员")} <em>{groupMembers.length}</em></div>
             {groupMembers.map((m) => (
               <div className="bot-group-member" key={m.id}>

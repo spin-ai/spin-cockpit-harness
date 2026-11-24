@@ -177,6 +177,23 @@ for (const m of cssText.matchAll(/([a-zA-Z-]+)\s*:\s*([^;{}]+)/g)) {
   for (const h of m[2].matchAll(/#[0-9a-fA-F]{3,8}/g)) declHex.add(h[0].toLowerCase());
 }
 check(declHex.size <= 60, `styles.css · 属性值里的裸色值 ≤60（现在 ${declHex.size}：${[...declHex].slice(0, 5).join(",")}）`);
+// 上一版检查跳过了 `--*`，于是 --ds-send-bg:#416ee6 这类一次性颜色一直藏在自定义属性里
+const dsBareHex = [...cssText.matchAll(/(--ds-[a-z-]+)\s*:\s*([^;}]+)/g)]
+  .filter((m) => /#[0-9a-fA-F]{3,8}/.test(m[2]) || /\b(?:rgba?|hsla?)\(/.test(m[2]))
+  .map((m) => m[1]);
+check(dsBareHex.length === 0, `styles.css · --ds-* 只吃调色板 token，不写裸色值（越界：${dsBareHex.slice(0, 4).join(",") || "无"}）`);
+// 图标行：点击区 20px（--icon-size），聊天里的动作按钮也算
+const wideDsAction = [...cssText.matchAll(/\.ds-action\{([^}]*)\}/g)]
+  .filter((m) => {
+    const w = m[1].match(/width:([0-9]+)px/);
+    const h = m[1].match(/height:([0-9]+)px/);
+    return (w && Number(w[1]) > 20) || (h && Number(h[1]) > 20);
+  });
+check(wideDsAction.length === 0, `styles.css · .ds-action 点击区 ≤20px（--icon-size）；现在 ${wideDsAction.length} 处越界`);
+// 字符当图标：聊天两个组件里不许再出现 ＋ × ✕ ⌄ ↻ ▦ ☰ ← → 当图标
+const CHAT_FILES = ["src/components/Bot.tsx", "src/components/TaskChat.tsx"];
+const charIcons = CHAT_FILES.filter((f) => /<[a-z][^>]*>\s*[＋×✕⌄⌃↻▦☰←→]\s*<\//.test(read(f)) || />\s*[＋×✕⌄⌃↻▦☰←→]\s*[^<{]*</.test(read(f)));
+check(charIcons.length === 0, `聊天组件 · 不用字符当图标（缺图标先补 Icons.tsx）：${charIcons.join("、") || "ok"}`);
 const bodyFont = cssText.includes("font-size:13px");
 check(bodyFont, "styles.css · 正文字号 13px 存在（11–12.5 不再承担正文）");
 

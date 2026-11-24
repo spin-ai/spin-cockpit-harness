@@ -267,3 +267,28 @@ export const CheckSquareIcon = (p: IconProps) => (
 export const PencilIcon = (p: IconProps) => (
   <Svg {...p}><path d="M4 20h4l10-10a2.8 2.8 0 0 0-4-4L4 16z" /><path d="m13.5 6.5 4 4" /></Svg>
 );
+
+/* 决策 / 步骤状态：替换 GLYPH 里的字符（? ⏸ ✕ ↗ ↩ · ✓ → !），字符不当图标用 */
+export const CheckIcon = (p: IconProps) => (
+  <Svg {...p}><path d="m5 12.5 4.5 4.5L19 7.5" /></Svg>
+);
+
+export const QuestionIcon = (p: IconProps) => (
+  <Svg {...p}><circle cx="12" cy="12" r="8.4" /><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .9-1 1.6v.3" /><circle cx="12" cy="17" r=".9" fill="currentColor" stroke="none" /></Svg>
+);
+
+export const PauseIcon = (p: IconProps) => (
+  <Svg {...p}><rect x="7" y="5" width="3.4" height="14" rx="1" /><rect x="13.6" y="5" width="3.4" height="14" rx="1" /></Svg>
+);
+
+export const ArrowUpRightIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M7 17 17 7M9 7h8v8" /></Svg>
+);
+
+export const ReplyIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M9 7 4 12l5 5" /><path d="M4 12h9.5a5.5 5.5 0 0 1 5.5 5.5V19" /></Svg>
+);
+
+export const DotIcon = (p: IconProps) => (
+  <Svg {...p}><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none" /></Svg>
+);

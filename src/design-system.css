@@ -27,6 +27,8 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
   --sidebar:#fafafa;--sidebar-accent:#f0f0f0;--border:#e5e5e5;--border-strong:#d4d4d4;--input:#e5e5e5;
   --fg:#0a0a0a;--fg-2:#404040;--muted:#525252;--faint:#6f6f6f;
   --brand:#171717;--brand-soft:#f2f2f2;--brand-line:#dedede;
+  /* 语义蓝：只用于「运行中 / 发送 / AI 动作」，不拿来做装饰 */
+  --blue:#416ee6;
   --ring:0 0 0 3px color-mix(in srgb,#171717 14%,transparent);
 }
 
@@ -37,6 +39,7 @@ body{letter-spacing:0;font-size:13px;line-height:1.55}
   --border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.14);--input:rgba(255,255,255,.16);
   --fg:#f0f0f0;--fg-2:#d4d4d4;--muted:#a3a3a3;--faint:#8a8a8a;
   --brand:#e5e5e5;--brand-soft:#262626;--brand-line:#3a3a3a;
+  --blue:#7aaaff;
   --ring:0 0 0 3px rgba(255,255,255,.14);
   --shadow-1:0 1px 2px rgba(0,0,0,.22);
   --shadow-2:0 10px 24px rgba(0,0,0,.34);

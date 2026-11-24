@@ -36,6 +36,8 @@ declare global {
       onBotDelta(cb: (p: { botId: string; delta: string; groupId?: string; threadId?: string; name?: string }) => void): () => void;
       onBotTool(cb: (p: { botId: string; name: string; phase: "start" | "done"; groupId?: string; threadId?: string; botName?: string }) => void): () => void;
       onBotPhase(cb: (p: { botId: string; phase: "thinking" | "tool" | "done"; groupId?: string; threadId?: string; name?: string; tool?: string }) => void): () => void;
+      /** 推理模型的思考流（reasoning_content）：单独一块显示，不和正文混 */
+      onBotThought?(cb: (p: { botId: string; groupId?: string; threadId?: string; name?: string; delta: string }) => void): () => void;
       onBotGroupMessage(cb: (p: { groupId: string; message: BotGroupMessage }) => void): () => void;
       onBotMessage(cb: (p: { botId: string; text: string; turnId: string }) => void): () => void;
       /** 作用域增量：只带这个 bot 变了的切片（botTurns / botGroupMessages / botChats / itemCounts） */

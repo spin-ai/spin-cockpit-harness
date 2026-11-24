@@ -38,6 +38,13 @@ export interface Todo {
   agentId: string | null; /** 谁派/谁的活：机器人 id（派单链把活挂回 bot 用；老任务为空） */ botId?: string | null; priority: string; due: string; parentId: string | null; tags: string[];
   subtasks: Subtask[]; blockedBy: string[]; missingWriteback: boolean; lastRunFailed: boolean; confirmed: boolean; projectId?: string;
   cwd: string; createdAt: number; updatedAt: number;
+  /**
+   * 审批档（只影响「dsh 自己要不要逐条问」）：
+   *  - 缺省 / "ask"：写操作逐条审批（workspace-write + approval ask）
+   *  - "full-access"：这个任务里不再逐条问（danger-full-access + approval never）
+   * 人只在「开跑 / 任务设置」里改；bot 不能自己改。
+   */
+  permission?: "ask" | "full-access";
   kind?: "task" | "mission" | "chat";
   missionState?: MissionState | null;
 }
@@ -135,7 +142,7 @@ export interface BotRoutine {
   lastFiredAt?: number;
   lastError?: string;
 }
-export type BotDecision = "answered" | "replied" | "reported" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted" | "watching";
+export type BotDecision = "answered" | "replied" | "reported" | "silent" | "blocked" | "escalated" | "asked" | "streaming" | "interrupted" | "failed" | "watching";
 /** 一条 bot 回合：说了什么 / 为什么沉默，两者都进审计。 */
 export interface BotTurn {
   id: string;
@@ -234,6 +241,8 @@ export interface RuntimeView {
 }
 export interface Run {
   id: string; todoId: string | null; agentId: string; status: string; trigger: string;
+  /** waiting_input 时在等什么："approval" = 有一条权限请求挂着（和「等人回答问题」分开） */
+  waitingFor?: "approval";
   /** 消息宿主：纯聊天 / 探索 Run 没有 todoId 时用它挂到会话 */
   threadId?: string | null;
   startedAt: number | null; endedAt: number | null; cost: number;

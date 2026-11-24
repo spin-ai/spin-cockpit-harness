@@ -6,17 +6,20 @@ import type { State, Todo, TodoStatus } from "../types";
 import { STATUS, activeRun, agentOf, duration, lastRun } from "../ui";
 import { Splitter, useStoredSize } from "./Splitter";
 import {
-  ChevronDownIcon, ChevronRightIcon, EllipsisIcon, FolderPlusIcon,
-  PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon, PlusIcon, SearchIcon, SlidersIcon, XIcon,
+  EllipsisIcon, FolderPlusIcon,
+  CheckIcon, ChevronDownIcon, ChevronRightIcon, DotIcon, PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon, PlusIcon, SearchIcon, SlidersIcon, XIcon,
 } from "./Icons";
 import { ListContextMenu } from "./ListContextMenu";
 import { RowMenu } from "./RowMenu";
 import { requestTerminalAt } from "../terminal-events";
+import { useT } from "../i18n";
 import { assignmentsForBot } from "../selectors/assignments";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 type Filter = "all" | "needs" | "active" | "review" | "confirmed";
 
+const groupLabel = (t: (k: string, f?: string) => string, g: { id: string; label: string }) => t("task.group." + g.id, g.label);
+/** 分组：label 是中文兜底，渲染时走 t("task.group.<id>") */
 const GROUPS: { id: string; label: string; statuses: TodoStatus[] }[] = [
   { id: "todo", label: "待执行", statuses: ["todo"] },
   { id: "active", label: "进行中", statuses: ["queued", "in_progress", "waiting_input"] },
@@ -25,20 +28,21 @@ const GROUPS: { id: string; label: string; statuses: TodoStatus[] }[] = [
 ];
 
 function TaskPlan({ items, expanded }: { items: Todo["subtasks"]; expanded: boolean }) {
+  const t = useT();
   const done = items.filter((s) => s.status === "done").length;
   const current = items.find((s) => s.status === "in_progress");
   const shown = expanded ? items : current ? [current] : [];
   return (
     <div className="task-plan">
       <div className="task-plan-head tiny">
-        <span className="muted">Agent 计划</span>
+        <span className="muted">{t("task.plan.title", "Agent 计划")}</span>
         <span className="mono faint">{done}/{items.length}</span>
       </div>
       {shown.length > 0 && (
         <ul className="task-plan-list">
           {shown.map((s) => (
             <li key={s.id} className={`task-plan-step st-${s.status}`}>
-              <span className="task-plan-glyph">{s.status === "done" ? "✓" : s.status === "in_progress" ? "◐" : s.status === "cancelled" ? "✕" : "○"}</span>
+              <span className="task-plan-glyph">{s.status === "done" ? <CheckIcon size={11} /> : s.status === "cancelled" ? <XIcon size={11} /> : <DotIcon size={11} />}</span>
               <span className="ellipsis" title={s.title}>{s.title}</span>
             </li>
           ))}
@@ -67,6 +71,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
   botUnread?: number;
   activeBotId?: string | null;
 }) {
+  const t = useT();
   /** 左栏顶部：等批准的计划（审批只在终端 —— 原型 owner-workspaces.html） */
   const missionsNeedingPlan = useMemo(() => {
     const plans = state.missionPlans ?? [];
@@ -325,21 +330,21 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Escape") setQuery(""); }}
-            placeholder="搜索项目 / 任务…"
-            aria-label="搜索项目与任务"
+            placeholder={t("task.search.placeholder", "搜索项目 / 任务…")}
+            aria-label={t("task.search.label", "搜索项目与任务")}
           />
-          {searching && <button className="icon-btn" title="清除搜索" aria-label="清除搜索" onClick={() => setQuery("")}><XIcon size={11} /></button>}
+          {searching && <button className="icon-btn" title={t("task.search.clear", "清除搜索")} aria-label={t("task.search.clear", "清除搜索")} onClick={() => setQuery("")}><XIcon size={11} /></button>}
         </div>
         <div className="task-search-row">
           {/* 状态筛选收成下拉：和范围 / 图标动作同一行（一个区域只有一行 chrome） */}
-          <select className="task-filter-select" value={filter} title="按状态筛选" onChange={(e) => setFilter(e.target.value as Filter)}>
+          <select className="task-filter-select" value={filter} title={t("task.filter.title", "按状态筛选")} onChange={(e) => setFilter(e.target.value as Filter)}>
             {([["all", "全部"], ["needs", "待处理"], ["active", "进行中"], ["review", "待确认"], ["confirmed", "已完成"]] as [Filter, string][]).map(([id, label]) => (
-              <option key={id} value={id}>{label}</option>
+              <option key={id} value={id}>{t("task.filter." + id, label)}</option>
             ))}
           </select>
           {onToggleScope && (
-            <button className="task-scope" title="任务范围：只看当前项目 / 看所有项目" onClick={onToggleScope}>
-              {allProjects ? "全部项目" : "本项目"}
+            <button className="task-scope" title={t("task.scope.title", "任务范围：只看当前项目 / 看所有项目")} onClick={onToggleScope}>
+              {allProjects ? t("task.scope.all", "全部项目") : t("task.scope.this", "本项目")}
             </button>
           )}
           <span className="spacer" />
@@ -383,7 +388,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
               const items = itemsFor(g);
               return (
                 <section key={g.id} className={`todo-board-col ${g.id}`}>
-                  <header><span>{g.label}</span><em>{items.length}</em></header>
+                  <header><span>{groupLabel(t, g)}</span><em>{items.length}</em></header>
                   <div className="todo-board-cards">
                     {items.map((t) => (
                       <button key={t.id} className={`todo-board-card ${t.id === selectedId ? "on" : ""} ${t.status === "waiting_input" ? "waiting" : ""}`} onClick={() => onSelect(t.id)} title={t.desc || t.title}>
@@ -429,7 +434,7 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
           return (
             <section className="todo-group" key={g.id}>
               <button className={`todo-group-head ${g.id}`} onClick={() => toggle(g.id)}>
-                <span className="row gap6"><span className="chev">{isCollapsed ? "▸" : "▾"}</span>{g.label}</span>
+                <span className="row gap6"><ChevronRightIcon size={12} className={"chev-ico" + (isCollapsed ? "" : " rot-90")} />{groupLabel(t, g)}</span>
                 <span>{items.length}</span>
               </button>
               {!isCollapsed && items.map((t) => (
