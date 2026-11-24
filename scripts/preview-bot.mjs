@@ -568,10 +568,16 @@ check("群聊：没人开口时有「正在想」行", await ev(`!!document.quer
 await sleep(250);
 check("群聊：后端回声到了就不再画乐观气泡（不重复）", await ev(`!document.querySelector(".ds-pending")`));
 check("群聊：逐字流式可见（不等整段）", (await text(".ds-streaming")).includes("先说一半"));
-await run(`
-  for (let i = 0; i < 20 && !document.querySelector(".ds-streaming"); i++) await new Promise((r) => setTimeout(r, 25));
-  return true;`);
-check("群聊：流式块上能「停止」", await ev(`!!document.querySelector(".ds-streaming .ds-action-text")`));
+// 流式块存在的时间窗很短（mock 是分段吐的）：在同一段脚本里轮询到就返回，避免两次往返之间它已经收尾
+const streamStop = await ev(`(async () => {
+  for (let i = 0; i < 80; i++) {
+    const btn = document.querySelector(".ds-streaming .ds-action-text");
+    if (btn) return true;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return false;
+})()`);
+check("群聊：流式块上能「停止」", streamStop === true);
 await shot(path.join(OUT, "bot-group-stream.png"));
 await sleep(700);
 check("群聊：跑完后落库、临时态收干净", (await text(".bot-stream")).includes("先说一半，说完了。") && await ev(`!document.querySelector(".ds-pending") && !document.querySelector(".ds-streaming")`), JSON.stringify((await text(".bot-stream")).slice(-160)));
