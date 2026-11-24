@@ -580,37 +580,28 @@ await run(`
   const send = [...document.querySelectorAll(".ds-send")].find((b) => b.getBoundingClientRect().width > 0);
   if (!send) throw new Error("没有发送按钮");
   send.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  // 回声 80ms 后就到：必须在同一段脚本里观察「乐观气泡出现过」，跨 CDP 往返会直接读到回声态
-  let seen = false;
-  for (let i = 0; i < 12 && !seen; i++) {
-    seen = Boolean(document.querySelector(".ds-pending"));
-    if (!seen) await new Promise((r) => setTimeout(r, 10));
-  }
-  window.__pendingSeen = seen;
-  return true;`);
-check("群聊：自己的话立刻出现（不等后端）", await ev(`Boolean(window.__pendingSeen)`));
-check("群聊：没人开口时有「正在想」行", await ev(`!!document.querySelector(".ds-typing")`), JSON.stringify((await text(".bot-stream")).slice(-160)));
-await sleep(250);
-check("群聊：后端回声到了就不再画乐观气泡（不重复）", await ev(`!document.querySelector(".ds-pending")`));
-// 流式块存在的时间窗很短（mock 是分段吐的）：一次轮询里把「逐字可见」和「块上能停止」都记下来，
-// 分两次读会在两次 CDP 往返之间正好错过它
-const streamSeen = await ev(`(async () => {
-  let partial = false;
-  let stop = false;
-  for (let i = 0; i < 120; i++) {
-    const el = document.querySelector(".ds-streaming");
-    if (el) {
-      if ((el.textContent || "").includes("先说一半")) partial = true;
-      if (el.querySelector(".ds-action-text")) stop = true;
-      if (partial && stop) break;
+  // 回声 80ms 后就到、流式 220–640ms 之间：同一段脚本里把四种状态都记下来，跨 CDP 往返会整段错过
+  const seen = { pending: false, typing: false, partial: false, stop: false };
+  for (let i = 0; i < 90; i++) {
+    if (document.querySelector(".ds-pending")) seen.pending = true;
+    if (document.querySelector(".ds-typing")) seen.typing = true;
+    const block = document.querySelector(".ds-streaming");
+    if (block) {
+      if ((block.textContent || "").includes("先说一半")) seen.partial = true;
+      if (block.querySelector(".ds-action-text")) seen.stop = true;
     }
+    if (seen.pending && seen.typing && seen.partial && seen.stop) break;
     await new Promise((r) => setTimeout(r, 20));
   }
-  return JSON.stringify({ partial, stop });
-})()`);
-const streamSeenObj = JSON.parse(streamSeen || "{}");
-check("群聊：逐字流式可见（不等整段）", streamSeenObj.partial === true, streamSeen);
-check("群聊：流式块上能「停止」", streamSeenObj.stop === true, streamSeen);
+  window.__groupSeen = seen;
+  return true;`);
+const groupSeen = JSON.parse((await ev(`JSON.stringify(window.__groupSeen || {})`)) || "{}");
+check("群聊：自己的话立刻出现（不等后端）", groupSeen.pending === true, JSON.stringify(groupSeen));
+check("群聊：没人开口时有「正在想」行", groupSeen.typing === true, JSON.stringify(groupSeen));
+await sleep(250);
+check("群聊：后端回声到了就不再画乐观气泡（不重复）", await ev(`!document.querySelector(".ds-pending")`));
+check("群聊：逐字流式可见（不等整段）", groupSeen.partial === true, JSON.stringify(groupSeen));
+check("群聊：流式块上能「停止」", groupSeen.stop === true, JSON.stringify(groupSeen));
 await shot(path.join(OUT, "bot-group-stream.png"));
 await sleep(700);
 check("群聊：跑完后落库、临时态收干净", (await text(".bot-stream")).includes("先说一半，说完了。") && await ev(`!document.querySelector(".ds-pending") && !document.querySelector(".ds-streaming")`), JSON.stringify((await text(".bot-stream")).slice(-160)));
@@ -907,7 +898,13 @@ await run(`
   if (hit) hit.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 250));
   return true;`);
-check("会话内查找：点击跳到那一条并闪一下", await ev(`!!document.querySelector(".chat-flash")`));
+check("会话内查找：点击跳到那一条并闪一下", await ev(`(async () => {
+  for (let i = 0; i < 40; i++) {
+    if (document.querySelector(".chat-flash")) return true;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return false;
+})()`));
 await run(`
   const close = document.querySelector('.chat-search [aria-label="关闭查找"]');
   if (close) close.dispatchEvent(new MouseEvent("click", { bubbles: true }));
