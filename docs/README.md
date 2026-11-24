@@ -94,7 +94,7 @@
 | [`product/REQ-bot-workspace.md`](product/REQ-bot-workspace.md) | 需求 | 部分落地 | **机器人工作区交接**：把项目 / worktree / 终端交给 bot 的 21 条 User Story + 10 条 IR + 13 条 SR，参照 ORCA 的 hand-over / work list；含终端 agent 窄通道 / 审批回传 / 远端隧道 / 手动远端 shell |
 | [`product/REQ-bot-group.md`](product/REQ-bot-group.md) | 需求 | 部分落地 | **机器人群聊**：@ 解析 / 投递规则 / 成员接力 / 共享上下文 / 未读 / 话题 / 附件 / 群档案的 19 条 User Story + 7 条 IR + 16 条 SR，先纠正「ORCA 没有群聊」的前提 |
 | [`product/REQ-workbench-execution.md`](product/REQ-workbench-execution.md) | 需求 | 部分落地 | **工作台任务与执行体验**：任务派活、探索 Run、手动终端、纯聊天、五种来源授权与关闭视图语义的 8 条 User Story |
-| [`product/REQ-requirements.md`](product/REQ-requirements.md) | 需求 | 部分落地 | **项目需求管理**：RR/IR/SR/US 四层、项目级裁剪、追溯矩阵、主管 Bot 与会话 / UI 联动；已落 RR/IR/SR/US M0 |
+| [`product/REQ-requirements.md`](product/REQ-requirements.md) | 需求 | 部分落地 | **项目需求管理**：RR/IR/SR/US 四层、项目级裁剪、追溯矩阵、主管 Bot 与会话 / UI 联动；已落 RR/IR/SR/US M0 + 只读追溯矩阵 |
 | [`product/VERIFY-bot-intelligence.md`](product/VERIFY-bot-intelligence.md) | 需求 | 记录 | **机器人智能度验收**：日期 + 命令 + 问题 + 答成什么样；含网关 function calling 探针与三问端到端，以及被推翻的自评 |
 | [`arch/ARCH-key-tech.md`](arch/ARCH-key-tech.md) | 架构 | 部分落地 | **五件关键技术**：解析 / 编排 / 整理 / 记忆 / 画像的边界、现状、判据、风险与一句话应对 |
 | [`arch/ARCH-workbench-execution.md`](arch/ARCH-workbench-execution.md) | 架构 | 部分落地 | **工作台任务与执行模型**：六类对象、Carrier、探索后关联、视图与进程解耦、统一授权及 M0–M4 迁移（M1/M2 核心已落地） |

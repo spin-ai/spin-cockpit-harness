@@ -9,6 +9,7 @@
 - **持久化**：`requirements` 表 + `State.requirements`；写入 / 读取 / 回放校验已在 `tests/db.test.mjs`
 - **主进程 actions**：`requirementCreate / requirementUpdate / requirementSetStatus / requirementDelete`；层级、父子、key、状态闸门走 `electron/requirements/core.mjs` 纯函数
 - **入口**：项目页页头「需求」、项目行菜单「需求」、命令面板「需求（RR → IR → SR → US）」
+- **追溯矩阵（只读）**：需求页第二个 tab；行 = 需求链，RR 分组，列 IR / SR / US；缺下游 / 缺验收；只看缺口；点 chip 回需求池并选中
 - **测试**：`tests/requirements/core.test.mjs`（四层 / 父子 / key / 验收 / 状态闸门）；`npm test -- requirements`
 
 ### Changed（清理 A：重复的 helper 与死代码）

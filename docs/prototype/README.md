@@ -17,7 +17,7 @@
 | [`bot.html`](bot.html) | Bot（会话与审计） | 主动开口的 bot 不能只有气泡：沉默 / 被频控 / 转人工要和「说过的话」平级可见；每条都要能展开「为什么说」。配置（人设 / 执行体 / 日程 / 配额）在应用的「机器人」页，不在这张原型里 |
 | [`mission-route.html`](mission-route.html) | Mission 动线（三条备选） | 同一条 Mission 在任务面板 / 机器人 / 场景三处各说各话：机器人占了独立一页，任务、项目、会话分散；场景 cast 里没有的 agent 会被静默丢掉；三种动线分别把事实源放在任务 / 执行体 / Mission |
 | [`owner-workspaces.html`](owner-workspaces.html) | 两种开发逻辑（对话 / 多终端）工作台 | 把「对话开发」和「多终端开发」两种逻辑用同一条外壳强行共用：`TaskPane` 里塞机器人、`TaskChat` 里判四种会话、bot 起的 run 在终端面板里看不到、同一个 bot 三处入口。这一版把 **owner** 做成一等：Bot 工作台（会话为主）/ 项目工作台（终端为主），run 成为可从会话 / TODO / 终端三处独立进入的面 |
-| [`requirements.html`](requirements.html) | 需求管理（RR → IR → SR → US） | 需求没有结构化承载；原型验证左树 / 详情 / 状态闸门 / 验收 / 助手会话；当前分支已落四层 M0 |
+| [`requirements.html`](requirements.html) | 需求管理（RR → IR → SR → US） | 需求没有结构化承载；原型验证左树 / 详情 / 状态闸门 / 验收 / 追溯矩阵 / 助手会话；当前分支已落四层 M0 + 只读矩阵 |
 | [`entry-points.html`](entry-points.html) | 入口总表（23 张卡，14 个能造出任务的入口） | 上一版把「表 / 时序 / 界面」横向拆成三章，读一个入口要来回跑三次。现在**一个入口一张卡**：卡里就是「条件 / 结果 / 代码 + 时序图 + 界面示意图」，按「这句话从哪儿来」分 8 组 |
 
 ### 3D spike（实验，不属于上面这些）

@@ -4,6 +4,7 @@ import { PageHeader } from "./PageHeader";
 import { Overview } from "./Overview";
 import { EmptyState } from "./EmptyState";
 import { ChevronDownIcon, ChevronLeftIcon, PlusIcon, XIcon } from "./Icons";
+import { Tabs } from "./Tabs";
 import { confirmDialog } from "./ConfirmHost";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
@@ -87,9 +88,11 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [tab, setTab] = useState<"pool" | "matrix">("pool");
   const [query, setQuery] = useState("");
   const [levelFilter, setLevelFilter] = useState<"all" | RequirementLevel>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | RequirementStatus>("all");
+  const [matrixOnlyGaps, setMatrixOnlyGaps] = useState(false);
   const [creating, setCreating] = useState<{ parentId: string | null; level: RequirementLevel; title: string } | null>(null);
   const [gate, setGate] = useState<{ missing: string[]; message: string } | null>(null);
   const [form, setForm] = useState<Record<DraftKey, string>>({
@@ -132,6 +135,31 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
   };
   const flat = projectReqs.filter(matches).sort(byCreated);
   const gapCount = projectReqs.filter((r) => gapOf(r, childrenOf(projectReqs, r.id))).length;
+  const matrixColumns: RequirementLevel[] = ["ir", "sr", "us"];
+  const buildPaths = (): Requirement[][] => {
+    const out: Requirement[][] = [];
+    const walk = (req: Requirement, chain: Requirement[]) => {
+      const next = NEXT_LEVEL[req.level];
+      const children = childrenOf(projectReqs, req.id);
+      if (!next || !children.length) { out.push([...chain, req]); return; }
+      for (const child of children) walk(child, [...chain, req]);
+    };
+    for (const root of roots) walk(root, []);
+    return out;
+  };
+  const matrixPaths = buildPaths();
+  const pathHasGap = (path: Requirement[]) => {
+    if (matrixColumns.some((level) => !path.some((req) => req.level === level))) return true;
+    const last = path[path.length - 1];
+    return !!gapOf(last, childrenOf(projectReqs, last.id));
+  };
+  const matrixShown = matrixPaths.filter((path) => !matrixOnlyGaps || pathHasGap(path));
+  const matrixGroups = new Map<string, { root: Requirement; paths: Requirement[][] }>();
+  for (const path of matrixShown) {
+    const root = path[0];
+    if (!matrixGroups.has(root.id)) matrixGroups.set(root.id, { root, paths: [] });
+    matrixGroups.get(root.id)!.paths.push(path);
+  }
 
   const save = async (field: DraftKey, value: string) => {
     if (!selected) return;
@@ -275,6 +303,10 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
       <PageHeader
         title="需求"
         subtitle={`${project?.name || "未选择项目"} · RR → IR → SR → US · 先完成需求定义`}
+        tabs={<Tabs ariaLabel="需求视图" value={tab} onChange={(id) => setTab(id as "pool" | "matrix")} items={[
+          { id: "pool", label: "需求池" },
+          { id: "matrix", label: "追溯矩阵" },
+        ]} />}
         actions={<div className="row gap8">
           {onBack ? <button className="btn tiny" onClick={onBack} title="返回项目" aria-label="返回项目"><ChevronLeftIcon size={14} /></button> : null}
           <select className="req-select" aria-label="切换项目" value={project?.id || ""} onChange={(e) => void switchProject(e.target.value)}>
@@ -292,7 +324,7 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
         { label: "已完成", value: projectReqs.filter((r) => r.status === "done").length },
       ]} />
 
-      <div className="req-shell">
+      {tab === "pool" ? <div className="req-shell">
         <section className="req-panel req-tree" aria-label="需求树">
           <div className="req-tree-tools">
             <input className="req-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索 key / 标题 / 正文" aria-label="搜索需求" />
@@ -376,7 +408,10 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
                   <input className="req-input" value={form.owner} onChange={(e) => setForm((p) => ({ ...p, owner: e.target.value }))} onBlur={() => void save("owner", form.owner)} placeholder="—" />
                 </label>
                 <label className="req-meta-field grow"><span>来源</span>
-                  <input className="req-input" value={form.source} onChange={(e) => setForm((p) => ({ ...p, source: e.target.value }))} onBlur={() => void save("source", form.source)} placeholder="客户 / 内部 / 数据" />
+                  <input className="req-input" data-req-field="source" value={form.source} onChange={(e) => setForm((p) => ({ ...p, source: e.target.value }))} onBlur={() => void save("source", form.source)} placeholder="客户 / 内部 / 数据" />
+                </label>
+                <label className="req-meta-field grow"><span>提出人</span>
+                  <input className="req-input" data-req-field="requester" value={form.requester} onChange={(e) => setForm((p) => ({ ...p, requester: e.target.value }))} onBlur={() => void save("requester", form.requester)} placeholder="谁提的" />
                 </label>
                 {selected.status === "draft" && childrenOf(projectReqs, selected.id).length === 0 ? (
                   <button className="btn tiny ghost req-delete" onClick={() => void removeSelected()}>删除草稿</button>
@@ -486,7 +521,43 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
             </div>
           )}
         </section>
-      </div>
+      </div> : (
+        <section className="req-panel req-matrix-panel" aria-label="追溯矩阵">
+          <div className="req-matrix-tools">
+            <label className="req-check"><input type="checkbox" checked={matrixOnlyGaps} onChange={(e) => setMatrixOnlyGaps(e.target.checked)} /> 只看缺口</label>
+            <span className="req-legend"><b>✓</b> 已批准 <b>○</b> 进行中 <b>—</b> 缺</span>
+            <span className="req-matrix-hint">行 = 一条需求链；缺下游 / 缺验收都算缺口</span>
+          </div>
+          <div className="req-matrix-scroll">
+            {matrixShown.length ? (
+              <table className="req-matrix">
+                <thead><tr>{matrixColumns.map((level) => <th key={level}>{LEVEL_LABEL[level]}</th>)}</tr></thead>
+                <tbody>
+                  {[...matrixGroups.values()].flatMap((group) => [
+                    <tr key={group.root.id} className="req-matrix-group">
+                      <th colSpan={matrixColumns.length}>
+                        <span className="req-key">{group.root.key}</span>
+                        <span className="req-row-title">{group.root.title}</span>
+                        <span className="req-row-end">{gapOf(group.root, childrenOf(projectReqs, group.root.id)) ? <span className="req-chip warn">{gapOf(group.root, childrenOf(projectReqs, group.root.id))!.label}</span> : null}</span>
+                      </th>
+                    </tr>,
+                    ...group.paths.map((path, index) => (
+                      <tr key={`${path.map((r) => r.id).join("-")}-${index}`}>
+                        {matrixColumns.map((level) => {
+                          const item = path.find((req) => req.level === level);
+                          if (!item) return <td key={level}><span className="req-matrix-miss">—</span></td>;
+                          const gap = gapOf(item, childrenOf(projectReqs, item.id));
+                          return <td key={level}><button className="req-matrix-chip" onClick={() => { setSelectedId(item.id); setTab("pool"); }} title={`${item.key} · ${STATUS_LABEL[item.status]}`}><span className={`req-dot ${item.status}`} /><span>{item.key}</span>{gap ? <span className="req-chip warn">{gap.label}</span> : null}</button></td>;
+                        })}
+                      </tr>
+                    )),
+                  ])}
+                </tbody>
+              </table>
+            ) : <div className="inline-empty">没有匹配的需求链。</div>}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
