@@ -1872,13 +1872,25 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
         // 还没吐字时 groupStream 是空的，但仍可能有成员在跑：按成员逐个 abort
         const ids = groupStream.length ? groupStream.map((s) => s.botId) : groupMembers.map((m) => m.id);
         await Promise.all(ids.map((id) => act("botCancel", { botId: id })));
-        notify("已取消这次回复");
-        return;
+      } else {
+        await act("botCancel", { botId: bot?.id });
       }
-      await act("botCancel", { botId: bot?.id });
       notify("已取消这次回复");
     }
     catch (err) { notify(String((err as Error)?.message || err)); }
+    finally {
+      // 叫停是本地就能收的事：先把临时态收干净（发送键立即回来），再去刷回合账
+      // （后端把这一轮收成 interrupted 需要一点时间，不能让输入框一直卡在「停止」）
+      setStreaming(null);
+      setGroupStream([]);
+      setGroupPhases({});
+      setPendingUser(null);
+      setPendingOwner(null);
+      setBusy("");
+      revealRef.current.one = { target: "", shown: 0 };
+      revealRef.current.group.clear();
+      void load();
+    }
   };
 
   /** 重试一轮：后端复用原话重跑，前端只负责刷新 */

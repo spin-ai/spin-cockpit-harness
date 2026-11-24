@@ -568,6 +568,9 @@ check("群聊：没人开口时有「正在想」行", await ev(`!!document.quer
 await sleep(250);
 check("群聊：后端回声到了就不再画乐观气泡（不重复）", await ev(`!document.querySelector(".ds-pending")`));
 check("群聊：逐字流式可见（不等整段）", (await text(".ds-streaming")).includes("先说一半"));
+await run(`
+  for (let i = 0; i < 20 && !document.querySelector(".ds-streaming"); i++) await new Promise((r) => setTimeout(r, 25));
+  return true;`);
 check("群聊：流式块上能「停止」", await ev(`!!document.querySelector(".ds-streaming .ds-action-text")`));
 await shot(path.join(OUT, "bot-group-stream.png"));
 await sleep(700);
@@ -619,9 +622,13 @@ check("BOT 工作台：回合流自己滚、整页不动", Boolean(wsMetrics && 
 // 另一条入口：从机器人列表 / 派单进来的是 view "bot"，外壳必须同样整页填充
 await run(`
   window.dispatchEvent(new CustomEvent("harness:view", { detail: "bot" }));
+  for (let i = 0; i < 40 && !document.querySelector(".wide.bot-workspace"); i++) await new Promise((r) => setTimeout(r, 25));
+  // 外壳在，但必须真的有一条会话打开着，才有转录可量（会话列表态没有 .bot-stream）
+  const item = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("PM"));
+  if (item) { item.dispatchEvent(new MouseEvent("click", { bubbles: true })); }
   for (let i = 0; i < 40 && !document.querySelector(".wide.bot-workspace .bot-stream"); i++) await new Promise((r) => setTimeout(r, 25));
   return true;`);
-check("view=bot 也用整页填充外壳（否则整页滚，跟不上）", await ev(`!!document.querySelector(".wide.bot-workspace .bot-stream")`));
+check("view=bot 也用整页填充外壳（否则整页滚，跟不上）", await ev(`(() => { const shell = document.querySelector(".wide.bot-workspace"); if (!shell) return false; const stream = document.querySelector(".bot-stream"); return !stream || shell.contains(stream); })()`));
 await run(`
   const item = [...document.querySelectorAll(".bot-item")].find((b) => b.textContent.includes("项目群"));
   if (item) { item.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 300)); }
@@ -809,7 +816,20 @@ check("重试：点了用 turnId 调 botRetry", retryObj.after === retryObj.befo
 // 上下文账：composer 上方一行，显示字符数与记忆占比；>80% 用琥珀文字（不铺底色）
 const ctxText = await text(".ds-context");
 check("上下文账：显示字符 / 记忆占比", /上下文/.test(ctxText) && /16\.8k/.test(ctxText) && /记忆 85%/.test(ctxText), ctxText);
-check("上下文账：>80% 用琥珀文字（不铺底色）", await ev(`(() => { const el = document.querySelector(".ds-context"); if (!el) return false; if (!el.classList.contains("warn")) return false; const s = [...el.querySelectorAll("span")][0]; return getComputedStyle(s).color !== getComputedStyle(el).color && getComputedStyle(el).backgroundColor === "rgba(0, 0, 0, 0)"; })()`), ctxText);
+// 琥珀色直接用 token 探一个基准色，别按 RGB 字面值猜（主题不同值不一样）
+const ctxColor = await ev(`(() => {
+  const el = document.querySelector(".ds-context");
+  if (!el) return "missing";
+  const probe = document.createElement("span");
+  probe.style.color = "var(--amber)";
+  document.body.appendChild(probe);
+  const amber = getComputedStyle(probe).color;
+  probe.remove();
+  const span = el.querySelector("span");
+  return JSON.stringify({ warn: el.classList.contains("warn"), amber, span: getComputedStyle(span).color, elColor: getComputedStyle(el).color, bg: getComputedStyle(el).backgroundColor });
+})()`);
+const ctxColorObj = JSON.parse(ctxColor || "{}");
+check("上下文账：>80% 用琥珀文字（不铺底色）", ctxColorObj.warn === true && ctxColorObj.span === ctxColorObj.amber && ctxColorObj.bg === "rgba(0, 0, 0, 0)", ctxColor);
 // 上下文账是入口不是装饰：点它就落到轨迹（能看这一轮的上下文构成）
 await run(`
   const el = document.querySelector(".ds-context");
@@ -834,9 +854,10 @@ await run(`
   setter.call(box, "失败测试：让网关报错");
   box.dispatchEvent(new Event("input", { bubbles: true }));
   await new Promise((r) => setTimeout(r, 80));
-  const sendBtn = vis(".ds-send");
-  // 上一拍可能还在生成（composer 会变成「停止」）：等它回到「发送」再点
-  for (let i = 0; i < 20 && !vis(".ds-send"); i++) await new Promise((r) => setTimeout(r, 25));
+  // 上一拍可能还在生成（composer 会变成「停止」）：先停下来，再等「发送」回来
+  const stopBtn = [...document.querySelectorAll(".ds-action-text")].find((b) => b.textContent.trim() === "停止" && b.getBoundingClientRect().width > 0);
+  if (stopBtn) { stopBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 250)); }
+  for (let i = 0; i < 40 && !vis(".ds-send"); i++) await new Promise((r) => setTimeout(r, 25));
   const send2 = vis(".ds-send");
   if (!send2) throw new Error("没有可见的发送按钮（仍在生成中）");
   send2.dispatchEvent(new MouseEvent("click", { bubbles: true }));
