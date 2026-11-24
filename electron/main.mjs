@@ -5953,7 +5953,7 @@ const actions = {
     return { ok: true };
   },
   /** 发一句：先落「你」的消息，再按 replyMode / @提及 逐个 bot 生成回复并落库 */
-  botGroupSend: async ({ id, text, threadId, attachments } = {}) => {
+  botGroupSend: async ({ id, text, threadId, attachments, retryOf, onlyBotId } = {}) => {
     const gid = String(id || "");
     const group = (store.state.botGroups || []).find((g) => g.id === gid);
     if (!group) throw new Error("群不存在");
@@ -5999,8 +5999,22 @@ const actions = {
       throw new Error(`群里没有「${audience.unknown.join(" / ")}」：可用 ${members.map((m) => m.name).join(" / ")}`);
     }
     if (audience.replierMissing) throw new Error("固定回复的成员不在群里了，换一个或改成 @ 谁谁回");
-    const targets = all.filter((b) => audience.ids.includes(b.id));
+    let targets = all.filter((b) => audience.ids.includes(b.id));
     const msgs = store.state.botGroupMessages || (store.state.botGroupMessages = []);
+    /** 群聊单条重试：只让原成员重答同一句，不重复落 owner 消息、不叫醒别人（SR-Chat-11） */
+    const retryId = String(retryOf || "").trim();
+    let retryOfOwner = null;
+    if (retryId) {
+      const original = msgs.find((m) => m.id === retryId && m.groupId === gid);
+      if (!original || original.author !== "bot") throw new Error("只能重试群里某个成员的一条回复");
+      const want = String(onlyBotId || original.botId || "").trim();
+      const bot = all.find((b) => b.id === want);
+      if (!bot) throw new Error("重试的成员不在群里了");
+      retryOfOwner = [...msgs]
+        .filter((m) => m.groupId === gid && (m.threadId || "") === tid && m.author === "owner" && (m.seq || 0) <= (original.seq || 0))
+        .pop() || null;
+      targets = [bot];
+    }
     /** 当前话题的消息视图：默认话题是 threadId 为空的老消息 */
     const roomMsgs = () => msgs.filter((m) => (m.threadId || "") === tid);
     const nextSeq = () => (msgs.length ? Math.max(...msgs.map((m) => m.seq || 0)) + 1 : 0);
@@ -6013,8 +6027,11 @@ const actions = {
       msgs.push(msg);
       return msg;
     };
-    const botValue = `${value || `（附件：${files.map((a) => a.name).join("、")}）`}${fileBlock}`;
-    const ownerMsg = push("owner", null, value, "answered", files.length ? { attachments: files.map(({ name, path }) => ({ name, path })) } : null);
+    const retryValue = retryOfOwner?.text || value;
+    const botValue = `${retryValue || `（附件：${files.map((a) => a.name).join("、")}）`}${fileBlock}`;
+    const ownerMsg = retryId
+      ? { seq: retryOfOwner?.seq || 0, id: retryOfOwner?.id || null }
+      : push("owner", null, value, "answered", files.length ? { attachments: files.map(({ name, path }) => ({ name, path })) } : null);
     // 话题的第一句就是标题：不出现一排「新话题」
     if (tid && roomMsgs().filter((m) => m.author === "owner").length === 1) {
       const thread = (group.threads || []).find((x) => x.id === tid);
@@ -6085,6 +6102,7 @@ const actions = {
         if (turn?.decision === "quiet") { out.push(turn); return; }
         const msg = push("bot", bot, turn?.reply || "", turn?.decision || "answered", {
           turnId: turn?.id || null, runId: turn?.runId || null, cost: turn?.cost || null, sessionId,
+          ...(retryId ? { retryOf: retryId } : null),
         });
         store.saveGroupMessage?.(msg);
         sendGroupMessage(gid, msg);
@@ -6147,6 +6165,16 @@ const actions = {
     }
     store.persist(); broadcast();
     return { messages: out };
+  },
+  /** 群聊单条重试：只让原成员重答同一句，追加一条新消息（meta.retryOf 指回原条） */
+  botGroupRetry: async ({ messageId } = {}) => {
+    const msg = (store.state.botGroupMessages || []).find((m) => m.id === String(messageId || ""));
+    if (!msg) throw new Error("这条群消息不存在");
+    if (msg.author !== "bot" || !msg.botId) throw new Error("只能重试群里某个成员的回复");
+    await actions.botGroupSend({
+      id: msg.groupId, threadId: msg.threadId || "", retryOf: msg.id, onlyBotId: msg.botId,
+    });
+    return { ok: true };
   },
   /**
    * 聊天面的小状态：草稿（切会话不丢）与阅读位置。

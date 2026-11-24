@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import { confirmDialog } from "./ConfirmHost";
 import type { Delegation, ElementContext, Message, MissionPlanRecord, Run, State, Thread, Todo } from "../types";
 import { RUN_STATUS, STATUS, agentOf, duration, lastRun, missingKeyInfo, timeAgo } from "../ui";
-import { CheckSquareIcon, ChevronDownIcon, CopyCheckIcon, CopyIcon, FileTextIcon, PanelExpandIcon, PanelRestoreIcon, PencilIcon, RefreshIcon, SendIcon, SparkleIcon, WrenchIcon } from "./Icons";
+import { CheckSquareIcon, ChevronDownIcon, CopyCheckIcon, CopyIcon, FileTextIcon, PanelExpandIcon, PanelRestoreIcon, PencilIcon, PlusIcon, RefreshIcon, SendIcon, SparkleIcon, WrenchIcon } from "./Icons";
 import { requestTerminalAdopt } from "../terminal-events";
 import { RowMenu } from "./RowMenu";
 import { templateOf } from "../office/templates";
@@ -224,6 +224,12 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [unseen, setUnseen] = useState(0);
+  /** 附件（文本，≤3）：和这一句话一起带进上下文；发送成功即清空 */
+  const [files, setFiles] = useState<{ name: string; path: string; text: string }[]>([]);
+  /** 会话内搜索：结果列表 + 点击跳到那条消息并闪一下（不做全文高亮，避免把 RichText 拆碎） */
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQ, setSearchQ] = useState("");
+  const [flashId, setFlashId] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const [mentionDismissed, setMentionDismissed] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalog>({ models: [], efforts: [] });
@@ -473,7 +479,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   const onScroll = () => {
     const el = bodyRef.current;
     if (!el) return;
-    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
     stickRef.current = bottom;
     atBottomRef.current = bottom;
     setAtBottom(bottom);
@@ -487,6 +493,16 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
   const onChatKeyDown = (e: React.KeyboardEvent) => {
     const el = bodyRef.current;
     if (!el) return;
+    // ⌘F：会话内查找；⌘⇧C：复制最近一条 Agent 回答（IR-Chat-12）
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") { e.preventDefault(); setSearchOpen(true); return; }
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "c") {
+      const lastAgent = [...msgs].reverse().find((m) => m.role === "agent" && m.content);
+      if (!lastAgent) return;
+      e.preventDefault();
+      void window.harness.clipboardWrite(lastAgent.content);
+      window.dispatchEvent(new CustomEvent("harness:toast", { detail: "已复制最近一条回答" }));
+      return;
+    }
     const page = el.clientHeight * 0.85;
     const step = 48;
     if (e.key === "ArrowUp") { e.preventDefault(); el.scrollTop -= step; }
@@ -496,7 +512,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     else if (e.key === "Home") { e.preventDefault(); el.scrollTop = 0; }
     else if (e.key === "End") { e.preventDefault(); jumpToBottom(); }
     else return;
-    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
     stickRef.current = bottom;
     atBottomRef.current = bottom;
     setAtBottom(bottom);
@@ -539,9 +555,10 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
       }
       return;
     }
+    const outgoing = withFiles(value);
     if (!todo && !override && !chatOnly && previewAllocation) {
       setSending(true);
-      const p = await act("proposeDispatch", { threadId: thread.id, text: value, agentId, projectId: scopeProjectId || undefined });
+      const p = await act("proposeDispatch", { threadId: thread.id, text: outgoing, agentId, projectId: scopeProjectId || undefined });
       setSending(false);
       if (p) setProposal({ ...p, text: value });
       return;
@@ -550,15 +567,16 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     // 纯聊天 / 只聊：走无 Todo 的对话 Run；发送仍然是一次明确动作
     const useChat = !todo && (chatOnly || pureChat);
     const res = useChat
-      ? await act("chat", { threadId: thread.id, text: value, agentId, projectId: scopeProjectId || undefined })
+      ? await act("chat", { threadId: thread.id, text: outgoing, agentId, projectId: scopeProjectId || undefined })
       : await act("send", {
-        threadId: thread.id, text: value, agentId, projectId: scopeProjectId || undefined,
+        threadId: thread.id, text: outgoing, agentId, projectId: scopeProjectId || undefined,
         context: context ?? null, allocation: override?.allocation,
         runId: activeRuns.length > 1 ? active?.id : undefined,
       });
     setSending(false);
     if (!res || res.mode === "error") { textRef.current?.focus(); return; } // 失败保留草稿
     setText("");
+    setFiles([]);
     drafts.current[thread.id] = "";
     setInputHistoryIndex(null);
     inputHistoryDraft.current = "";
@@ -596,6 +614,49 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     if (!res) return;
     stickRef.current = true;
     atBottomRef.current = true;
+  };
+
+  const pickFiles = async () => {
+    try {
+      const picked = await window.harness.docsPick();
+      if (!Array.isArray(picked) || !picked.length) return;
+      setFiles((prev) => [...prev, ...picked.map((f) => ({ name: f.name || f.path.split("/").pop() || "附件", path: f.path, text: String(f.text || "").slice(0, 4000) }))].slice(0, 3));
+    } catch (err) {
+      window.dispatchEvent(new CustomEvent("harness:toast", { detail: `读取附件失败：${String((err as Error)?.message || err)}` }));
+    }
+  };
+  /** 附件拼在正文后面：网关只吃文本，所以把内容当上下文带过去，并在正文里留出处 */
+  const withFiles = (value: string) => (files.length
+    ? `${value}\n\n${files.map((f) => `附件 ${f.name}（${f.path}）\n\`\`\`\n${f.text}\n\`\`\``).join("\n\n")}`
+    : value);
+
+  /** 会话内搜索：只搜有文字的消息（工具步太多，搜它们会把结果撑满） */
+  const searchHits = useMemo(() => {
+    const q = searchQ.trim().toLowerCase();
+    if (!q) return [];
+    return msgs
+      .filter((m) => (m.role === "user" || m.role === "agent" || m.kind === "system") && String(m.content || "").toLowerCase().includes(q))
+      .slice(-12)
+      .reverse()
+      .map((m) => ({ id: m.id, role: m.role, at: m.createdAt, text: String(m.content || "").replace(/\s+/g, " ").slice(0, 120) }));
+  }, [msgs, searchQ]);
+  const jumpToMessage = (id: string) => {
+    const el = bodyRef.current?.querySelector<HTMLElement>(`[data-msg-id="${id}"]`);
+    if (!el) return;
+    stickRef.current = false;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    setFlashId(id);
+    window.setTimeout(() => setFlashId((cur) => (cur === id ? null : cur)), 900);
+  };
+  /** 复制整段对话为 Markdown：贴到 issue / 文档里不用再一条条点复制 */
+  const copyTranscript = async () => {
+    if (!msgs.length) return;
+    const body = msgs
+      .filter((m) => m.role === "user" || m.role === "agent" || m.kind === "system")
+      .map((m) => `### ${m.role === "user" ? "我" : m.role === "agent" ? "Agent" : "系统"} · ${new Date(m.createdAt).toLocaleString()}\n\n${m.content}`)
+      .join("\n\n");
+    await window.harness.clipboardWrite(`# ${thread?.title || "对话"}\n\n${body}`);
+    window.dispatchEvent(new CustomEvent("harness:toast", { detail: "已复制整段对话（Markdown）" }));
   };
 
   const copy = async (id: string, content: string) => {
@@ -748,6 +809,19 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
     flush();
     return items;
   }, [msgs, showTool]);
+
+  /** 长会话窗口化：先画最近 40 块，点「加载更早」再往前放一页（Bot 会话同一口径） */
+  const CHAT_WINDOW = 40;
+  const [windowCount, setWindowCount] = useState(CHAT_WINDOW);
+  const shownItems = chatItems.length > windowCount ? chatItems.slice(-windowCount) : chatItems;
+  const hiddenItems = chatItems.length - shownItems.length;
+  const loadEarlier = () => {
+    const el = bodyRef.current;
+    const keep = el ? el.scrollHeight - el.scrollTop : 0;
+    setWindowCount((n) => n + CHAT_WINDOW);
+    // 内容挂到顶上之后把视口固定在原来的位置（否则会被顶到最上面）
+    requestAnimationFrame(() => { if (el) el.scrollTop = el.scrollHeight - keep; });
+  };
 
   /** 直接跳到该 Mission 的航母舞台；没有航母场景时按 Mission 角色建一个再跳 */
   const openCarrier = async () => {
@@ -1010,6 +1084,36 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
           )}
 
           <div className="chat-body-wrap">
+            {searchOpen && (
+              <div className="chat-search" role="search">
+                <input
+                  autoFocus
+                  className="chat-search-input"
+                  value={searchQ}
+                  placeholder="在对话里查找…"
+                  aria-label="在对话里查找"
+                  onChange={(e) => setSearchQ(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") { e.preventDefault(); setSearchOpen(false); }
+                    if (e.key === "Enter" && searchHits[0]) { e.preventDefault(); jumpToMessage(searchHits[0].id); }
+                  }}
+                />
+                <span className="chat-search-count">{searchQ.trim() ? `${searchHits.length} 条` : ""}</span>
+                {searchHits.length > 0 && (
+                  <div className="chat-search-hits">
+                    {searchHits.map((hit) => (
+                      <button key={hit.id} className="chat-search-hit" onClick={() => jumpToMessage(hit.id)}>
+                        <span className="ds-tag">{hit.role === "user" ? "我" : hit.role === "agent" ? "Agent" : "系统"}</span>
+                        <span className="ellipsis">{hit.text}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <button className="icon-btn" title="关闭查找" aria-label="关闭查找" onClick={() => { setSearchOpen(false); setSearchQ(""); }}>
+                  <XIcon size={14} />
+                </button>
+              </div>
+            )}
             <div
               className="chat-scroll"
               ref={bodyRef}
@@ -1018,7 +1122,12 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
               onWheel={onChatWheel}
               onKeyDown={onChatKeyDown}
             >
-              {chatItems.map((item) => {
+              {hiddenItems > 0 && (
+                <button className="ds-earlier" onClick={loadEarlier} title="把更早的回合放进来（不影响当前阅读位置）">
+                  加载更早 · 还有 {hiddenItems} 块
+                </button>
+              )}
+              {shownItems.map((item) => {
                 if (item.kind === "run") return <RunDivider key={item.key} state={state} runId={item.runId} now={now} />;
                 if (item.kind === "thought") {
                   return <ThoughtBlock key={item.key} message={item.msg} now={now} />;
@@ -1053,6 +1162,7 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                     canRegenerate={!botThread && m.role === "agent" && m.id === lastAgentId && !active && !todo?.confirmed}
                     onRegenerate={() => void regenerate()}
                     onEdit={botThread ? undefined : (text) => void act("editMessage", { id: m.id, text })}
+                    flash={flashId === m.id}
                   />
                 );
               })}
@@ -1153,6 +1263,18 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                 <button className="btn tiny" onClick={() => setProposal(null)}>取消</button>
                 <button className="btn tiny primary" disabled={sending} onClick={() => void send({ text: proposal.text, allocation: { projectId: proposal.projectId, agentId: proposal.agentId } })}>确认派活</button>
               </div>
+            </div>
+          )}
+          {files.length > 0 && (
+            <div className="ds-attach-row">
+              {files.map((f) => (
+                <span className="ds-attach" key={f.path} title={f.path}>
+                  <span className="ellipsis">{f.name}</span>
+                  <button className="ds-attach-x" title="移除附件" aria-label={`移除附件 ${f.name}`} onClick={() => setFiles((prev) => prev.filter((x) => x.path !== f.path))}>
+                    <XIcon size={11} />
+                  </button>
+                </span>
+              ))}
             </div>
           )}
           <div className="ds-composer">
@@ -1305,6 +1427,13 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                 )}
               </div>
               <div className="composer-actions">
+                <button
+                  className="icon-btn"
+                  title={files.length ? `再添加（已 ${files.length}/3）` : "添加文本附件（≤3 个，随这句话带进上下文）"}
+                  aria-label="添加附件"
+                  disabled={files.length >= 3}
+                  onClick={() => void pickFiles()}
+                ><PlusIcon size={14} /></button>
                 {!botThread && (
                   <RowMenu title="更多发送选项">
                     <label className="row-menu-label">添加 Agent
@@ -1328,6 +1457,8 @@ export function TaskChat({ state, globalState, thread, now, act, onSelect, onNew
                     )}
                     {!todo && <button onClick={() => setPreviewAllocation((v) => !v)}>{previewAllocation ? "取消预览分派" : "发送前预览分派"}</button>}
                     <button onClick={() => setShowTool((v) => !v)}>{showTool ? "隐藏工具与思考" : "显示工具与思考"}</button>
+                    <button onClick={() => setSearchOpen(true)}>在对话里查找…（⌘F）</button>
+                    <button onClick={() => void copyTranscript()} disabled={!msgs.length}>复制整段对话（Markdown）</button>
                   </RowMenu>
                 )}
                 <button
@@ -1456,8 +1587,10 @@ function delegationLabel(value: string) {
   } as Record<string, string>)[value] || value;
 }
 
-function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry, canRegenerate, onRegenerate, onEdit }: {
+function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry, canRegenerate, onRegenerate, onEdit, flash }: {
   message: Message; agentName: string; now: number; copied: boolean; onCopy: () => void; onRetry: () => void;
+  /** 会话内搜索命中：滚到这一条时闪一下（8% fg，0.8s 淡出） */
+  flash?: boolean;
   canRegenerate?: boolean; onRegenerate?: () => void;
   onEdit?: (text: string) => void;
 }) {
@@ -1483,7 +1616,7 @@ function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry, canR
 
   if (isUser) {
     return (
-      <div className="ds-user">
+      <div className={`ds-user${flash ? " chat-flash" : ""}`} data-msg-id={m.id}>
         {m.context && (
           <div className="ds-user-ctx" title={`${m.context.selector}${m.context.source?.file ? ` · ${m.context.source.file}` : ""}`}>
             <span className="ds-tag">元素</span>
@@ -1535,7 +1668,7 @@ function ChatMessage({ message: m, agentName, now, copied, onCopy, onRetry, canR
   }
 
   return (
-    <div className={`ds-assistant ${m.kind === "error" ? "is-error" : ""}`}>
+    <div className={`ds-assistant ${m.kind === "error" ? "is-error" : ""}${flash ? " chat-flash" : ""}`} data-msg-id={m.id}>
       {m.context && (
         <div className="ds-user-ctx" title={`${m.context.selector}${m.context.source?.file ? ` · ${m.context.source.file}` : ""}`}>
           <span className="ds-tag">元素</span>
@@ -1778,7 +1911,13 @@ function ToolRow({ message: m, now, copied, onCopy, onRetry, preview, previewRoo
           {result && (
             <div className="ds-tool-field">
               <div className="ds-tool-field-head"><span>输出</span></div>
-              <pre className="ds-tool-field-body">{result || "（没有输出）"}</pre>
+              {family === "edit"
+                ? (
+                  <pre className="ds-diff">{result.split("\n").map((line, i) => (
+                    <span key={i} className={line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : ""}>{line}{"\n"}</span>
+                  ))}</pre>
+                )
+                : <pre className="ds-tool-field-body">{result || "（没有输出）"}</pre>}
             </div>
           )}
           {!args && !result && <pre className="ds-tool-field-body">{head}</pre>}

@@ -794,7 +794,38 @@ const hm = (ts: number) => {
  * 群聊单条消息：memo 住。流式时只更新末尾的流式块，历史消息不参与 reconcile；
  * 微调 props（senderName / state）只在全量 snapshot 到达时变一次。
  */
-const GroupMessageRow = memo(function GroupMessageRow({ m, senderName, state }: { m: BotGroupMessage; senderName?: string; state?: State | null }) {
+/** 从一段文字里挑出可预览的文件路径（最多 3 个；只认「有目录 / 有扩展名」的形态，避免把句子当路径） */
+function pathsInText(text: string) {
+  const re = /(?:^|[\s（("'`\[])((?:\.{1,2}\/)?[\w.@+-]+\/[\w.@/+-]+\.[A-Za-z]\w{0,5})(?::(\d+))?/g;
+  const hits: { path: string; line?: number }[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(String(text || ""))) && hits.length < 3) {
+    const path = match[1].replace(/[),.;:]+$/, "");
+    if (!path || hits.some((h) => h.path === path)) continue;
+    hits.push({ path, line: match[2] ? Number(match[2]) : undefined });
+  }
+  return hits;
+}
+
+/** 群聊消息里的文件 chip → 就地展开预览（和单聊同一个 InlinePreviewCard，不跳标签） */
+function GroupFileChips({ message, root }: { message: BotGroupMessage; root?: string }) {
+  const preview = useInlinePreview();
+  const paths = pathsInText(message.text || "");
+  if (!paths.length) return null;
+  return (
+    <div className="ds-group-files">
+      {paths.map((p) => (
+        <button key={p.path} className="ds-file-chip" title={p.path} onClick={() => preview.openFile(message.id, p.path, { root, line: p.line })}>
+          <FileTextIcon size={12} />
+          <span className="ds-file-chip-name">{p.path.split("/").pop() || p.path}</span>
+        </button>
+      ))}
+      {preview.target?.owner === message.id && <InlinePreviewCard target={preview.target} onClose={preview.close} />}
+    </div>
+  );
+}
+
+const GroupMessageRow = memo(function GroupMessageRow({ m, senderName, state, previewRoot }: { m: BotGroupMessage; senderName?: string; state?: State | null; previewRoot?: string }) {
   if (m.author === "owner") {
     return (
       <div className="ds-user" role="article" aria-label={`你 · ${hm(m.createdAt)}`}>
@@ -824,6 +855,13 @@ const GroupMessageRow = memo(function GroupMessageRow({ m, senderName, state }: 
       {spoke
         ? <div className="ds-assistant-body"><RichText text={m.text} /></div>
         : <div className="ds-system-note">{m.text || "没有开口"}<span> · 沉默也留痕</span></div>}
+      {spoke && <GroupFileChips message={m} root={previewRoot} />}
+      {m.decision === "failed" && (
+        <div className="ds-fail-actions">
+          <button className="btn tiny primary" onClick={() => void window.harness.action("botGroupRetry", { messageId: m.id })} title="只让这个成员重答同一句">重试这一条</button>
+          <span className="ds-fail-hint">只重跑它自己，不叫醒别人</span>
+        </div>
+      )}
       <TraceDetails runId={m.meta?.runId} botName={m.botName} state={state} />
     </div>
   );
@@ -1910,9 +1948,17 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
     if (failRetry?.text) { await send(failRetry.text); return; }
   };
 
-  // Esc = 停止当前生成（聊天面里最常按的那个键）
+  // Esc = 停止当前生成；⌘⇧C = 复制最近一条回答（聊天面里最常按的两个键）
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "c") {
+        const lastReply = [...turns].reverse().find((t) => ["replied", "answered", "reported", "asked"].includes(t.decision || ""))?.reply;
+        if (!lastReply) return;
+        event.preventDefault();
+        void window.harness.clipboardWrite(lastReply);
+        notify("已复制最近一条回答");
+        return;
+      }
       if (event.key !== "Escape") return;
       if (!streaming && !groupStream.length) return;
       event.preventDefault();
@@ -3097,6 +3143,7 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                 m={m}
                 senderName={botOf(m.botId ?? undefined)?.name}
                 state={state}
+                previewRoot={previewRootForBot}
               />
             ))}
             {/* 群聊：自己刚发的那句 + 每个正在回的成员一块（逐字长出来） */}
@@ -3203,6 +3250,12 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
               const turnHeadText = headLabel;
               const bubble = (
                 <>
+                  {turn.context?.digest && (
+                    <div className="ds-digest" role="note" title="更早的对话被折成一段背景摘要，不再逐条注入">
+                      <span className="ds-tag">已压缩</span>
+                      <span>更早的对话{typeof turn.context.history === "number" ? `（保留最近 ${turn.context.history} 条）` : ""}折成摘要，只作背景</span>
+                    </div>
+                  )}
                   <BotTrace turn={turn} state={state} label={turnHeadText} preview={inlinePreview} previewRoot={previewRootForBot} />
                   <div className="ds-assistant-body"><RichText text={turn.reply || ""} /></div>
                   {turn.decision === "asked" && (

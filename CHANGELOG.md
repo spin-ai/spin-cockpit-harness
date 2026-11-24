@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### Added（chat 界面收口第二轮）
+- **长会话窗口化**：BOT 与 CHAT 转录都先画最近 40 块，顶部「加载更早 · 还有 N 块」；加载时按 `scrollHeight - scrollTop` 保持阅读位置
+- **会话内查找**：`⌘F` 打开浮动查找条（命中最多 12 条，Enter 跳第一条、点击跳转），命中消息闪 8% fg / 0.9s 淡出；`⌘⇧C` 复制最近一条回答；`⋯` 里新增「复制整段对话（Markdown）」
+- **任务会话附件**：composer 左侧 `＋` 选文本文件（≤3、每个 4000 字），随这句话带进上下文，发送成功即清空
+- **群聊里的对话内预览**：群消息正文中的文件路径（≤3）渲染成 chip，点开就地展开（与单聊同卡）
+- **群聊单条重试**：`botGroupRetry({ messageId })` 复用原 owner 那句、只叫原成员、新消息 `meta.retryOf` 指回原条；失败行上有「重试这一条」
+- **压缩卡**：`context.digest` 的回合前加「已压缩 · 更早的对话折成摘要，只作背景」注记
+- **任务会话 diff 着色**：edit 类工具的输出按 `+/−` 着色（与 Bot 的 edit 卡一致）
+- **行号命中**：文件预览指到 `path:line` 时把那一行照亮（8% fg，只到页级）
+- **跟随阈值统一**：TaskChat 48px → 24px，与 Bot 一致
+
+验证：`npm run preview:bot` 78 项全部通过（连续两次）；typecheck / build / verify:design / npm test 通过。
+
 ### Added / Fixed（聊天窗口：失败卡、上下文账、叫停即时恢复）
 - **失败卡落进对话**：发送 / 重试失败不再只有页头 banner——转录里该次对话的位置出现一张 `.ds-fail`（`没回` 标签 + 原因 + 复制 + 收起 + **重试**）；重试有回合按 `turnId` 重跑，没回合就把原文再发一次（不复制消息、不动草稿）
 - **叫停立刻可用**：`cancel()` 的 `finally` 收掉本地 `streaming / busy / pendingUser` 等临时态并刷新回合账——此前按「停止」后发送键会一直被「停止」占着，直到后端把回合收成 interrupted

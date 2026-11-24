@@ -85,7 +85,8 @@ const MOCK = String.raw`
         { kind: "request", round: 1, at: now - 698000, ms: 600, usage: { total_tokens: 140, prompt_tokens: 80, completion_tokens: 60 }, text: "今天两条：\n\n- 首页标题已改大\n- 构建通过" },
       ] }),
     turn({ id: "t2", decision: "reported", threadId: "th-bot-b1", runId: "r1", todoId: "td1",
-      reply: "FEAT-1 完成：首页标题改大\n测试通过，等你确认。", cost: { tokens: 120, ms: 800 } }),
+      reply: "FEAT-1 完成：首页标题改大\n测试通过，等你确认。", cost: { tokens: 120, ms: 800 },
+      context: { chars: 9000, memory: 5200, memoryUsedPct: 40, history: 24, digest: true } }),
     turn({ id: "t3", decision: "silent", threadId: "th-bot-b1", reason: "没有值得说的事件", cost: {} }),
     turn({ id: "t4", decision: "asked", threadId: "th-bot-b1", reply: "要我顺便把副标题也改了吗？", ask: { text: "副标题要不要一起改？", status: "open", createdAt: now - 300000 },
       context: { chars: 16800, memory: 11200, memoryUsedPct: 85, history: 14, memoryLines: { total: 22, loaded: 18, dropped: 4, cap: 200, budget: 12900 }, sections: {} } }),
@@ -103,7 +104,10 @@ const MOCK = String.raw`
     pluginCommands: [], todoLinks: [],
     bots: [bot, bot2], botTurns: turns, routines: [{ id: "rt1", botId: "b1", name: "早报", kind: "daily", atHour: 9 }],
     botGroups: [{ id: "g1", name: "项目群", memberIds: ["b1", "b2"], replyMode: { kind: "mentions" }, createdAt: now - 6e5 }],
-    botGroupMessages: [],
+    botGroupMessages: [{
+      id: "gmsg-fail", groupId: "g1", threadId: null, seq: 0, author: "bot", botId: "b2", botName: "DE-A · 前端",
+      text: "模拟：模型网关 502", decision: "failed", createdAt: now - 3.6e6, meta: null,
+    }],
     context: { selection: null, elements: [], notes: [] },
     summary: { activeRuns: 0, cost: 0, tokens: 0, failures: 0 },
     workspacePath: "/tmp/ws", projectPath: "/tmp/ws", projectId: "p", activeProjectId: "p",
@@ -131,7 +135,7 @@ const MOCK = String.raw`
       id: "tbig" + i, decision: i % 2 ? "replied" : "answered",
       input: "第 " + i + " 问", reply: "第 " + i + " 答", threadId: "th-bot-b1",
       // 窗口化用例之后还要验「上下文账」：最后一轮带真实 context，不让它变成空值
-      ...(i === n - 1 ? { context: { chars: 16800, memory: 11200, memoryUsedPct: 85, history: 14, memoryLines: { total: 22, loaded: 18, dropped: 4, cap: 200, budget: 12900 }, sections: {} } } : {}),
+      ...(i === n - 1 ? { context: { chars: 16800, memory: 11200, memoryUsedPct: 85, history: 14, digest: true, memoryLines: { total: 22, loaded: 18, dropped: 4, cap: 200, budget: 12900 }, sections: {} } } : {}),
     }));
   };
   let emit = () => {};
@@ -152,6 +156,7 @@ const MOCK = String.raw`
       }
       else if (type === "botRetry") result = { ok: true };
       // 和主进程 db.saveBotUi 一样「按字段合并」：只写 scroll 时不能把草稿清空，反之亦然
+      else if (type === "botGroupRetry") result = { ok: true };
       else if (type === "botUiSave") { const prev = draftStore[payload.key] || { draft: "", scroll: null }; draftStore[payload.key] = { draft: payload.draft !== undefined ? payload.draft : prev.draft, scroll: payload.scroll !== undefined ? payload.scroll : prev.scroll, updatedAt: Date.now() }; result = { ok: true }; }
       else if (type === "botGroupSend") {
         // 模拟群聊：先落自己的话，再逐个成员流式回（和主进程 botGroupSend 一样）
@@ -547,6 +552,18 @@ await run(`
   for (let i = 0; i < 20 && !ready(); i++) await new Promise((r) => setTimeout(r, 25));
   return true;`);
 const groupComposer = await ev(`(() => { const el = [...document.querySelectorAll(".ds-composer textarea")].find((t) => t.getBoundingClientRect().width > 0); return el ? (el.getAttribute("placeholder") || "") : ""; })()`);
+const groupRetry = await ev(`(() => {
+  const btn = [...document.querySelectorAll(".ds-fail-actions .btn")].find((b) => /重试这一条/.test(b.textContent));
+  return JSON.stringify({ shown: Boolean(btn), text: (document.querySelector(".ds-fail-hint")?.textContent || "").slice(0, 40) });
+})()`);
+const groupRetryObj = JSON.parse(groupRetry || "{}");
+check("群聊：失败的那一条能单独重试", groupRetryObj.shown === true, groupRetry);
+await run(`
+  const btn = [...document.querySelectorAll(".ds-fail-actions .btn")].find((b) => /重试这一条/.test(b.textContent));
+  if (btn) btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 200));
+  return true;`);
+check("群聊：单条重试只叫原成员（botGroupRetry）", await ev(`(() => { const c = window.__calls.filter((x) => x.type === "botGroupRetry"); return c.length >= 1 && c.at(-1).payload.messageId === "gmsg-fail"; })()`));
 check("群聊：进去了（在群里说一句）", groupComposer.includes("在群里说一句"), groupComposer);
 await run(`
   const box = [...document.querySelectorAll(".ds-composer textarea")].find((t) => t.getBoundingClientRect().width > 0);
@@ -558,12 +575,15 @@ await run(`
   const send = [...document.querySelectorAll(".ds-send")].find((b) => b.getBoundingClientRect().width > 0);
   if (!send) throw new Error("没有发送按钮");
   send.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  // 回声 80ms 后就到：必须在同一段脚本里观察「乐观气泡出现过」，跨 CDP 往返会直接读到回声态
+  let seen = false;
+  for (let i = 0; i < 12 && !seen; i++) {
+    seen = Boolean(document.querySelector(".ds-pending"));
+    if (!seen) await new Promise((r) => setTimeout(r, 10));
+  }
+  window.__pendingSeen = seen;
   return true;`);
-// 「立刻」= 200ms 内出现（React 提交 + IPC 往返都可能差几十毫秒，固定 40ms 读会偶发空）
-await run(`
-  for (let i = 0; i < 10 && !document.querySelector(".ds-pending"); i++) await new Promise((r) => setTimeout(r, 20));
-  return true;`);
-check("群聊：自己的话立刻出现（不等后端）", (await text(".ds-pending")).includes("群里问一句"));
+check("群聊：自己的话立刻出现（不等后端）", await ev(`Boolean(window.__pendingSeen)`));
 check("群聊：没人开口时有「正在想」行", await ev(`!!document.querySelector(".ds-typing")`), JSON.stringify((await text(".bot-stream")).slice(-160)));
 await sleep(250);
 check("群聊：后端回声到了就不再画乐观气泡（不重复）", await ev(`!document.querySelector(".ds-pending")`));
@@ -818,6 +838,10 @@ await run(`
 const retry = await ev(`JSON.stringify(window.__retry)`);
 const retryObj = JSON.parse(retry || "{}");
 check("重试：点了用 turnId 调 botRetry", retryObj.after === retryObj.before + 1 && Boolean(retryObj.turnId), retry);
+
+// 压缩卡：更早的对话被折成摘要时，转录里有一条系统注记（不是消息）
+const digestText = await text(".ds-digest");
+check("压缩卡：标明「已压缩 · 只作背景」", /已压缩/.test(digestText) && /摘要/.test(digestText), digestText);
 
 // 上下文账：composer 上方一行，显示字符数与记忆占比；>80% 用琥珀文字（不铺底色）
 const ctxText = await text(".ds-context");

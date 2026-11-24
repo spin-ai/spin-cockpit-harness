@@ -133,7 +133,14 @@ export function InlinePreviewCard({ target, onClose }: { target: InlinePreviewTa
       ) : !file.loaded && target.kind === "file" ? (
         <div className="ds-ip-empty">读取中…</div>
       ) : (
-        <pre className={`ds-ip-body${target.kind === "text" && !target.mono ? " is-prose" : ""}`}>{win.lines.join("\n")}</pre>
+        <pre className={`ds-ip-body${target.kind === "text" && !target.mono ? " is-prose" : ""}`}>
+          {win.lines.map((line, i) => {
+            // 指到某一行时，就在窗口里把那一行照亮（只到页级，不做列级定位）
+            const abs = win.from + i;
+            const hit = target.kind === "file" && target.line ? abs === Number(target.line) : false;
+            return <span key={i} className={hit ? "is-hit" : ""}>{line}{"\n"}</span>;
+          })}
+        </pre>
       )}
     </div>
   );
