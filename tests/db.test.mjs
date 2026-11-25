@@ -53,6 +53,18 @@ try {
     id: "p1", name: "demo", path: dir, desc: "", color: "slate", status: "in_progress",
     createdAt: 1, lastOpenedAt: 2, alias: "",
   });
+  db.state.requirements.push({
+    id: "rq1", projectId: "p1", key: "DEMO-IR-01", level: "ir", parentId: null,
+    title: "需求往返", body: "正文", status: "draft", priority: "P1", owner: "张", source: "客户",
+    requester: "李", scope: "只读", outOfScope: "不改存储", impact: "", role: "", value: "",
+    acceptance: [{ text: "可判定", done: false }], tags: ["req"], createdAt: 30, updatedAt: 31,
+  });
+  db.state.requirements.push({
+    id: "rq2", projectId: "p1", key: "DEMO-IR-02", level: "ir", parentId: null,
+    title: "第二条需求", body: "", status: "draft", priority: "P2", owner: "", source: "", requester: "",
+    scope: "", outOfScope: "", impact: "", role: "", value: "", acceptance: [], tags: [], createdAt: 32, updatedAt: 33,
+  });
+  db.state.requirementLinks.push({ id: "rl1", fromId: "rq1", toId: "rq2", kind: "conflicts", createdAt: 34 });
   db.state.todos.push({
     id: "t1", key: "#1", title: "往返", desc: "", acceptance: ["a"], status: "queued",
     agentId: null, priority: "P1", due: "", parentId: null, tags: ["x"], subtasks: [],
@@ -99,6 +111,15 @@ try {
   assert.equal(runRt?.resultSource, "error", "runs.result_source 要能往返（来源不能丢）");
   assert.equal(runRt?.resultTruncated, true, "runs.result_truncated 要能往返");
   assert.equal(runRt?.resultAt, 20, "runs.result_at 要能往返");
+  const reqRt = again.state.requirements.find((r) => r.id === "rq1");
+  assert.ok(reqRt, "requirements 应该往返");
+  assert.equal(reqRt.title, "需求往返");
+  assert.equal(reqRt.outOfScope, "不改存储");
+  assert.deepEqual(reqRt.acceptance, [{ text: "可判定", done: false }]);
+  assert.deepEqual(reqRt.tags, ["req"]);
+  const linkRt = again.state.requirementLinks.find((l) => l.id === "rl1");
+  assert.ok(linkRt, "requirement_links 应该往返");
+  assert.equal(linkRt.kind, "conflicts");
   assert.deepEqual(again.state.pluginKv[0].value, { nested: true });
   assert.equal(again.state.settings.theme, "dark");
   assert.equal(again.state.seq, 200);

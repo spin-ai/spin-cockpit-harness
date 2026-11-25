@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Added（需求管理 M0：RR → IR → SR → US）
+- **新的需求页**：`src/components/Requirements.tsx`，标准页外壳；左侧需求树（RR 根 / IR / SR / US）、右侧详情；搜索、层级 / 状态筛选、行内新建、子需求、验收判据、状态闸门、缺口提示
+- **持久化**：`requirements` 表 + `State.requirements`；写入 / 读取 / 回放校验已在 `tests/db.test.mjs`
+- **主进程 actions**：`requirementCreate / requirementUpdate / requirementSetStatus / requirementDelete`；层级、父子、key、状态闸门走 `electron/requirements/core.mjs` 纯函数
+- **入口**：项目页页头「需求」、项目行菜单「需求」、命令面板「需求（IR → SR → US）」
+- **追溯矩阵（可补缺口）**：需求页第二个 tab；行 = 需求链，RR 分组，列 IR / SR / US；缺下游 / 缺验收；只看缺口；空格直接新建下一层；点 chip 回需求池并选中
+- **需求关联**：`requirement_links`（relates / duplicates / conflicts）；详情「关联」可加 / 删 / 点进目标；删需求时一起清理；`tests/db.test.mjs` 覆盖往返
+- **测试**：`tests/requirements/core.test.mjs`（四层 / 父子 / key / 验收 / 状态闸门）；`npm test -- requirements`
+
 ### Added（群聊的会话内查找 + 回合轨）
 - **群聊 `⌘F`**：以前 `⌘F` 和查找面板都写死 `!isGroup`。现在群聊也能查（按群消息匹配，成员名做标签、系统行也搜得到），点击命中跳过去闪一下
 - **群聊回合轨**：右侧细线刻度，一轮 = **你发的那一句**（不按每条消息画）；悬浮看「你 · 第 N 轮 · 时间 + 原话」，点击跳回。1:1 与群聊共用 `data-turn-id` 定位，阅读位置 / 查找跳转 / 当前轮高亮同一套

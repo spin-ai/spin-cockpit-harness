@@ -5,6 +5,15 @@ import { DatabaseSync } from "node:sqlite";
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT, path TEXT, desc TEXT, color TEXT, status TEXT, created_at INTEGER, last_opened_at INTEGER, alias TEXT);
+-- 需求（第一片 IR → SR → US）：一条一个父节点；正文 / 验收 / 每层字段都在这张表
+CREATE TABLE IF NOT EXISTS requirements (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, key TEXT NOT NULL, level TEXT NOT NULL, parent_id TEXT, title TEXT NOT NULL, body TEXT DEFAULT '', status TEXT DEFAULT 'draft', priority TEXT DEFAULT 'P2', owner TEXT DEFAULT '', source TEXT DEFAULT '', requester TEXT DEFAULT '', scope TEXT DEFAULT '', out_of_scope TEXT DEFAULT '', impact TEXT DEFAULT '', role TEXT DEFAULT '', value TEXT DEFAULT '', acceptance TEXT DEFAULT '[]', tags TEXT DEFAULT '[]', created_at INTEGER, updated_at INTEGER);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_requirements_key ON requirements(key);
+CREATE INDEX IF NOT EXISTS idx_requirements_project ON requirements(project_id, level, status);
+CREATE INDEX IF NOT EXISTS idx_requirements_parent ON requirements(parent_id);
+-- 横向关联：relates / duplicates / conflicts；父子仍用 requirements.parent_id
+CREATE TABLE IF NOT EXISTS requirement_links (id TEXT PRIMARY KEY, from_id TEXT NOT NULL, to_id TEXT NOT NULL, kind TEXT DEFAULT 'relates', created_at INTEGER);
+CREATE INDEX IF NOT EXISTS idx_requirement_links_from ON requirement_links(from_id);
+CREATE INDEX IF NOT EXISTS idx_requirement_links_to ON requirement_links(to_id);
 CREATE TABLE IF NOT EXISTS hosts (id TEXT PRIMARY KEY, name TEXT, kind TEXT, addr TEXT, status TEXT, heartbeat INTEGER, version TEXT, port INTEGER, user TEXT, caps TEXT, last_probe INTEGER, latency_ms INTEGER, max_concurrency INTEGER, default_cwd TEXT, probe_error TEXT);
 CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, name TEXT, host_id TEXT, cli TEXT, cwd TEXT, max_concurrency INTEGER, approval TEXT, color TEXT, skills TEXT, alias TEXT, project_id TEXT, terminal_id TEXT, role TEXT DEFAULT 'worker', instructions TEXT DEFAULT '', max_children INTEGER DEFAULT 4);
 CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, key TEXT, title TEXT, desc TEXT, acceptance TEXT, status TEXT, agent_id TEXT, priority TEXT, due TEXT, parent_id TEXT, tags TEXT, subtasks TEXT, blocked_by TEXT, missing_writeback INTEGER, last_run_failed INTEGER, cwd TEXT, created_at INTEGER, updated_at INTEGER, confirmed INTEGER, project_id TEXT, kind TEXT DEFAULT 'task', mission_state TEXT, bot_id TEXT, permission TEXT);
@@ -271,6 +280,7 @@ export async function openDb(dir, { onTranscript } = {}) {
   const state = {
     hosts: [], projects: [], agents: [], todos: [], runs: [], threads: [], messages: [],
     artifacts: [], events: [], context: {}, seq: 0, activeProjectId: null,
+    requirements: [], requirementLinks: [],
     missionPlans: [], delegations: [],
     plugins: [], pluginKv: [], todoLinks: [], scenes: [], coordinationScenes: [], terminals: [],
     settings: { ...DEFAULT_SETTINGS },
@@ -288,6 +298,19 @@ export async function openDb(dir, { onTranscript } = {}) {
     id: r.id, name: r.name, path: r.path, desc: r.desc || "", color: r.color || "slate",
     status: r.status || "in_progress", createdAt: r.created_at || Date.now(), lastOpenedAt: r.last_opened_at || r.created_at || 0,
     alias: r.alias || "",
+  }));
+  state.requirements = rows("SELECT * FROM requirements").map((r) => ({
+    id: r.id, projectId: r.project_id, key: r.key, level: r.level,
+    parentId: r.parent_id || null, title: r.title || "", body: r.body || "",
+    status: r.status || "draft", priority: r.priority || "P2", owner: r.owner || "",
+    source: r.source || "", requester: r.requester || "",
+    scope: r.scope || "", outOfScope: r.out_of_scope || "", impact: r.impact || "",
+    role: r.role || "", value: r.value || "",
+    acceptance: J(r.acceptance, []), tags: J(r.tags, []),
+    createdAt: r.created_at || Date.now(), updatedAt: r.updated_at || r.created_at || Date.now(),
+  }));
+  state.requirementLinks = rows("SELECT * FROM requirement_links").map((r) => ({
+    id: r.id, fromId: r.from_id, toId: r.to_id, kind: r.kind || "relates", createdAt: r.created_at || 0,
   }));
   state.agents = rows("SELECT * FROM agents").map((r) => ({
     id: r.id, name: r.name, hostId: r.host_id, cli: r.cli, cwd: r.cwd, max: r.max_concurrency,
@@ -487,13 +510,25 @@ export async function openDb(dir, { onTranscript } = {}) {
     if (closed) return;
     db.exec("BEGIN IMMEDIATE");
     try {
-    for (const t of ["hosts", "projects", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "coordination_scenes", "terminals", "context", "settings", "meta", "bots", "bot_turns", "routines", "bot_events", "bot_groups", "bot_group_members", "bot_group_messages", "bot_revisions", "bot_items", "bot_item_links", "bot_item_events", "bot_workspaces", "bot_peer_mail"]) run(`DELETE FROM ${t}`);
+    for (const t of ["hosts", "projects", "requirements", "requirement_links", "agents", "todos", "runs", "threads", "messages", "artifacts", "events", "mission_plans", "delegations", "plugins", "plugin_kv", "todo_links", "scenes", "coordination_scenes", "terminals", "context", "settings", "meta", "bots", "bot_turns", "routines", "bot_events", "bot_groups", "bot_group_members", "bot_group_messages", "bot_revisions", "bot_items", "bot_item_links", "bot_item_events", "bot_workspaces", "bot_peer_mail"]) run(`DELETE FROM ${t}`);
     for (const h of state.hosts) run(
       "INSERT INTO hosts (id,name,kind,addr,status,heartbeat,version,port,user,caps,last_probe,latency_ms,max_concurrency,default_cwd,probe_error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [h.id, h.name, h.kind, h.addr, h.status, h.heartbeat || 0, h.version || "—", h.port || 22, h.user || "",
         JSON.stringify(h.caps || []), h.lastProbe ?? null, h.latencyMs ?? null, h.maxConcurrency || 0, h.defaultCwd || "", h.probeError ?? null],
     );
     for (const p of state.projects) run("INSERT INTO projects VALUES (?,?,?,?,?,?,?,?,?)", [p.id, p.name, p.path, p.desc || "", p.color || "slate", p.status || "in_progress", p.createdAt || Date.now(), p.lastOpenedAt || 0, p.alias || ""]);
+    for (const l of state.requirementLinks || []) run(
+      "INSERT INTO requirement_links (id,from_id,to_id,kind,created_at) VALUES (?,?,?,?,?)",
+      [l.id, l.fromId, l.toId, l.kind || "relates", l.createdAt || Date.now()],
+    );
+    for (const r of state.requirements || []) run(
+      "INSERT INTO requirements (id,project_id,key,level,parent_id,title,body,status,priority,owner,source,requester,scope,out_of_scope,impact,role,value,acceptance,tags,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [r.id, r.projectId, r.key, r.level, r.parentId || null, r.title || "", r.body || "",
+        r.status || "draft", r.priority || "P2", r.owner || "", r.source || "", r.requester || "",
+        r.scope || "", r.outOfScope || "", r.impact || "", r.role || "", r.value || "",
+        JSON.stringify(r.acceptance || []), JSON.stringify(r.tags || []),
+        r.createdAt || Date.now(), r.updatedAt || Date.now()],
+    );
     for (const a of state.agents) run("INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [a.id, a.name, a.hostId, a.cli, a.cwd, a.max, a.approval, a.color, JSON.stringify(a.skills || []), a.alias || "", a.projectId || "", a.terminalId || "", a.role || "worker", a.instructions || "", a.maxChildren ?? 4]);
     for (const t of state.todos) run("INSERT INTO todos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [t.id, t.key, t.title, t.desc || "", JSON.stringify(t.acceptance || []), t.status, t.agentId || null, t.priority, t.due || "", t.parentId || null, JSON.stringify(t.tags || []), JSON.stringify(t.subtasks || []), JSON.stringify(t.blockedBy || []), t.missingWriteback ? 1 : 0, t.lastRunFailed ? 1 : 0, t.cwd || "", t.createdAt || Date.now(), t.updatedAt || Date.now(), t.confirmed ? 1 : 0, t.projectId || null, t.kind || "task", t.missionState || null, t.botId || null, t.permission || null]);
     for (const r of state.runs) run(

@@ -4,6 +4,45 @@ export interface Project {
   id: string; name: string; path: string; desc: string; color: string;
   status: ProjectStatus; createdAt: number; lastOpenedAt: number; alias: string;
 }
+export type RequirementLevel = "rr" | "ir" | "sr" | "us";
+export type RequirementStatus = "draft" | "reviewing" | "approved" | "done" | "rejected" | "obsolete" | "in_progress" | "verifying";
+export interface RequirementAcceptance { text: string; done: boolean; }
+export type RequirementLinkKind = "relates" | "duplicates" | "conflicts";
+export interface RequirementLink {
+  id: string;
+  fromId: string;
+  toId: string;
+  kind: RequirementLinkKind;
+  createdAt: number;
+}
+/**
+ * 需求（RR → IR → SR → US）。
+ * 一条需求只有一个父节点：RR 是 root，IR 挂 RR，SR 挂 IR，US 挂 SR。
+ */
+export interface Requirement {
+  id: string;
+  projectId: string;
+  key: string;
+  level: RequirementLevel;
+  parentId: string | null;
+  title: string;
+  body: string;
+  status: RequirementStatus;
+  priority: string;
+  owner: string;
+  source: string;
+  requester: string;
+  scope: string;
+  outOfScope: string;
+  impact: string;
+  role: string;
+  value: string;
+  acceptance: RequirementAcceptance[];
+  tags: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface HostCap { cli: string; path: string; version: string; }
 export interface Host {
   id: string; name: string; kind: string; addr: string; status: string; heartbeat: number; version: string;
@@ -494,6 +533,8 @@ export interface State {
   projectId: string;
   activeProjectId: string | null;
   projects: Project[];
+  requirements?: Requirement[];
+  requirementLinks?: RequirementLink[];
   scenes?: Scene[];
   coordinationScenes?: CoordinationScene[];
   bots?: Bot[];
