@@ -1,0 +1,135 @@
+{
+  "id": "ai.cockpit.pptx",
+  "name": "演示文稿",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "engines": {
+    "cockpit": ">=0.2.0"
+  },
+  "main": "main.mjs",
+  "defaultEnabled": true,
+  "activation": [
+    "onView:pptx",
+    "onCommand:pptx.plan",
+    "onCommand:pptx.quick",
+    "onCommand:pptx.probe"
+  ],
+  "permissions": [
+    "ui:view",
+    "net",
+    "fs:project"
+  ],
+  "contributes": {
+    "views": [
+      {
+        "id": "pptx",
+        "title": "演示文稿",
+        "location": "main",
+        "icon": "layers"
+      }
+    ],
+    "commands": [
+      {
+        "id": "pptx.plan",
+        "title": "新建演示文稿（先看大纲）",
+        "description": "生成大纲 → 确认 → 页级并发出原生 .pptx"
+      },
+      {
+        "id": "pptx.quick",
+        "title": "极速出稿",
+        "description": "跳过大纲确认，直接并发生成；门禁问题只记 warning"
+      },
+      {
+        "id": "pptx.probe",
+        "title": "探测演示文稿模型",
+        "description": "检查配置的 OpenAI 兼容接口是否可达"
+      }
+    ],
+    "settings": [
+      {
+        "key": "mode",
+        "type": "enum",
+        "title": "默认模式",
+        "description": "极速 = 跳过确认、门禁不阻断；精细 = 先确认大纲、逐页门禁",
+        "default": "precise",
+        "options": [
+          { "value": "precise", "label": "精细（默认）" },
+          { "value": "quick", "label": "极速" }
+        ]
+      },
+      {
+        "key": "engine",
+        "type": "enum",
+        "title": "版式引擎",
+        "description": "自动 = 配了模型就用模型设计 SVG，失败回落本地版式；本地版式不联网、结果稳定",
+        "default": "auto",
+        "options": [
+          { "value": "auto", "label": "自动" },
+          { "value": "model", "label": "只用模型" },
+          { "value": "template", "label": "只用本地版式" }
+        ]
+      },
+      {
+        "key": "endpoint",
+        "type": "string",
+        "title": "模型地址",
+        "description": "OpenAI 兼容根地址（自动补 /chat/completions），如 https://ark.cn-beijing.volces.com/api/v3",
+        "placeholder": "https://ark.cn-beijing.volces.com/api/v3"
+      },
+      {
+        "key": "apiKey",
+        "type": "secret",
+        "title": "API Key",
+        "description": "只存本机，不回读明文"
+      },
+      {
+        "key": "model",
+        "type": "string",
+        "title": "模型名",
+        "description": "负责写大纲与逐页 SVG 的模型 id",
+        "placeholder": "doubao-seed-2.1-turbo"
+      },
+      {
+        "key": "concurrency",
+        "type": "number",
+        "title": "并发数",
+        "description": "页级并发，默认 5；过高容易触发模型限流",
+        "default": 5
+      },
+      {
+        "key": "theme",
+        "type": "enum",
+        "title": "默认配色",
+        "description": "纸白 / 石墨 / 陶土 / 墨蓝",
+        "default": "paper",
+        "options": [
+          { "value": "paper", "label": "纸白" },
+          { "value": "graphite", "label": "石墨" },
+          { "value": "clay", "label": "陶土" },
+          { "value": "ink", "label": "墨蓝" }
+        ]
+      },
+      {
+        "key": "pageCount",
+        "type": "number",
+        "title": "默认页数",
+        "description": "大纲没给页数时按这个生成（10–15 页是速度验收区间）",
+        "default": 12
+      },
+      {
+        "key": "timeoutMs",
+        "type": "number",
+        "title": "单页超时（毫秒）",
+        "description": "模型生成单页 SVG 的超时；超时即走本地版式兜底",
+        "default": 120000
+      },
+      {
+        "key": "styleHint",
+        "type": "string",
+        "title": "风格补充",
+        "description": "可选，例如「极简、黑白、大量留白」，会随每页提示词发给模型",
+        "placeholder": "克制的瑞士网格，少量强调色"
+      }
+    ]
+  }
+}
