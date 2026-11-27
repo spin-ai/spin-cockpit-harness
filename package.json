@@ -57,16 +57,16 @@
     "i18n:report": "node scripts/i18n-report.mjs"
   },
   "dependencies": {
-    "@larksuiteoapi/node-sdk": "^1.76.0",
-    "@napi-rs/canvas": "^1.1.1",
+    "@larksuiteoapi/node-sdk": "^1.77.0",
+    "@napi-rs/canvas": "^1.2.0",
     "adm-zip": "^0.6.1",
     "epub2": "^3.0.2",
     "mammoth": "^1.13.0",
     "node-pty": "^1.1.0",
-    "officeparser": "^8.4.1",
+    "officeparser": "^8.9.0",
     "pdfjs-dist": "^6.2.108",
     "qrcode": "^1.5.4",
-    "unpdf": "^2.1.0",
+    "unpdf": "^2.2.2",
     "xlsx": "npm:@e965/xlsx@^0.20.3"
   },
   "devDependencies": {
