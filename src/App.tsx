@@ -702,7 +702,6 @@ export default function App() {
                 onSelect={selectTodo}
                 projectCounts={projectCounts}
                 onAddProject={() => void addProject()}
-                onManageProjects={() => setView("projects")}
                 onSwitchProject={(id) => void switchProject(id)}
                 maximized={maximized === "todo"}
                 onToggleMaximize={() => toggleMaximize("todo")}

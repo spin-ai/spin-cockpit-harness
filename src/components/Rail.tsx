@@ -3,10 +3,10 @@ import { useT } from "../i18n";
 /**
  * rail：只放「对象」和「库」，不放入口性的容器（原型 owner-workspaces.html）。
  *
- *   机器人 · 工作台 │ 场景 │ 记忆 · 知识 · 人物 │ 插件市场
+ *   机器人 · 工作台 · 项目 │ 场景 │ 记忆 · 知识 · 人物 │ 插件市场
  *
- * 项目 / 机器人 是两个 机器人 / 工作台 页面里的左栏列表（不占 rail），
- * Git 在工作台的右栏「文件 / 会话 / Git」里。
+ * 项目占 rail（项目花名册是一级页面，需求挂在项目内、不占 rail）；
+ * 机器人列表仍是机器人页面的左栏，Git 在工作台的右栏「文件 / 会话 / Git」里。
  * 插件自己的视图（视觉解析…）不单独占 rail：它们是「插件市场」里的条目。
  */
 type View = "workspace" | "terminal" | "scene" | "projects" | "requirements" | "bots" | "git" | "settings" | "guide" | "notes" | "knowledge" | "memory" | "persona" | "zhulong" | "plugins" | "bot";
@@ -15,6 +15,7 @@ const icon = (name: string) => {
   const common = { width: 19, height: 19, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
   if (name === "bot") return <svg {...common}><rect x="4" y="8" width="16" height="11" rx="3" /><path d="M12 8V5M9 13h.01M15 13h.01M9 16.5h6" /></svg>;
   if (name === "terminal") return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="m7 9 3 3-3 3M13 15h4" /></svg>;
+  if (name === "projects") return <svg {...common}><path d="M4 7.5A1.5 1.5 0 0 1 5.5 6h3.4l1.7 2h7.9A1.5 1.5 0 0 1 20 9.5v7A1.5 1.5 0 0 1 18.5 18h-13A1.5 1.5 0 0 1 4 16.5z" /></svg>;
   if (name === "scene") return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M9 9v11M15 9v11" /></svg>;
   if (name === "memory") return <svg {...common}><path d="M12 3v18M5 7v10M19 7v10M8.5 5v14M15.5 5v14" /></svg>;
   if (name === "note") return <svg {...common}><path d="M5 4h9l5 5v11H5z" /><path d="M14 4v5h5M8 13h8M8 17h5" /></svg>;
@@ -30,6 +31,7 @@ export function Rail({ view, onChange, notesEnabled = false, badges = {} }: { vi
   const items: { id: View; label: string }[] = [
     { id: "workspace", label: t("nav.workspace") },
     { id: "terminal", label: t("nav.terminal") },
+    { id: "projects", label: t("nav.projects") },
   ];
   const mid: { id: View; label: string }[] = [{ id: "scene", label: t("nav.scene") }];
   const libs: { id: View; label: string }[] = [

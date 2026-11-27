@@ -6,7 +6,7 @@ import type { State, Todo, TodoStatus } from "../types";
 import { STATUS, activeRun, agentOf, duration, lastRun } from "../ui";
 import { Splitter, useStoredSize } from "./Splitter";
 import {
-  EllipsisIcon, FolderPlusIcon,
+  FolderPlusIcon,
   CheckIcon, ChevronDownIcon, ChevronRightIcon, DotIcon, PanelCollapseIcon, PanelExpandIcon, PanelRestoreIcon, PlusIcon, SearchIcon, SlidersIcon, XIcon,
 } from "./Icons";
 import { ListContextMenu } from "./ListContextMenu";
@@ -52,12 +52,12 @@ function TaskPlan({ items, expanded }: { items: Todo["subtasks"]; expanded: bool
   );
 }
 
-export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, projectCounts, onAddProject, onManageProjects, onSwitchProject, onCollapse, confirmStop = false, allProjects = false, onToggleScope, maximized = false, onToggleMaximize, onOpenBot, onManageBots, botUnread = 0, activeBotId = null }: {
+export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, projectCounts, onAddProject, onSwitchProject, onCollapse, confirmStop = false, allProjects = false, onToggleScope, maximized = false, onToggleMaximize, onOpenBot, onManageBots, botUnread = 0, activeBotId = null }: {
   /** BOT 模式：机器人列表 + 它接的活；工作台模式：项目列表 + TODO 总览 */
   mode?: "bot" | "terminal";
   state: State; selectedId: string | null; now: number; act: Act; onSelect: (id: string) => void;
   projectCounts: Record<string, number>;
-  onAddProject: () => void; onManageProjects: () => void; onSwitchProject: (id: string) => void;
+  onAddProject: () => void; onSwitchProject: (id: string) => void;
   onCollapse?: () => void;
   maximized?: boolean;
   onToggleMaximize?: () => void;
@@ -696,7 +696,6 @@ export function TaskPane({ mode = "bot", state, selectedId, now, act, onSelect, 
             <SlidersIcon size={14} />
           </button>
           <button className="icon-btn" title="添加项目" aria-label="添加项目" onClick={onAddProject}><FolderPlusIcon size={14} /></button>
-          <button className="icon-btn" title="管理项目" aria-label="管理项目" onClick={onManageProjects}><EllipsisIcon size={13} /></button>
           </div>
           <button
             className="project-panel-chev"
