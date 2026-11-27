@@ -121,7 +121,7 @@
 | [`arch/ARCH-im-gateway.md`](arch/ARCH-im-gateway.md) | 架构 | 部分落地 | 即时通信网关：渠道范围只做飞书，飞书接入路径 / 现状 / 未做 |
 | [`arch/ARCH-zhulong-integration.md`](arch/ARCH-zhulong-integration.md) | 架构 | 部分落地 | 视觉解析插件：验证台 UI 改造、三种解析后端与插件设置项 |
 | [`arch/ARCH-bot.md`](arch/ARCH-bot.md) | 架构 | 部分落地 | 人格 bot：多 bot 档案、60s tick 与三道闸、回合审计；dispatch / 飞书未做 |
-| [`arch/ARCH-bot-borrow-from-orca.md`](arch/ARCH-bot-borrow-from-orca.md) | 架构 | 提案 | ORCA Bot 盘点（59f3122bc）：静默标记、Items 台账、记忆行模型、只读自查、通知作用域；P0/P1/P2 借鉴清单与第一批范围 |
+| [`arch/ARCH-bot-borrow-from-orca.md`](arch/ARCH-bot-borrow-from-orca.md) | 架构 | 提案 | ORCA Bot 盘点（14c614651）：静默标记、Items 台账、记忆行模型、只读自查、通知作用域；P0/P1/P2 借鉴清单与第一批范围 |
 | [`arch/ARCH-bot-workspace.md`](arch/ARCH-bot-workspace.md) | 架构 | 部分落地 | **工作区交接**：`bot_workspaces` 长期关系、`work_list`、`workspace=<id>` 观察面、原地起 run、交回与删除边界（参照 ORCA bot-work / hand-over） |
 | [`arch/ARCH-bot-group.md`](arch/ARCH-bot-group.md) | 架构 | 部分落地 | **群聊路由**：房间 / 成员 / 投递规则、@ 解析（代码与路径不算）、回复接力、共享上下文、未读；对照 ORCA `BotGroup` 的 rooms / remote / mail 差距 |
 | [`arch/ARCH-agent-bridge.md`](arch/ARCH-agent-bridge.md) | 架构 | 部分落地 | **为什么不照搬 ORCA CLI**：内置 bot 走主进程工具表；只给受管终端 agent 一条 whoami / note / report 的窄通道，token 绑定 run |

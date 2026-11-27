@@ -1,4 +1,4 @@
-> 层：架构 · 状态：提案 · 核对：2026-11-23 · 覆盖：ORCA Bot 实现盘点、8e0c267e 到 59f3122bc 的 Bot 变更、按 P0/P1/P2 的可借鉴清单与第一批改动范围
+> 层：架构 · 状态：提案 · 核对：2026-11-27 · 覆盖：ORCA Bot 实现盘点、8e0c267e→59f3122bc→14c614651 的 Bot 变更、按 P0/P1/P2 的可借鉴清单与第一批改动范围
 
 # Arch · 从 ORCA 借 Bot 能力
 
@@ -14,9 +14,11 @@
 |---|---|
 | 源码副本 | `third-part/orca`（`https://github.com/stablyai/orca.git`，MIT） |
 | 旧 commit | `8e0c267e4bf5c47f8f8dda0e9daae4590fad326f` · 2026-11-20 06:36:35 -0800 |
-| 新 commit | `59f3122bc8c16c4f655a5af80ba19bd865aab937` · 2026-11-23 06:10:54 -0800（`origin/main`、`origin/HEAD`） |
-| 区间 | 991 commits；Bot 五个目录 207 commits、689 个文件、+45673 / −34966、272 个新文件（139 个在 `mobile/`，133 个在主进程 / 共享 / CLI / 脚本） |
-| 更新方式 | `git fetch origin main` → `git switch main` → `git reset --hard origin/main`；工作区干净，无我们的改动 |
+| 首次复核 | `59f3122bc8c16c4f655a5af80ba19bd865aab937` · 2026-11-23 06:10:54 -0800 |
+| 本次复核 | `14c6146516c37e59857f0e30c19b64d580ee3e8c` · 2026-11-27 21:53:24 +0800 |
+| 首次区间 | 8e0c267e→59f3122bc：991 commits；Bot 五个目录 207 commits、689 个文件、+45673 / −34966、272 个新文件 |
+| 本次区间 | 59f3122bc→14c614651：`src/{main,shared}/bots` + `src/cli/bots` 共 289 个文件、+15205 / −3513、**90 个新文件**（items 生命周期、tool-relay/OAuth、team-share、look-around、tidy-up、host 用量闸） |
+| 更新方式 | 本机 HTTPS 到 github 不通，用 SSH 只读拉：`git fetch --depth=1 git@github.com:stablyai/orca.git main` → `git checkout -B main FETCH_HEAD`；工作区干净，无我们的改动 |
 
 **收录判据**：一条要同时满足 ① ORCA 有可指的文件与做法 ② 我们能落到具体文件 ③ 有可测判据。
 只写读过源码能确认的事；「推断」一律在句中标注。没读透的进 §6，不进清单。
@@ -285,7 +287,7 @@
 
 ```bash
 cd third-part/orca
-git log -1 --format='%H %ad' --date=iso          # 应为 59f3122bc8c16c4f655a5af80ba19bd865aab937
+git log -1 --format='%H %ad' --date=iso          # 应为 14c6146516c37e59857f0e30c19b64d580ee3e8c
 git rev-list --count 8e0c267e..HEAD              # 991
 git log --oneline 8e0c267e..HEAD -- src/main/bots src/shared/bots src/cli/bots mobile/src/bots \
   config/scripts/bot-apps | wc -l                # 207

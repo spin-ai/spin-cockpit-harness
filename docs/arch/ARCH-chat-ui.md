@@ -166,7 +166,7 @@
 
 **问题**：ACP 每要写一个文件 / 跑一条命令就发一次 `session/request_permission`，而人已经在「开跑」时授权过这件事。
 原来每次弹一个整屏模态（一次只画 `approvals[0]`），人在任务跑起来之后既不能改文件也不能看日志，只能连点。
-与 ORCA `@ 59f3122bc` 的差距：它的权限是**按会话选一次**（`ask / accept-edits / auto / full-access`，ACP 只给 ask / full-access），
+与 ORCA `@ 14c614651` 的差距：它的权限是**按会话选一次**（`ask / accept-edits / auto / full-access`，ACP 只给 ask / full-access），
 审批卡贴在 composer 上方、可折叠可堆叠；我们是按调用弹一次、整屏挡。
 
 | 项 | 规格 |
