@@ -289,6 +289,16 @@ tick（每 60s）
 - 思考同时落进 `turn.trace` 的 `kind: "thought"`（截 1500 字）：轨迹里能回看，但不把每轮的快照撑大。
 - 「思考档」`effort` 映射到各网关字段（`electron/bot/reasoning.mjs`）：Ark/豆包 `thinking.type`、OpenAI 推理模型 `reasoning_effort`、DeepSeek 等不给。**不认字段的网关 400 后去掉重试一次**，不让「快速档」变成失败。`quick` 同时把工具轮次压到 2 轮（少绕两圈）。
 
+### 4.2 「我的手」：停止连坐 + 执行链（2026-11-27）
+
+bot 会派活（`task_create` / `run_start`），但以前**派出去的 run 在转录里看不见、也停不住**：`botCancel` 只 abort bot 自己的流。
+
+- 派活的当下就把 `todoId / runId` 挂到回合上（`linkTurnHand`，主进程），不是等回合结束才写——否则正在跑的 run 掐不住。
+- `botCancel` 用 `runsToStopForCancel()`（`electron/bot/hands.mjs`，纯函数）找出**这个 bot 最近 30 分钟内派出去、且还在跑**的 run，一起 `actions.stop`；时间窗避免把上周的 run 连坐。返回 `{ stopped: n }`，界面把它们数进 toast。
+- 转录里一行 `我做的 · FEAT-1 标题 · 完成 · npm test`（`.ds-hands`）：任务段点开任务，运行段进轨迹（`handChainForTurn()` 选活跃优先、其次最新）。没有派活的回合不画。
+
+单测：`tests/bot/hands.test.mjs`（停止连坐三条 + 执行链三条）；预览断言：`我做的：派过活的回合画出执行链` / `点运行那段 → 切到轨迹`。
+
 **沉默优先**：`decision: "silent"` 是正常结果，不是异常；连续沉默不报警，但连续 24h 一条没发要能在 UI 里看到（可能是配置错了）。
 
 ---

@@ -68,7 +68,7 @@ export const ERROR_CLASS: Record<string, string> = { auth: "认证", rate_limit:
 export const RUN_STATUS: Record<string, string> = {
   queued: "排队", running: "进行中", waiting_input: "等待输入",
   waiting_plan: "计划待批", waiting_children: "等待子任务",
-  completed: "完成", failed: "失败", cancelled: "已停止", interrupted: "已中断",
+  completed: "完成", done: "完成", failed: "失败", cancelled: "已停止", interrupted: "已中断",
 };
 export function agentOf(agents: Agent[], id: string | null) { return agents.find((a) => a.id === id) ?? null; }
 export function activeRun(todo: Todo, runs: Run[]) {

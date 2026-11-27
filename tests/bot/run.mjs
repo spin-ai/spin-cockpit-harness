@@ -34,6 +34,7 @@ const suites = [
   "./peer-note.test.mjs", // 1:1 里 @ 到别的机器人：地址上下文 / 交接目标 / 喂给目标的框法
   "./thinking.test.mjs",  // 推理模型思考流：回吐 / 落 trace / 截断 / 无思考不留空事件
   "./reasoning.test.mjs", // 思考档 → 各网关推理字段（thinking / reasoning_effort / 不给）
+  "./hands.test.mjs",     // 「我的手」：停止连坐 run / 执行链取哪一条
   "./context.test.mjs",   // 上下文预算 / 长对话压缩 / 温度与工具签名
   "./tidy.test.mjs",      // 记忆整理：80% 才给候选 / 只归档可恢复
   "./templates.test.mjs",  // 内置模板：人格 / 职责 / 日程成品可用

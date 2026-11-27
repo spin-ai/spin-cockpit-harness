@@ -4598,6 +4598,16 @@ button.zh-check{grid-template-columns:6px minmax(0,1fr) auto 10px}
 .ds-ip-body.is-prose{font-family:var(--font-sans);font-size:13px;line-height:1.65}
 .ds-ip-body .is-hit{display:inline-block;width:100%;background:color-mix(in srgb,var(--fg) 8%,transparent)}
 
+/* 「我做的」：这一轮派出去的活（任务 → 运行 → 最近一步）。一行文字，不新增卡片 */
+.ds-hands{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;margin-top:6px;font-size:12px;line-height:20px;color:var(--faint)}
+.ds-hands-label{flex:none;color:var(--faint)}
+.ds-hand{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:340px;height:20px;padding:0 6px;border:0;border-radius:var(--radius-sm);background:var(--surface-hover);color:var(--fg-2);font-size:12px;line-height:20px;cursor:pointer}
+.ds-hand:hover{background:var(--surface-selected);color:var(--fg)}
+.ds-hand .mono{flex:none;color:var(--faint);font-size:11px}
+.ds-hand.is-live{color:var(--ds-blue)}
+.ds-hand-last{min-width:0;color:var(--faint)}
+.ds-hand-more{flex:none;color:var(--faint);font-size:11px}
+
 /* 推理模型的思考流：正文之前的「它在想什么」，正文开始后收成一行 */
 .ds-live-thought{margin:2px 0 6px;padding:0 0 0 8px;border-left:2px solid var(--border-strong);min-width:0}
 .ds-live-thought-head{display:block;font-size:11px;line-height:18px;color:var(--faint)}

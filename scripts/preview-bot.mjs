@@ -419,6 +419,28 @@ check("Chat 窗口：composer 是 34px 圆形发送", sendBtn === '{"w":34,"r":"
 check("正文渲染 Markdown 代码块", await ev(`!!document.querySelector(".ds-assistant-body pre code")`));
 check("正文渲染 Markdown 列表", await ev(`!!document.querySelector(".ds-assistant-body ul li")`));
 check("run 汇报带产物", (await text(".bot-stream")).includes("src/App.tsx"));
+// 「我做的」：这一轮派出去的活画成一条链（任务 → 运行 → 最近一步），没派活的回合不画
+const handsUi = await ev(`(() => {
+  const rows = [...document.querySelectorAll(".bot-stream .ds-hands")];
+  const first = rows[0];
+  return JSON.stringify({
+    rows: rows.length,
+    text: first ? first.textContent.trim() : "",
+    hands: first ? [...first.querySelectorAll(".ds-hand")].map((b) => b.textContent.trim()) : [],
+  });
+})()`);
+const handsObj = JSON.parse(handsUi || "{}");
+check("我做的：派过活的回合画出执行链", handsObj.rows >= 1 && /FEAT-1/.test(handsObj.text || ""), handsUi);
+check("我做的：点运行那段 → 切到轨迹", await ev(`(() => {
+  const run = [...document.querySelectorAll(".bot-stream .ds-hands .ds-hand")].find((b) => /完成|进行中|失败/.test(b.textContent || ""));
+  if (!run) return false;
+  run.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  return true;
+})()`), handsUi);
+await run(`await new Promise((r) => setTimeout(r, 200)); return true;`);
+check("我做的：跳到轨迹页", await ev(`!!document.querySelector(".ds-trajectory")`));
+await run(`const tab = [...document.querySelectorAll(".bot-chat-tabs button")].find((b) => b.textContent.trim() === "对话"); if (tab) tab.dispatchEvent(new MouseEvent("click", { bubbles: true })); await new Promise((r) => setTimeout(r, 200)); return true;`);
+
 check("消息动作：引用 / 更多菜单", await ev(`!!document.querySelector('.ds-action[title="引用这条继续问"]') && !!document.querySelector('.ds-actions .row-menu-trigger')`));
 check("citations：为什么说 / 注入记忆", (await text(".bot-stream")).includes("为什么说"));
 // 回合轨：不写序号，悬停细线预览这一轮的内容

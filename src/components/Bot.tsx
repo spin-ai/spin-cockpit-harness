@@ -5,13 +5,15 @@ import { EmptyState } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
 import { RowMenu } from "./RowMenu";
 import { CheckSquareIcon, CopyIcon, FileTextIcon, LinkIcon, PencilIcon, PlusIcon, QuoteIcon, RefreshIcon, SearchIcon, SendIcon, SparkleIcon, TerminalIcon, XIcon } from "./Icons";
-import { ArrowUpRightIcon, CheckIcon, DotIcon, PauseIcon, QuestionIcon, ReplyIcon } from "./Icons";
+import { ArrowUpRightIcon, BoltIcon, CheckIcon, DotIcon, PauseIcon, QuestionIcon, ReplyIcon } from "./Icons";
 import { FAMILY_UNIT, FAMILY_VERB, STATUS_LABEL, familyOf, formatDuration, humanArgs, isFileLike, objectOf, runsOfFamily, statusOf, summarizeFamilies, turnStatusOf, type ToolFamily, type ToolStatus } from "../tool-family";
 import { ToolFamilyIcon } from "./ToolFamilyIcon";
 import { UndoBar, type UndoAction } from "./UndoBar";
 import { FileChip } from "./FileChip";
 import { CAP_LABEL, DECISION_LABEL } from "../labels";
 import { hm } from "../ui";
+import { ACTIVE_RUN_STATUSES, handChainForTurn } from "../../electron/bot/hands.mjs";
+import { RUN_STATUS } from "../ui";
 
 /** Bot 页的时间：不是今天就带「月/日」前缀（其它页面只要 hh:mm） */
 const botTime = (ts: number) => hm(ts, { date: true });
@@ -605,6 +607,57 @@ function ToolCard({ step, child = false, preview, previewRoot }: { step: TraceSt
         </div>,
       )}
     </details>
+  );
+}
+
+/**
+ * 这一轮派出去的活：`我做的 · FEAT-1 标题 · 运行中 · 最近改 src/App.tsx`。
+ * 只画一行文字 + 两个可点段，不新增卡片；没有派活的回合什么都不画。
+ */
+function HandsRow({ turn, state, onOpenTodo, onOpenRun }: {
+  turn: Turn; state?: State | null;
+  onOpenTodo?: (id: string) => void;
+  onOpenRun?: (runId: string) => void;
+}) {
+  const t = useT();
+  const chain = handChainForTurn(turn, { todos: state?.todos || [], runs: state?.runs || [] });
+  if (!chain) return null;
+  const { todo, run, extra } = chain;
+  const lastStep = run
+    ? [...(state?.messages || [])].reverse().find((m) => m.runId === run.id && (m.kind === "tool" || m.kind === "thought"))
+    : null;
+  const lastText = String(lastStep?.meta?.title || lastStep?.content || "")
+    .split("\n")[0].replace(/^run:\s*/i, "").trim().slice(0, 48);
+  const live = Boolean(run && ACTIVE_RUN_STATUSES.includes(run.status));
+  return (
+    <div className="ds-hands">
+      <span className="ds-hands-label">{t("bot.hands.label", "我做的")}</span>
+      {todo && (
+        <button
+          className="ds-hand"
+          title={`${todo.key || ""} ${todo.title || ""}`.trim()}
+          onClick={() => onOpenTodo?.(todo.id)}
+          aria-label={`${t("bot.hands.openTodo", "打开任务")} ${todo.key || todo.title || ""}`}
+        >
+          <CheckSquareIcon size={12} />
+          {todo.key && <span className="mono">{todo.key}</span>}
+          <span className="ellipsis">{todo.title || ""}</span>
+        </button>
+      )}
+      {extra > 0 && <span className="ds-hand-more">+{extra}</span>}
+      {run && (
+        <button
+          className={`ds-hand${live ? " is-live" : ""}`}
+          title={t("bot.hands.openRun", "看这次运行的轨迹")}
+          onClick={() => onOpenRun?.(run.id)}
+          aria-label={t("bot.hands.openRun", "看这次运行的轨迹")}
+        >
+          <BoltIcon size={12} />
+          <span>{RUN_STATUS[run.status] || run.status}</span>
+          {lastText && <span className="ds-hand-last ellipsis">· {lastText}</span>}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -2119,9 +2172,15 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
         const ids = groupStream.length ? groupStream.map((s) => s.botId) : groupMembers.map((m) => m.id);
         await Promise.all(ids.map((id) => act("botCancel", { botId: id })));
       } else {
-        await act("botCancel", { botId: bot?.id });
+        const res = (await act("botCancel", { botId: bot?.id })) as { stopped?: number } | null;
+        // 停止现在连它派出去的 run 一起停：说清楚停了几次运行，别让人以为只是停了说话
+        const stoppedN = Number(res?.stopped) || 0;
+        notify(stoppedN > 0
+          ? `${t("bot.stop.doneRuns", "已取消这次回复，并停掉 {n} 次运行").replace("{n}", String(stoppedN))}`
+          : t("bot.stop.cancelled", "已取消这次回复"));
+        return;
       }
-      notify("已取消这次回复");
+      notify(t("bot.stop.cancelled", "已取消这次回复"));
     }
     catch (err) { notify(String((err as Error)?.message || err)); }
     finally {
@@ -3559,6 +3618,12 @@ export function BotConsole({ act, notify, onOpenThread, onOpenTodo, state, initi
                   ) : (
                     <div className="ds-assistant-body"><RichText text={turn.reply || ""} /></div>
                   )}
+                  <HandsRow
+                    turn={turn}
+                    state={state}
+                    onOpenTodo={(id) => onOpenTodo?.(id)}
+                    onOpenRun={() => { setTrajectoryTurn(turn.id); setChatView("trajectory"); }}
+                  />
                   {turn.decision === "asked" && (
                     <div className="ds-system-note">你回一句就会成为它的职责（人格卡 → 职责），以后随时能改。</div>
                   )}

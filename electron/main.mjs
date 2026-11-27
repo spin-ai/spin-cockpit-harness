@@ -20,6 +20,7 @@ import { BOT_INJECT_CHARS, createBots, soulMarkdown } from "./bot/index.mjs";
 import { crossTopicDigest, groupAudience, groupContextLines, groupMarkdown, replyMentions, settleGroupAsks } from "./bot/group.mjs";
 import { mailPrompt, pendingMailsFor } from "./bot/mail.mjs";
 import { handoffPrompt, peerMentionNote, resolveHandoffTarget } from "./bot/peer-note.mjs";
+import { runsToStopForCancel } from "./bot/hands.mjs";
 import { notifyAllowed, notifyDecision } from "./bot/notify.mjs";
 import { TIDY_MAX_ARCHIVE, planTidy } from "./bot/tidy.mjs";
 import { botTemplate, templateSummaries } from "./bot/templates.mjs";
@@ -3755,6 +3756,22 @@ function withTimeout(promise, ms, label) {
   ]).finally(() => clearTimeout(timer));
 }
 
+/**
+ * 把「这一轮派出去的活」当场挂到回合上（回合结束时 reply() 还会再写一遍完整版）。
+ * 不这么做的话，停止时只知道"回合跑完了才派过活"，正在跑的 run 掐不住。
+ */
+function linkTurnHand(ctx, { todoId = "", runId = "" } = {}) {
+  const id = String(ctx?.turnId || "");
+  if (!id) return;
+  const turn = (store.state.botTurns || []).find((t) => t.id === id);
+  if (!turn) return;
+  if (todoId) {
+    turn.todoIds = [...new Set([...(turn.todoIds || []), String(todoId)])];
+    turn.todoId = turn.todoId || String(todoId);
+  }
+  if (runId && !turn.runId) turn.runId = String(runId);
+}
+
 async function botReadTool(name, args = {}, ctx = {}) {
   const meta = BOT_TOOL_META[name];
   if (!meta) return { error: `未知工具 ${name}` };
@@ -3903,6 +3920,7 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
         return { error: String(err?.message || err) };
       }
       const runId = st.runs.find((r) => r.todoId === todo.id && !before.has(r.id))?.id || null;
+      linkTurnHand(ctx, { todoId: todo.id, runId: runId || "" });
       broadcast();
       return { ok: true, runId, todoId: todo.id, key: todo.key };
     }
@@ -4153,6 +4171,7 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
             }
           }
         }
+        linkTurnHand(ctx, { todoId: existed.id, runId: runId || "" });
         store.persist(); broadcast();
         return { ok: true, existed: true, key: existed.key, todoId: existed.id, agent: agent.alias || agent.name, bot: targetBot?.name || null, started: Boolean(runId), runId };
       }
@@ -4186,6 +4205,7 @@ async function botReadToolNow(name, args = {}, ctx = {}) {
           return { ok: true, key: todo.key, todoId: todo.id, agent: agent.alias || agent.name, started: false, error: String(err?.message || err) };
         }
       }
+      linkTurnHand(ctx, { todoId: todo.id, runId: runId || "" });
       store.persist(); broadcast();
       return { ok: true, key: todo.key, todoId: todo.id, agent: agent.alias || agent.name, bot: targetBot?.name || null, started: Boolean(runId), runId };
     }
@@ -6459,9 +6479,14 @@ const actions = {
   botCancel: async ({ botId } = {}) => {
     const id = String(botId || "");
     const controller = botAborts.get(id);
-    if (!controller) return { ok: false, reason: "没有进行中的回复" };
+    // 点「停止」要连它派出去的活一起停：以前只掐 bot 自己的流，外面的 run 还在跑
+    const stopped = runsToStopForCancel(store.state.runs || [], store.state.botTurns || [], { botId: id });
+    for (const runId of stopped) {
+      try { actions.stop({ runId }); } catch (err) { console.warn(`[bot] 停 run 失败 ${runId}：${String(err?.message || err)}`); }
+    }
+    if (!controller) return { ok: true, stopped: stopped.length, reason: "没有进行中的回复" };
     controller.abort();
-    return { ok: true };
+    return { ok: true, stopped: stopped.length };
   },
   /** 接受建议：只建 todo（confirmed=false），不起 run —— 起 run 仍由人在桌面点确认 */
   /**
