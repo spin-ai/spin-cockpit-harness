@@ -93,8 +93,10 @@ const ctx = {
   },
   fs: {
     pickDirectory: (options) => request("fs.pickDirectory", { options: options || {} }),
+    projectRoot: () => request("fs.projectRoot", {}),
     readProjectFile: (rel) => request("fs.readProjectFile", { rel: String(rel) }),
     writeProjectFile: (rel, text) => request("fs.writeProjectFile", { rel: String(rel), text: String(text) }),
+    writeProjectBinary: (rel, base64) => request("fs.writeProjectBinary", { rel: String(rel), base64: String(base64) }),
     reveal: (file) => request("fs.reveal", { file: String(file) }),
   },
   net: {
@@ -132,6 +134,8 @@ const ctx = {
   notify: (message, options) => request("notify", { message: String(message), options: options || {} }),
   ui: {
     openView: (id) => request("ui.openView", { id: String(id) }),
+    /** 插件 → 渲染层的进度推送（PPT 页级进度这类长任务用；需要 ui:view 权限） */
+    post: (event, payload) => request("ui.post", { event: String(event), payload: payload ?? null }),
   },
 };
 

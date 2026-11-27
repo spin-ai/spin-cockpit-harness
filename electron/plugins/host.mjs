@@ -425,8 +425,24 @@ export class PluginHost {
         return res.canceled ? null : res.filePaths[0] || null;
       }
       case "fs.reveal": {
-        if (!permission("fs:vault")) throw new Error("permission denied: fs:vault");
+        // 只做「在文件夹里显示」：project 插件也能用，但它拿不到读取权限
+        if (!permission("fs:vault") && !permission("fs:project")) throw new Error("permission denied: fs:project");
         shell.showItemInFolder(String(params.file || ""));
+        return true;
+      }
+      case "fs.projectRoot": {
+        if (!permission("fs:project")) throw new Error("permission denied: fs:project");
+        return path.resolve(this.store.state.projectPath || process.cwd());
+      }
+      case "fs.writeProjectBinary": {
+        if (!permission("fs:project")) throw new Error("permission denied: fs:project");
+        const root = this.store.state.projectPath || process.cwd();
+        const full = path.resolve(root, String(params.rel || ""));
+        if (!full.startsWith(path.resolve(root) + path.sep)) throw new Error("path outside project");
+        const data = Buffer.from(String(params.base64 || ""), "base64");
+        if (data.length > 64 * 1024 * 1024) throw new Error("文件过大（>64MB）");
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, data);
         return true;
       }
       case "fs.readProjectFile": {
@@ -457,6 +473,15 @@ export class PluginHost {
       }
       case "ui.openView": {
         this.getWin()?.webContents.send("harness:plugin-open-view", { id: String(params.id || "") });
+        return true;
+      }
+      case "ui.post": {
+        if (!permission("ui:view")) throw new Error("permission denied: ui:view");
+        this.getWin()?.webContents.send("harness:plugin-event", {
+          pluginId,
+          event: String(params.event || ""),
+          payload: params.payload ?? null,
+        });
         return true;
       }
       case "secrets.get": return null;
