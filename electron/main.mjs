@@ -7485,6 +7485,102 @@ const actions = {
     store.addEvent("project.status", `project.status ${project.name} → ${status}`);
     return project;
   },
+  /** 项目目标：一行字，汇总顶上那段 */
+  projectSetGoal: ({ id = "", goal = "" } = {}) => {
+    const p = store.state.projects.find((x) => x.id === String(id));
+    if (!p) throw new Error("项目不存在");
+    p.goal = String(goal || "").slice(0, 400);
+    p.updatedAt = Date.now();
+    store.persist(); broadcast();
+    return { ok: true, goal: p.goal };
+  },
+  /** 里程碑：整组替换（汇总的横向时间轴） */
+  projectMilestones: ({ id = "", milestones = [] } = {}) => {
+    const p = store.state.projects.find((x) => x.id === String(id));
+    if (!p) throw new Error("项目不存在");
+    const list = (Array.isArray(milestones) ? milestones : []).slice(0, 12).map((m, i) => ({
+      id: String(m?.id || `ms-${Date.now().toString(36)}-${i}`),
+      name: String(m?.name || "").slice(0, 80) || `里程碑 ${i + 1}`,
+      date: Number(m?.date) || Date.now(),
+      status: ["done", "doing", "todo"].includes(m?.status) ? m.status : "todo",
+    }));
+    p.milestones = list;
+    p.updatedAt = Date.now();
+    store.persist(); broadcast();
+    return { ok: true, milestones: list };
+  },
+  /** 需求排期（计划 tab 的甘特条） */
+  requirementSetPlan: ({ id = "", planStart = null, planEnd = null } = {}) => {
+    const req = (store.state.requirements || []).find((r) => r.id === String(id));
+    if (!req) throw new Error("需求不存在");
+    req.planStart = planStart ? Number(planStart) : null;
+    req.planEnd = planEnd ? Number(planEnd) : null;
+    req.updatedAt = Date.now();
+    store.persist(); broadcast();
+    return { ok: true, planStart: req.planStart, planEnd: req.planEnd };
+  },
+  /** 从需求派活：建一条带 requirementId 的任务（起 run 仍由人确认） */
+  requirementDispatch: ({ id = "", agentId = null, botId = null, title = "", projectId = "" } = {}) => {
+    const req = (store.state.requirements || []).find((r) => r.id === String(id));
+    if (!req) throw new Error("需求不存在");
+    if (req.status === "draft" || req.status === "reviewing") throw new Error("先批准再派活");
+    const todo = actions.createTodo({
+      title: (String(title || "").trim() || req.title).slice(0, 120),
+      desc: `${req.key} · ${req.title}\n\n${String(req.body || "").slice(0, 800)}`,
+      agentId: agentId || null,
+      botId: botId || null,
+      projectId: projectId || req.projectId || null,
+      priority: req.priority || "P2",
+      requirementId: req.id,
+    });
+    todo.acceptance = (req.acceptance || []).map((a) => a.text).slice(0, 5);
+    if (req.status === "approved") { req.status = "in_progress"; req.updatedAt = Date.now(); }
+    store.persist(); broadcast();
+    return { ok: true, todoId: todo.id, key: todo.key };
+  },
+  /** 事项台账（遗留事项 / 任务 / 问题） */
+  issueCreate: ({ projectId = "", kind = "issue", title = "", body = "", priority = "P2", reqId = null, owner = null } = {}) => {
+    const p = store.state.projects.find((x) => x.id === String(projectId)) || activeProject();
+    if (!p) throw new Error("先添加一个项目");
+    const k = ["legacy", "task", "issue"].includes(kind) ? kind : "issue";
+    const prefix = k === "legacy" ? "LEGACY" : k === "task" ? "TASK" : "ISSUE";
+    const used = (store.state.issues || []).filter((i) => i.projectId === p.id && i.key.startsWith(prefix + "-")).length;
+    const issue = {
+      id: `is-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+      projectId: p.id, key: `${prefix}-${String(used + 1).padStart(2, "0")}`,
+      kind: k, title: String(title || "").trim().slice(0, 200), body: String(body || "").slice(0, 4000),
+      status: "open", priority: ["P0", "P1", "P2", "P3"].includes(priority) ? priority : "P2",
+      owner: owner || null, reqId: reqId || null, notes: [],
+      createdAt: Date.now(), updatedAt: Date.now(),
+    };
+    if (!issue.title) throw new Error("标题不能为空");
+    store.state.issues = [issue, ...(store.state.issues || [])];
+    store.persist(); broadcast();
+    return { ok: true, issue };
+  },
+  issueUpdate: ({ id = "", status, priority, owner, reqId, title, body } = {}) => {
+    const it = (store.state.issues || []).find((x) => x.id === String(id));
+    if (!it) throw new Error("事项不存在");
+    if (status && ["open", "doing", "blocked", "resolved", "closed"].includes(status)) it.status = status;
+    if (priority && ["P0", "P1", "P2", "P3"].includes(priority)) it.priority = priority;
+    if (owner !== undefined) it.owner = owner || null;
+    if (reqId !== undefined) it.reqId = reqId || null;
+    if (title !== undefined) it.title = String(title).slice(0, 200) || it.title;
+    if (body !== undefined) it.body = String(body).slice(0, 4000);
+    it.updatedAt = Date.now();
+    store.persist(); broadcast();
+    return { ok: true, issue: it };
+  },
+  issueNote: ({ id = "", text = "", by = "你" } = {}) => {
+    const it = (store.state.issues || []).find((x) => x.id === String(id));
+    if (!it) throw new Error("事项不存在");
+    const body = String(text || "").trim().slice(0, 2000);
+    if (!body) throw new Error("写一句再记");
+    it.notes = [...(it.notes || []), { at: Date.now(), by: String(by || "你").slice(0, 40), text: body }];
+    it.updatedAt = Date.now();
+    store.persist(); broadcast();
+    return { ok: true, issue: it };
+  },
   requirementCreate: ({ projectId = "", level = "rr", parentId = null, title = "", body = "" } = {}) => {
     const normalized = normalizeLevel(level);
     if (!normalized) throw new Error(`未知需求层级：${level}`);
@@ -7518,8 +7614,8 @@ const actions = {
       if (!next) throw new Error("标题不能为空");
       if (next !== req.title) { req.title = next; changed.push("title"); }
     }
-    for (const [key, value] of Object.entries({ body, priority, owner, source, requester, scope, outOfScope, impact, role, value })) {
-      if (typeof value === "string" && value !== req[key]) { req[key] = value; changed.push(key); }
+    for (const [field, filled] of Object.entries({ body, priority, owner, source, requester, scope, outOfScope, impact, role, value })) {
+      if (typeof filled === "string" && filled !== req[field]) { req[field] = filled; changed.push(field); }
     }
     if (acceptance !== undefined) {
       const next = normalizeAcceptance(acceptance);
@@ -7629,7 +7725,7 @@ const actions = {
     }
     store.addEvent("todo.created", `todo.created count=3 source=template`);
   },
-  createTodo: ({ title, desc = "", agentId = null, cwd = "", priority = "P2", botId = null, projectId = null }) => {
+  createTodo: ({ title, desc = "", agentId = null, cwd = "", priority = "P2", botId = null, projectId = null, requirementId = null }) => {
     if (!title) throw new Error("title required");
     const project = projectId ? (store.state.projects.find((p) => p.id === projectId) || activeProject()) : activeProject();
     const id = store.nextId("t");
@@ -7640,6 +7736,8 @@ const actions = {
       cwd: cwd || project?.path || workspaceRoot, createdAt: now(), updatedAt: now(),
       // 派单链记住是谁派的：机器人建的任务挂回机器人（没有 bot 的路径仍是 null）
       botId: botId || null,
+      // 从需求派出来的任务：看板 / 计划据此显示实现者，汇总据此算「未派活」
+      requirementId: requirementId || null,
     };
     store.state.todos.unshift(todo);
     threadForTodo(todo);

@@ -1,8 +1,13 @@
 export type TodoStatus = "todo" | "queued" | "in_progress" | "waiting_input" | "in_review" | "done" | "cancelled";
 export type ProjectStatus = "planned" | "in_progress" | "paused" | "completed" | "cancelled";
+export interface ProjectMilestone { id: string; name: string; date: number; status: "done" | "doing" | "todo"; }
 export interface Project {
   id: string; name: string; path: string; desc: string; color: string;
   status: ProjectStatus; createdAt: number; lastOpenedAt: number; alias: string;
+  /** 项目目标：一句话说清要交付什么、什么时候算完成（项目汇总顶上那一段） */
+  goal?: string;
+  /** 里程碑：项目汇总里的横向时间轴 */
+  milestones?: ProjectMilestone[];
 }
 export type RequirementLevel = "rr" | "ir" | "sr" | "us";
 export type RequirementStatus = "draft" | "reviewing" | "approved" | "done" | "rejected" | "obsolete" | "in_progress" | "verifying";
@@ -39,8 +44,27 @@ export interface Requirement {
   value: string;
   acceptance: RequirementAcceptance[];
   tags: string[];
+  /** 排期（计划 tab 的甘特条）；没排期就是 null */
+  planStart?: number | null;
+  planEnd?: number | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** 事项台账：遗留事项 / 任务 / 问题（项目汇总里的「问题与求助」也读它） */
+export type IssueKind = "legacy" | "task" | "issue";
+export type IssueStatus = "open" | "doing" | "blocked" | "resolved" | "closed";
+export interface IssueNote { at: number; by: string; text: string; }
+export interface ProjectIssue {
+  id: string; projectId: string; key: string;
+  kind: IssueKind; title: string; body: string;
+  status: IssueStatus; priority: string;
+  /** 责任人：bot id，空 = 未指派 */
+  owner?: string | null;
+  /** 关联需求 */
+  reqId?: string | null;
+  notes: IssueNote[];
+  createdAt: number; updatedAt: number;
 }
 
 export interface HostCap { cli: string; path: string; version: string; }
@@ -84,6 +108,8 @@ export interface Todo {
    * 人只在「开跑 / 任务设置」里改；bot 不能自己改。
    */
   permission?: "ask" | "full-access";
+  /** 从哪条需求派出来的（需求详情「派活」写入；看板/计划据此显示实现者） */
+  requirementId?: string | null;
   kind?: "task" | "mission" | "chat";
   missionState?: MissionState | null;
 }
@@ -534,6 +560,8 @@ export interface State {
   activeProjectId: string | null;
   projects: Project[];
   requirements?: Requirement[];
+  /** 事项台账（遗留事项 / 任务 / 问题） */
+  issues?: ProjectIssue[];
   requirementLinks?: RequirementLink[];
   scenes?: Scene[];
   coordinationScenes?: CoordinationScene[];

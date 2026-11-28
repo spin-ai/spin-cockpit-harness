@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Requirement, RequirementLevel, RequirementLinkKind, RequirementStatus, State } from "../types";
+import type { Requirement, RequirementLevel, RequirementLinkKind, RequirementStatus, State, Todo } from "../types";
 import { PageHeader } from "./PageHeader";
+import { RowMenu } from "./RowMenu";
 import { Overview } from "./Overview";
 import { EmptyState } from "./EmptyState";
 import { ChevronDownIcon, ChevronLeftIcon, PlusIcon, XIcon } from "./Icons";
@@ -17,8 +18,14 @@ const STATUS_LABEL: Record<RequirementStatus, string> = {
   draft: "草稿", reviewing: "待评审", approved: "已批准", done: "已完成",
   rejected: "已拒绝", obsolete: "已废弃", in_progress: "实现中", verifying: "待验收",
 };
-const M0_STATUSES: RequirementStatus[] = ["draft", "reviewing", "approved", "done", "rejected", "obsolete"];
+const M0_STATUSES: RequirementStatus[] = ["draft", "reviewing", "approved", "in_progress", "verifying", "done", "rejected", "obsolete"];
 const LINK_KIND: Record<RequirementLinkKind, string> = { relates: "相关", duplicates: "重复", conflicts: "冲突" };
+const toDateInput = (ts?: number | null) => {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const fromDateInput = (value: string) => (value ? new Date(`${value}T09:00:00`).getTime() : null);
 const FIELD_LABEL: Record<string, string> = {
   scope: "范围", outOfScope: "范围外", impact: "影响模块", acceptance: "验收判据",
   role: "角色", value: "价值", children: "子需求", tasks: "任务", source: "来源", requester: "提出人",
@@ -37,8 +44,9 @@ const ancestorsOf = (list: Requirement[], req: Requirement) => {
 };
 const acceptance = (req: Requirement) => (Array.isArray(req.acceptance) ? req.acceptance : []);
 
-function gapOf(req: Requirement, children: Requirement[]): { label: string; tone?: "warn" } | null {
+function gapOf(req: Requirement, children: Requirement[], tasks: Todo[] = []): { label: string; tone?: "warn" } | null {
   if ((req.level === "sr" || req.level === "us") && !acceptance(req).length) return { label: "缺验收", tone: "warn" };
+  if (req.level === "us" && req.status === "approved" && !tasks.length) return { label: "未派活", tone: "warn" };
   if (req.level !== "us" && !children.length) return { label: "缺下游", tone: "warn" };
   return null;
 }
@@ -58,7 +66,14 @@ function missingFields(req: Requirement): string[] {
   return missing;
 }
 
-function gateFor(req: Requirement, next: RequirementStatus, children: Requirement[]): { ok: boolean; missing: string[]; message: string } {
+function gateFor(req: Requirement, next: RequirementStatus, children: Requirement[], tasks: Todo[] = []): { ok: boolean; missing: string[]; message: string } {
+  if (next === "in_progress") {
+    if (req.status !== "approved") return { ok: false, missing: ["status"], message: "先批准再开始实现" };
+    if (req.level === "us" && !tasks.length) return { ok: false, missing: ["tasks"], message: "开始实现前先派活（建一条任务）" };
+  }
+  if (next === "verifying") {
+    if (tasks.length && tasks.some((t) => t.status !== "done")) return { ok: false, missing: ["tasks"], message: "还有任务没完成，不能进待验收" };
+  }
   if (next === "approved") {
     const missing = missingFields(req);
     if (missing.length) return { ok: false, missing, message: "批准前还有必填项" };
@@ -80,9 +95,15 @@ function gateFor(req: Requirement, next: RequirementStatus, children: Requiremen
 
 type DraftKey = "title" | "body" | "priority" | "owner" | "source" | "requester" | "scope" | "outOfScope" | "impact" | "role" | "value";
 
-export function Requirements({ state, act, notify, onBack }: { state: State; act: Act; notify: (message: string) => void; onBack?: () => void }) {
+export function Requirements({ state, act, notify, onBack, embedded = false, projectId }: {
+  state: State; act: Act; notify: (message: string) => void; onBack?: () => void;
+  /** 嵌进项目页的「需求」tab：不画页头 / 概览 / 项目选择器 / 视图 tab */
+  embedded?: boolean;
+  /** 嵌进项目页时用这一页的项目；不传则用全局当前项目 */
+  projectId?: string;
+}) {
   const requirements = state.requirements ?? [];
-  const project = state.projects.find((p) => p.id === state.activeProjectId) ?? state.projects[0] ?? null;
+  const project = state.projects.find((p) => p.id === (projectId || state.activeProjectId)) ?? state.projects[0] ?? null;
   const projectReqs = useMemo(
     () => (project ? requirements.filter((r) => r.projectId === project.id).sort(byCreated) : []),
     [requirements, project?.id],
@@ -145,7 +166,10 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
     return true;
   };
   const flat = projectReqs.filter(matches).sort(byCreated);
-  const gapCount = projectReqs.filter((r) => gapOf(r, childrenOf(projectReqs, r.id))).length;
+  /** 需求派出去的任务（看板 / 计划 / 未派活缺口都用它） */
+  const tasksOf = (reqId: string) => (state.todos || []).filter((t) => t.requirementId === reqId);
+  const gapOfReq = (req: Requirement) => gapOf(req, childrenOf(projectReqs, req.id), tasksOf(req.id));
+  const gapCount = projectReqs.filter((r) => gapOfReq(r)).length;
   const matrixColumns: RequirementLevel[] = ["ir", "sr", "us"];
   const buildPaths = (): Requirement[][] => {
     const out: Requirement[][] = [];
@@ -162,7 +186,7 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
   const pathHasGap = (path: Requirement[]) => {
     if (matrixColumns.some((level) => !path.some((req) => req.level === level))) return true;
     const last = path[path.length - 1];
-    return !!gapOf(last, childrenOf(projectReqs, last.id));
+    return !!gapOfReq(last);
   };
   const matrixShown = matrixPaths.filter((path) => !matrixOnlyGaps || pathHasGap(path));
   const matrixGroups = new Map<string, { root: Requirement; paths: Requirement[][] }>();
@@ -182,7 +206,7 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
   const setStatus = async (next: RequirementStatus) => {
     if (!selected) return;
     if (next === selected.status) return;
-    const local = gateFor(selected, next, childrenOf(projectReqs, selected.id));
+    const local = gateFor(selected, next, childrenOf(projectReqs, selected.id), tasksOf(selected.id));
     if (!local.ok) { setGate(local); return; }
     const res = await act("requirementSetStatus", { id: selected.id, status: next });
     if (res) setGate(null);
@@ -336,8 +360,8 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
   };
 
   return (
-    <div className="page req-page">
-      <PageHeader
+    <div className={embedded ? "req-embedded" : "page req-page"}>
+      {!embedded && <PageHeader
         title="需求"
         subtitle={`${project?.name || "未选择项目"} · RR → IR → SR → US · 先完成需求定义`}
         tabs={<Tabs ariaLabel="需求视图" value={tab} onChange={(id) => { setTab(id as "pool" | "matrix"); setMatrixCreating(null); }} items={[
@@ -351,17 +375,17 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
           </select>
           <button className="btn primary" onClick={() => startCreate(null)}><PlusIcon size={14} /> 新建需求</button>
         </div>}
-      />
+      />}
 
-      <Overview items={[
+      {!embedded && <Overview items={[
         { label: "需求", value: projectReqs.length },
         { label: "待评审", value: projectReqs.filter((r) => r.status === "reviewing").length },
         { label: "已批准", value: projectReqs.filter((r) => r.status === "approved").length },
         { label: "缺口", value: gapCount, tone: gapCount ? "warn" : undefined },
         { label: "已完成", value: projectReqs.filter((r) => r.status === "done").length },
-      ]} />
+      ]} />}
 
-      {tab === "pool" ? <div className="req-shell">
+      {(embedded || tab === "pool") ? <div className="req-shell">
         <section className="req-panel req-tree" aria-label="需求树">
           <div className="req-tree-tools">
             <input className="req-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索 key / 标题 / 正文" aria-label="搜索需求" />
@@ -406,7 +430,7 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
           {!selected ? (
             projectReqs.length
               ? <EmptyState compact title="选择一条需求" desc="左栏点一行查看 / 修改；点击行尾箭头展开子需求。" />
-              : <div className="inline-empty">左侧先建一条 RR；需求先定义，再拆到 IR / SR / US。</div>
+              : <EmptyState compact title="还没有需求" desc="需求先定义，再往下拆 IR / SR / 交付层；一条 RR 是一切的起点。" action={<button className="btn tiny" onClick={() => startCreate(null)}>新建 RR</button>} />
           ) : (
             <div className="req-detail-scroll">
               <div className="req-crumbs">
@@ -453,6 +477,35 @@ export function Requirements({ state, act, notify, onBack }: { state: State; act
                 {selected.status === "draft" && childrenOf(projectReqs, selected.id).length === 0 ? (
                   <button className="btn tiny ghost req-delete" onClick={() => void removeSelected()}>删除草稿</button>
                 ) : null}
+              </div>
+
+              <div className="req-plan-row">
+                <label className="req-meta-field"><span>起</span>
+                  <input className="req-input" type="date" value={toDateInput(selected.planStart)} onChange={(e) => void act("requirementSetPlan", { id: selected.id, planStart: fromDateInput(e.target.value), planEnd: selected.planEnd ?? null })} aria-label="排期开始" />
+                </label>
+                <label className="req-meta-field"><span>止</span>
+                  <input className="req-input" type="date" value={toDateInput(selected.planEnd)} onChange={(e) => void act("requirementSetPlan", { id: selected.id, planStart: selected.planStart ?? null, planEnd: fromDateInput(e.target.value) })} aria-label="排期结束" />
+                </label>
+                <span className="req-plan-hint">填了起止日期就会出现在「计划」甘特里</span>
+                <span className="spacer" />
+                {selected.level === "us" ? (
+                  <RowMenu title="派活" trigger={<span className="btn tiny">派活 · {tasksOf(selected.id).length}</span>} triggerClassName="req-dispatch">
+                    <div className="row-menu-info"><div><span>已派</span><em>{tasksOf(selected.id).map((t) => t.key).join(" / ") || "还没有"}</em></div></div>
+                    {(state.agents || []).filter((a) => (a.role || "worker") !== "supervisor").map((a) => (
+                      <button key={a.id} disabled={selected.status === "draft" || selected.status === "reviewing"}
+                        onClick={() => void act("requirementDispatch", { id: selected.id, agentId: a.id, projectId: project?.id || null })}>
+                        派给 {a.alias || a.name}
+                      </button>
+                    ))}
+                    {(state.bots || []).filter((b) => b.projectId === (project?.id || "")).map((b) => (
+                      <button key={b.id} disabled={selected.status === "draft" || selected.status === "reviewing"}
+                        onClick={() => void act("requirementDispatch", { id: selected.id, botId: b.id, projectId: project?.id || null })}>
+                        交给 {b.name}
+                      </button>
+                    ))}
+                    <div className="row-menu-info"><div><span>下一步</span><em>起 run 仍由人确认</em></div></div>
+                  </RowMenu>
+                ) : <span className="req-plan-hint">只有交付层（US）能派活</span>}
               </div>
 
               {gate ? (

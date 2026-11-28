@@ -6,7 +6,7 @@ import { TaskChat } from "./components/TaskChat";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { FilePanel } from "./components/FilePanel";
 import { GitView } from "./components/GitView";
-import { Projects } from "./components/Views";
+import { ProjectHome } from "./components/ProjectHome";
 import { ApprovalDock } from "./components/ApprovalDock";
 import { Requirements } from "./components/Requirements";
 import { ConfirmHost } from "./components/ConfirmHost";
@@ -433,11 +433,6 @@ export default function App() {
     setView("requirements");
   }, [act, state?.activeProjectId]);
 
-  const newTaskInProject = useCallback(async (id: string) => {
-    if (id !== state?.activeProjectId) await switchProject(id);
-    setView("terminal");
-    window.setTimeout(() => window.dispatchEvent(new CustomEvent("harness:new-task")), 120);
-  }, [state?.activeProjectId, switchProject]);
 
   const newThread = useCallback(async () => {
     // 新对话默认全局；需要项目作用域时在 Chat 的「作用域」里选
@@ -501,7 +496,7 @@ export default function App() {
       { id: "view-bot", label: "机器人：回合流 + 人格 / 记忆", group: "导航", run: () => setView("workspace") },
       { id: "view-terminal", label: "工作台：项目 / 终端 / 任务表", group: "导航", run: () => setView("terminal") },
       { id: "view-scene", label: "场景", group: "导航", run: () => setView("scene") },
-      { id: "view-projects", label: "项目花名册（统计 / 场景 / 切换）", group: "导航", run: () => setView("projects") },
+      { id: "view-projects", label: "项目主页（需求 / 看板 / 计划 / 事项 / 汇总）", group: "导航", run: () => setView("projects") },
       { id: "view-requirements", label: "需求（IR → SR → US）", group: "导航", run: () => void openRequirements() },
       { id: "view-stats", label: "统计", group: "导航", hint: "设置 → 统计", run: () => openSettingsSection("stats") },
       { id: "view-hosts", label: "主机", group: "导航", hint: "设置 → 主机", run: () => openSettingsSection("hosts") },
@@ -777,7 +772,11 @@ export default function App() {
             />
           </div>
         )}
-        {view === "projects" && <div className="wide"><Projects state={state} now={now} act={act} notify={notify} onAdd={() => void addProject()} onSwitch={(id) => void switchProject(id)} onNewTask={(id) => void newTaskInProject(id)} onOpenRequirements={(id) => void openRequirements(id)} /></div>}
+        {view === "projects" && (
+          <div className="wide">
+            <ProjectHome state={state} now={now} act={act} notify={notify} onAddProject={() => void addProject()} onSwitchProject={(id) => void act("switchProject", { id })} onOpenTask={(id) => void selectTodo(id)} onOpenWorkspace={() => setView("workspace")} />
+          </div>
+        )}
         {view === "requirements" && <div className="wide"><Requirements state={state} act={act} notify={notify} onBack={() => setView("projects")} /></div>}
         {view === "git" && <div className="wide"><GitView state={state} notify={notify} /></div>}
         {view === "settings" && <div className="wide settings-wide"><Settings state={state} act={act} notify={notify} now={now} onOpenTodo={(id) => void openTodoFromPalette(id)} initialSection={settingsSection} /></div>}

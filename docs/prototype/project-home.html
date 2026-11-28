@@ -1,0 +1,1650 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>项目主页 · 原型</title>
+<!--
+  项目主页（master-detail：左栏项目 · 主面 = 需求 tab + 概览 tab）
+  ──────────────────────────────────────────────────────────────────────────
+  这一版把 requirements.html 的需求面**吸收进来**（不再有两个原型、两套项目概念）：
+    · 需求：RR→IR→SR→US 四层（可裁剪成轻量/标准/完整）、状态闸门、验收增删勾选、
+      子需求、横向关联（相关/重复/冲突）、派活（建 deliver 任务）、追溯矩阵（含缺口筛选）
+    · 项目：左栏唯一的项目列表；主面页头一行 + 概览条 + Tabs（需求 / 概览）
+    · 运行 / 场景 / 文件树不进 tab，只在内容底部留一行出口
+  requirements.html 保留作对照（独立页形态），不再是需求的唯一原型。
+
+  可点：左栏换项目（不换页）· 两个 tab · 树展开/选中 · 状态闸门（点按钮，缺东西会拦）
+        · 验收勾选与新增 · 派活（选实现者建任务）· 关联 · 矩阵/缺口筛选 · 模板裁剪 · 亮暗
+  定格：?theme=light|dark ?empty=1 ?noreq=1 ?tab=overview ?view=matrix ?project=p1|p2 ?sel=<id> ?tpl=light|standard|full
+  单文件、双击打开、无构建、无依赖；数据全在内存，刷新即还原。不是实现。
+-->
+<style>
+:root{
+  --font-sans:"Geist Variable","Geist",-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --mono:"Geist Mono Variable","Geist Mono","SF Mono",SFMono-Regular,ui-monospace,Menlo,Consolas,monospace;
+  --radius:10px;--radius-sm:6px;--radius-lg:14px;
+  --shadow-1:0 1px 2px rgba(10,10,10,.045);
+  --shadow-float:0 18px 46px rgba(0,0,0,.22),0 2px 8px rgba(0,0,0,.10);
+}
+:root[data-theme="light"]{
+  --page-canvas:#fafafa;--surface:#ffffff;--surface-hover:#f5f5f5;--surface-selected:#ededed;
+  --border:#e5e5e5;--border-strong:#d4d4d4;--input:#e5e5e5;
+  --fg:#0a0a0a;--fg-2:#404040;--muted:#696969;--faint:#a3a3a3;
+  --brand:#171717;--brand-fg:#ffffff;--brand-soft:#f2f2f2;--brand-line:#dedede;
+  --green:#3f9a68;--green-soft:#edf8f2;--green-line:#d5eedf;
+  --amber:#a97a2f;--amber-soft:#fdf8ee;--amber-line:#f2e3c4;
+  --red:#cf5f5d;--red-soft:#fdf2f2;--red-line:#f4d7d7;
+  --purple:#7d67d1;--purple-soft:#f4f2fd;--purple-line:#e3ddf8;
+}
+:root[data-theme="dark"]{
+  --page-canvas:#0a0a0a;--surface:#171717;--surface-hover:#262626;--surface-selected:#2e2e2e;
+  --border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.14);--input:rgba(255,255,255,.16);
+  --fg:#f0f0f0;--fg-2:#d4d4d4;--muted:#a3a3a3;--faint:#737373;
+  --brand:#e5e5e5;--brand-fg:#0a0a0a;--brand-soft:#262626;--brand-line:#3a3a3a;
+  --green:#5fb884;--green-soft:rgba(95,184,132,.12);--green-line:rgba(95,184,132,.28);
+  --amber:#c9a25c;--amber-soft:rgba(201,162,92,.12);--amber-line:rgba(201,162,92,.26);
+  --red:#d97a78;--red-soft:rgba(217,122,120,.12);--red-line:rgba(217,122,120,.26);
+  --purple:#9c8ae0;--purple-soft:rgba(156,138,224,.12);--purple-line:rgba(156,138,224,.26);
+  --shadow-1:0 1px 2px rgba(0,0,0,.22);
+  --shadow-float:0 18px 46px rgba(0,0,0,.52),0 2px 8px rgba(0,0,0,.28);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--page-canvas);color:var(--fg);font:13px/1.55 var(--font-sans);-webkit-font-smoothing:antialiased;overflow:hidden}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0;padding:0}
+::selection{background:color-mix(in srgb,var(--fg) 14%,transparent);color:inherit}
+svg{display:block}
+[data-theme="light"] .moon,[data-theme="dark"] .sun{display:none}
+
+/* ── 外壳 ─────────────────────────────────────────────────── */
+.app{height:100vh;display:grid;grid-template-columns:56px minmax(0,1fr);min-width:0}
+.main{min-width:0;display:flex;flex-direction:column;overflow:hidden;height:100vh}
+.rail{height:100vh;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0 4px;background:var(--surface);border-right:1px solid var(--border)}
+.rail-btn{width:48px;height:44px;border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--muted);font-size:9px;line-height:1}
+.rail-btn:hover{background:var(--surface-hover);color:var(--fg)}
+.rail-btn.on{background:var(--surface-selected);color:var(--fg)}
+.rail-btn svg{width:18px;height:18px}
+.rail-sep{width:24px;height:1px;background:var(--border);margin:5px 0}
+.rail-bottom{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:2px}
+
+/* ── 页头 / 概览条 ────────────────────────────────────────── */
+.head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 20px;align-items:end;padding:14px 24px 10px}
+.head h1{margin:0;font-size:22px;line-height:1.15;font-weight:600;letter-spacing:-.03em;display:flex;align-items:center;gap:8px;min-width:0}
+.head h1 .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 标题就是项目下拉：名字 + @别名 + chevron */
+.proj-trigger{display:inline-flex;align-items:center;gap:8px;max-width:100%;min-width:0;padding:2px 6px 2px 2px;margin-left:-2px;border-radius:8px;background:transparent;color:var(--fg)}
+.proj-trigger:hover{background:var(--surface-hover)}
+.proj-trigger:focus-visible{outline:1px solid var(--border-strong);outline-offset:1px}
+.proj-trigger .pt-chev{width:14px;height:14px;color:var(--faint);flex:none}
+.proj-trigger:hover .pt-chev{color:var(--muted)}
+.proj-menu{position:absolute;left:0;top:calc(100% + 6px);z-index:60;width:340px;max-height:60vh;overflow:auto;padding:4px;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-float)}
+.proj-menu[hidden]{display:none}
+.head h1{position:relative}
+.pm-row{display:grid;grid-template-columns:8px minmax(0,1fr) auto 14px;align-items:center;gap:8px;width:100%;height:32px;padding:0 7px;border-radius:6px;text-align:left;color:var(--fg-2);font-size:12px}
+.pm-row:hover{background:var(--surface-hover);color:var(--fg)}
+.pm-row.on{background:var(--surface-selected);color:var(--fg)}
+.pm-main{display:flex;align-items:baseline;gap:6px;min-width:0}
+.pm-main b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pm-meta{font-size:10px;color:var(--faint)}
+.pm-cnt{font-size:10.5px;color:var(--faint);white-space:nowrap}
+.pm-check{font-size:11px;color:var(--fg-2);text-align:center}
+.proj-menu .sep{height:1px;margin:4px 0;background:var(--border)}
+/* 收起左栏：主面单列，项目切换只走标题下拉 */
+.workbench.proj-folded{grid-template-columns:minmax(0,1fr)}
+.workbench.proj-folded .proj-col{display:none}
+.head-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:3px;font-size:11.5px;color:var(--muted);min-width:0}
+.head-meta .mono{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.head-actions{display:flex;align-items:center;gap:8px;justify-content:flex-end}
+.overview{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0 24px 10px;font-size:11.5px;color:var(--muted)}
+.overview b{font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--fg)}
+.overview .sep{color:var(--faint)}
+.overview .warn b{color:var(--amber)}
+
+/* ── 控件 ─────────────────────────────────────────────────── */
+.select,.input{height:28px;min-width:0;padding:0 8px;border:1px solid var(--input);border-radius:6px;background:var(--surface);color:var(--fg);font-size:11.5px;outline:none}
+.input::placeholder{color:var(--faint)}
+.btn{height:30px;padding:0 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--fg);font-size:12px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn:hover{background:var(--surface-hover)}
+.btn.primary{background:var(--brand);border-color:var(--brand);color:var(--brand-fg)}
+.btn.primary:hover{opacity:.9}
+.btn.tiny{height:26px;padding:0 8px;font-size:11.5px}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.icon-btn{width:20px;height:20px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;color:var(--muted);flex:none}
+.icon-btn:hover{background:var(--surface-hover);color:var(--fg)}
+.btn svg{width:14px;height:14px}
+.icon-btn svg{width:15px;height:15px}
+.menu-wrap{position:relative}
+.menu{position:absolute;right:0;top:28px;z-index:40;width:210px;padding:4px;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-float)}
+.menu[hidden]{display:none}
+.menu button{width:100%;height:28px;padding:0 8px;border-radius:5px;display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--fg-2);text-align:left}
+.menu button:hover{background:var(--surface-hover);color:var(--fg)}
+.menu button.on{background:var(--surface-selected);color:var(--fg)}
+.menu button.danger{color:var(--red)}
+.menu .sep{height:1px;margin:4px 0;background:var(--border)}
+.menu .note{font-size:10px;color:var(--faint);padding:2px 8px 4px}
+.seg{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--border);border-radius:6px;background:var(--surface)}
+.seg button{height:22px;padding:0 7px;border-radius:4px;font-size:10.5px;color:var(--muted)}
+.seg button.on{background:var(--surface-selected);color:var(--fg)}
+.chip{height:17px;padding:0 5px;border:1px solid var(--border);border-radius:5px;display:inline-flex;align-items:center;gap:4px;font-size:9.5px;color:var(--muted);white-space:nowrap;line-height:1}
+.chip.gap{color:var(--amber);border-color:var(--amber-line);background:var(--amber-soft)}
+.chip.ai{color:var(--purple);border-color:var(--purple-line);background:var(--purple-soft)}
+.chip.mono{font-family:var(--mono);font-size:10px}
+
+/* ── Tabs ─────────────────────────────────────────────────── */
+.tabs{display:inline-flex;align-self:flex-start;gap:2px;height:28px;padding:2px;margin:0 24px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px}
+.tab{height:22px;padding:0 11px;border-radius:5px;display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted)}
+.tab:hover{color:var(--fg)}
+.tab.on{background:var(--surface-selected);color:var(--fg);box-shadow:var(--shadow-1)}
+
+/* ── 工作区 ───────────────────────────────────────────────── */
+.workbench{flex:1;min-height:0;display:grid;grid-template-columns:232px minmax(0,1fr);gap:12px;padding:0 24px 0}
+.workbench.single{grid-template-columns:minmax(0,1fr)}
+.panel{min-height:0;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+
+/* 左栏：项目列表 */
+.proj-head{display:flex;align-items:center;gap:6px;padding:8px 8px 0;flex:none}
+.proj-head b{font-size:12px;font-weight:600;color:var(--fg)}
+.proj-head .n{font-family:var(--mono);font-size:10px;color:var(--faint)}
+.proj-head .spacer{flex:1}
+.proj-tools{padding:6px 9px 9px;display:flex;flex-direction:column;gap:7px;border-bottom:1px solid var(--border);flex:none}
+.proj-expand{flex:none}
+.proj-expand[hidden]{display:none}
+.proj-scroll{flex:1;overflow:auto;padding:5px}
+.proj-foot{flex:none;border-top:1px solid var(--border);padding:6px;display:flex;flex-direction:column;gap:2px}
+.proj-row{width:100%;display:flex;flex-direction:column;justify-content:center;gap:1px;height:42px;padding:0 6px;border-radius:6px;text-align:left;color:var(--fg-2)}
+.proj-row:hover{background:var(--surface-hover)}
+.proj-row.on{background:var(--surface-selected);color:var(--fg)}
+.proj-row .nm{display:flex;align-items:center;gap:6px;min-width:0;font-size:12px}
+.proj-row .nm b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proj-row .meta{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--faint);min-width:0;padding-left:13px;white-space:nowrap;overflow:hidden}
+.proj-row .meta .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;font-family:var(--mono);font-size:10px}
+.proj-row .cnt{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;color:var(--faint);flex:none}
+.proj-row .cnt .run{color:var(--brand)}
+.link-row{width:100%;height:26px;padding:0 6px;border-radius:6px;display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--muted);text-align:left}
+.link-row:hover{background:var(--surface-hover);color:var(--fg)}
+.link-row .mono{font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-left:auto}
+.d{width:6px;height:6px;border-radius:50%;flex:none;background:var(--faint)}
+.d.on{background:var(--brand)}
+.d.paused{background:var(--amber)}
+
+/* 需求 tab */
+.tabpane{min-width:0;min-height:0;display:flex;flex-direction:column;gap:12px}
+.tabpane[hidden]{display:none}
+.req{flex:1;min-height:0;display:grid;grid-template-columns:300px minmax(0,1fr);gap:12px}
+.tree-tools{padding:9px;display:flex;flex-direction:column;gap:7px;border-bottom:1px solid var(--border);flex:none}
+.filter-row{display:flex;gap:5px;align-items:center}
+.filter-row .select{flex:1;min-width:0}
+.tree-scroll{flex:1;overflow:auto;padding:5px}
+.tree-row{display:flex;align-items:center;gap:5px;height:30px;padding:0 5px;border-radius:6px;min-width:0;width:100%;text-align:left;color:var(--fg-2)}
+.tree-row:hover{background:var(--surface-hover)}
+.tree-row.on{background:var(--surface-selected);color:var(--fg)}
+.tree-row .chev{width:16px;height:16px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;color:var(--faint);flex:none}
+.tree-row .chev svg{width:11px;height:11px;transition:transform .12s}
+.tree-row .chev.open svg{transform:rotate(180deg)}
+.tree-row .chev-space{width:16px;flex:none}
+.tree-row .key{font-family:var(--mono);font-size:10px;color:var(--faint);flex:none}
+.tree-row .ttl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.tree-row .path{font-size:9.5px;color:var(--faint);flex:none;max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree-row .row-end{margin-left:auto;display:flex;align-items:center;gap:3px;flex:none}
+.dot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--faint)}
+.dot.draft{background:var(--faint)}
+.dot.reviewing{background:var(--amber)}
+.dot.approved{background:var(--fg-2)}
+.dot.in_progress{background:var(--brand)}
+.dot.verifying{background:var(--amber)}
+.dot.done{background:var(--green)}
+.dot.rejected,.dot.obsolete{background:var(--red)}
+.avatar{width:16px;height:16px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:8.5px;font-weight:700;color:#fff;flex:none;letter-spacing:-.02em}
+.avatar.a{background:#6b7fd7}.avatar.b{background:#c47a57}.avatar.c{background:#5f9e78}
+.avatar-stack{display:inline-flex;align-items:center}
+.avatar-stack .avatar{margin-left:-4px;border:1px solid var(--surface)}
+.avatar-stack .avatar:first-child{margin-left:0}
+.avatar-stack .more{font-family:var(--mono);font-size:9px;color:var(--faint);margin-left:2px}
+.inline-empty{padding:16px 6px;font-size:11.5px;color:var(--faint);text-align:center;line-height:1.7}
+
+/* 详情 */
+.detail-scroll{flex:1;overflow:auto;padding:13px 16px 20px;min-width:0}
+.crumbs{display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-family:var(--mono);font-size:10px;color:var(--faint)}
+.crumbs button{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.crumbs button:hover{color:var(--fg);text-decoration:underline}
+.detail-key{font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:8px}
+.title-row{display:flex;align-items:flex-start;gap:8px}
+.title-row h2{flex:1;min-width:0;margin:2px 0 0;font-size:17px;line-height:1.35;font-weight:600;letter-spacing:-.01em}
+.meta-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted);padding-bottom:9px;border-bottom:1px solid var(--border)}
+.meta-line .prio{font-family:var(--mono);font-size:10.5px;color:var(--fg-2)}
+.gate-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px}
+.gate{margin-top:8px;padding:7px 10px;border:1px solid var(--amber-line);background:var(--amber-soft);border-radius:6px;display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--amber)}
+.impl{display:flex;align-items:center;gap:7px;margin-top:9px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface-hover);font-size:11.5px;min-height:30px;flex-wrap:wrap;color:var(--muted)}
+.impl b{font-weight:500;color:var(--fg-2)}
+.impl .spacer{flex:1}
+.md{margin-top:11px;font-size:12.5px;line-height:1.7;color:var(--fg-2);white-space:pre-wrap}
+.kv{display:flex;flex-direction:column;gap:3px;margin-top:9px;font-size:12px;color:var(--fg-2)}
+.kv .k{font-size:10px;color:var(--faint);font-family:var(--mono);letter-spacing:.03em}
+.kv .box{border:1px solid var(--border);border-radius:6px;padding:6px 8px;background:var(--surface-hover);color:var(--fg-2);white-space:pre-wrap}
+.sec{margin-top:14px;border-top:1px solid var(--border);padding-top:9px}
+.sec-head{display:flex;align-items:center;gap:7px;min-height:22px}
+.sec-head h3{margin:0;font-size:11.5px;font-weight:600;color:var(--fg)}
+.sec-head .count{font-family:var(--mono);font-size:10px;color:var(--faint)}
+.sec-head .spacer{flex:1}
+.acc-row{display:flex;align-items:flex-start;gap:7px;padding:4px 0;font-size:12px;color:var(--fg-2)}
+.acc-row input{margin:3px 0 0;accent-color:var(--brand)}
+.acc-row.done span{color:var(--faint);text-decoration:line-through}
+.acc-row .x{opacity:0;color:var(--faint);margin-left:auto;flex:none;font-size:11px}
+.acc-row:hover .x{opacity:1}
+.inline-add{width:100%;height:26px;margin-top:3px;border:0;border-bottom:1px dashed var(--border-strong);background:transparent;font-size:11.5px;color:var(--fg);outline:none}
+.inline-add::placeholder{color:var(--faint)}
+.child-row{display:flex;align-items:center;gap:6px;min-height:28px;padding:0 5px;border-radius:5px;font-size:11.5px;color:var(--fg-2);width:100%;text-align:left;min-width:0}
+.child-row:hover{background:var(--surface-hover)}
+.child-row .key{font-family:var(--mono);font-size:10px;color:var(--faint);flex:none}
+.child-row .ttl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.child-row .row-end{margin-left:auto;display:flex;align-items:center;gap:4px;flex:none}
+.task-row{display:flex;align-items:center;gap:7px;min-height:30px;font-size:11.5px;color:var(--fg-2);min-width:0}
+.task-row .task-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-row .task-meta{margin-left:auto;display:flex;gap:8px;font-family:var(--mono);font-size:10px;color:var(--faint);flex:none}
+.tl{display:flex;flex-direction:column;gap:5px}
+.tl-item{display:grid;grid-template-columns:78px minmax(0,1fr);gap:10px;font-size:11.5px;color:var(--muted)}
+.tl-time{font-family:var(--mono);font-size:10px;color:var(--faint);white-space:nowrap}
+.mini{width:100%;border-collapse:collapse;font-size:11.5px}
+.mini th{text-align:left;font-weight:500;color:var(--faint);font-size:10.5px;padding:0 8px 5px 0;border-bottom:1px solid var(--border);white-space:nowrap}
+.mini td{padding:6px 8px 6px 0;border-bottom:1px solid var(--border);color:var(--fg-2);vertical-align:middle}
+.mini tr:last-child td{border-bottom:0}
+.mini .mono{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+.mini button.link{color:var(--fg-2)}
+
+/* 概览 tab */
+.ov-grid{flex:1;min-height:0;overflow:auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;align-content:start}
+.sum-wrap{flex:1;min-height:0;overflow:auto;padding:2px 2px 0}
+.ov-block{padding:12px 14px 14px;min-width:0}
+.ov-h{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.ov-h b{font-size:12px;font-weight:600}
+.ov-h .spacer{flex:1}
+.ov-h .btn.tiny{height:22px;font-size:10.5px;padding:0 7px}
+.kv2{display:grid;grid-template-columns:66px minmax(0,1fr);gap:4px 10px;font-size:11.5px;color:var(--muted);align-items:baseline}
+.kv2 b{font-weight:500;color:var(--fg-2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kv2 .mono{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+.r-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:11.5px;min-width:0}
+.r-row .mono{font-family:var(--mono);font-size:10.5px;color:var(--faint);flex:none}
+.r-row .t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg-2)}
+.r-row .st{margin-left:auto;flex:none;font-size:10.5px;color:var(--muted)}
+.r-row .st.fail{color:var(--red)}
+.r-row .st.ok{color:var(--green)}
+
+/* 事项（台账）*/
+.item-group{display:flex;align-items:center;gap:6px;height:24px;padding:0 6px;margin-top:4px;font-size:10px;color:var(--faint);letter-spacing:.03em}
+.item-group .n{font-family:var(--mono);font-size:9.5px}
+.item-row{display:flex;align-items:center;gap:6px;min-height:30px;padding:0 6px;border-radius:6px;width:100%;text-align:left;color:var(--fg-2);font-size:12px}
+.item-row:hover{background:var(--surface-hover)}
+.item-row.on{background:var(--surface-selected);color:var(--fg)}
+.item-row .ttl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item-row .row-end{margin-left:auto;display:flex;align-items:center;gap:4px;flex:none}
+
+/* 汇总 = 项目周报（一列窄版式，不堆卡片）*/
+.report{max-width:760px;padding:2px 0 24px}
+.rp-head{display:flex;flex-direction:column;gap:3px;padding-bottom:12px;border-bottom:1px solid var(--border)}
+.rp-eyebrow{font-family:var(--mono);font-size:10.5px;color:var(--faint);letter-spacing:.04em}
+.rp-head h2{margin:0;font-size:20px;font-weight:600;letter-spacing:-.02em}
+.rp-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.rp-meta .sep{color:var(--faint)}
+.rp-actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.rp-lede{margin:12px 0 4px;font-size:12.5px;line-height:1.7;color:var(--fg-2)}
+.rp-sec{margin-top:16px;padding-top:10px;border-top:1px solid var(--border)}
+.rp-h{display:flex;align-items:baseline;gap:8px}
+.rp-h h3{margin:0;font-size:11px;font-weight:600;color:var(--fg);letter-spacing:.02em}
+.rp-h .n{font-family:var(--mono);font-size:10px;color:var(--faint)}
+.rp-h .rule{flex:1;height:1px;background:var(--border)}
+.rp-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:5px}
+.rp-list li{display:flex;align-items:baseline;gap:8px;font-size:12px;line-height:1.6;color:var(--fg-2);min-width:0}
+.rp-list .rk{font-family:var(--mono);font-size:10px;color:var(--faint);flex:none;min-width:62px}
+.rp-list .rt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rp-list .rnote{margin-left:auto;flex:none;font-size:10.5px;color:var(--muted)}
+.rp-list .rnote .ok{color:var(--green)}
+.rp-list .rnote .warn{color:var(--amber)}
+.rp-list .rnote .muted{color:var(--faint)}
+.rp-empty{font-size:11.5px;color:var(--faint);padding:4px 0}
+/* 里程碑时间轴（横向）：节点等宽，线按进度画 */
+.ms-track{position:relative;display:grid;grid-template-columns:repeat(var(--ms-count,4),minmax(0,1fr));gap:0;margin:16px 0 2px;padding-top:2px}
+.ms-line{position:absolute;left:6%;right:6%;top:11px;height:1px;background:var(--border-strong)}
+.ms-node{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;text-align:center;min-width:0;padding:0 4px}
+.ms-dot{width:9px;height:9px;border-radius:50%;background:var(--surface);border:1px solid var(--border-strong);z-index:1}
+.ms-node.done .ms-dot{background:var(--fg);border-color:var(--fg)}
+.ms-node.doing .ms-dot{background:var(--brand);border-color:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 14%,transparent)}
+.ms-date{font-size:10px;color:var(--faint);white-space:nowrap}
+.ms-name{font-size:11.5px;color:var(--fg-2);line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.ms-node.doing .ms-name{color:var(--fg);font-weight:500}
+.ms-state{font-size:9.5px;color:var(--faint)}
+.rp-goal{margin:6px 0 0;font-size:12.5px;line-height:1.7;color:var(--fg-2)}
+.who{display:inline-flex;align-items:center;gap:5px}
+/* 报告里的表格 */
+.rp-table{width:100%;border-collapse:collapse;margin-top:7px;font-size:11.5px}
+.rp-table th{text-align:left;font-weight:500;font-size:10px;color:var(--faint);font-family:var(--mono);padding:0 6px 5px 0;border-bottom:1px solid var(--border);white-space:nowrap}
+.rp-table td{padding:6px 6px 6px 0;border-bottom:1px solid var(--border);color:var(--fg-2);vertical-align:top}
+.rp-table tr:last-child td{border-bottom:0}
+.rp-table .mono{font-family:var(--mono);font-size:10px;color:var(--faint);white-space:nowrap}
+.rp-table .w{color:var(--fg);min-width:150px}
+.rp-table .note{color:var(--muted);font-size:11px}
+.rp-table .owner-cell{white-space:nowrap;font-size:11px;color:var(--fg-2)}
+.rp-st{font-size:10.5px;color:var(--muted);white-space:nowrap}
+.rp-st.warn{color:var(--amber)}
+.rp-st.ok{color:var(--green)}
+.rp-kv{display:flex;flex-wrap:wrap;gap:16px;margin-top:8px}
+.rp-kv>div{display:flex;flex-direction:column;gap:1px;min-width:96px}
+.rp-kv span{font-size:10px;color:var(--faint);font-family:var(--mono)}
+.rp-kv b{font-size:16px;font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}
+.rp-kv em{font-style:normal;font-size:10.5px;color:var(--faint)}
+.rp-foot{margin-top:18px;padding-top:10px;border-top:1px solid var(--border);font-size:10.5px;color:var(--faint)}
+
+/* 事项台账表格 */
+.table-wrap{flex:1;min-height:0;overflow:auto}
+.issue-table{width:100%;border-collapse:collapse;font-size:11.5px}
+.issue-table thead th{position:sticky;top:0;z-index:2;background:var(--surface);border-bottom:1px solid var(--border);padding:7px 8px;text-align:left;font-size:10.5px;color:var(--faint);font-weight:500;font-family:var(--mono);white-space:nowrap}
+.issue-table td{border-bottom:1px solid var(--border);padding:7px 8px;vertical-align:middle;color:var(--fg-2)}
+.issue-table tbody tr{cursor:pointer}
+.issue-table tbody tr:hover td{background:var(--surface-hover)}
+.issue-table tbody tr.on td{background:var(--surface-selected)}
+.issue-table .mono{font-family:var(--mono);font-size:10.5px;color:var(--faint);white-space:nowrap}
+.issue-table .ttl-cell{color:var(--fg);min-width:220px}
+.kind{display:inline-flex;align-items:center;height:17px;padding:0 5px;border-radius:5px;font-size:9.5px;border:1px solid var(--border);color:var(--muted);white-space:nowrap}
+.kind.issue{color:var(--red);border-color:var(--red-line);background:var(--red-soft)}
+.kind.legacy{color:var(--purple);border-color:var(--purple-line);background:var(--purple-soft)}
+.kind.task{color:var(--fg-2)}
+.ist{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);white-space:nowrap}
+.ist::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--faint)}
+.ist.open::before{background:var(--amber)}
+.ist.doing::before{background:var(--brand)}
+.ist.blocked::before{background:var(--red)}
+.ist.resolved::before{background:var(--green)}
+.ist.closed::before{background:var(--faint)}
+.detail-row td{padding:0;background:var(--surface-hover)}
+.issue-detail{padding:10px 12px 12px;border-bottom:1px solid var(--border)}
+.issue-body{font-size:12px;line-height:1.65;color:var(--fg-2);white-space:pre-wrap}
+
+/* 看板（M2 静态帧）*/
+.board-wrap{flex:1;min-height:0;overflow:auto;display:flex;gap:9px;padding:11px}
+.board-col{flex:1 1 180px;min-width:168px;min-height:0;display:flex;flex-direction:column;background:var(--surface-hover);border:1px solid var(--border);border-radius:8px}
+.board-col-head{display:flex;align-items:center;gap:6px;padding:7px 8px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:var(--fg-2);flex:none}
+.board-col-head .n{font-family:var(--mono);font-size:9.5px;color:var(--faint);font-weight:400;margin-left:auto}
+.board-cards{flex:1;overflow:auto;display:flex;flex-direction:column;gap:6px;padding:6px}
+.bcard{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px;cursor:pointer;min-width:0;text-align:left}
+.bcard:hover{border-color:var(--border-strong)}
+.bcard-key{font-family:var(--mono);font-size:9.5px;color:var(--faint);display:flex;align-items:center;gap:4px}
+.bcard-title{font-size:12px;line-height:1.4;color:var(--fg);margin-top:3px}
+.bcard-foot{display:flex;align-items:center;gap:5px;margin-top:7px;font-size:9.5px;color:var(--faint);font-family:var(--mono);min-height:16px}
+.bcard-foot .unassigned{color:var(--amber)}
+.bcard-foot .spacer{flex:1}
+.view-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px;border-bottom:1px solid var(--border);flex:none}
+.view-tools .spacer{flex:1}
+.view-note{font-size:10.5px;color:var(--faint)}
+.check{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+.check input{accent-color:var(--brand);margin:0}
+
+/* 计划（甘特，M3 静态帧）*/
+.gantt-wrap{flex:1;min-height:0;overflow:auto;padding:11px}
+.gantt{min-width:820px}
+.ghead{display:grid;grid-template-columns:230px minmax(560px,1fr);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2;background:var(--surface)}
+.ghead .left{padding:6px 8px;font-size:10px;color:var(--faint);font-family:var(--mono)}
+.gdays{display:grid;grid-template-columns:repeat(14,1fr);border-left:1px solid var(--border)}
+.gday{border-right:1px solid var(--border);padding:6px 3px;font-family:var(--mono);font-size:9px;color:var(--faint);text-align:center}
+.ggroup{display:grid;grid-template-columns:230px minmax(560px,1fr);border-bottom:1px solid var(--border);background:var(--surface-hover)}
+.ggroup .left{padding:5px 8px;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px;min-width:0}
+.ggroup .right{border-left:1px solid var(--border)}
+.grow{display:grid;grid-template-columns:230px minmax(560px,1fr);border-bottom:1px solid var(--border);min-height:32px}
+.grow:hover{background:var(--surface-hover)}
+.gleft{display:flex;align-items:center;gap:5px;padding:0 8px;min-width:0;cursor:pointer}
+.gleft .key,.ggroup .key{flex:none;white-space:nowrap}
+.gleft .ttl{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gtrack{position:relative;border-left:1px solid var(--border);background-image:repeating-linear-gradient(to right,transparent,transparent calc(100%/14 - 1px),var(--border) calc(100%/14 - 1px),var(--border) calc(100%/14))}
+.bar{position:absolute;top:9px;height:14px;border-radius:4px;background:var(--brand);opacity:.82}
+.bar.done{background:var(--green)}
+.bar.draft{background:var(--faint)}
+.bar.verifying{background:var(--amber)}
+.today-line{position:absolute;top:0;bottom:0;width:1px;background:var(--amber);opacity:.65;z-index:1}
+.unscheduled{margin-top:12px;border-top:1px solid var(--border);padding-top:8px}
+.unscheduled h4{margin:0 0 4px;font-size:11px;font-weight:600;color:var(--fg)}
+.u-row{display:flex;align-items:center;gap:6px;min-height:26px;font-size:11px;color:var(--muted);cursor:pointer;border-radius:5px;padding:0 4px;width:100%;text-align:left}
+.u-row:hover{background:var(--surface-hover);color:var(--fg)}
+
+/* 出口 / 空态 / toast */
+.exits{display:flex;align-items:center;gap:14px;padding:10px 24px 12px;font-size:11.5px;color:var(--faint)}
+.exits button{color:var(--muted)}
+.exits button:hover{color:var(--fg);text-decoration:underline}
+.exits .hint{margin-left:auto;font-size:10.5px;color:var(--faint)}
+.empty{flex:1;display:grid;place-items:center;padding:24px}
+.empty-box{max-width:380px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:8px}
+.empty-box b{font-size:15px;font-weight:600}
+.empty-box p{margin:0;font-size:12px;color:var(--muted);line-height:1.6}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);padding:7px 12px;border-radius:8px;background:var(--fg);color:var(--page-canvas);font-size:11.5px;box-shadow:var(--shadow-float);opacity:0;transition:opacity .14s;pointer-events:none;z-index:90}
+.toast.on{opacity:1}
+
+@media (max-width:1240px){ .req{grid-template-columns:260px minmax(0,1fr)} }
+@media (max-width:1180px){ .workbench{grid-template-columns:184px minmax(0,1fr)} }
+/* 窄屏：项目列表不消失，收到页头的作用域选择器里（唯一的项目清单） */
+.proj-picker{display:none;max-width:240px}
+@media (max-width:980px){
+  .workbench{grid-template-columns:minmax(0,1fr)}
+  .proj-col{display:none}
+  .req{grid-template-columns:minmax(0,1fr)}
+  .tree-scroll{max-height:220px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail" aria-label="主导航">
+    <button class="rail-btn" data-toast="原型里只有「项目」这一页"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="6" width="16" height="12" rx="2"/><path d="M8 10h8M8 14h5"/></svg>机器人</button>
+    <button class="rail-btn" data-toast="工作台：任务 · 终端 · 文件（施工面）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>工作台</button>
+    <button class="rail-btn on" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>项目</button>
+    <button class="rail-btn" data-toast="场景是满高舞台，仍独立"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="5" width="18" height="12" rx="1.6"/><path d="M8 21h8M12 17v4"/></svg>场景</button>
+    <div class="rail-sep"></div>
+    <button class="rail-btn" data-toast="记忆"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 4h9l3 3v13H6z"/><path d="M9 9h6M9 13h6M9 17h3"/></svg>记忆</button>
+    <button class="rail-btn" data-toast="知识库"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 4h10l3 3v13H5z"/><path d="M8 8h7M8 12h7"/></svg>知识库</button>
+    <button class="rail-btn" data-toast="人物"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/></svg>人物</button>
+    <button class="rail-btn" data-toast="插件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><rect x="8" y="8" width="8" height="8" rx="2"/></svg>插件</button>
+    <div class="rail-bottom">
+      <button class="rail-btn" id="themeBtn" title="切亮暗（?theme=light|dark）">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg>
+        亮暗
+      </button>
+      <button class="rail-btn" data-toast="说明"><span style="font-size:14px">?</span>说明</button>
+    </div>
+  </nav>
+
+  <div class="main">
+    <div class="head">
+      <div>
+        <h1>
+          <button class="icon-btn proj-expand" id="projExpand" title="展开项目列表" aria-label="展开项目列表" aria-expanded="false" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M13.5 9.5 17 12l-3.5 2.5"/></svg>
+          </button>
+          <button class="proj-trigger" id="projTrigger" aria-haspopup="menu" aria-expanded="false" title="切换项目">
+            <span class="name" id="hName">—</span>
+            <span class="chip mono" id="hAlias" style="height:18px"></span>
+            <svg class="pt-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <div class="proj-menu" id="projMenuHead" role="menu" hidden></div>
+        </h1>
+        <div class="head-meta" id="hMeta"></div>
+      </div>
+      <div class="head-actions">
+        <button class="btn primary" id="newReq">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          新建需求
+        </button>
+        <div class="menu-wrap">
+          <button class="icon-btn" id="projMenuBtn" title="更多项目操作" aria-label="更多项目操作" aria-expanded="false">
+            <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+          </button>
+          <div class="menu" id="projMenu" hidden>
+            <div class="note">需求层（裁剪 = 这个项目要几层）</div>
+            <button data-tpl="light">轻量 · RR → US</button>
+            <button data-tpl="standard">标准 · RR → SR → US</button>
+            <button data-tpl="full">完整 · RR → IR → SR → US</button>
+            <div class="sep"></div>
+            <button data-toast="导出需求（Markdown / CSV，含追溯矩阵）">导出需求</button>
+            <button data-toast="在 Finder 中显示">在 Finder 中显示</button>
+            <button data-toast="执行配置（runtime / Agent / 并发 / worktree）">执行配置</button>
+            <div class="sep"></div>
+            <button data-toast="状态：进行中 / 暂停 / 归档">改状态</button>
+            <button class="danger" data-toast="移除项目不会删磁盘文件">移除项目</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="overview" id="overview"></div>
+
+    <div class="tabs" role="tablist" aria-label="项目视图">
+      <button class="tab on" role="tab" data-tab="pool" aria-selected="true">需求</button>
+      <button class="tab" role="tab" data-tab="board" aria-selected="false">看板</button>
+      <button class="tab" role="tab" data-tab="plan" aria-selected="false">计划</button>
+      <button class="tab" role="tab" data-tab="items" aria-selected="false">事项</button>
+      <button class="tab" role="tab" data-tab="sum" aria-selected="false">汇总</button>
+    </div>
+
+    <div class="workbench" id="workbench">
+      <aside class="panel proj-col" aria-label="项目列表">
+        <div class="proj-head">
+          <b>项目</b><span class="n" id="projCount"></span>
+          <span class="spacer"></span>
+          <button class="icon-btn" id="projFold" title="收起项目列表" aria-label="收起项目列表" aria-expanded="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M16.5 9.5 13 12l3.5 2.5"/></svg>
+          </button>
+        </div>
+        <div class="proj-tools">
+          <input class="input" id="projSearch" placeholder="搜索项目 / 别名 / 路径" aria-label="搜索项目" />
+        </div>
+        <div class="proj-scroll" id="projList"></div>
+        <div class="proj-foot">
+          <button class="link-row" data-toast="全部需求（跨项目矩阵，只读）">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>
+            全部需求 <span class="mono">13 项目</span>
+          </button>
+          <button class="link-row" data-toast="打开目录，添加项目">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            添加项目
+          </button>
+        </div>
+      </aside>
+
+      <div class="tabpane" id="paneReq"></div>
+      <div class="tabpane" id="paneBoard" hidden></div>
+      <div class="tabpane" id="panePlan" hidden></div>
+      <div class="tabpane" id="paneItems" hidden></div>
+
+      <div class="tabpane" id="paneSum" hidden>
+        <div class="sum-wrap" id="ovGrid"></div>
+      </div>
+    </div>
+
+    <div class="exits" id="exits">
+      <button data-toast="去工作台：终端 + 任务（施工面）">去终端</button>
+      <button data-toast="去场景：满高舞台（只画不调度）">去场景</button>
+      <button data-toast="打开文件树（在工作台右栏）">打开文件树</button>
+      <span class="hint">运行 / 场景 / 文件是空间与工具，不占 tab</span>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+/* ══ 常量与数据 ══════════════════════════════════════════════════ */
+const LEVELS = ["rr", "ir", "sr", "us"];
+const LV = {
+  rr: { name: "RR", label: "原始需求" },
+  ir: { name: "IR", label: "初始需求" },
+  sr: { name: "SR", label: "系统需求" },
+  us: { name: "US", label: "用户故事" },
+};
+const TPL = {
+  light: { label: "轻量", levels: ["rr", "us"] },
+  standard: { label: "标准", levels: ["rr", "sr", "us"] },
+  full: { label: "完整", levels: [...LEVELS] },
+};
+const STATUS = {
+  draft: { label: "草稿" }, reviewing: { label: "待评审" }, approved: { label: "已批准" },
+  in_progress: { label: "实现中" }, verifying: { label: "待验收" }, done: { label: "已完成" },
+  rejected: { label: "已拒绝" }, obsolete: { label: "已废弃" },
+};
+const BOTS = [
+  { id: "b1", name: "小B", initial: "B", hue: "b" },
+  { id: "b2", name: "小C", initial: "C", hue: "c" },
+  { id: "a1", name: "小A同学", initial: "A", hue: "a" },
+];
+const NOW = Date.now();
+const DAY = 86400000;
+const HOUR = 3600000;
+const MIN = 60000;
+
+const PROJECTS = [
+  { id: "p1", name: "spin-yieldmind-app", alias: "YMA", status: "on", branch: "main", path: "/Users/spin/Documents/GitWorksapce/spin-yieldmind-app", tasks: 7, open: 7, busy: 0, bots: ["PM · 项目经理"], scene: "carrier", tpl: "full",
+    goal: "让客户在首页就能看见发布进度；本季度的验收口径是「200 轮会话不掉帧 + 失败可见」。",
+    milestones: [
+      { id: "m0", name: "需求冻结", date: NOW - 9 * DAY, status: "done" },
+      { id: "m1", name: "首版上线（进度区 + 失败卡）", date: NOW + 2 * DAY, status: "doing" },
+      { id: "m2", name: "压测通过（200 轮 ≤1.5s）", date: NOW + 9 * DAY, status: "todo" },
+      { id: "m3", name: "对外发布", date: NOW + 16 * DAY, status: "todo" },
+    ] },
+  { id: "p2", name: "spin-cockpit-harness", alias: "CMH", status: "on", branch: "main", path: "/Users/spin/Documents/GitWorksapce/spin-cockpit-harness", tasks: 2, open: 2, busy: 0, bots: ["PM · 项目经理", "SE · 系统架构"], scene: "warroom", tpl: "standard",
+    goal: "把 bot 从「会说话」做到「能干活」：工具面收敛、审批一处、过程可见。",
+    milestones: [
+      { id: "m0", name: "审批档落地", date: NOW - 5 * DAY, status: "done" },
+      { id: "m1", name: "工具面 MCP 化", date: NOW + 4 * DAY, status: "doing" },
+      { id: "m2", name: "执行体对话", date: NOW + 12 * DAY, status: "todo" },
+    ] },
+  { id: "p3", name: "workspace", alias: "workspace", status: "on", branch: "", path: "/Users/spin/Documents/YieldMind/workspace", tasks: 4, open: 4, busy: 0, bots: [], scene: "", tpl: "full" },
+  { id: "p4", name: "spin-testmind-app", alias: "testmind", status: "on", branch: "main", path: "/Users/spin/Documents/GitWorksapce/spin-testmind-app", tasks: 0, open: 0, busy: 0, bots: [], scene: "", tpl: "full" },
+  { id: "p5", name: "spin-yieldmind-ide", alias: "ymide", status: "on", branch: "main", path: "/Users/spin/Documents/GitWorksapce/spin-yieldmind-ide", tasks: 1, open: 1, busy: 0, bots: [], scene: "", tpl: "full" },
+  { id: "p6", name: "spin-zhulong-vl", alias: "zlvl", status: "on", branch: "main", path: "/Users/spin/Documents/GitWorksapce/spin-zhulong-vl", tasks: 0, open: 0, busy: 0, bots: [], scene: "", tpl: "full" },
+  { id: "p7", name: "spin-physics-ai", alias: "physai", status: "on", branch: "main", path: "/Users/spin/Documents/GitWorksapce/spin-physics-ai", tasks: 0, open: 0, busy: 0, bots: [], scene: "", tpl: "full" },
+  { id: "p8", name: "spin-publish", alias: "publish", status: "on", branch: "main", path: "/Users/spin/Documents/GitWorksapce/spin-publish", tasks: 0, open: 0, busy: 0, bots: [], scene: "", tpl: "full" },
+  { id: "p9", name: "deepseek-harness", alias: "dsh", status: "on", branch: "main", path: "/Users/spin/Documents/GitWorksapce/deepseek-harness", tasks: 0, open: 0, busy: 0, bots: [], scene: "", tpl: "full" },
+  { id: "p10", name: "rsi", alias: "rsi", status: "paused", branch: "main", path: "/Users/spin/Documents/GitWorksapce/spin-doc/materials/rsi", tasks: 0, open: 0, busy: 0, bots: [], scene: "", tpl: "full" },
+  { id: "p11", name: "spin-edamind", alias: "edamind", status: "on", branch: "main", path: "/Users/spin/Documents/GitWorksapce/spin-edamind", tasks: 0, open: 0, busy: 0, bots: [], scene: "", tpl: "full" },
+  { id: "p12", name: "spin-grape-html", alias: "grape", status: "on", branch: "main", path: "/Users/spin/Documents/GitWorksapce/spin-grape-html", tasks: 0, open: 0, busy: 0, bots: [], scene: "", tpl: "full" },
+  { id: "p13", name: "spin-zhulong-doc", alias: "zldoc", status: "on", branch: "main", path: "/Users/spin/Documents/GitWorksapce/spin-zhulong-doc", tasks: 0, open: 0, busy: 0, bots: [], scene: "", tpl: "full" },
+];
+
+const item = (o) => ({ acceptance: [], links: [], events: [], tasks: [], ...o });
+const req = (project, o) => item({ project, ...o });
+
+/* p1：完整的四层示例（吸收 requirements.html 的 CMH 剧本） */
+const ITEMS = {
+  p1: [
+    req("p1", { id: "rr1", seq: 1, key: "YMA-RR-01", level: "rr", parentId: null, title: "客户反馈：会话超过 200 轮后卡顿", status: "approved", priority: "P0", owner: "张", source: "客户", requester: "李经理", body: "客户在长会话里滚动明显掉帧，尤其超过 200 轮之后。\n\n希望先能看见卡在哪，再谈怎么优化。", events: [{ at: NOW - 20 * DAY, text: "李经理提出" }, { at: NOW - 18 * DAY, text: "状态：草稿 → 已批准" }] }),
+    req("p1", { id: "ir1", seq: 2, key: "YMA-IR-01", level: "ir", parentId: "rr1", title: "范围：只读历史会话，不改存储", status: "approved", priority: "P0", owner: "张", source: "客户", scope: "只读历史记录 + 前端渲染优化；不改消息存储结构，不引入新数据库。", outOfScope: "消息分页协议重写、云端同步、消息搜索。", body: "先把「看见卡点」做出来，存储改造留到下一期。", events: [{ at: NOW - 17 * DAY, text: "从 RR-01 拆出" }, { at: NOW - 16 * DAY, text: "状态：草稿 → 已批准" }] }),
+    req("p1", { id: "sr1", seq: 3, key: "YMA-SR-01", level: "sr", parentId: "ir1", title: "打开 200 轮会话首屏 ≤1.5s", status: "approved", priority: "P0", owner: "王", impact: "Chat / 会话加载 / MessageList", acceptance: [{ text: "打开 200 轮会话时，首屏可交互 ≤1.5s", done: true }, { text: "加载中显示骨架屏且不阻塞滚动", done: true }], events: [{ at: NOW - 15 * DAY, text: "从 IR-01 拆出" }, { at: NOW - 14 * DAY, text: "状态：草稿 → 已批准" }] }),
+    req("p1", { id: "us1", seq: 4, key: "YMA-US-01", level: "us", parentId: "sr1", title: "作为值班，打开历史会话能定位到出错轮次", status: "in_progress", priority: "P0", owner: "王", role: "值班工程师", planStart: NOW - 2 * DAY, planEnd: NOW + 2 * DAY, value: "不用逐屏翻聊天记录，直接看见哪一轮失败", body: "错误轮次要能高亮，并能复制 trace id。", acceptance: [{ text: "200 轮会话 3s 内看到错误轮", done: true }, { text: "错误轮可一键复制 trace id", done: false }], events: [{ at: NOW - 13 * DAY, text: "从 SR-01 切出" }, { at: NOW - 12 * DAY, text: "状态：草稿 → 已批准" }, { at: NOW - 11 * DAY, text: "派给 小B · 任务 T-121" }], tasks: [{ id: "t1", key: "T-121", kind: "deliver", botId: "b1", title: "实现错误轮定位与高亮", status: "running" }] }),
+    req("p1", { id: "us2", seq: 5, key: "YMA-US-02", level: "us", parentId: "sr1", title: "作为研发，能回放失败轮次", status: "draft", priority: "P2", owner: "王", role: "研发", planStart: NOW + 2 * DAY, planEnd: NOW + 5 * DAY, value: "复现用户看到的失败，而不是只看日志", body: "回放需要能定位到同一轮，并在本地重跑一次。", events: [{ at: NOW - 12 * DAY, text: "从 SR-01 切出" }] }),
+    req("p1", { id: "sr2", seq: 6, key: "YMA-SR-02", level: "sr", parentId: "ir1", title: "滚动历史时帧 ≤16ms", status: "approved", priority: "P1", owner: "王", impact: "Chat / MessageList / 滚动", acceptance: [{ text: "滚动历史消息 p95 帧 ≤16ms", done: false }], events: [{ at: NOW - 15 * DAY, text: "从 IR-01 拆出" }] }),
+    req("p1", { id: "rr2", seq: 7, key: "YMA-RR-02", level: "rr", parentId: null, title: "内部：周报要能自动汇总本周运行", status: "approved", priority: "P1", owner: "陈", source: "内部", requester: "陈", body: "每周五自动生成本周运行、失败、成本的汇总，不再手抄。", events: [{ at: NOW - 8 * DAY, text: "陈提出" }] }),
+    req("p1", { id: "rr3", seq: 8, key: "YMA-RR-03", level: "rr", parentId: null, title: "客户：失败运行要能看到失败原因", status: "reviewing", priority: "P1", owner: "陈", source: "客户", requester: "周工", body: "失败不能只显示「失败」，要能看到错误分类和原始输出。", events: [{ at: NOW - 6 * DAY, text: "周工提出" }] }),
+    req("p1", { id: "ir3", seq: 9, key: "YMA-IR-03", level: "ir", parentId: "rr3", title: "失败卡片统一展示错误分类", status: "reviewing", priority: "P1", owner: "陈", source: "客户", scope: "失败卡展示 errorClass + 原文 + 重试入口。", outOfScope: "错误自动归因、智能修复建议。", body: "先把失败说清楚，再谈自动处理。", events: [{ at: NOW - 5 * DAY, text: "从 RR-03 拆出" }] }),
+    req("p1", { id: "sr3", seq: 10, key: "YMA-SR-03", level: "sr", parentId: "ir3", title: "失败运行显示 errorClass + 原文", status: "approved", priority: "P1", owner: "王", impact: "Run 详情 / 失败卡 / 复制", acceptance: [{ text: "失败运行显示 errorClass", done: true }, { text: "失败卡可复制错误原文", done: false }], events: [{ at: NOW - 4 * DAY, text: "从 IR-03 拆出" }, { at: NOW - 3 * DAY, text: "状态：草稿 → 已批准" }] }),
+    req("p1", { id: "us3", seq: 11, key: "YMA-US-03", level: "us", parentId: "sr3", title: "作为值班，失败卡能复制错误原文", status: "approved", priority: "P1", owner: "王", role: "值班工程师", planStart: NOW, planEnd: NOW + 4 * DAY, value: "把错误原文贴给研发，不用截图", acceptance: [{ text: "失败卡可复制错误原文", done: true }, { text: "复制内容包含 errorClass", done: true }], events: [{ at: NOW - 3 * DAY, text: "从 SR-03 切出" }] }),
+  ],
+  p2: [
+    req("p2", { id: "c1", seq: 1, key: "CMH-RR-01", level: "rr", parentId: null, title: "发布节奏要能在首页看见", status: "approved", priority: "P1", owner: "张", source: "内部", requester: "值班", body: "发布会的时候大家都在问「到哪一步了」。", events: [{ at: NOW - 4 * DAY, text: "值班提出" }] }),
+    req("p2", { id: "c2", seq: 2, key: "CMH-SR-01", level: "sr", parentId: "c1", title: "首页展示批次号与失败原因", status: "approved", priority: "P1", owner: "李", impact: "首页 / 发布进度", acceptance: [{ text: "批次号与 run 记录一致", done: true }, { text: "失败时显示最近一次失败原因", done: false }], events: [{ at: NOW - 3 * DAY, text: "从 RR-01 拆出" }] }),
+    req("p2", { id: "c3", seq: 3, key: "CMH-US-01", level: "us", parentId: "c2", title: "作为值班，我能一眼看出这批卡在哪", status: "reviewing", priority: "P2", owner: "值班", role: "值班工程师", value: "不用问人", acceptance: [{ text: "首页能看到当前批次与卡住的那一步", done: false }], events: [{ at: NOW - 2 * DAY, text: "从 SR-01 切出" }] }),
+  ],
+};
+
+
+/* 事项 = 台账：遗留事项 / 任务 / 问题 三类记录（表格一行一条，可展开处理记录） */
+const ISSUE_KIND = { legacy: { label: "遗留事项" }, task: { label: "任务" }, issue: { label: "问题" } };
+const ISSUE_STATUS = {
+  open: { label: "待处理" }, doing: { label: "进行中" }, blocked: { label: "受阻" },
+  resolved: { label: "已解决" }, closed: { label: "已关闭" },
+};
+const BACKLOG = {
+  p1: [
+    { id: "b1", key: "ISSUE-01", kind: "issue", title: "长时间会话超过 200 轮后滚动掉帧", status: "doing", priority: "P0", owner: "b1", reqId: "rr1", updatedAt: NOW - 24 * MIN,
+      body: "客户复现：200 轮以上滚动明显掉帧。已确认与消息列表渲染有关，先加骨架屏再谈虚拟滚动。",
+      notes: [{ at: NOW - 2 * DAY, by: "值班", text: "从客户群里摘出来，补了复现步骤" }, { at: NOW - 24 * MIN, by: "小B", text: "起 run r8291，改了首屏加载" }] },
+    { id: "b2", key: "LEGACY-03", kind: "legacy", title: "旧 demo 页面还挂在导航里", status: "open", priority: "P3", owner: "", reqId: null, updatedAt: NOW - 6 * HOUR,
+      body: "导航里还有 3 个早期 demo 页，没有入口价值，但删之前要确认没人用。",
+      notes: [{ at: NOW - 6 * HOUR, by: "小B", text: "列出来给设计确认" }] },
+    { id: "b3", key: "TASK-07", kind: "task", title: "把失败运行的错误分类补进失败卡", status: "doing", priority: "P1", owner: "b2", reqId: "sr3", updatedAt: NOW - 2 * HOUR,
+      body: "失败卡只显示「失败」，要带 errorClass + 原文 + 重试入口。",
+      notes: [{ at: NOW - 5 * HOUR, by: "值班", text: "从 SR-03 派出来" }, { at: NOW - 2 * HOUR, by: "小C", text: "改完文案，等验收" }] },
+    { id: "b4", key: "ISSUE-02", kind: "issue", title: "CI 上 3 条用例 flaky（websocket 超时）", status: "blocked", priority: "P1", owner: "b2", reqId: null, updatedAt: NOW - 26 * HOUR,
+      body: "同一批用例在 CI 上偶发超时，本地复现不了。已加 skip，等排查到底是网关切还是用例写法。",
+      notes: [{ at: NOW - 30 * HOUR, by: "小C", text: "先加 skip，留 issue 跟踪" }, { at: NOW - 26 * HOUR, by: "值班", text: "等本周网关排查结论" }] },
+    { id: "b5", key: "LEGACY-01", kind: "legacy", title: "本地开发脚本还在用旧的端口常量", status: "resolved", priority: "P2", owner: "b1", reqId: null, updatedAt: NOW - 2 * DAY,
+      body: "scripts/dev.sh 里端口写死 5173，和现在 vite 的取端口逻辑冲突。",
+      notes: [{ at: NOW - 3 * DAY, by: "小B", text: "阿里改成读环境变量" }] },
+    { id: "b6", key: "TASK-09", kind: "task", title: "副标题要不要一起改", status: "open", priority: "P3", owner: "", reqId: "rr2", updatedAt: NOW - 3 * HOUR,
+      body: "客户提了一句，但没确认要不要一起改；先记下来，别丢。",
+      notes: [] },
+    { id: "b7", key: "ISSUE-03", kind: "issue", title: "PDF 附件读不了（bot 只能读文本）", status: "open", priority: "P2", owner: "", reqId: null, updatedAt: NOW - 8 * HOUR,
+      body: "客户发的合同是 PDF，bot 回「二进制读不了」。要么加解析，要么在输入区提示只收文本。",
+      notes: [{ at: NOW - 8 * HOUR, by: "值班", text: "先记着，等排期" }] },
+  ],
+  p2: [
+    { id: "b8", key: "ISSUE-11", kind: "issue", title: "bot 的工具表太长，模型容易乱调", status: "doing", priority: "P1", owner: "b1", reqId: "c2", updatedAt: NOW - 40 * MIN,
+      body: "工具从 17 个涨到 30+，同一轮里会出现重复调用。想按风险分组展示，并在提示里分组说明。",
+      notes: [{ at: NOW - 3 * HOUR, by: "小B", text: "起 run r8295" }] },
+    { id: "b9", key: "LEGACY-12", kind: "legacy", title: "架构文档的归档位置没定", status: "blocked", priority: "P2", owner: "b2", reqId: null, updatedAt: NOW - 5 * HOUR,
+      body: "docs/arch 与 resources/wiki 两套语料，归档到哪还没定。",
+      notes: [{ at: NOW - 5 * HOUR, by: "小C", text: "等 SE 回话" }] },
+  ],
+};
+
+/* 每个项目的需求层（裁剪）与展开态、选中态 */
+const perProject = {};
+const defaultSelection = (pid) => {
+  const items = ITEMS[pid] || [];
+  const withTasks = items.find((i) => (i.tasks || []).length && !items.some((x) => x.parentId === i.id));
+  const leaf = items.find((i) => !items.some((x) => x.parentId === i.id));
+  return (withTasks || leaf || items[0] || {}).id || "";
+};
+const expandAncestors = (pid, id) => {
+  const s = perProject[pid];
+  if (!s || !id) return;
+  let cur = (ITEMS[pid] || []).find((i) => i.id === id) || null;
+  while (cur && cur.parentId) { s.expanded.add(cur.parentId); cur = (ITEMS[pid] || []).find((i) => i.id === cur.parentId) || null; }
+};
+const stateOf = (pid) => {
+  if (!perProject[pid]) {
+    const p = PROJECTS.find((x) => x.id === pid);
+    perProject[pid] = {
+      levels: [...(TPL[params.get("tpl")] || TPL[p?.tpl] || TPL.full).levels],
+      expanded: new Set((ITEMS[pid] || []).filter((i) => !i.parentId).map((i) => i.id)),
+      selectedId: params.get("sel") || defaultSelection(pid),
+    };
+    expandAncestors(pid, perProject[pid].selectedId);
+  }
+  return perProject[pid];
+};
+
+const params = new URLSearchParams(location.search);
+const EMPTY = params.get("empty") === "1";
+const NOREQ = params.get("noreq") === "1";
+let selectedProject = EMPTY ? "" : (params.get("project") || "p1");
+const TAB_ALIAS = { overview: "sum", summary: "sum", sum: "sum", ov: "sum", req: "pool", pool: "pool", board: "board", plan: "plan", items: "items", item: "items", matrix: "sum" };
+let tab = TAB_ALIAS[params.get("tab") || ""] || "pool";
+
+let gapOnly = false;
+let tailoring = false;
+let search = "";
+let levelFilter = "all";
+let statusFilter = "all";
+let creating = null;      // { level, parentId, ctx }
+let gateError = null;     // { id, key, text }
+let assignFor = null;     // 需求 id：正在选实现者
+let linkFor = null;       // 需求 id：正在加关联
+let theme = params.get("theme") === "dark" ? "dark" : "light";
+if (theme === "dark") document.documentElement.dataset.theme = "dark";
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pad2 = (n) => String(n).padStart(2, "0");
+const fmt = (ts) => { const d = new Date(ts); return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+const shortKey = (k) => String(k || "").replace(/^[A-Z]+-/, "");
+const proj = () => PROJECTS.find((p) => p.id === selectedProject) || null;
+const st = () => stateOf(selectedProject);
+const allItems = () => (NOREQ ? [] : (ITEMS[selectedProject] || []));
+const byId = (id) => allItems().find((i) => i.id === id) || null;
+
+/* ══ 派生（层级裁剪 / 父子 / 任务 / 缺口）══════════════════════ */
+const enabled = () => st().levels;
+const deliveryLevel = () => enabled()[enabled().length - 1] || "us";
+const visible = (i) => !!i && enabled().includes(i.level);
+const visibleItems = () => allItems().filter(visible);
+const parentOf = (i) => { let p = i && i.parentId ? byId(i.parentId) : null; while (p && !visible(p)) p = p.parentId ? byId(p.parentId) : null; return p; };
+const childrenOf = (i) => visibleItems().filter((x) => { const p = parentOf(x); return p && p.id === i.id; });
+const roots = () => visibleItems().filter((x) => !parentOf(x));
+const ancestors = (i) => { const out = []; let cur = i; while (cur) { out.unshift(cur); cur = parentOf(cur); } return out; };
+const nextLevel = (lv) => { const i = enabled().indexOf(lv); return i >= 0 ? enabled()[i + 1] || null : null; };
+const isDelivery = (i) => i.level === deliveryLevel();
+const deliverTasks = (i) => (i.tasks || []).filter((t) => t.kind === "deliver");
+const rawChildren = (i) => allItems().filter((x) => x.parentId === i.id);
+const collectDeliver = (i) => { const out = [...deliverTasks(i)]; for (const c of rawChildren(i)) out.push(...collectDeliver(c)); return out; };
+const implementers = (i) => [...new Set(collectDeliver(i).map((t) => t.botId))].map((id) => BOTS.find((b) => b.id === id)).filter(Boolean);
+const taskStats = (i) => { const l = collectDeliver(i); return { total: l.length, done: l.filter((t) => t.status === "done").length }; };
+const statusLabel = (s) => (STATUS[s] || STATUS.draft).label;
+const levelName = (lv) => (LV[lv] || {}).name || lv;
+
+function gapOf(i) {
+  if (!visible(i)) return null;
+  if ((i.level === "sr" || i.level === "us") && !(i.acceptance || []).length) return { type: "acceptance", label: "缺验收" };
+  if (isDelivery(i) && i.status === "approved" && collectDeliver(i).length === 0) return { type: "unplanned", label: "未派活" };
+  if (i.level !== deliveryLevel() && childrenOf(i).length === 0) return { type: "downstream", label: "缺下游" };
+  return null;
+}
+const gapCount = () => visibleItems().filter((i) => gapOf(i)).length;
+
+function gateMissing(i, next) {
+  if (next === "approved") {
+    if (i.level === "rr" && !i.source) return { key: "source", text: "RR 批准前必须有来源" };
+    if (i.level === "ir" && (!i.scope || !i.outOfScope)) return { key: "scope", text: "IR 批准前必须有范围和范围外" };
+    if ((i.level === "sr" || i.level === "us") && !(i.acceptance || []).length) return { key: "acceptance", text: "批准前需要至少 1 条可判定验收" };
+  }
+  if (next === "in_progress" && !collectDeliver(i).length) return { key: "tasks", text: "开始实现前需要先派活" };
+  if (next === "verifying") { const l = collectDeliver(i); if (l.length && l.some((t) => t.status !== "done")) return { key: "tasks", text: "还有 deliver 任务没完成，不能进入待验收" }; }
+  if (next === "done") {
+    const acc = i.acceptance || [];
+    if (!acc.length) return { key: "acceptance", text: "没有验收判据，不能标记完成" };
+    if (acc.some((a) => !a.done)) return { key: "acceptance", text: "还有验收判据没勾选，不能标记完成" };
+  }
+  return null;
+}
+
+/* 当前状态能往哪走（按钮顺序即推荐顺序） */
+function nextActions(i) {
+  const s = i.status;
+  if (s === "draft") return [["reviewing", "提交评审"], ["obsolete", "废弃"]];
+  if (s === "reviewing") return [["approved", "批准"], ["rejected", "拒绝"], ["draft", "退回草稿"]];
+  if (s === "approved") return [["in_progress", "开始实现"], ["verifying", "提交验收"], ["done", "标记完成"]];
+  if (s === "in_progress") return [["verifying", "提交验收"], ["done", "标记完成"]];
+  if (s === "verifying") return [["done", "验收通过"], ["in_progress", "打回实现"]];
+  if (s === "rejected" || s === "obsolete") return [["draft", "重新激活"]];
+  return [["in_progress", "重新打开"]];
+}
+
+/* ══ 渲染：项目列表 / 页头 / 概览条 ═══════════════════════════ */
+function renderProjects() {
+  const q = search.trim().toLowerCase();
+  const rows = PROJECTS.filter((p) => !q || `${p.name} ${p.alias} ${p.path}`.toLowerCase().includes(q));
+  $("projList").innerHTML = rows.length ? rows.map((p) => {
+    const items = NOREQ ? [] : (ITEMS[p.id] || []);
+    const on = p.id === selectedProject;
+    return `<button class="proj-row${on ? " on" : ""}" data-project="${p.id}" aria-current="${on ? "true" : "false"}">
+      <span class="nm"><span class="d ${p.status === "paused" ? "paused" : "on"}"></span><b>${esc(p.name)}</b></span>
+      <span class="meta"><span class="mono">@${esc(p.alias)}</span><span class="cnt">${p.open ? `未完成 ${p.open}` : ""}${items.length ? `<span class="run">· 需求 ${items.length}</span>` : ""}</span></span>
+    </button>`;
+  }).join("") : `<div class="inline-empty">没有匹配的项目</div>`;
+}
+
+function renderHeadMenu() {
+  const el = $("projMenuHead");
+  if (!el) return;
+  el.innerHTML = PROJECTS.map((x) => {
+    const items = NOREQ ? [] : (ITEMS[x.id] || []);
+    const on = x.id === selectedProject;
+    return `<button class="pm-row${on ? " on" : ""}" role="menuitemradio" aria-checked="${on}" data-project="${x.id}">
+      <span class="d ${x.status === "paused" ? "paused" : "on"}"></span>
+      <span class="pm-main"><b class="ellipsis">${esc(x.name)}</b><span class="pm-meta mono">@${esc(x.alias)}</span></span>
+      <span class="pm-cnt">${x.open ? `未完成 ${x.open}` : ""}${items.length ? ` · 需求 ${items.length}` : ""}</span>
+      <span class="pm-check" aria-hidden="true">${on ? "✓" : ""}</span>
+    </button>`;
+  }).join("") + `<div class="sep"></div><button class="pm-row add" data-toast="打开目录，添加项目"><span class="pm-main" style="grid-column:1 / -1"><b>＋ 添加项目</b></span></button>`;
+}
+
+function renderHead() {
+  const p = proj();
+  renderHeadMenu();
+  // 折叠：按钮在左栏自己头上；收起后页头标题左侧出现「展开」
+  const fold = $("projFold");
+  const expand = $("projExpand");
+  if (fold) fold.hidden = projCollapsed;
+  if (expand) expand.hidden = !projCollapsed;
+  const count = $("projCount");
+  if (count) count.textContent = String(PROJECTS.length);
+  const trig = $("projTrigger");
+  if (trig && p) trig.title = `切换项目\n${p.path}`;
+  $("workbench").classList.toggle("proj-folded", projCollapsed);
+  if (!p) {
+    $("hName").textContent = "项目";
+    $("hAlias").textContent = "";
+    $("hMeta").innerHTML = `<span>本地目录即项目：任务、终端、文件树都跟着它</span>`;
+    $("overview").innerHTML = "";
+    $("newReq").style.display = "none";
+    return;
+  }
+  $("hName").textContent = p.name;
+  // 别名和名字一样就不重复显示（和左栏同一口径）
+  const showAlias = Boolean(p.alias) && p.alias !== p.name;
+  $("hAlias").textContent = showAlias ? "@" + p.alias : "";
+  $("hAlias").style.display = showAlias ? "" : "none";
+  $("newReq").style.display = "";
+  const items = allItems();
+  const bots = p.bots.length ? `${p.bots.map(esc).join(" / ")} 接手` : "";
+  $("hMeta").innerHTML = [
+    `<span class="chip">${p.status === "paused" ? "已暂停" : "进行中"}</span>`,
+    p.branch ? `<span class="mono">${esc(p.branch)}</span>` : "",
+    bots,
+  ].filter(Boolean).join(`<span class="sep">·</span>`);
+  const gaps = gapCount();
+  const rows = [["任务", p.tasks], ["未完成", p.open], ["需求", items.length], ["缺口", gaps, gaps ? "warn" : ""]].filter(([, v]) => Number(v) > 0);
+  $("overview").innerHTML = rows.map(([label, v, tone], i) => `${i ? '<span class="sep">·</span>' : ""}<span class="${tone || ""}">${label} <b>${v}</b></span>`).join("");
+}
+
+/* ══ 渲染：需求 tab 骨架 ══════════════════════════════════════ */
+function reqPanelsHtml() {
+  return `<div class="req">
+    <section class="panel" aria-label="需求树">
+      <div class="tree-tools">
+        <input class="input" id="reqSearch" placeholder="搜索需求 / 关键字" aria-label="搜索需求" value="${esc(search)}" />
+        <div class="filter-row">
+          <select class="select" id="fLevel" aria-label="按层级筛选">
+            <option value="all">全部层级</option>
+            ${enabled().map((lv) => `<option value="${lv}" ${levelFilter === lv ? "selected" : ""}>${levelName(lv)}</option>`).join("")}
+          </select>
+          <select class="select" id="fStatus" aria-label="按状态筛选">
+            <option value="all">全部状态</option>
+            ${Object.keys(STATUS).map((s) => `<option value="${s}" ${statusFilter === s ? "selected" : ""}>${statusLabel(s)}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="tree-scroll" id="reqTree"></div>
+    </section>
+    <section class="panel" aria-label="需求详情"><div class="detail-scroll" id="reqDetail"></div></section>
+  </div>`;
+}
+
+function renderPaneReq() {
+  if (!allItems().length) {
+    $("paneReq").innerHTML = `<section class="panel" style="flex:1"><div class="empty"><div class="empty-box">
+      <b>这个项目还没有需求</b>
+      <p>需求按项目维护：RR → IR → SR → US 四层，层级可裁剪；每条都能派活、能验收。</p>
+      <button class="btn primary" data-new-req="1">＋ 新建需求</button>
+    </div></div></section>`;
+    return false;
+  }
+  $("paneReq").innerHTML = reqPanelsHtml();
+  return true;
+}
+
+/* ══ 渲染：需求树 ════════════════════════════════════════════ */
+function matches(i) {
+  const q = search.trim().toLowerCase();
+  return (!q || `${i.key} ${i.title}`.toLowerCase().includes(q))
+    && (levelFilter === "all" || i.level === levelFilter)
+    && (statusFilter === "all" || i.status === statusFilter);
+}
+const filtering = () => Boolean(search.trim()) || levelFilter !== "all" || statusFilter !== "all";
+
+function renderTree() {
+  const s = st();
+  const out = [];
+  const creatingRow = (lv, parentId, ctx, title = "") => `<div class="tree-row" style="gap:6px">
+    <span class="chev-space"></span><span class="dot draft"></span>
+    <span class="key">${levelName(lv)}</span>
+    <input class="inline-add" data-create-input data-ctx="${ctx}" data-level="${lv}" data-parent="${parentId || ""}" placeholder="输入标题，回车创建" value="${esc(title)}" style="height:22px" />
+  </div>`;
+
+  if (creating && creating.ctx === "tree") out.push(creatingRow(creating.level, creating.parentId, "tree"));
+
+  if (filtering()) {
+    // 过滤态：平铺 + 路径，不做折叠
+    const list = visibleItems().filter(matches).sort((a, b) => a.seq - b.seq);
+    if (!list.length) out.push(`<div class="inline-empty">没有匹配的需求</div>`);
+    for (const i of list) {
+      const path = ancestors(i).slice(0, -1).map((a) => shortKey(a.key)).join(" / ");
+      out.push(treeRow(i, 0, false, path));
+    }
+    $("reqTree").innerHTML = out.join("");
+    return;
+  }
+
+  const walk = (i, depth) => {
+    out.push(treeRow(i, depth, true, ""));
+    if (s.expanded.has(i.id)) childrenOf(i).forEach((c) => walk(c, depth + 1));
+  };
+  const rs = roots();
+  if (!rs.length) out.push(`<div class="inline-empty">还没有需求。点右上「新建需求」开始。</div>`);
+  for (const r of rs) walk(r, 0);
+  $("reqTree").innerHTML = out.join("");
+}
+
+function treeRow(i, depth, canExpand, path) {
+  const s = st();
+  const kids = childrenOf(i);
+  const open = s.expanded.has(i.id);
+  const on = s.selectedId === i.id;
+  const impl = isDelivery(i) ? implementers(i) : [];
+  const gap = gapOf(i);
+  return `<button class="tree-row${on ? " on" : ""}" data-select="${i.id}" style="padding-left:${5 + depth * 13}px" title="${esc(i.title)}">
+    ${canExpand && kids.length
+      ? `<span class="chev${open ? " open" : ""}" data-expand="${i.id}" role="button" aria-label="${open ? "收起" : "展开"}" aria-expanded="${open}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg></span>`
+      : `<span class="chev-space"></span>`}
+    <span class="dot ${i.status}"></span>
+    <span class="key">${shortKey(i.key)}</span>
+    <span class="ttl">${esc(i.title)}</span>
+    ${path ? `<span class="path" title="${esc(path)}">${esc(path)}</span>` : ""}
+    <span class="row-end">
+      ${impl.length ? `<span class="avatar-stack">${impl.slice(0, 2).map((b) => `<span class="avatar ${b.hue}" title="${esc(b.name)}">${esc(b.initial)}</span>`).join("")}${impl.length > 2 ? `<span class="more">+${impl.length - 2}</span>` : ""}</span>` : ""}
+      ${gap ? `<span class="chip gap">${gap.label}</span>` : ""}
+    </span>
+  </button>`;
+}
+
+/* ══ 渲染：详情 ══════════════════════════════════════════════ */
+function renderDetail() {
+  const s = st();
+  const i = byId(s.selectedId) || visibleItems()[0];
+  if (!i) { $("reqDetail").innerHTML = `<div class="inline-empty">左边选一条需求，或＋新建需求</div>`; return; }
+  const chain = ancestors(i);
+  const impl = implementers(i);
+  const tasks = collectDeliver(i);
+  const acc = i.acceptance || [];
+  const needAcc = gateError && gateError.id === i.id && gateError.key === "acceptance";
+  const kids = childrenOf(i);
+  const nl = nextLevel(i.level);
+
+  $("reqDetail").innerHTML = `
+    <div class="crumbs">${chain.map((n, idx) => `${idx ? "<span>→</span>" : ""}<button data-select="${n.id}" title="${esc(n.title)}">${shortKey(n.key)}</button>`).join("")}</div>
+    <div class="detail-key">${esc(i.key)}${i.ai ? ` · <span class="chip ai">AI 草稿</span>` : ""}</div>
+    <div class="title-row"><h2>${esc(i.title)}</h2></div>
+    <div class="meta-line">
+      <span class="dot ${i.status}"></span><span>${statusLabel(i.status)}</span><span class="sep">·</span>
+      <span class="prio">${esc(i.priority || "P2")}</span><span class="sep">·</span>
+      <span>${esc(i.owner || "—")}</span><span class="sep">·</span>
+      <span>${esc(i.source || "—")}</span>
+      ${i.requester ? `<span class="sep">·</span><span>${esc(i.requester)} 提出</span>` : ""}
+    </div>
+    <div class="gate-actions">
+      ${nextActions(i).map(([next, label], idx) => `<button class="btn tiny${idx === 0 ? " primary" : ""}" data-status="${next}">${label}</button>`).join("")}
+      <button class="btn tiny" data-toast="问小A同学（全局助手在 rail 底部 / ⌘⇧A）">问小A同学</button>
+    </div>
+    ${gateError && gateError.id === i.id ? `<div class="gate"><span>${esc(gateError.text)}</span><button data-fix="${gateError.key}">去补</button></div>` : ""}
+    <div class="impl">
+      <span class="label" style="font-family:var(--mono);font-size:10px;color:var(--faint)">实现</span>
+      ${impl.length ? impl.map((b) => `<span class="avatar ${b.hue}">${esc(b.initial)}</span><b>${esc(b.name)}</b>`).join("") : `<b style="color:var(--amber)">未派活</b>`}
+      <span class="count">${tasks.length} 个任务</span>
+      <span class="spacer"></span>
+      ${!isDelivery(i)
+        ? `<span class="count">只有交付层（${levelName(deliveryLevel())}）能派活</span>`
+        : assignFor === i.id
+          ? BOTS.filter((b) => b.id !== "a1").map((b) => `<button class="btn tiny" data-assign="${b.id}">${esc(b.name)}</button>`).join("") + `<button class="btn tiny" data-assign-cancel="1">取消</button>`
+          : `<button class="btn tiny" data-assign-open="${i.id}">派活</button>`}
+    </div>
+    ${levelFields(i)}
+    ${i.body ? `<div class="md">${esc(i.body)}</div>` : ""}
+
+    ${(i.level === "sr" || i.level === "us") ? `<section class="sec">
+      <div class="sec-head"><h3>验收判据</h3><span class="count">${acc.filter((a) => a.done).length}/${acc.length}</span><span class="spacer"></span></div>
+      ${acc.length ? acc.map((a, idx) => `<div class="acc-row${a.done ? " done" : ""}${needAcc && !a.done ? " needs" : ""}">
+        <input type="checkbox" ${a.done ? "checked" : ""} data-acc="${idx}" aria-label="验收判据 ${idx + 1}" />
+        <span>${esc(a.text)}</span>
+        <button class="x" data-acc-del="${idx}" title="删除这条" aria-label="删除这条">×</button>
+      </div>`).join("") : `<div class="inline-empty">还没有验收判据。SR / US 批准前至少要有一条。</div>`}
+      <input class="inline-add" data-acc-input placeholder="输入一条可判定的验收，回车添加" aria-label="添加验收判据" />
+    </section>` : ""}
+
+    <section class="sec">
+      <div class="sec-head"><h3>子需求</h3><span class="count">${kids.length}</span><span class="spacer"></span>
+        ${nl ? `<button class="btn tiny" data-new-child="${i.id}">＋ ${levelName(nl)}</button>` : `<span class="count">交付层</span>`}
+      </div>
+      ${kids.length ? kids.map((c) => `<button class="child-row" data-select="${c.id}">
+        <span class="dot ${c.status}"></span><span class="key">${shortKey(c.key)}</span><span class="ttl">${esc(c.title)}</span>
+        <span class="row-end">${isDelivery(c) ? implementers(c).slice(0, 2).map((b) => `<span class="avatar ${b.hue}">${b.initial}</span>`).join("") : ""}${gapOf(c) ? `<span class="chip gap">${gapOf(c).label}</span>` : ""}</span>
+      </button>`).join("") : `<div class="inline-empty">${nl ? `还没有 ${levelName(nl)}。` : "这是交付层。"}</div>`}
+      ${creating && creating.ctx === "detail" && creating.parentId === i.id ? `<input class="inline-add" data-create-input data-ctx="detail" data-level="${creating.level}" data-parent="${i.id}" placeholder="输入标题，回车创建" />` : ""}
+    </section>
+
+    <section class="sec">
+      <div class="sec-head"><h3>关联</h3><span class="count">${(i.links || []).length}</span><span class="spacer"></span>
+        <button class="btn tiny" data-link-open="${i.id}">＋ 关联</button>
+      </div>
+      ${(i.links || []).length ? (i.links || []).map((l, idx) => {
+        const t = byId(l.toId);
+        return t ? `<div class="child-row"><span class="dot ${t.status}"></span><span class="key">${shortKey(t.key)}</span><span class="ttl">${esc(t.title)}</span><span class="row-end"><span class="chip">${esc(l.kind)}</span><button class="x" data-link-del="${idx}" title="取消关联" aria-label="取消关联" style="color:var(--faint)">×</button></span></div>` : "";
+      }).join("") : `<div class="inline-empty">没有横向关联（相关 / 重复 / 冲突）。</div>`}
+      ${linkFor === i.id ? `<div class="filter-row" style="margin-top:6px">
+        <select class="select" id="linkKind" aria-label="关联类型"><option value="相关">相关</option><option value="重复">重复</option><option value="冲突">冲突</option></select>
+        <select class="select" id="linkTarget" aria-label="关联目标">${visibleItems().filter((x) => x.id !== i.id).map((x) => `<option value="${x.id}">${shortKey(x.key)} · ${esc(x.title.slice(0, 18))}</option>`).join("")}</select>
+        <button class="btn tiny" data-link-add="${i.id}">加</button>
+      </div>` : ""}
+    </section>
+
+    <section class="sec">
+      <div class="sec-head"><h3>任务</h3><span class="count">${tasks.length}</span><span class="spacer"></span>
+        ${isDelivery(i) ? `<button class="btn tiny" data-task-open="1" title="去工作台看这条需求下的任务">打开工作台</button>` : ""}
+      </div>
+      ${tasks.length ? tasks.map((t) => {
+        const b = BOTS.find((x) => x.id === t.botId);
+        return `<div class="task-row">
+          ${b ? `<span class="avatar ${b.hue}">${b.initial}</span>` : ""}
+          <span class="chip">${t.kind === "verify" ? "验收" : "实现"}</span>
+          <span class="task-title">${esc(t.title)}</span>
+          <span class="task-meta"><span>${esc(t.key)}</span><span>${t.status === "running" ? "运行中" : t.status === "done" ? "完成" : t.status === "cancelled" ? "已停止" : "待开跑"}</span></span>
+        </div>`;
+      }).join("") : `<div class="inline-empty">${isDelivery(i) ? (i.status === "draft" || i.status === "reviewing" ? "批准后才能派活。" : "还没派活。点上面「派活」选实现者。") : "只有交付层能派活；先往下拆。"}</div>`}
+    </section>
+
+    <section class="sec">
+      <div class="sec-head"><h3>时间线</h3><span class="count">${(i.events || []).length}</span></div>
+      <div class="tl">${[...(i.events || [])].sort((a, b) => b.at - a.at).map((e) => `<div class="tl-item"><span class="tl-time">${fmt(e.at)}</span><span>${esc(e.text)}</span></div>`).join("") || `<div class="inline-empty">还没有事件。</div>`}</div>
+    </section>`;
+  $("reqDetail").scrollTop = 0;
+}
+
+/* 层级专属字段 */
+function levelFields(i) {
+  const box = (k, v) => `<div class="kv"><span class="k">${k}</span><span class="box">${esc(v || "—")}</span></div>`;
+  if (i.level === "rr") return box("来源 / 提出人", `${i.source || "—"} · ${i.requester || "—"}`);
+  if (i.level === "ir") return box("范围", i.scope) + box("范围外", i.outOfScope);
+  if (i.level === "sr") return box("影响模块", i.impact);
+  return box("角色 / 价值", `${i.role || "—"} · ${i.value || "—"}`);
+}
+
+/* ══ 渲染：追溯矩阵 ══════════════════════════════════════════ */
+
+/* ══ 渲染：事项（台账表格）══════════════════════════════════ */
+const projectItems = () => (NOREQ ? [] : (BACKLOG[selectedProject] || []));
+const needsYou = () => projectItems().filter((i) => i.status === "open" || i.status === "blocked");
+const ISSUE_ORDER = ["open", "doing", "blocked", "resolved", "closed"];
+const reqKeyOf = (id) => { const r = id ? byId(id) : null; return r ? shortKey(r.key) : ""; };
+const ownerName = (id) => (BOTS.find((b) => b.id === id) || {}).name || "";
+
+function renderItems() {
+  const all = projectItems();
+  const q = (itemSearch || "").trim().toLowerCase();
+  const list = all
+    .filter((i) => itemKind === "all" || i.kind === itemKind)
+    .filter((i) => itemFilter === "all" || i.status === itemFilter)
+    .filter((i) => !q || `${i.key} ${i.title} ${i.body || ""}`.toLowerCase().includes(q))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+  const row = (i) => {
+    const open = openIssue === i.id;
+    return `<tr class="${open ? "on" : ""}" data-issue="${i.id}">
+      <td class="mono">${esc(i.key)}</td>
+      <td><span class="kind ${i.kind}">${ISSUE_KIND[i.kind].label}</span></td>
+      <td class="ttl-cell">${esc(i.title)}</td>
+      <td><span class="ist ${i.status}">${ISSUE_STATUS[i.status].label}</span></td>
+      <td class="mono">${reqKeyOf(i.reqId) || "—"}</td>
+      <td>${i.owner ? `<span class="avatar ${(BOTS.find((b) => b.id === i.owner) || {}).hue || "b"}">${(BOTS.find((b) => b.id === i.owner) || {}).initial || "?"}</span> ${esc(ownerName(i.owner))}` : `<span style="color:var(--amber)">未指派</span>`}</td>
+      <td class="mono">${esc(i.priority || "")}</td>
+      <td class="mono">${(i.notes || []).length}</td>
+      <td class="mono">${fmt(i.updatedAt)}</td>
+    </tr>` + (open ? `<tr class="detail-row"><td colspan="9">
+      <div class="issue-detail">
+        <div class="issue-body">${esc(i.body || "（没有正文）")}</div>
+        <div class="gate-actions" style="margin-top:8px">
+          ${i.status !== "resolved" ? `<button class="btn tiny primary" data-toast="标为已解决（原型占位）">标已解决</button>` : ""}
+          ${i.status !== "closed" ? `<button class="btn tiny" data-toast="关闭（不再跟踪）">关闭</button>` : ""}
+          <button class="btn tiny" data-toast="指派给某个 bot / 执行体">指派</button>
+          <button class="btn tiny" data-toast="开一条任务跟这个事项">转任务</button>
+        </div>
+        <div class="sec-head" style="margin-top:10px"><h3>处理记录</h3><span class="count">${(i.notes || []).length}</span></div>
+        <div class="tl">${(i.notes || []).map((n) => `<div class="tl-item"><span class="tl-time">${fmt(n.at)}</span><span><b>${esc(n.by)}</b>：${esc(n.text)}</span></div>`).join("") || `<div class="inline-empty">还没有记录</div>`}</div>
+        <input class="inline-add" data-toast="记一笔会写进这条事项的处理记录（原型占位）" placeholder="记一笔：进展 / 决定 / 阻塞…" aria-label="记一笔" />
+      </div>
+    </td></tr>` : "");
+  };
+
+  $("paneItems").innerHTML = `<section class="panel" style="flex:1;min-height:0">
+    <div class="view-tools">
+      <input class="input" id="itemSearch" placeholder="搜索编号 / 标题 / 正文" aria-label="搜索事项" value="${esc(itemSearch)}" style="width:220px" />
+      <select class="select" id="itemKind" aria-label="按类型筛选">
+        <option value="all" ${itemKind === "all" ? "selected" : ""}>全部类型</option>
+        <option value="legacy" ${itemKind === "legacy" ? "selected" : ""}>遗留事项</option>
+        <option value="task" ${itemKind === "task" ? "selected" : ""}>任务</option>
+        <option value="issue" ${itemKind === "issue" ? "selected" : ""}>问题</option>
+      </select>
+      <select class="select" id="itemFilter" aria-label="按状态筛选">
+        <option value="all" ${itemFilter === "all" ? "selected" : ""}>全部状态</option>
+        ${ISSUE_ORDER.map((s0) => `<option value="${s0}" ${itemFilter === s0 ? "selected" : ""}>${ISSUE_STATUS[s0].label}</option>`).join("")}
+      </select>
+      <span class="spacer"></span>
+      <span class="view-note">台账：遗留事项 / 任务 / 问题；点一行展开处理记录</span>
+      <button class="btn tiny" data-toast="新建一条事项（遗留 / 任务 / 问题）">＋ 新建</button>
+    </div>
+    <div class="table-wrap">
+      <table class="issue-table">
+        <thead><tr>
+          <th>编号</th><th>类型</th><th>标题</th><th>状态</th><th>关联需求</th><th>负责人</th><th>优先级</th><th>记录</th><th>更新</th>
+        </tr></thead>
+        <tbody>
+          ${list.map(row).join("") || `<tr><td colspan="9"><div class="inline-empty">没有匹配的事项</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  </section>`;
+}
+
+function taskDetail() { return ""; }
+
+/* ══ 渲染：看板（M2 静态帧）══════════════════════════════════ */
+const BOARD_COLS = ["draft", "reviewing", "approved", "in_progress", "verifying", "done"];
+let boardLevel = "";
+let boardBot = "all";
+let boardGapOnly = false;
+let projCollapsed = params.get("fold") === "1";
+let itemFilter = "all";
+let itemKind = "all";
+let itemSearch = "";
+let openIssue = params.get("open") || "";
+
+function renderBoard() {
+  const lv = enabled().includes(boardLevel) ? boardLevel : deliveryLevel();
+  let list = visibleItems().filter((i) => i.level === lv);
+  if (boardBot === "none") list = list.filter((i) => collectDeliver(i).length === 0);
+  else if (boardBot !== "all") list = list.filter((i) => collectDeliver(i).some((t) => t.botId === boardBot));
+  if (boardGapOnly) list = list.filter((i) => gapOf(i));
+  const cols = BOARD_COLS.map((s) => ({ s, items: list.filter((i) => i.status === s).sort((a, b) => a.seq - b.seq) }));
+  $("paneBoard").innerHTML = `<section class="panel" style="flex:1;min-height:0">
+    <div class="view-tools">
+      <select class="select" data-board-level aria-label="看板层级">
+        ${enabled().map((l) => `<option value="${l}" ${l === lv ? "selected" : ""}>${levelName(l)}</option>`).join("")}
+      </select>
+      <select class="select" data-board-bot aria-label="按实现者筛选">
+        <option value="all" ${boardBot === "all" ? "selected" : ""}>全部实现者</option>
+        <option value="none" ${boardBot === "none" ? "selected" : ""}>未派活</option>
+        ${BOTS.filter((b) => b.id !== "a1").map((b) => `<option value="${b.id}" ${boardBot === b.id ? "selected" : ""}>${esc(b.name)}</option>`).join("")}
+      </select>
+      <label class="check"><input type="checkbox" data-board-gap ${boardGapOnly ? "checked" : ""} /> 只看缺口</label>
+      <span class="spacer"></span>
+      <span class="view-note">M2 静态帧：拖拽与闸门未实现；卡点开回需求池</span>
+    </div>
+    <div class="board-wrap">
+      ${cols.map((c) => `<div class="board-col">
+        <div class="board-col-head"><span class="dot ${c.s}"></span>${statusLabel(c.s)}<span class="n">${c.items.length}</span></div>
+        <div class="board-cards">
+          ${c.items.map((i) => {
+            const impl = implementers(i);
+            const s2 = taskStats(i);
+            const gap = gapOf(i);
+            return `<button class="bcard" data-open="${i.id}" title="打开这条需求">
+              <div class="bcard-key">${shortKey(i.key)}${i.ai ? ` <span class="chip ai">AI</span>` : ""}</div>
+              <div class="bcard-title">${esc(i.title)}</div>
+              <div class="bcard-foot">
+                ${impl.length ? `${impl.slice(0, 2).map((b) => `<span class="avatar ${b.hue}" title="${esc(b.name)}">${b.initial}</span>`).join("")}<span>${s2.done}/${s2.total}</span>` : `<span class="unassigned">未派活</span>`}
+                <span class="spacer"></span>
+                ${gap && !(gap.type === "unplanned" && !impl.length) ? `<span class="chip gap">${gap.label}</span>` : ""}
+                ${(i.acceptance || []).length ? `<span>${(i.acceptance || []).length} 验收</span>` : ""}
+              </div>
+            </button>`;
+          }).join("") || `<div class="inline-empty">—</div>`}
+        </div>
+      </div>`).join("")}
+    </div>
+  </section>`;
+}
+
+/* ══ 渲染：计划（甘特，M3 静态帧）════════════════════════════ */
+const padDay = (ts) => { const d = new Date(ts); return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+const startOfDay = (ts) => { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); };
+
+function renderPlan() {
+  const lv = deliveryLevel();
+  const list = visibleItems().filter((i) => i.level === lv);
+  const scheduled = list.filter((i) => i.planStart && i.planEnd);
+  const unscheduled = list.filter((i) => !i.planStart || !i.planEnd);
+  const rangeStart = startOfDay(NOW - 3 * DAY);
+  const days = 14;
+  const headers = Array.from({ length: days }, (_, i) => `<div class="gday">${i % 2 === 0 ? padDay(rangeStart + i * DAY) : ""}</div>`).join("");
+  const groups = new Map();
+  for (const i of scheduled) {
+    const root = ancestors(i)[0] || i;
+    if (!groups.has(root.id)) groups.set(root.id, { root, list: [] });
+    groups.get(root.id).list.push(i);
+  }
+  const todayPct = ((startOfDay(NOW) - rangeStart) / DAY) / days * 100;
+  const body = [...groups.values()].map((g) => `
+    <div class="ggroup"><div class="left"><span class="dot ${g.root.status}"></span><span class="key">${shortKey(g.root.key)}</span><span class="ttl">${esc(g.root.title)}</span></div><div class="right"></div></div>
+    ${g.list.sort((a, b) => a.seq - b.seq).map((i) => {
+      const s0 = Math.max(startOfDay(i.planStart), rangeStart);
+      const e0 = Math.min(startOfDay(i.planEnd) + DAY, rangeStart + days * DAY);
+      const left = Math.max(0, (s0 - rangeStart) / DAY / days * 100);
+      const width = Math.max(2, (e0 - s0) / DAY / days * 100);
+      const impl = implementers(i);
+      return `<div class="grow">
+        <button class="gleft" data-open="${i.id}"><span class="dot ${i.status}"></span>${impl.slice(0, 1).map((b) => `<span class="avatar ${b.hue}">${b.initial}</span>`).join("")}<span class="key">${shortKey(i.key)}</span><span class="ttl">${esc(i.title)}</span></button>
+        <div class="gtrack"><div class="today-line" style="left:${todayPct}%"></div><div class="bar ${i.status}" style="left:${left}%;width:${width}%" title="${padDay(i.planStart)} → ${padDay(i.planEnd)} · ${statusLabel(i.status)}"></div></div>
+      </div>`;
+    }).join("")}`).join("");
+  $("panePlan").innerHTML = `<section class="panel" style="flex:1;min-height:0">
+    <div class="view-tools">
+      <b style="font-size:12px">计划</b><span class="view-note">交付层 ${levelName(lv)} · 14 天窗口</span>
+      <span class="spacer"></span>
+      <span class="view-note">M3 静态帧：日期 / 依赖 / 拖拽未实现 · 今天 ${padDay(NOW)}</span>
+    </div>
+    <div class="gantt-wrap">
+      ${scheduled.length ? `<div class="gantt">
+        <div class="ghead"><div class="left">需求</div><div class="gdays">${headers}</div></div>
+        ${body}
+      </div>` : `<div class="empty"><div class="empty-box"><b>还没有排期</b><p>给交付层需求设置起止日期后，这里才会出现时间线（M3）。</p></div></div>`}
+      <div class="unscheduled">
+        <h4>未排期 ${unscheduled.length}</h4>
+        ${unscheduled.map((i) => `<button class="u-row" data-open="${i.id}"><span class="dot ${i.status}"></span><span class="key">${shortKey(i.key)}</span><span class="ttl" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(i.title)}</span><span class="spacer" style="flex:1"></span><span class="chip">未排期</span></button>`).join("") || `<div class="inline-empty">全部已排期。</div>`}
+      </div>
+    </div>
+  </section>`;
+}
+
+/* ══ 渲染：概览 tab ══════════════════════════════════════════ */
+const RUNS = [
+  { id: "r8291", title: "FEAT-1 首页标题改大", st: "ok", text: "完成 · 42s", owner: "b1" },
+  { id: "r8288", title: "验收：副标题回归", st: "fail", text: "失败 · 2m 10s", owner: "b1" },
+  { id: "r8275", title: "STDF 解析分工", st: "ok", text: "完成 · 1m 03s", owner: "b2" },
+];
+
+/* ══ 渲染：汇总（一句话进展 / 目标 / 里程碑 / 进展表格 / 问题与求助）══ */
+function renderSummary() {
+  const p = proj();
+  if (!p) { $("ovGrid").innerHTML = ""; return; }
+  const reqs = visibleItems();
+  const backlog = projectItems();
+  const gaps = gapCount();
+  const doneReqs = reqs.filter((i) => i.status === "done" || ((i.level === "sr" || i.level === "us") && (i.acceptance || []).length && (i.acceptance || []).every((a) => a.done)));
+  const doingReqs = reqs.filter((i) => i.status === "in_progress" || i.status === "verifying");
+  const blocked = backlog.filter((i) => i.status === "blocked");
+  const failedRuns = RUNS.filter((r) => r.st === "fail");
+  const unassigned = backlog.filter((i) => !i.owner && i.kind !== "legacy");
+  const nextReq = reqs.filter((i) => i.status === "approved" && isDelivery(i) && !collectDeliver(i).length);
+  const ms = p.milestones || [];
+  const msDoing = ms.find((m) => m.status === "doing") || ms.find((m) => m.status === "todo") || null;
+
+  // 一句话进展
+  const oneLine = [
+    doneReqs.length ? `本周验收通过 ${doneReqs.length} 条` : "本周还没有验收通过的需求",
+    doingReqs.length ? `${doingReqs.length} 条在实现` : "",
+    msDoing ? `里程碑「${msDoing.name}」${msDoing.status === "doing" ? "进行中" : "未开始"}（${padDay(msDoing.date)}）` : "",
+    (blocked.length + failedRuns.length) ? `${blocked.length + failedRuns.length} 个问题需要你拍板` : "没有阻塞",
+  ].filter(Boolean).join("；") + "。";
+
+  // 里程碑时间轴：今天之前实线，之后虚线
+  const msNodes = ms.map((m, idx) => `<div class="ms-node ${m.status}">
+      <div class="ms-dot"></div>
+      <div class="ms-date mono">${padDay(m.date)}</div>
+      <div class="ms-name">${esc(m.name)}</div>
+      <div class="ms-state">${m.status === "done" ? "已完成" : m.status === "doing" ? "进行中" : "未开始"}</div>
+    </div>`).join("");
+
+  // 进展表格：在做的 + 刚完成的
+  const rows = [
+    ...reqs.filter((i) => ["in_progress", "verifying"].includes(i.status)).map((i) => ({
+      key: i.key, title: i.title, kind: "需求", status: statusLabel(i.status),
+      owner: implementers(i).map((b) => b.name).join(" / ") || "—",
+      note: `${(i.acceptance || []).filter((a) => a.done).length}/${(i.acceptance || []).length} 验收过`,
+      at: i.events?.at(-1)?.at || i.updatedAt || NOW, tone: i.status === "verifying" ? "warn" : "",
+    })),
+    ...backlog.filter((i) => ["doing", "blocked"].includes(i.status)).map((i) => ({
+      key: i.key, title: i.title, kind: ISSUE_KIND[i.kind].label, status: ISSUE_STATUS[i.status].label,
+      owner: ownerName(i.owner) || "未指派",
+      note: i.notes?.at(-1)?.text?.slice(0, 26) || "—",
+      at: i.updatedAt || NOW, tone: i.status === "blocked" ? "warn" : "",
+    })),
+    ...doneReqs.map((i) => ({
+      key: i.key, title: i.title, kind: "需求", status: "验收通过",
+      owner: implementers(i).map((b) => b.name).join(" / ") || "—",
+      note: `验收 ${(i.acceptance || []).filter((a) => a.done).length}/${(i.acceptance || []).length}`,
+      at: i.events?.at(-1)?.at || NOW, tone: "ok",
+    })),
+  ].sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 8);
+
+  // 问题与求助：每条的「影响 + 需要你做什么」
+  // 责任人：事项看 owner；运行看执行者；缺口/未派活落到项目接手的 bot（没有就写「项目负责人」）
+  const projectOwner = p.bots[0] || "";
+  const asks = [
+    ...blocked.map((i) => ({ key: i.key, what: i.title, owner: ownerName(i.owner), impact: i.notes?.at(-1)?.text || "卡住了", need: "拍板 / 找对接人", tone: "warn" })),
+    ...failedRuns.map((r) => ({ key: r.id, what: r.title, owner: ownerName(r.owner), impact: `运行失败（${r.text.replace("失败 · ", "")}）`, need: "要不要重试 / 换方案", tone: "warn" })),
+    ...(gaps ? [{ key: "缺口", what: `${gaps} 条需求没接住（缺验收 / 未派活 / 缺下游）`, owner: projectOwner, impact: "验收口径不全，做完也判不了", need: "指派或补验收", tone: "warn" }] : []),
+    ...(unassigned.length ? [{ key: "未指派", what: `${unassigned.length} 条事项没有负责人`, owner: "", impact: "没人接就会烂在台账里", need: "指派给谁", tone: "" }] : []),
+    ...(nextReq.length ? [{ key: "未派活", what: `${nextReq.length} 条已批准的需求还没派活`, owner: "", impact: "批准了但没人动手", need: "确认要不要现在开", tone: "" }] : []),
+  ];
+  const ownerCell = (name) => {
+    const bot = BOTS.find((b) => b.name === name);
+    return name
+      ? (bot ? `<span class="who"><span class="avatar ${bot.hue}">${bot.initial}</span>${esc(name)}</span>` : esc(name))
+      : `<span style="color:var(--amber)">未指派</span>`;
+  };
+
+  $("ovGrid").innerHTML = `<article class="report">
+    <header class="rp-head">
+      <div class="rp-eyebrow">项目汇总 · ${esc(p.alias)}</div>
+      <h2>${esc(p.name)}</h2>
+      <div class="rp-meta">
+        <span>${padDay(NOW - 3 * DAY)} → ${padDay(NOW + 3 * DAY)}</span><span class="sep">·</span>
+        <span>生成于 ${fmt(NOW)}</span><span class="sep">·</span>
+        <span>${esc(p.branch || "—")}</span>
+        ${p.bots.length ? `<span class="sep">·</span><span>${p.bots.map(esc).join(" / ")} 接手</span>` : ""}
+      </div>
+      <div class="rp-actions">
+        <button class="btn tiny" data-toast="复制成 Markdown（贴到周会 / issue 里）">复制为 Markdown</button>
+        <button class="btn tiny" data-toast="导出追溯矩阵（CSV / Markdown，给评审与审计用）">导出矩阵</button>
+        <button class="btn tiny" data-tab="items">看待办台账</button>
+      </div>
+    </header>
+
+    <section class="rp-sec">
+      <div class="rp-h"><h3>一句话进展</h3><span class="rule"></span></div>
+      <p class="rp-lede" style="margin-top:6px">${oneLine}</p>
+    </section>
+
+    <section class="rp-sec">
+      <div class="rp-h"><h3>目标</h3><span class="rule"></span>
+        <button class="btn tiny" data-toast="目标写在项目设置里；这里只读">编辑</button></div>
+      <p class="rp-goal">${esc(p.goal || "还没有写目标：一句话说清这个项目要交付什么、什么时候算完成。")}</p>
+    </section>
+
+    <section class="rp-sec">
+      <div class="rp-h"><h3>里程碑</h3><span class="n">${ms.filter((m) => m.status === "done").length}/${ms.length}</span><span class="rule"></span></div>
+      ${ms.length ? `<div class="ms-track" style="--ms-count:${ms.length}">
+        <div class="ms-line"></div>
+        ${msNodes}
+      </div>` : `<div class="rp-empty">还没有里程碑。</div>`}
+    </section>
+
+    <section class="rp-sec">
+      <div class="rp-h"><h3>进展</h3><span class="n">${rows.length}</span><span class="rule"></span></div>
+      ${rows.length ? `<table class="rp-table"><thead><tr>
+        <th>编号</th><th>工作项</th><th>类型</th><th>状态</th><th>负责人</th><th>说明</th><th>更新</th>
+      </tr></thead><tbody>
+        ${rows.map((r) => `<tr>
+          <td class="mono">${esc(r.key)}</td>
+          <td class="w">${esc(r.title)}</td>
+          <td class="mono">${esc(r.kind)}</td>
+          <td><span class="rp-st ${r.tone}">${esc(r.status)}</span></td>
+          <td>${esc(r.owner)}</td>
+          <td class="note">${esc(r.note)}</td>
+          <td class="mono">${fmt(r.at)}</td>
+        </tr>`).join("")}
+      </tbody></table>` : `<div class="rp-empty">这周还没有可写的进展。</div>`}
+    </section>
+
+    <section class="rp-sec">
+      <div class="rp-h"><h3>问题与求助</h3><span class="n">${asks.length}</span><span class="rule"></span></div>
+      ${asks.length ? `<table class="rp-table"><thead><tr>
+        <th>编号</th><th>问题</th><th>责任人</th><th>影响</th><th>需要你</th>
+      </tr></thead><tbody>
+        ${asks.map((a) => `<tr>
+          <td class="mono">${esc(a.key)}</td>
+          <td class="w">${esc(a.what)}</td>
+          <td class="owner-cell">${ownerCell(a.owner)}</td>
+          <td class="note">${esc(a.impact)}</td>
+          <td><span class="rp-st ${a.tone}">${esc(a.need)}</span></td>
+        </tr>`).join("")}
+      </tbody></table>` : `<div class="rp-empty">没有需要你处理的问题。</div>`}
+    </section>
+
+    <footer class="rp-foot">汇总只读；点条目会跳到对应的需求 / 事项。原型里「复制为 Markdown」「导出矩阵」只给 toast。</footer>
+  </article>`;
+}
+
+/* ══ 空态 ═══════════════════════════════════════════════════ */
+function renderEmpty() {
+  $("workbench").classList.add("single");
+  $("hAlias").style.display = "none";
+  $("projMenuBtn").style.display = "none";
+  document.querySelector(".tabs").style.display = "none";
+  $("exits").style.display = "none";
+  $("workbench").innerHTML = `<div class="empty"><div class="empty-box">
+    <b>还没有项目</b>
+    <p>项目 = 一个本地目录。加进来之后，任务、终端、文件树和需求都跟着它。</p>
+    <button class="btn primary" data-toast="打开目录，添加项目">添加项目</button>
+  </div></div>`;
+}
+
+/* ══ 动作 ═══════════════════════════════════════════════════ */
+const toast = (msg) => {
+  const el = $("toast");
+  el.textContent = msg;
+  el.classList.add("on");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove("on"), 1900);
+};
+const pushEvent = (i, text) => (i.events = i.events || []).push({ at: Date.now(), text });
+
+function setStatus(id, next) {
+  const i = byId(id);
+  if (!i || i.status === next) return;
+  const missing = gateMissing(i, next);
+  if (missing) { gateError = { id, ...missing }; renderDetail(); toast(missing.text); return; }
+  const old = i.status;
+  i.status = next;
+  gateError = null;
+  pushEvent(i, `状态：${statusLabel(old)} → ${statusLabel(next)}`);
+  renderAll();
+  toast(`${shortKey(i.key)} · ${statusLabel(next)}`);
+}
+
+function addItem({ level, parentId, title }) {
+  const t = String(title || "").trim();
+  if (!t) return null;
+  if (level !== "rr" && !parentId) { toast("先建上一级需求"); return null; }
+  const items = ITEMS[selectedProject] || (ITEMS[selectedProject] = []);
+  const keyPrefix = proj().alias;
+  const n = items.filter((x) => x.level === level).length + 1;
+  const next = item({
+    project: selectedProject, id: `n-${Date.now().toString(36)}`, seq: items.length + 1,
+    key: `${keyPrefix}-${levelName(level)}-${pad2(n)}`, level, parentId: parentId || null,
+    title: t.slice(0, 200), status: "draft", priority: "P2", owner: "", source: level === "rr" ? "内部" : "",
+    body: "", acceptance: [], links: [], events: [{ at: Date.now(), text: "创建" }], tasks: [],
+  });
+  items.push(next);
+  if (parentId) st().expanded.add(parentId);
+  st().selectedId = next.id;
+  creating = null;
+  renderAll();
+  toast(`已新建 ${shortKey(next.key)}`);
+  return next;
+}
+
+function openCreate({ level, parentId, ctx }) {
+  creating = { level, parentId, ctx };
+  if (ctx === "tree") renderTree();
+  else renderDetail();
+  requestAnimationFrame(() => {
+    const el = document.querySelector("[data-create-input]");
+    if (el) el.focus();
+  });
+}
+
+function assign(i, botId) {
+  const bot = BOTS.find((b) => b.id === botId);
+  if (!bot) return;
+  const n = deliverTasks(i).length + 1;
+  i.tasks = i.tasks || [];
+  i.tasks.push({ id: `t-${Date.now().toString(36)}`, key: `T-${120 + n}`, kind: "deliver", botId, title: `${i.title.slice(0, 24)}（实现 ${n}）`, status: "todo" });
+  pushEvent(i, `派给 ${bot.name} · 任务 T-${120 + n}`);
+  assignFor = null;
+  renderAll();
+  toast(`已派给 ${bot.name}（起 run 仍由人确认）`);
+}
+
+/* ══ 交互（事件委托）═══════════════════════════════════════ */
+function renderAll() {
+  if (EMPTY) { renderHead(); renderEmpty(); return; }
+  $("exits").style.display = "";
+  $("hAlias").style.display = "";
+  $("projMenuBtn").style.display = "";
+  document.querySelector(".tabs").style.display = "";
+  $("workbench").classList.remove("single");
+  if (!$("workbench").querySelector(".proj-col")) { location.reload(); return; }
+  renderProjects(); renderHead();
+  if (renderPaneReq()) { renderTree(); renderDetail(); }
+  renderSummary();
+  if (tab === "board") renderBoard();
+  if (tab === "plan") renderPlan();
+  if (tab === "items") renderItems();
+  setTab(tab);
+}
+
+function setTab(next) {
+  tab = next;
+  for (const [key, id] of [["pool", "paneReq"], ["board", "paneBoard"], ["plan", "panePlan"], ["items", "paneItems"], ["sum", "paneSum"]]) {
+    const pane = $(id);
+    if (pane) pane.hidden = key !== next;
+  }
+  for (const b of document.querySelectorAll("[data-tab]")) {
+    const on = b.dataset.tab === next;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-selected", String(on));
+  }
+  if (EMPTY) return;
+  if (next === "board") renderBoard();
+  if (next === "plan") renderPlan();
+  if (next === "items") renderItems();
+  if (next === "sum") renderSummary();
+}
+
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-project],[data-select],[data-expand],[data-status],[data-assign],[data-assign-open],[data-assign-cancel],[data-acc-del],[data-link-open],[data-link-add],[data-link-del],[data-new-child],[data-tpl],[data-tab],[data-open],[data-issue],[data-gap-only],[data-goto-matrix],[data-new-req],[data-toast],#themeBtn,#projMenuBtn,[data-fix]");
+  if (!el) { $("projMenu").hidden = true; $("projMenuHead").hidden = true; $("projTrigger").setAttribute("aria-expanded", "false"); return; }
+  if (el.dataset.tab) { setTab(el.dataset.tab); return; }
+  if (el.dataset.issue) { openIssue = openIssue === el.dataset.issue ? "" : el.dataset.issue; renderItems(); return; }
+  if (el.dataset.open) { st().selectedId = el.dataset.open; expandAncestors(selectedProject, el.dataset.open); setTab("pool"); renderTree(); renderDetail(); return; }
+
+  if (el.dataset.expand) { e.stopPropagation(); const s = st(); s.expanded.has(el.dataset.expand) ? s.expanded.delete(el.dataset.expand) : s.expanded.add(el.dataset.expand); renderTree(); return; }
+  if (el.dataset.project) {
+    if (el.dataset.project === selectedProject) return;
+    selectedProject = el.dataset.project; search = ""; gateError = null; creating = null; assignFor = null; linkFor = null;
+    $("projMenuHead").hidden = true; $("projTrigger").setAttribute("aria-expanded", "false");
+    renderAll(); toast(`已切到 ${proj()?.name || "项目"}（作用域跟着换，不跳页）`); return;
+  }
+  if (el.dataset.select) { st().selectedId = el.dataset.select; expandAncestors(selectedProject, el.dataset.select); renderTree(); renderDetail(); return; }
+  if (el.dataset.status) { setStatus(st().selectedId, el.dataset.status); return; }
+  if (el.dataset.assignOpen) { assignFor = el.dataset.assignOpen; renderDetail(); return; }
+  if (el.dataset.assign) { assign(byId(st().selectedId), el.dataset.assign); return; }
+  if (el.dataset.assignCancel) { assignFor = null; renderDetail(); return; }
+  if (el.dataset.accDel) { const i = byId(st().selectedId); i.acceptance.splice(Number(el.dataset.accDel), 1); renderAll(); return; }
+  if (el.dataset.linkOpen) { linkFor = el.dataset.linkOpen; renderDetail(); return; }
+  if (el.dataset.linkAdd) {
+    const i = byId(el.dataset.linkAdd);
+    const kind = $("linkKind")?.value || "相关";
+    const toId = $("linkTarget")?.value || "";
+    if (toId) { i.links = i.links || []; i.links.push({ kind, toId }); pushEvent(i, `关联：${kind} ${shortKey(byId(toId)?.key || "")}`); }
+    linkFor = null; renderAll(); return;
+  }
+  if (el.dataset.linkDel) { const i = byId(st().selectedId); i.links.splice(Number(el.dataset.linkDel), 1); renderAll(); return; }
+  if (el.dataset.newChild) { openCreate({ level: nextLevel(byId(el.dataset.newChild).level), parentId: el.dataset.newChild, ctx: "detail" }); return; }
+  if (el.dataset.tpl) {
+    const t = TPL[el.dataset.tpl];
+    st().levels = [...t.levels];
+    st().expanded = new Set(visibleItems().filter((x) => !parentOf(x)).map((x) => x.id));
+    $("projMenu").hidden = true;
+    renderAll(); toast(`层级：${t.levels.map(levelName).join(" → ")}（${t.label}）`); return;
+  }
+  if (el.dataset.gapOnly !== undefined) { gapOnly = !gapOnly; renderDetail(); return; }
+  if (el.dataset.gotoMatrix) { setTab("matrix"); return; }
+  if (el.dataset.newReq) { newReqFlow(); return; }
+  if (el.dataset.fix) {
+    const key = el.dataset.fix;
+    if (key === "acceptance") requestAnimationFrame(() => document.querySelector("[data-acc-input]")?.focus());
+    else if (key === "tasks") { assignFor = st().selectedId; renderDetail(); }
+    else toast("补范围 / 来源：双击正文即可编辑");
+    return;
+  }
+  if (el.id === "tabReq") return setTab("req");
+  if (el.id === "tabOv") return setTab("ov");
+  if (el.id === "themeBtn") { theme = theme === "dark" ? "light" : "dark"; document.documentElement.dataset.theme = theme; return; }
+  if (el.id === "projMenuBtn") { const m = $("projMenu"); m.hidden = !m.hidden; el.setAttribute("aria-expanded", String(!m.hidden)); e.stopPropagation(); return; }
+  if (el.id === "projFold" || el.id === "projExpand") {
+    projCollapsed = el.id === "projFold";
+    renderHead();
+    toast(projCollapsed ? "项目列表已收起（标题处可下拉切换）" : "项目列表已展开");
+    return;
+  }
+  if (el.id === "projTrigger") {
+    const m = $("projMenuHead");
+    m.hidden = !m.hidden;
+    el.setAttribute("aria-expanded", String(!m.hidden));
+    e.stopPropagation();
+    return;
+  }
+  if (el.dataset.toast) toast(el.dataset.toast);
+});
+
+function newReqFlow() {
+  const cur = byId(st().selectedId);
+  if (cur && nextLevel(cur.level)) { openCreate({ level: nextLevel(cur.level), parentId: cur.id, ctx: "detail" }); return; }
+  if (cur && isDelivery(cur)) { const p = parentOf(cur); if (p && nextLevel(p.level)) { openCreate({ level: cur.level, parentId: p.id, ctx: "detail" }); return; } }
+  openCreate({ level: "rr", parentId: null, ctx: "tree" });
+}
+
+document.addEventListener("input", (e) => {
+  if (e.target.id === "projSearch") { search = e.target.value; renderProjects(); }
+  if (e.target.id === "reqSearch") { search = e.target.value; renderTree(); }
+  if (e.target.id === "itemSearch") { itemSearch = e.target.value; renderItems(); }
+});
+document.addEventListener("change", (e) => {
+  if (e.target.dataset && e.target.dataset.boardLevel !== undefined) { boardLevel = e.target.value; renderBoard(); }
+  if (e.target.dataset && e.target.dataset.boardBot !== undefined) { boardBot = e.target.value; renderBoard(); }
+  if (e.target.dataset && e.target.dataset.boardGap !== undefined) { boardGapOnly = e.target.checked; renderBoard(); }
+  if (e.target.id === "itemFilter") { itemFilter = e.target.value; renderItems(); return; }
+  if (e.target.id === "itemKind") { itemKind = e.target.value; renderItems(); return; }
+  if (e.target.id === "fLevel") { levelFilter = e.target.value; renderTree(); }
+  if (e.target.id === "fStatus") { statusFilter = e.target.value; renderTree(); }
+  if (e.target.dataset && e.target.dataset.acc !== undefined) {
+    const i = byId(st().selectedId);
+    const idx = Number(e.target.dataset.acc);
+    i.acceptance[idx].done = e.target.checked;
+    pushEvent(i, `验收：${e.target.checked ? "勾选" : "取消"} 第 ${idx + 1} 条`);
+    renderTree(); renderDetail();
+  }
+});
+document.addEventListener("keydown", (e) => {
+  const el = e.target;
+  if (el.dataset && el.dataset.createInput !== undefined && e.key === "Enter") {
+    e.preventDefault();
+    addItem({ level: el.dataset.level, parentId: el.dataset.parent || null, title: el.value });
+  }
+  if (el.dataset && el.dataset.accInput !== undefined && e.key === "Enter") {
+    e.preventDefault();
+    const text = String(el.value || "").trim();
+    if (!text) return;
+    const i = byId(st().selectedId);
+    i.acceptance = i.acceptance || [];
+    i.acceptance.push({ text, done: false });
+    pushEvent(i, `验收：新增「${text.slice(0, 24)}」`);
+    gateError = null;
+    renderAll();
+  }
+  if (e.key === "Escape") {
+    creating = null; assignFor = null; linkFor = null; $("projMenu").hidden = true;
+    if (!EMPTY) { renderTree(); renderDetail(); }
+    $("projMenuHead").hidden = true;
+    $("projTrigger").setAttribute("aria-expanded", "false");
+  }
+});
+$("newReq").addEventListener("click", () => newReqFlow());
+
+/* 首屏 */
+try {
+  renderAll();
+  if (params.get("menu") === "1") {
+    $("projMenuHead").hidden = false;
+    $("projTrigger").setAttribute("aria-expanded", "true");
+  }
+} catch (err) { document.title = "原型渲染失败：" + err.message; console.error(err); }
+</script>
+</body>
+</html>
