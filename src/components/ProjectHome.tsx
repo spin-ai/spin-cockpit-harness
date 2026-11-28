@@ -5,7 +5,7 @@ import { Overview } from "./Overview";
 import { RowMenu } from "./RowMenu";
 import { confirmDialog } from "./ConfirmHost";
 import { EmptyState } from "./EmptyState";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ListIcon, PlusIcon, SearchIcon, TableIcon, XIcon } from "./Icons";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DownloadIcon, ListIcon, MailIcon, PlusIcon, SearchIcon, SheetIcon, TableIcon, XIcon } from "./Icons";
 import { Segmented } from "./Tabs";
 import { agentOf } from "../ui";
 
@@ -22,6 +22,13 @@ const BOARD_COLS = ["draft", "reviewing", "approved", "in_progress", "verifying"
 /** 列表视图的顺序：现在在动的排前面，积压的往后，已完成垫底 */
 const LIST_ORDER = ["in_progress", "verifying", "approved", "reviewing", "draft", "done"];
 const DELIVERY = "us";
+type ReportTemplate = "standard" | "brief" | "delivery";
+const REPORT_TPL_LABEL: Record<ReportTemplate, string> = { standard: "标准周报", brief: "精简周报", delivery: "交付验收" };
+const TPL_HINT: Record<ReportTemplate, string> = {
+  standard: "一句话进展 · 目标 · 里程碑 · 进展 · 问题",
+  brief: "只有 进展 + 问题，适合每天发",
+  delivery: "里程碑 · 验收明细 · 问题，适合评审",
+};
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 const dayLabel = (ts: number) => { const d = new Date(ts); return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
@@ -936,6 +943,13 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
   onOpenReq?: (id: string) => void; onOpenIssue?: (id: string) => void;
   notify: (message: string) => void;
 }) {
+  const [tpl, setTpl] = useState<ReportTemplate>(() => {
+    try {
+      const saved = localStorage.getItem("ph.reportTpl");
+      return saved === "brief" || saved === "delivery" ? saved : "standard";
+    } catch { return "standard"; }
+  });
+  useEffect(() => { try { localStorage.setItem("ph.reportTpl", tpl); } catch { /* ignore */ } }, [tpl]);
   const weekStart = (() => {
     const d = new Date(now);
     d.setHours(0, 0, 0, 0);
@@ -997,35 +1011,54 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
     ...(unassigned.length ? [{ key: "未指派", what: `${unassigned.length} 条事项没有负责人`, owner: "", impact: "没人接就会烂在台账里", need: "指派给谁", tone: "" }] : []),
   ];
 
-  /** 复制出去就是一份能贴群里的周报：一句话进展 → 目标 → 里程碑 → 进展 → 问题 */
-  const reportMd = () => {
-    const line = (cells: string[]) => `| ${cells.map((c) => String(c).replace(/\|/g, "\\|")).join(" | ")} |`;
-    return [
-      `# ${project.name} · 项目周报`,
-      `${dayLabel(now - 3 * DAY)} → ${dayLabel(now + 3 * DAY)}`,
-      "",
-      "## 一句话进展",
-      oneLine,
-      "",
-      "## 目标",
-      project.goal || "_还没写目标_",
-      "",
-      "## 里程碑",
-      ...(milestones.length
-        ? milestones.map((m) => `- ${m.status === "done" ? "[x]" : m.status === "doing" ? "[~]" : "[ ]"} ${dayLabel(m.date)} ${m.name}`)
-        : ["_还没有里程碑_"]),
-      "",
-      "## 进展",
-      line(["编号", "工作项", "类型", "状态", "负责人", "说明"]),
-      line(["---", "---", "---", "---", "---", "---"]),
-      ...progressRows.map((r) => line([r.key, r.title, r.kind, r.status, r.owner, r.note])),
-      "",
-      "## 问题与求助",
-      ...(asks.length
-        ? [line(["问题", "责任人", "影响", "需要你"]), line(["---", "---", "---", "---"]),
-          ...asks.map((a) => line([a.what, a.owner || "未指派", a.impact, a.need]))]
-        : ["没有需要你拍板的事。"]),
-    ].join("\n");
+  /** 导出用的那份数据：页面渲染与 xlsx / eml 共用，避免「页上一套、文件里另一套」 */
+  const reportPayload = () => ({
+    projectName: project.name,
+    periodLabel: `本周 ${dayLabel(weekStart)} → ${dayLabel(weekStart + 6 * DAY)}`,
+    weekStartLabel: dayLabel(weekStart),
+    weekEndLabel: dayLabel(weekStart + 6 * DAY),
+    generatedLabel: `生成于 ${fmt(now)}`,
+    goal: project.goal || "",
+    oneLine,
+    stats: [
+      { label: "需求", value: reqs.length },
+      { label: "已批准未派活", value: gapUnplanned.length },
+      { label: "任务", value: (state.todos || []).filter((t) => t.projectId === project.id).length },
+      { label: "台账待处理", value: issues.filter((i) => i.status === "open").length },
+    ],
+    progress: progressRows.map((r) => ({ ...r, updatedLabel: fmt(r.at || 0) })),
+    asks,
+    milestones: milestones.map((m) => ({
+      name: m.name,
+      dateLabel: dayLabel(m.date),
+      statusLabel: m.status === "done" ? "已完成" : m.date < now - DAY ? "已逾期" : m.status === "doing" ? "进行中" : "未开始",
+    })),
+    acceptance: reqs
+      .filter((r) => r.level === DELIVERY && (r.acceptance || []).length)
+      .slice(0, 60)
+      .map((r) => ({ key: r.key, title: r.title, items: (r.acceptance || []).map((a) => ({ text: a.text, done: !!a.done })) })),
+  });
+
+  const exportReport = async (format: "xlsx" | "eml") => {
+    try {
+      const res = await act("reportExport", { format, template: tpl, payload: reportPayload() });
+      if (!res?.path) return; // 取消保存
+      const name = String(res.path).split("/").pop();
+      notify(format === "eml"
+        ? (res.opened ? `已生成邮件，正在打开：${name}` : `已生成邮件：${name}（用 Outlook 打开即可发送）`)
+        : `已导出：${name}`);
+    } catch (err) {
+      notify(String((err as Error)?.message || err).replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/, ""));
+    }
+  };
+
+  const copyMarkdown = async () => {
+    try {
+      await act("reportMarkdown", { template: tpl, payload: reportPayload() });
+      notify("周报已复制（Markdown）");
+    } catch (err) {
+      notify(String((err as Error)?.message || err));
+    }
   };
 
   const saveMs = (list: ProjectMilestone[], done = "") => void run("ms", async () => {
@@ -1040,11 +1073,25 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
           <div className="ph-report-meta" title={`生成于 ${fmt(now)}`}>
             <span>本周 {dayLabel(weekStart)} → {dayLabel(weekStart + 6 * DAY)}</span>
           </div>
-          <button className="btn tiny" title="把这一页复制成 Markdown（周报全文）" onClick={() => {
-            // 走主进程剪贴板：渲染层的 navigator.clipboard 在窗口没焦点时会拒绝
-            void Promise.resolve(window.harness?.clipboardWrite?.(reportMd()))
-              .then(() => notify("周报已复制（Markdown）"), () => notify("复制失败：剪贴板不可用"));
-          }}>复制周报</button>
+          <RowMenu title="导出周报" align="right" triggerClassName="btn tiny" trigger={<><DownloadIcon size={12} /> 导出周报</>}>
+            <button onClick={() => void exportReport("xlsx")}>
+              <SheetIcon size={13} /> 导出 Excel<span className="row-menu-hint">.xlsx</span>
+            </button>
+            <button onClick={() => void exportReport("eml")}>
+              <MailIcon size={13} /> 发 Outlook 邮件<span className="row-menu-hint">.eml</span>
+            </button>
+            <button onClick={copyMarkdown}>
+              <CopyIcon size={13} /> 复制 Markdown<span className="row-menu-hint">贴到群里</span>
+            </button>
+            <div className="row-menu-info"><div><span>周报模板</span><em>{REPORT_TPL_LABEL[tpl]}</em></div></div>
+            {(Object.keys(REPORT_TPL_LABEL) as ReportTemplate[]).map((id) => (
+              <button key={id} className={tpl === id ? "on" : ""} onClick={() => setTpl(id)}>
+                <span className="row-menu-title">{REPORT_TPL_LABEL[id]}</span>
+                {tpl === id ? <span className="row-menu-hint">✓</span> : null}
+              </button>
+            ))}
+            <div className="row-menu-info"><div><span>模板影响</span><em title={TPL_HINT[tpl]}>{TPL_HINT[tpl]}</em></div></div>
+          </RowMenu>
         </header>
 
         <section className="ph-sec">

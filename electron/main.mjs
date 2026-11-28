@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { formatToolContent, normalizeToolStatus, toolFamily, toolOutputText } from "./tool-format.mjs";
 import { openDb, DEFAULT_SETTINGS } from "./db.mjs";
 import { normalizeAcceptance, normalizeLevel, keyPrefix, nextRequirementKey, statusGate, validateParent } from "./requirements/core.mjs";
+import { REPORT_TEMPLATE_LABEL, buildEml, buildMarkdown, buildXlsxBuffer, reportFileName } from "./reports/weekly.mjs";
 import { safeStorage } from "electron";
 import { AcpClient, dshPathEnv } from "./acp.mjs";
 import { createKnowledge } from "./knowledge/index.mjs";
@@ -7494,6 +7495,43 @@ const actions = {
     store.persist(); broadcast();
     return { ok: true, goal: p.goal };
   },
+  /** 复制周报（Markdown）：同样按模板走主进程格式化，再写剪贴板——不用渲染层再实现一遍 */
+  reportMarkdown: ({ template = "standard", payload = {} } = {}) => {
+    const md = buildMarkdown(payload, template);
+    clipboard.writeText(md);
+    store.addEvent("report.copy", `report.copy ${REPORT_TEMPLATE_LABEL[template] || template}`);
+    return { ok: true, chars: md.length };
+  },
+  /**
+   * 导出周报：xlsx 走 `xlsx`（SheetJS），eml 是 Outlook 能直接打开的 MIME + HTML。
+   * payload 由渲染层按当前模板算好（页面渲染与导出用同一份数据）。
+   */
+  reportExport: async ({ format = "xlsx", template = "standard", payload = {}, to = "", filePath = "" } = {}) => {
+    const eml = format === "eml";
+    const ext = eml ? "eml" : "xlsx";
+    // filePath 是给测试 / 命令行留的直写通道；正常路径一律走保存对话框
+    const target = filePath
+      ? { canceled: false, filePath: String(filePath) }
+      : await dialog.showSaveDialog(win, {
+        title: eml ? "导出周报为邮件（.eml，Outlook 可直接打开）" : "导出周报为 Excel",
+        defaultPath: path.join(app.getPath("desktop"), reportFileName(payload, ext)),
+        filters: [eml ? { name: "Outlook 邮件", extensions: [ext] } : { name: "Excel 工作簿", extensions: [ext] }],
+      });
+    const res = target;
+    if (res.canceled || !res.filePath) return null;
+    const data = eml
+      ? buildEml(payload, template, { to })
+      : buildXlsxBuffer(payload, template);
+    fs.writeFileSync(res.filePath, data);
+    store.addEvent("report.export", `report.export ${ext} ${REPORT_TEMPLATE_LABEL[template] || template} ${res.filePath}`);
+    let opened = false;
+    try {
+      if (eml) opened = !(await shell.openPath(res.filePath)); // 空字符串 = 打开成功
+      else shell.showItemInFolder(res.filePath);
+    } catch { /* 打不开就只留文件 */ }
+    return { path: res.filePath, opened };
+  },
+
   /** 里程碑：整组替换（汇总的横向时间轴） */
   projectMilestones: ({ id = "", milestones = [] } = {}) => {
     const p = store.state.projects.find((x) => x.id === String(id));

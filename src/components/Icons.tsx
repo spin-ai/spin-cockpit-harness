@@ -179,6 +179,18 @@ export const FolderPlusIcon = (p: IconProps) => (
   <Svg {...p}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" /><path d="M12 11v6M9 14h6" /></Svg>
 );
 
+export const DownloadIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M12 3v11" /><path d="m7 10 5 5 5-5" /><path d="M4 20h16" /></Svg>
+);
+
+export const MailIcon = (p: IconProps) => (
+  <Svg {...p}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3.5 6.5 8.5 6 8.5-6" /></Svg>
+);
+
+export const SheetIcon = (p: IconProps) => (
+  <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 10h18M9 4v16M15 4v16" /></Svg>
+);
+
 export const CopyIcon = (p: IconProps) => (
   <Svg {...p}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></Svg>
 );

@@ -26,7 +26,7 @@ const here = path.join(root, "tests");
 const ELECTRON_NODE = new Set(["knowledge-index.test.mjs", "knowledge-engines.test.mjs"]);
 
 const GROUPS = {
-  core: ["acp-resume.test.mjs", "agent-bridge.test.mjs", "browser-tools.test.mjs", "db.test.mjs", "tool-family.test.mjs", "preview-doc.test.mjs", "preview-format.test.mjs", "preview-permissions.test.mjs", "preview-tunnel.test.mjs", "mission.test.mjs", "worktree.test.mjs"],
+  core: ["acp-resume.test.mjs", "agent-bridge.test.mjs", "browser-tools.test.mjs", "db.test.mjs", "tool-family.test.mjs", "preview-doc.test.mjs", "preview-format.test.mjs", "preview-permissions.test.mjs", "preview-tunnel.test.mjs", "mission.test.mjs", "worktree.test.mjs", "report-weekly.test.mjs"],
   persona: ["persona-import.test.mjs", "persona-lifecycle.test.mjs"],
   knowledge: ["knowledge-index.test.mjs", "knowledge-engines.test.mjs", "wiki-curate.test.mjs", "wiki-plugin.test.mjs", "zhulong.test.mjs"],
   memory: ["memory.test.mjs"],
