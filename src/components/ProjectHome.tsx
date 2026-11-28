@@ -892,7 +892,10 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
   const openIssues = issues.filter((i) => i.status === "open");
   const implName = (r: Requirement) => implementersOf(state, r).join(" / ") || (todosOf(state, r.id).length ? "待认领" : "—");
   const unassigned = issues.filter((i) => !i.owner && ["open", "doing", "blocked"].includes(i.status));
-  const nextReqs = reqs.filter((r) => r.status === "approved" && r.level === DELIVERY && !todosOf(state, r.id).length);
+  const gapType = (type: string) => gaps.filter((r) => gapOf(state, r, new Map())?.type === type);
+  const gapNeedAcceptance = gapType("acceptance");
+  const gapUnplanned = gapType("unplanned");
+  const gapNoKids = gapType("downstream");
   const milestones = [...(project.milestones || [])].sort((a, b) => a.date - b.date);
   const milestonesDone = milestones.filter((m) => m.status === "done").length;
   const nextMs = milestones.find((m) => m.status === "doing") || milestones.find((m) => m.status === "todo") || null;
@@ -933,9 +936,10 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
   const asks: { key: string; what: string; owner: string; impact: string; need: string; tone: string; issueId?: string }[] = [
     ...blocked.map((i) => ({ key: i.key, what: i.title, owner: ownerLabel(state, i.owner), impact: (i.notes || []).at(-1)?.text || "卡住了", need: "拍板 / 找对接人", tone: "warn", issueId: i.id })),
     ...failedRuns.slice(0, 3).map((r) => ({ key: r.id, what: (state.todos || []).find((t) => t.id === r.todoId)?.title || "运行失败", owner: ownerLabel(state, (state.todos || []).find((t) => t.id === r.todoId)?.botId), impact: `运行失败${r.error ? `：${String(r.error).slice(0, 24)}` : ""}`, need: "要不要重试 / 换方案", tone: "warn" })),
-    ...(gaps.length ? [{ key: "缺口", what: `${gaps.length} 条需求没接住（缺验收 / 未派活 / 缺下游）`, owner: projectOwner, impact: "验收口径不全，做完也判不了", need: "指派或补验收", tone: "warn" }] : []),
+    ...(gapNeedAcceptance.length ? [{ key: "缺验收", what: `${gapNeedAcceptance.length} 条需求没写验收判据`, owner: projectOwner, impact: "做完了也判不了算不算完成", need: "补一条可判定的验收", tone: "warn" }] : []),
+    ...(gapUnplanned.length ? [{ key: "未派活", what: `${gapUnplanned.length} 条已批准的需求还没派活`, owner: projectOwner, impact: "批准了但没人动手", need: "派给谁 / 或先退回待评审", tone: "" }] : []),
+    ...(gapNoKids.length ? [{ key: "缺下游", what: `${gapNoKids.length} 条需求还没拆到下一层`, owner: projectOwner, impact: "拆不下去就是没想清楚", need: "拆解或标废弃", tone: "" }] : []),
     ...(unassigned.length ? [{ key: "未指派", what: `${unassigned.length} 条事项没有负责人`, owner: "", impact: "没人接就会烂在台账里", need: "指派给谁", tone: "" }] : []),
-    ...(nextReqs.length ? [{ key: "未派活", what: `${nextReqs.length} 条已批准的需求还没派活`, owner: "", impact: "批准了但没人动手", need: "确认要不要现在开", tone: "" }] : []),
   ];
 
   /** 复制出去就是一份能贴群里的周报：一句话进展 → 目标 → 里程碑 → 进展 → 问题 */
