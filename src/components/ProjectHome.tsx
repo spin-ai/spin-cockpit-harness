@@ -353,7 +353,7 @@ export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchPro
         {tab === "sum" && (
           <SummaryPane state={state} project={project} reqs={reqs} issues={issues} gaps={gaps} now={now}
             goalDraft={goalDraft} onGoalDraft={setGoalDraft} run={run} act={act} notify={notify}
-            msDraft={msDraft} onMsDraft={setMsDraft} onOpenItems={() => setTab("items")} onOpenBoard={() => setTab("board")}
+            msDraft={msDraft} onMsDraft={setMsDraft}
             onOpenWorkspace={onOpenWorkspace}
             onOpenReq={(id) => { setTab("pool"); setFocusReq({ id, at: Date.now() }); }}
             onOpenIssue={(id) => { setTab("items"); setOpenIssue(id); }} />
@@ -927,15 +927,20 @@ function NoteInput({ onSubmit }: { onSubmit: (text: string) => void }) {
 }
 
 /* ── 汇总（项目周报式）──────────────────────────────────────── */
-function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoalDraft, run, act, msDraft, onMsDraft, onOpenItems, onOpenBoard, onOpenWorkspace, onOpenReq, onOpenIssue, notify }: {
+function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoalDraft, run, act, msDraft, onMsDraft, onOpenWorkspace, onOpenReq, onOpenIssue, notify }: {
   state: State; project: Project; reqs: Requirement[]; issues: ProjectIssue[]; gaps: Requirement[]; now: number;
   goalDraft: string | null; onGoalDraft: (v: string | null) => void;
   run: (label: string, fn: () => Promise<unknown>) => Promise<void>; act: Act;
   msDraft: { name: string; date: string } | null; onMsDraft: (v: { name: string; date: string } | null) => void;
-  onOpenItems: () => void; onOpenBoard: () => void; onOpenWorkspace?: () => void;
+  onOpenWorkspace?: () => void;
   onOpenReq?: (id: string) => void; onOpenIssue?: (id: string) => void;
   notify: (message: string) => void;
 }) {
+  const weekStart = (() => {
+    const d = new Date(now);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime() - ((d.getDay() + 6) % 7) * DAY;
+  })();
   const done = reqs.filter((r) => r.status === "done" || ((r.level === "sr" || r.level === "us") && (r.acceptance || []).length && (r.acceptance || []).every((a) => a.done)));
   const doing = reqs.filter((r) => r.status === "in_progress" || r.status === "verifying");
   const blocked = issues.filter((i) => i.status === "blocked");
@@ -1032,21 +1037,14 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
     <div className="ph-pane is-report">
       <article className="ph-report">
         <header className="ph-report-head">
-          <div className="ph-note">项目汇总 · 周报</div>
-          <div className="ph-report-meta">
-            <span>{dayLabel(now - 3 * DAY)} → {dayLabel(now + 3 * DAY)}</span><span>·</span>
-            <span>{fmt(now)}</span>
-            {(state.bots || []).filter((b) => b.projectId === project.id).map((b) => <span key={b.id}>· {b.name} 接手</span>)}
+          <div className="ph-report-meta" title={`生成于 ${fmt(now)}`}>
+            <span>本周 {dayLabel(weekStart)} → {dayLabel(weekStart + 6 * DAY)}</span>
           </div>
-          <div className="ph-report-actions">
-            <button className="btn tiny" onClick={() => {
-              // 走主进程剪贴板：渲染层的 navigator.clipboard 在窗口没焦点时会拒绝
-              void Promise.resolve(window.harness?.clipboardWrite?.(reportMd()))
-                .then(() => notify("周报已复制（Markdown）"), () => notify("复制失败：剪贴板不可用"));
-            }}>复制为 Markdown</button>
-            <button className="btn tiny" onClick={onOpenBoard}>看板</button>
-            <button className="btn tiny" onClick={onOpenItems}>台账</button>
-          </div>
+          <button className="btn tiny" title="把这一页复制成 Markdown（周报全文）" onClick={() => {
+            // 走主进程剪贴板：渲染层的 navigator.clipboard 在窗口没焦点时会拒绝
+            void Promise.resolve(window.harness?.clipboardWrite?.(reportMd()))
+              .then(() => notify("周报已复制（Markdown）"), () => notify("复制失败：剪贴板不可用"));
+          }}>复制周报</button>
         </header>
 
         <section className="ph-sec">
@@ -1169,7 +1167,6 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
 
         <footer className="ph-report-foot">
           <button className="ph-link" onClick={onOpenWorkspace}>打开工作台</button>
-          <button className="ph-link" onClick={onOpenItems}>看事项台账</button>
           {openIssues.length ? <span className="ph-muted">待处理 {openIssues.length} 条</span> : null}
           <span className="ph-muted">点行可跳到对应的需求 / 事项</span>
         </footer>
