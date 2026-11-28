@@ -5168,6 +5168,25 @@ details.ds-live-thought[open]>summary{margin-bottom:2px}
 .req-link-add{display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap}
 .req-link-add .req-select{flex:1;min-width:120px}
 
+/* 左栏行尾的缺口提示（只在有缺口时出现） */
+.ph-gap{margin-left:auto;font-size:10.5px;color:var(--amber);white-space:nowrap}
+
+/* 事项新建表单：两行 + 正文，回车保存 */
+.ph-issue-form{display:flex;flex-direction:column;gap:8px;padding:8px;border-bottom:1px solid var(--border);background:var(--surface-hover);flex:none}
+.ph-issue-form-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* 看板整块空态（没有交付层需求） */
+.ph-empty-board{flex:1;min-height:0;display:grid;place-items:center;padding:24px}
+
+/* 报告 / 矩阵里可点的行 */
+.ph-row-link{cursor:pointer}
+.ph-table tbody tr.ph-row-link:hover td{background:var(--surface-hover)}
+
+/* 跨项目需求矩阵：盖在主面上，点背景 / Esc 关闭 */
+.ph-modal-bg{position:fixed;inset:0;z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;padding:32px;background:color-mix(in srgb,var(--fg) 28%,transparent)}
+.ph-modal{display:flex;flex-direction:column;width:min(1040px,100%);max-height:100%;min-height:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-float);overflow:hidden}
+.ph-modal .ph-hint{padding:8px 12px 12px;border-top:1px solid var(--border);flex:none}
+
 /* ══════════════════════════════════════════════════════════════
    项目主页（原型 docs/prototype/project-home.html 的落地）
    外壳：rail + 左栏 232（可收起）+ 主面；主面 = 页头一行 + 概览条 + 五个页面级 tab
@@ -5296,6 +5315,7 @@ details.ds-live-thought[open]>summary{margin-bottom:2px}
 .ph-gantt-row .ph-gantt-left{font-size:11px}
 .ph-gantt-track{position:relative;border-left:1px solid var(--border);background-image:repeating-linear-gradient(to right,transparent,transparent calc(100%/14 - 1px),var(--border) calc(100%/14 - 1px),var(--border) calc(100%/14))}
 .ph-gantt-today{position:absolute;top:0;bottom:0;width:1px;background:var(--amber);opacity:.65}
+.ph-gantt-today-band{position:absolute;top:0;bottom:0;background:var(--amber);opacity:.06;pointer-events:none}
 .ph-gantt-bar{position:absolute;top:9px;height:14px;border-radius:var(--radius-sm);background:var(--fg-2);opacity:.45}
 .ph-gantt-bar.s-draft{background:var(--faint);opacity:.5}
 .ph-gantt-bar.s-approved{background:var(--fg-2)}

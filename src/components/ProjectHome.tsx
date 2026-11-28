@@ -25,6 +25,18 @@ const dayLabel = (ts: number) => { const d = new Date(ts); return `${pad2(d.getM
 const fmt = (ts: number) => { const d = new Date(ts); return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
 const DAY = 86400000;
 
+/** 导出就真的下载一个文件（矩阵面板与 ⋯ 菜单共用） */
+function downloadCsv(name: string, rows: (string | number)[][]) {
+  const csv = rows.map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 /** 需求 → 派出去的任务（看板 / 计划的实现者与「未派活」都由它算） */
 function todosOf(state: State, reqId: string) {
   return (state.todos || []).filter((t) => t.requirementId === reqId);
@@ -58,11 +70,10 @@ function gapOf(state: State, req: Requirement, byId: Map<string, Requirement>) {
   return null;
 }
 
-export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchProject, onOpenTask, onOpenWorkspace }: {
+export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchProject, onOpenWorkspace }: {
   state: State; now: number; act: Act; notify: (message: string) => void;
   onAddProject: () => void;
   onSwitchProject: (id: string) => void;
-  onOpenTask?: (id: string) => void;
   onOpenWorkspace?: () => void;
 }) {
   const project = state.projects.find((p) => p.id === state.activeProjectId) || state.projects[0] || null;
@@ -76,12 +87,16 @@ export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchPro
   const [issueKind, setIssueKind] = useState<string>("all");
   const [issueStatus, setIssueStatus] = useState<string>("all");
   const [issueQuery, setIssueQuery] = useState("");
-  const [creatingIssue, setCreatingIssue] = useState<{ kind: string; title: string } | null>(null);
+  const [creatingIssue, setCreatingIssue] = useState<{ kind: string; title: string; body: string; priority: string; owner: string; reqId: string } | null>(null);
   const [boardBot, setBoardBot] = useState<string>("all");
   const [boardGap, setBoardGap] = useState(false);
   const [goalDraft, setGoalDraft] = useState<string | null>(null);
   const [msDraft, setMsDraft] = useState<{ name: string; date: string } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [focusReq, setFocusReq] = useState<{ id: string; at: number } | null>(null);
+  const [createReq, setCreateReq] = useState<{ parentId: string | null; at: number } | null>(null);
+  const [matrixOpen, setMatrixOpen] = useState(false);
+  const [pendingPick, setPendingPick] = useState<{ projectId: string; reqId: string } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => { try { localStorage.setItem("ph.tab", tab); } catch { /* ignore */ } }, [tab]);
@@ -99,6 +114,46 @@ export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchPro
   const byId = useMemo(() => new Map(reqs.map((r) => [r.id, r])), [reqs]);
   const issues = useMemo(() => (state.issues || []).filter((i) => i.projectId === project?.id), [state.issues, project?.id]);
   const gaps = useMemo(() => reqs.filter((r) => gapOf(state, r, byId)), [reqs, state, byId]);
+
+  // 矩阵里点了别的项目的需求：先切项目，等这条需求进了 state 再让需求池选中它
+  useEffect(() => {
+    if (!pendingPick) return;
+    const target = (state.requirements || []).find((r) => r.id === pendingPick.reqId);
+    if (!target) { setPendingPick(null); return; }
+    if (project?.id !== pendingPick.projectId) return;
+    setFocusReq({ id: pendingPick.reqId, at: Date.now() });
+    setPendingPick(null);
+  }, [pendingPick, state.requirements, project?.id]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if ((e.target as HTMLElement)?.isContentEditable) return;
+      const order = ["pool", "board", "plan", "items", "sum"] as const;
+      if (/^[1-5]$/.test(e.key)) {
+        e.preventDefault();
+        setTab(order[Number(e.key) - 1]);
+        return;
+      }
+      if (e.key.toLowerCase() === "n" && !renaming) {
+        e.preventDefault();
+        setTab("pool");
+        setCreateReq({ parentId: null, at: Date.now() });
+        return;
+      }
+      if (e.key === "Escape") {
+        if (matrixOpen) setMatrixOpen(false);
+        else if (creatingIssue) setCreatingIssue(null);
+        else if (openIssue) setOpenIssue(null);
+        else if (goalDraft !== null) setGoalDraft(null);
+        else if (msDraft) setMsDraft(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [matrixOpen, creatingIssue, openIssue, goalDraft, msDraft, renaming]);
 
   const run = useCallback(async (label: string, fn: () => Promise<unknown>) => {
     try { await fn(); } catch (err) { notify(String((err as Error)?.message || err)); }
@@ -148,6 +203,7 @@ export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchPro
           {filteredProjects.map((p) => {
             const pr = (state.requirements || []).filter((r) => r.projectId === p.id);
             const open = (state.todos || []).filter((t) => t.projectId === p.id && !t.confirmed).length;
+            const gapCount = pr.filter((r) => gapOf(state, r, byId)).length;
             const on = p.id === project.id;
             return (
               <button key={p.id} className={`ph-proj${on ? " on" : ""}`} onClick={() => onSwitchProject(p.id)} aria-current={on ? "true" : "false"}>
@@ -158,6 +214,7 @@ export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchPro
                 <span className="ph-row2">
                   {p.alias && p.alias !== p.name ? <span className="mono">{`@${p.alias}`}</span> : null}
                   <span className="ph-cnt">{open ? `未完成 ${open}` : ""}{pr.length ? ` · 需求 ${pr.length}` : ""}</span>
+                  {gapCount ? <span className="ph-gap">{`缺口 ${gapCount}`}</span> : null}
                 </span>
               </button>
             );
@@ -165,7 +222,9 @@ export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchPro
           {!filteredProjects.length && <div className="inline-empty">没有匹配的项目</div>}
         </div>
         <div className="ph-col-foot">
-          <button className="ph-link" onClick={() => notify("全部需求（跨项目矩阵）还没做")}>全部需求</button>
+          <button className="ph-link" onClick={() => setMatrixOpen(true)}>
+            全部需求<span className="ph-n mono">{(state.requirements || []).length}</span>
+          </button>
           <button className="ph-link" onClick={onAddProject}><PlusIcon size={12} /> 添加项目</button>
         </div>
       </aside>
@@ -228,14 +287,15 @@ export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchPro
             </div>
           </div>
           <div className="ph-head-actions">
-            <button className="btn primary" onClick={() => { setTab("pool"); notify("在需求页点「新建需求」"); }}><PlusIcon size={13} /> 新建需求</button>
+            <button className="btn primary" onClick={() => { setTab("pool"); setCreateReq({ parentId: null, at: Date.now() }); }}><PlusIcon size={13} /> 新建需求</button>
             <RowMenu title="项目操作">
               <button onClick={() => act("revealProject", { id: project.id })}>在 Finder 中显示</button>
               <button onClick={() => setTab("sum")}>项目汇总</button>
               <button onClick={() => setTab("items")}>事项台账</button>
               <button onClick={() => setRenaming(project.name)}>重命名</button>
               <button className="danger" onClick={() => void removeProject()}>移除项目</button>
-              <button onClick={() => notify("导出追溯矩阵（CSV / Markdown）还没做")}>导出矩阵</button>
+              <button onClick={() => { downloadCsv(`${project.name}-需求.csv`, requirementsCsv(reqs, project.name)); notify("已导出需求表（CSV）"); }}>导出需求表（CSV）</button>
+              <button onClick={() => setMatrixOpen(true)}>全部需求（跨项目）</button>
             </RowMenu>
           </div>
         </div>
@@ -248,19 +308,24 @@ export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchPro
         ].filter((x) => Number(x.value) > 0)} />
 
         <div className="ph-tabs" role="tablist" aria-label="项目视图">
-          {([["pool", "需求"], ["board", "看板"], ["plan", "计划"], ["items", "事项"], ["sum", "汇总"]] as const).map(([id, label]) => (
-            <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>{label}</button>
+          {([["pool", "需求"], ["board", "看板"], ["plan", "计划"], ["items", "事项"], ["sum", "汇总"]] as const).map(([id, label], index) => (
+            <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "on" : ""}
+              title={`${label}（${index + 1}）`} onClick={() => setTab(id)}>{label}</button>
           ))}
         </div>
 
-        {tab === "pool" && <Requirements state={state} act={act} notify={notify} embedded projectId={project.id} />}
+        {tab === "pool" && (
+          <Requirements state={state} act={act} notify={notify} embedded projectId={project.id}
+            focus={focusReq} createRequest={createReq} />
+        )}
 
         {tab === "board" && (
           <BoardPane state={state} reqs={reqs} project={project} byId={byId} botFilter={boardBot} gapOnly={boardGap}
-            onBot={setBoardBot} onGap={setBoardGap} onOpen={(id) => { setTab("pool"); void id; }} />
+            onBot={setBoardBot} onGap={setBoardGap} onOpen={(id) => { setTab("pool"); setFocusReq({ id, at: Date.now() }); }}
+            onCreate={() => { setTab("pool"); setCreateReq({ parentId: null, at: Date.now() }); }} />
         )}
 
-        {tab === "plan" && <PlanPane reqs={reqs} onOpen={() => setTab("pool")} />}
+        {tab === "plan" && <PlanPane reqs={reqs} onOpen={(id) => { setTab("pool"); if (id) setFocusReq({ id, at: Date.now() }); }} />}
 
         {tab === "items" && (
           <ItemsPane state={state} project={project} issues={issues} reqs={reqs}
@@ -272,19 +337,119 @@ export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchPro
 
         {tab === "sum" && (
           <SummaryPane state={state} project={project} reqs={reqs} issues={issues} gaps={gaps} now={now}
-            goalDraft={goalDraft} onGoalDraft={setGoalDraft} run={run} act={act}
+            goalDraft={goalDraft} onGoalDraft={setGoalDraft} run={run} act={act} notify={notify}
             msDraft={msDraft} onMsDraft={setMsDraft} onOpenItems={() => setTab("items")} onOpenBoard={() => setTab("board")}
-            onOpenWorkspace={onOpenWorkspace} onOpenTask={onOpenTask} />
+            onOpenWorkspace={onOpenWorkspace}
+            onOpenReq={(id) => { setTab("pool"); setFocusReq({ id, at: Date.now() }); }}
+            onOpenIssue={(id) => { setTab("items"); setOpenIssue(id); }} />
         )}
+      </div>
+
+      {matrixOpen && (
+        <MatrixDialog state={state} onClose={() => setMatrixOpen(false)}
+          onPick={(projectId, reqId) => {
+            setMatrixOpen(false); setTab("pool");
+            if (projectId !== project.id) onSwitchProject(projectId);
+            setPendingPick({ projectId, reqId });
+          }} />
+      )}
+    </div>
+  );
+}
+
+/** 需求表导出：矩阵面板和 ⋯ 菜单共用一份列定义 */
+const REQ_CSV_HEAD = ["项目", "编号", "层级", "标题", "状态", "优先级", "负责人", "验收", "缺口", "更新时间"];
+function requirementsCsv(reqs: Requirement[], projectName: string, state?: State): (string | number)[][] {
+  return [
+    REQ_CSV_HEAD,
+    ...reqs.map((r) => {
+      const acc = r.acceptance || [];
+      const gap = state ? gapOf(state, r, new Map())?.label || "" : "";
+      return [
+        projectName, r.key, LEVEL_LABEL[r.level] || r.level, r.title, REQ_STATUS[r.status] || r.status,
+        r.priority || "", r.owner || "",
+        acc.length ? `${acc.filter((a) => a.done).length}/${acc.length}` : "",
+        gap, fmt(r.updatedAt || 0),
+      ];
+    }),
+  ];
+}
+
+/** 跨项目需求矩阵：审计用（日常缺口看看板），也是「导出」的唯一入口 */
+function MatrixDialog({ state, onClose, onPick }: {
+  state: State;
+  onClose: () => void;
+  onPick: (projectId: string, reqId: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [level, setLevel] = useState<string>("all");
+  const [gapOnly, setGapOnly] = useState(false);
+  const nameOf = (id: string) => state.projects.find((p) => p.id === id)?.name || "—";
+  const rows = (state.requirements || [])
+    .filter((r) => level === "all" || r.level === level)
+    .filter((r) => !query.trim() || `${r.key} ${r.title} ${r.body} ${nameOf(r.projectId)}`.toLowerCase().includes(query.trim().toLowerCase()))
+    .filter((r) => !gapOnly || gapOf(state, r, new Map()))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="ph-modal-bg" role="dialog" aria-modal="true" aria-label="全部需求" onClick={onClose}>
+      <div className="ph-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="ph-tools">
+          <b className="ph-tools-title">全部需求</b>
+          <span className="ph-n mono">{rows.length}</span>
+          <input className="ph-input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索项目 / 编号 / 标题" aria-label="搜索全部需求" />
+          <select className="ph-select" value={level} onChange={(e) => setLevel(e.target.value)} aria-label="按层级筛选">
+            <option value="all">全部层级</option>
+            {Object.entries(LEVEL_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+          <label className="ph-check"><input type="checkbox" checked={gapOnly} onChange={(e) => setGapOnly(e.target.checked)} /> 只看缺口</label>
+          <span className="ph-spacer" />
+          <button className="btn tiny" onClick={() => downloadCsv("全部需求.csv", [REQ_CSV_HEAD, ...rows.map((r) => requirementsCsv([r], nameOf(r.projectId), state)[1])])}>导出 CSV</button>
+          <button className="icon-btn" title="关闭" aria-label="关闭" onClick={onClose}><XIcon size={14} /></button>
+        </div>
+        <div className="ph-table-wrap">
+          <table className="ph-table">
+            <thead>
+              <tr><th>项目</th><th>编号</th><th>层级</th><th>标题</th><th>状态</th><th>负责人</th><th>验收</th><th>更新</th></tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const acc = r.acceptance || [];
+                const gap = gapOf(state, r, new Map());
+                return (
+                  <tr key={r.id} onClick={() => onPick(r.projectId, r.id)}>
+                    <td className="ph-muted ellipsis">{nameOf(r.projectId)}</td>
+                    <td className="mono">{r.key}</td>
+                    <td className="mono">{LEVEL_LABEL[r.level]}</td>
+                    <td className="ph-cell-title">{r.title}</td>
+                    <td><span className={`req-dot ${r.status}`} /> {REQ_STATUS[r.status]}</td>
+                    <td>{r.owner || <span className="ph-muted">—</span>}</td>
+                    <td className="mono">{acc.length ? `${acc.filter((a) => a.done).length}/${acc.length}` : "—"}{gap ? <span className="req-chip warn">{gap.label}</span> : null}</td>
+                    <td className="mono">{fmt(r.updatedAt || 0)}</td>
+                  </tr>
+                );
+              })}
+              {!rows.length && <tr><td colSpan={8}><div className="inline-empty">没有匹配的需求</div></td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <div className="ph-hint">点一行跳到那个项目，并选中这条需求。日常查缺口用看板「只看缺口」。</div>
       </div>
     </div>
   );
 }
 
 /* ── 看板 ───────────────────────────────────────────────────── */
-function BoardPane({ state, reqs, project, byId, botFilter, gapOnly, onBot, onGap, onOpen }: {
+function BoardPane({ state, reqs, project, byId, botFilter, gapOnly, onBot, onGap, onOpen, onCreate }: {
   state: State; reqs: Requirement[]; project: Project; byId: Map<string, Requirement>;
   botFilter: string; gapOnly: boolean; onBot: (v: string) => void; onGap: (v: boolean) => void; onOpen: (id: string) => void;
+  onCreate: () => void;
 }) {
   const delivery = reqs.filter((r) => r.level === DELIVERY);
   let list = delivery;
@@ -313,6 +478,17 @@ function BoardPane({ state, reqs, project, byId, botFilter, gapOnly, onBot, onGa
           <span className="ph-spacer" />
           <span className="ph-note">交付层 {LEVEL_LABEL[DELIVERY]} · 拖拽与闸门未做</span>
         </div>
+        {!delivery.length ? (
+          <div className="ph-empty-board">
+            <EmptyState compact title="还没有交付层需求"
+              desc="看板按交付层（US）的需求状态分列。先在「需求」里建一条 RR，再往下拆到 US。"
+              action={<button className="btn tiny" onClick={onCreate}>新建需求</button>} />
+          </div>
+        ) : gapOnly && !list.length ? (
+          <div className="ph-empty-board">
+            <EmptyState compact title="没有缺口" desc="交付层需求都有人接、验收也写全了。取消勾选看全部。" />
+          </div>
+        ) : (
         <div className="ph-board">
           {BOARD_COLS.map((col) => {
             const items = list.filter((r) => r.status === col);
@@ -346,6 +522,7 @@ function BoardPane({ state, reqs, project, byId, botFilter, gapOnly, onBot, onGa
             );
           })}
         </div>
+        )}
       </section>
       <div className="ph-hint">看板只读；点卡片回需求池看详情。项目：{project.name}</div>
     </div>
@@ -353,7 +530,7 @@ function BoardPane({ state, reqs, project, byId, botFilter, gapOnly, onBot, onGa
 }
 
 /* ── 计划 ───────────────────────────────────────────────────── */
-function PlanPane({ reqs, onOpen }: { reqs: Requirement[]; onOpen: () => void }) {
+function PlanPane({ reqs, onOpen }: { reqs: Requirement[]; onOpen: (id?: string) => void }) {
   const list = reqs.filter((r) => r.level === DELIVERY);
   const scheduled = list.filter((r) => r.planStart && r.planEnd);
   const unscheduled = list.filter((r) => !r.planStart || !r.planEnd);
@@ -402,10 +579,11 @@ function PlanPane({ reqs, onOpen }: { reqs: Requirement[]; onOpen: () => void })
                     const width = Math.max(2, (e - s) / DAY / span * 100);
                     return (
                       <div className="ph-gantt-row" key={r.id}>
-                        <button className="ph-gantt-left ellipsis" onClick={onOpen} title={`${r.key} ${r.title}`}>
+                        <button className="ph-gantt-left ellipsis" onClick={() => onOpen(r.id)} title={`${r.key} ${r.title}`}>
                           <span className={`req-dot ${r.status}`} />{r.key.replace(/^[A-Z]+-/, "")} · {r.title}
                         </button>
                         <div className="ph-gantt-track">
+                          <span className="ph-gantt-today-band" style={{ left: `${todayPct}%`, width: `${100 / span}%` }} />
                           <span className="ph-gantt-today" style={{ left: `${todayPct}%` }} />
                           <span className={`ph-gantt-bar s-${r.status}`} style={{ left: `${left}%`, width: `${width}%` }} title={`${dayLabel(r.planStart!)} → ${dayLabel(r.planEnd!)}`} />
                         </div>
@@ -416,12 +594,12 @@ function PlanPane({ reqs, onOpen }: { reqs: Requirement[]; onOpen: () => void })
               ))}
             </div>
           ) : (
-            <EmptyState compact title="还没有排期" desc="在需求详情里给交付层需求填起止日期，这里就会出现时间线。" action={<button className="btn tiny" onClick={onOpen}>去需求池</button>} />
+            <EmptyState compact title="还没有排期" desc="在需求详情里给交付层需求填起止日期，这里就会出现时间线。" action={<button className="btn tiny" onClick={() => onOpen()}>去需求池</button>} />
           )}
           <div className="ph-unscheduled">
             <b>未排期 <span className="ph-n mono">{unscheduled.length}</span></b>
             {unscheduled.length ? unscheduled.map((r) => (
-              <button key={r.id} className="ph-u-row" onClick={onOpen}>
+              <button key={r.id} className="ph-u-row" onClick={() => onOpen(r.id)}>
                 <span className={`req-dot ${r.status}`} /><span className="mono">{r.key.replace(/^[A-Z]+-/, "")}</span><span className="ellipsis">{r.title}</span>
                 <span className="ph-spacer" /><span className="req-chip">未排期</span>
               </button>
@@ -439,7 +617,8 @@ function ItemsPane({ state, project, issues, reqs, query, onQuery, kind, onKind,
   state: State; project: Project; issues: ProjectIssue[]; reqs: Requirement[];
   query: string; onQuery: (v: string) => void; kind: string; onKind: (v: string) => void;
   status: string; onStatus: (v: string) => void; openId: string | null; onOpen: (id: string | null) => void;
-  creating: { kind: string; title: string } | null; onCreating: (v: { kind: string; title: string } | null) => void;
+  creating: { kind: string; title: string; body: string; priority: string; owner: string; reqId: string } | null;
+  onCreating: (v: { kind: string; title: string; body: string; priority: string; owner: string; reqId: string } | null) => void;
   run: (label: string, fn: () => Promise<unknown>) => Promise<void>; act: Act; notify: (m: string) => void;
 }) {
   const list = issues
@@ -448,6 +627,44 @@ function ItemsPane({ state, project, issues, reqs, query, onQuery, kind, onKind,
     .filter((i) => !query.trim() || `${i.key} ${i.title} ${i.body}`.toLowerCase().includes(query.trim().toLowerCase()))
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   const reqKey = (id?: string | null) => (id ? reqs.find((r) => r.id === id)?.key?.replace(/^[A-Z]+-/, "") || "" : "");
+  // 展开的事项在表格底部：滚一下，别让人以为没反应
+  useEffect(() => {
+    if (!openId) return;
+    const t = window.setTimeout(() => document.querySelector(".ph-issue-detail")?.scrollIntoView({ block: "nearest" }), 60);
+    return () => window.clearTimeout(t);
+  }, [openId]);
+
+  /** 台账里的事真要做：当场建一条任务（工作台里跑），并把来龙去脉记进处理记录 */
+  const issueToTodo = async (it: ProjectIssue) => {
+    await run("issue", async () => {
+      const todo = await act("createTodo", {
+        title: it.title, desc: `${it.key} · ${it.title}\n\n${it.body || ""}`,
+        projectId: project.id, priority: it.priority || "P2",
+      });
+      if (!todo?.key) return;
+      await act("issueNote", { id: it.id, text: `转成任务 ${todo.key}` });
+      if (it.status === "open") await act("issueUpdate", { id: it.id, status: "doing" });
+      notify(`已转成任务 ${todo.key}，在工作台执行`);
+    });
+  };
+
+  const submitIssue = async () => {
+    if (!creating) return;
+    const title = creating.title.trim();
+    if (!title) return;
+    const draft = creating;
+    onCreating(null);
+    await run("issue", async () => {
+      const res = await act("issueCreate", {
+        projectId: project.id, kind: draft.kind, title,
+        body: draft.body.trim(), priority: draft.priority,
+        owner: draft.owner || null, reqId: draft.reqId || null,
+      });
+      const id = res?.issue?.id;
+      if (id) onOpen(id);
+      notify(draft.kind === "issue" ? "已记一条问题" : draft.kind === "task" ? "已记一条任务" : "已记一条遗留事项");
+    });
+  };
   const bots = (state.bots || []).filter((b) => b.projectId === project.id || !b.projectId);
 
   return (
@@ -464,29 +681,42 @@ function ItemsPane({ state, project, issues, reqs, query, onQuery, kind, onKind,
             {Object.entries(ISSUE_STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
           <span className="ph-spacer" />
-          <button className="btn tiny" onClick={() => onCreating({ kind: "issue", title: "" })}><PlusIcon size={12} /> 新建</button>
+          <button className="btn tiny" onClick={() => onCreating({ kind: "issue", title: "", body: "", priority: "P2", owner: "", reqId: "" })}><PlusIcon size={12} /> 新建</button>
         </div>
 
         {creating && (
-          <div className="ph-issue-create">
-            <select className="ph-select" value={creating.kind} onChange={(e) => onCreating({ ...creating, kind: e.target.value })} aria-label="事项类型">
-              {Object.entries(ISSUE_KIND).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
-            <input className="ph-input grow" autoFocus value={creating.title} placeholder="一句话说清这条事项，回车创建"
-              onChange={(e) => onCreating({ ...creating, title: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") { onCreating(null); return; }
-                if (e.key !== "Enter") return;
-                e.preventDefault();
-                const title = creating.title.trim();
-                if (!title) return;
-                void run("issue", async () => {
-                  await act("issueCreate", { projectId: project.id, kind: creating.kind, title });
-                  notify("已记一条事项");
-                });
-                onCreating(null);
-              }} />
-            <button className="btn tiny" onClick={() => onCreating(null)} title="取消" aria-label="取消"><XIcon size={12} /></button>
+          <div className="ph-issue-form" role="group" aria-label="新建事项">
+            <div className="ph-issue-form-row">
+              <select className="ph-select" value={creating.kind} onChange={(e) => onCreating({ ...creating, kind: e.target.value })} aria-label="事项类型">
+                {Object.entries(ISSUE_KIND).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+              <input className="ph-input grow" autoFocus value={creating.title} placeholder="一句话说清这条事项（回车保存）"
+                onChange={(e) => onCreating({ ...creating, title: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") { onCreating(null); return; }
+                  if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); void submitIssue(); }
+                }} aria-label="事项标题" />
+              <select className="ph-select" value={creating.priority} onChange={(e) => onCreating({ ...creating, priority: e.target.value })} aria-label="优先级">
+                {["P0", "P1", "P2", "P3"].map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <textarea className="ph-textarea" rows={2} value={creating.body} placeholder="正文（可选）：复现步骤、影响范围、已经试过什么"
+              onChange={(e) => onCreating({ ...creating, body: e.target.value })}
+              onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); onCreating(null); } }} aria-label="事项正文" />
+            <div className="ph-issue-form-row">
+              <select className="ph-select" value={creating.owner} onChange={(e) => onCreating({ ...creating, owner: e.target.value })} aria-label="责任人">
+                <option value="">未指派</option>
+                {bots.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                {(state.agents || []).map((a) => <option key={a.id} value={a.alias || a.name}>{a.alias || a.name}</option>)}
+              </select>
+              <select className="ph-select" value={creating.reqId} onChange={(e) => onCreating({ ...creating, reqId: e.target.value })} aria-label="关联需求">
+                <option value="">不关联需求</option>
+                {reqs.map((r) => <option key={r.id} value={r.id}>{r.key} {r.title.slice(0, 18)}</option>)}
+              </select>
+              <span className="ph-spacer" />
+              <button className="btn tiny" onClick={() => onCreating(null)}>取消</button>
+              <button className="btn tiny primary" disabled={!creating.title.trim()} onClick={() => void submitIssue()}>保存</button>
+            </div>
           </div>
         )}
 
@@ -512,7 +742,15 @@ function ItemsPane({ state, project, issues, reqs, query, onQuery, kind, onKind,
                   </tr>
                 );
               })}
-              {!list.length && <tr><td colSpan={9}><div className="inline-empty">没有匹配的事项</div></td></tr>}
+              {!list.length && (
+                <tr><td colSpan={9}>
+                  {issues.length
+                    ? <div className="inline-empty">没有匹配的事项（改一下筛选或搜索）</div>
+                    : <EmptyState compact title="台账还是空的"
+                        desc="遗留事项、任务、问题都记在这儿：一条一行，谁在处理、卡在哪都写在处理记录里。"
+                        action={<button className="btn tiny" onClick={() => onCreating({ kind: "issue", title: "", body: "", priority: "P2", owner: "", reqId: "" })}>记第一条</button>} />}
+                </td></tr>
+              )}
             </tbody>
           </table>
           {openId && (() => {
@@ -524,6 +762,7 @@ function ItemsPane({ state, project, issues, reqs, query, onQuery, kind, onKind,
                 <div className="ph-issue-actions">
                   {it.status !== "resolved" && <button className="btn tiny primary" disabled={String(it.id).startsWith("tmp")} onClick={() => void run("issue", () => act("issueUpdate", { id: it.id, status: "resolved" }))}>标已解决</button>}
                   {it.status !== "closed" && <button className="btn tiny" onClick={() => void run("issue", () => act("issueUpdate", { id: it.id, status: "closed" }))}>关闭这条</button>}
+                  <button className="btn tiny" onClick={() => void issueToTodo(it)}>转成任务</button>
                   <select className="ph-select" aria-label="指派责任人" value={it.owner || ""} onChange={(e) => void run("issue", () => act("issueUpdate", { id: it.id, owner: e.target.value || null }))}>
                     <option value="">未指派</option>
                     {bots.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
@@ -566,12 +805,14 @@ function NoteInput({ onSubmit }: { onSubmit: (text: string) => void }) {
 }
 
 /* ── 汇总（项目周报式）──────────────────────────────────────── */
-function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoalDraft, run, act, msDraft, onMsDraft, onOpenItems, onOpenBoard, onOpenWorkspace, onOpenTask }: {
+function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoalDraft, run, act, msDraft, onMsDraft, onOpenItems, onOpenBoard, onOpenWorkspace, onOpenReq, onOpenIssue, notify }: {
   state: State; project: Project; reqs: Requirement[]; issues: ProjectIssue[]; gaps: Requirement[]; now: number;
   goalDraft: string | null; onGoalDraft: (v: string | null) => void;
   run: (label: string, fn: () => Promise<unknown>) => Promise<void>; act: Act;
   msDraft: { name: string; date: string } | null; onMsDraft: (v: { name: string; date: string } | null) => void;
-  onOpenItems: () => void; onOpenBoard: () => void; onOpenWorkspace?: () => void; onOpenTask?: (id: string) => void;
+  onOpenItems: () => void; onOpenBoard: () => void; onOpenWorkspace?: () => void;
+  onOpenReq?: (id: string) => void; onOpenIssue?: (id: string) => void;
+  notify: (message: string) => void;
 }) {
   const done = reqs.filter((r) => r.status === "done" || ((r.level === "sr" || r.level === "us") && (r.acceptance || []).length && (r.acceptance || []).every((a) => a.done)));
   const doing = reqs.filter((r) => r.status === "in_progress" || r.status === "verifying");
@@ -580,7 +821,7 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
   const implName = (r: Requirement) => implementersOf(state, r).join(" / ") || (todosOf(state, r.id).length ? "待认领" : "—");
   const unassigned = issues.filter((i) => !i.owner && ["open", "doing", "blocked"].includes(i.status));
   const nextReqs = reqs.filter((r) => (r.planStart && r.planStart > now) || (r.status === "approved" && r.level === DELIVERY && !todosOf(state, r.id).length));
-  const milestones = project.milestones || [];
+  const milestones = [...(project.milestones || [])].sort((a, b) => a.date - b.date);
   const milestonesDone = milestones.filter((m) => m.status === "done").length;
   const nextMs = milestones.find((m) => m.status === "doing") || milestones.find((m) => m.status === "todo") || null;
   const runs = (state.runs || []).filter((r) => (state.todos || []).some((t) => t.id === r.todoId && t.projectId === project.id));
@@ -596,27 +837,27 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
 
   const progressRows = [
     ...doing.map((r) => ({
-      key: r.key, title: r.title, kind: "需求", status: REQ_STATUS[r.status],
+      key: r.key, title: r.title, kind: "需求", status: REQ_STATUS[r.status], id: r.id, source: "req" as const,
       owner: implName(r),
       note: `${(r.acceptance || []).filter((a) => a.done).length}/${(r.acceptance || []).length} 验收过`,
       at: r.updatedAt, tone: r.status === "verifying" ? "warn" : "",
     })),
     ...issues.filter((i) => ["doing", "blocked"].includes(i.status)).map((i) => ({
-      key: i.key, title: i.title, kind: ISSUE_KIND[i.kind], status: ISSUE_STATUS[i.status],
+      key: i.key, title: i.title, kind: ISSUE_KIND[i.kind], status: ISSUE_STATUS[i.status], id: i.id, source: "issue" as const,
       owner: ownerLabel(state, i.owner) || "未指派",
       note: (i.notes || []).at(-1)?.text?.slice(0, 26) || "—",
       at: i.updatedAt, tone: i.status === "blocked" ? "warn" : "",
     })),
     ...done.map((r) => ({
-      key: r.key, title: r.title, kind: "需求", status: "验收通过",
+      key: r.key, title: r.title, kind: "需求", status: "验收通过", id: r.id, source: "req" as const,
       owner: implName(r),
       note: `验收 ${(r.acceptance || []).filter((a) => a.done).length}/${(r.acceptance || []).length}`,
       at: r.updatedAt, tone: "ok",
     })),
   ].sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 8);
 
-  const asks = [
-    ...blocked.map((i) => ({ key: i.key, what: i.title, owner: ownerLabel(state, i.owner), impact: (i.notes || []).at(-1)?.text || "卡住了", need: "拍板 / 找对接人", tone: "warn" })),
+  const asks: { key: string; what: string; owner: string; impact: string; need: string; tone: string; issueId?: string }[] = [
+    ...blocked.map((i) => ({ key: i.key, what: i.title, owner: ownerLabel(state, i.owner), impact: (i.notes || []).at(-1)?.text || "卡住了", need: "拍板 / 找对接人", tone: "warn", issueId: i.id })),
     ...failedRuns.slice(0, 3).map((r) => ({ key: r.id, what: (state.todos || []).find((t) => t.id === r.todoId)?.title || "运行失败", owner: ownerLabel(state, (state.todos || []).find((t) => t.id === r.todoId)?.botId), impact: `运行失败${r.error ? `：${String(r.error).slice(0, 24)}` : ""}`, need: "要不要重试 / 换方案", tone: "warn" })),
     ...(gaps.length ? [{ key: "缺口", what: `${gaps.length} 条需求没接住（缺验收 / 未派活 / 缺下游）`, owner: projectOwner, impact: "验收口径不全，做完也判不了", need: "指派或补验收", tone: "warn" }] : []),
     ...(unassigned.length ? [{ key: "未指派", what: `${unassigned.length} 条事项没有负责人`, owner: "", impact: "没人接就会烂在台账里", need: "指派给谁", tone: "" }] : []),
@@ -654,7 +895,10 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
     ].join("\n");
   };
 
-  const saveMs = (list: ProjectMilestone[]) => void run("ms", () => act("projectMilestones", { id: project.id, milestones: list }));
+  const saveMs = (list: ProjectMilestone[], done = "") => void run("ms", async () => {
+    await act("projectMilestones", { id: project.id, milestones: list });
+    if (done) notify(done);
+  });
 
   return (
     <div className="ph-pane">
@@ -667,7 +911,11 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
             {(state.bots || []).filter((b) => b.projectId === project.id).map((b) => <span key={b.id}>· {b.name} 接手</span>)}
           </div>
           <div className="ph-report-actions">
-            <button className="btn tiny" onClick={() => { void navigator.clipboard?.writeText(reportMd()); }}>复制为 Markdown</button>
+            <button className="btn tiny" onClick={() => {
+              // 走主进程剪贴板：渲染层的 navigator.clipboard 在窗口没焦点时会拒绝
+              void Promise.resolve(window.harness?.clipboardWrite?.(reportMd()))
+                .then(() => notify("周报已复制（Markdown）"), () => notify("复制失败：剪贴板不可用"));
+            }}>复制为 Markdown</button>
             <button className="btn tiny" onClick={onOpenBoard}>看板</button>
             <button className="btn tiny" onClick={onOpenItems}>台账</button>
           </div>
@@ -686,9 +934,14 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
             <p className="ph-lede">{project.goal || "还没有写目标：一句话说清这个项目要交付什么、什么时候算完成。"}</p>
           ) : (
             <div className="ph-goal-edit">
-              <textarea className="ph-textarea" autoFocus value={goalDraft} onChange={(e) => onGoalDraft(e.target.value)} placeholder="一句话说清目标与验收口径" />
+              <textarea className="ph-textarea" autoFocus value={goalDraft} placeholder="一句话说清目标与验收口径"
+                onChange={(e) => onGoalDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); onGoalDraft(null); } }} />
               <div className="row gap6">
-                <button className="btn tiny primary" onClick={() => { void run("goal", () => act("projectSetGoal", { id: project.id, goal: goalDraft })); onGoalDraft(null); }}>保存</button>
+                <button className="btn tiny primary" onClick={() => {
+                  void run("goal", async () => { await act("projectSetGoal", { id: project.id, goal: goalDraft }); notify("目标已保存"); });
+                  onGoalDraft(null);
+                }}>保存</button>
                 <button className="btn tiny" onClick={() => onGoalDraft(null)}>取消</button>
               </div>
             </div>
@@ -712,7 +965,7 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
                     <button onClick={() => saveMs(milestones.map((x) => x.id === m.id ? { ...x, status: "todo" } : x))}>未开始</button>
                     <button onClick={() => saveMs(milestones.map((x) => x.id === m.id ? { ...x, status: "doing" } : x))}>进行中</button>
                     <button onClick={() => saveMs(milestones.map((x) => x.id === m.id ? { ...x, status: "done" } : x))}>已完成</button>
-                    <button className="danger" onClick={() => saveMs(milestones.filter((x) => x.id !== m.id))}>删除</button>
+                    <button className="danger" onClick={() => saveMs(milestones.filter((x) => x.id !== m.id), "里程碑已删除")}>删除</button>
                   </RowMenu>
                 </div>
               ))}
@@ -720,7 +973,16 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
           ) : <div className="inline-empty">还没有里程碑。加一个：名称 + 日期，状态稍后改。</div>}
           {msDraft && (
             <div className="ph-ms-add">
-              <input className="ph-input grow" autoFocus value={msDraft.name} placeholder="里程碑名称" onChange={(e) => onMsDraft({ ...msDraft, name: e.target.value })} />
+              <input className="ph-input grow" autoFocus value={msDraft.name} placeholder="里程碑名称"
+                onChange={(e) => onMsDraft({ ...msDraft, name: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") { onMsDraft(null); return; }
+                  if (e.key !== "Enter" || !msDraft.name.trim()) return;
+                  e.preventDefault();
+                  const date = new Date(`${msDraft.date}T09:00:00`).getTime() || Date.now();
+                  saveMs([...milestones, { id: `ms-${Date.now().toString(36)}`, name: msDraft.name.trim(), date, status: "todo" }], "里程碑已添加");
+                  onMsDraft(null);
+                }} />
               <input className="ph-input" type="date" value={msDraft.date} onChange={(e) => onMsDraft({ ...msDraft, date: e.target.value })} aria-label="日期" />
               <button className="btn tiny primary" disabled={!msDraft.name.trim()} onClick={() => {
                 const date = new Date(`${msDraft.date}T09:00:00`).getTime() || Date.now();
@@ -739,7 +1001,9 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
               <thead><tr><th>编号</th><th>工作项</th><th>类型</th><th>状态</th><th>负责人</th><th>说明</th><th>更新</th></tr></thead>
               <tbody>
                 {progressRows.map((r) => (
-                  <tr key={`${r.key}-${r.at}`}>
+                  <tr key={`${r.key}-${r.at}`}
+                    className={r.source === "req" && onOpenReq ? "ph-row-link" : r.source === "issue" && onOpenIssue ? "ph-row-link" : ""}
+                    onClick={() => { if (r.source === "req") onOpenReq?.(r.id); else onOpenIssue?.(r.id); }}>
                     <td className="mono">{r.key}</td>
                     <td className="ph-cell-title">{r.title}</td>
                     <td className="mono">{r.kind}</td>
@@ -761,7 +1025,7 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
               <thead><tr><th>编号</th><th>问题</th><th>责任人</th><th>影响</th><th>需要你</th></tr></thead>
               <tbody>
                 {asks.map((a) => (
-                  <tr key={a.key}>
+                  <tr key={a.key} className={a.issueId ? "ph-row-link" : ""} onClick={() => { if (a.issueId) onOpenIssue?.(a.issueId); }}>
                     <td className="mono">{a.key}</td>
                     <td className="ph-cell-title">{a.what}</td>
                     <td>{a.owner || <span className="warn">未指派</span>}</td>
@@ -778,7 +1042,7 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
           <button className="ph-link" onClick={onOpenWorkspace}>打开工作台</button>
           <button className="ph-link" onClick={onOpenItems}>看事项台账</button>
           {openIssues.length ? <span className="ph-muted">待处理 {openIssues.length} 条</span> : null}
-          {onOpenTask ? <span className="ph-muted">点任务 key 可打开任务</span> : null}
+          <span className="ph-muted">点行可跳到对应的需求 / 事项</span>
         </footer>
       </article>
     </div>

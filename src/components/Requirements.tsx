@@ -95,12 +95,16 @@ function gateFor(req: Requirement, next: RequirementStatus, children: Requiremen
 
 type DraftKey = "title" | "body" | "priority" | "owner" | "source" | "requester" | "scope" | "outOfScope" | "impact" | "role" | "value";
 
-export function Requirements({ state, act, notify, onBack, embedded = false, projectId }: {
+export function Requirements({ state, act, notify, onBack, embedded = false, projectId, focus, createRequest }: {
   state: State; act: Act; notify: (message: string) => void; onBack?: () => void;
   /** 嵌进项目页的「需求」tab：不画页头 / 概览 / 项目选择器 / 视图 tab */
   embedded?: boolean;
   /** 嵌进项目页时用这一页的项目；不传则用全局当前项目 */
   projectId?: string;
+  /** 外部请求选中一条需求（看板卡片 / 计划行点进来）；换 at 才算新请求 */
+  focus?: { id: string; at: number } | null;
+  /** 外部请求打开「新建需求」；parentId 为空就是新建 RR */
+  createRequest?: { parentId?: string | null; at: number } | null;
 }) {
   const requirements = state.requirements ?? [];
   const project = state.projects.find((p) => p.id === (projectId || state.activeProjectId)) ?? state.projects[0] ?? null;
@@ -129,6 +133,36 @@ export function Requirements({ state, act, notify, onBack, embedded = false, pro
   const selected = projectReqs.find((r) => r.id === selectedId) ?? null;
 
   useEffect(() => {
+    // 看板 / 计划点进来：选中它并展开祖先，再滚到可见位置
+    if (!focus?.id) return;
+    setSelectedId(focus.id);
+    setGate(null);
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      let cur = projectReqs.find((r) => r.id === focus.id);
+      while (cur?.parentId) {
+        next.add(cur.parentId);
+        cur = projectReqs.find((r) => r.id === cur!.parentId);
+      }
+      return next;
+    });
+    // 等行渲染出来再滚，别打断点击本身
+    const t = window.setTimeout(() => {
+      document.querySelector<HTMLElement>(`[data-req-id="${focus.id}"]`)?.scrollIntoView({ block: "nearest" });
+    }, 60);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus?.at]);
+
+  // 项目页页头「新建需求」：直接把创建行打开（不让人先找按钮）
+  useEffect(() => {
+    if (!createRequest) return;
+    startCreate(createRequest.parentId ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createRequest?.at]);
+
+  useEffect(() => {
+    // 换项目：展开所有根、选第一条；需求更新不重置用户的选中 / 展开
     const roots = projectReqs.filter((r) => !r.parentId);
     setExpanded(new Set(roots.map((r) => r.id)));
     setSelectedId((prev) => (prev && projectReqs.some((r) => r.id === prev) ? prev : roots[0]?.id ?? null));
@@ -211,6 +245,17 @@ export function Requirements({ state, act, notify, onBack, embedded = false, pro
     const res = await act("requirementSetStatus", { id: selected.id, status: next });
     if (res) setGate(null);
     else setGate({ missing: [], message: "状态更新失败，见右下角错误" });
+  };
+
+  /** 派活：建任务 → 提示派给了谁、任务号是多少；失败把原因说清楚 */
+  const dispatch = async (field: "agentId" | "botId", id: string, who: string) => {
+    if (!selected) return;
+    try {
+      const res = await act("requirementDispatch", { id: selected.id, [field]: id, projectId: project?.id || null });
+      if (res) notify(`已派给 ${who}：任务 ${res.key || ""}`.trim());
+    } catch (err) {
+      notify(String((err as Error)?.message || err));
+    }
   };
 
   const focusMissing = (missing: string[]) => {
@@ -325,6 +370,7 @@ export function Requirements({ state, act, notify, onBack, embedded = false, pro
       <div key={req.id}>
         <div
           className={`req-row ${on ? "on" : ""}`}
+          data-req-id={req.id}
           style={{ paddingLeft: 6 + (flatMode ? 0 : depth * 14) }}
           onClick={() => { setSelectedId(req.id); setGate(null); }}
           title={`${req.key} · ${req.title}${path ? ` · ${path}` : ""}`}
@@ -493,13 +539,13 @@ export function Requirements({ state, act, notify, onBack, embedded = false, pro
                     <div className="row-menu-info"><div><span>已派</span><em>{tasksOf(selected.id).map((t) => t.key).join(" / ") || "还没有"}</em></div></div>
                     {(state.agents || []).filter((a) => (a.role || "worker") !== "supervisor").map((a) => (
                       <button key={a.id} disabled={selected.status === "draft" || selected.status === "reviewing"}
-                        onClick={() => void act("requirementDispatch", { id: selected.id, agentId: a.id, projectId: project?.id || null })}>
+                        onClick={() => void dispatch("agentId", a.id, a.alias || a.name)}>
                         派给 {a.alias || a.name}
                       </button>
                     ))}
                     {(state.bots || []).filter((b) => b.projectId === (project?.id || "")).map((b) => (
                       <button key={b.id} disabled={selected.status === "draft" || selected.status === "reviewing"}
-                        onClick={() => void act("requirementDispatch", { id: selected.id, botId: b.id, projectId: project?.id || null })}>
+                        onClick={() => void dispatch("botId", b.id, b.name)}>
                         交给 {b.name}
                       </button>
                     ))}
