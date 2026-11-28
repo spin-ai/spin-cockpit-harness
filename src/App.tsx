@@ -774,7 +774,7 @@ export default function App() {
         )}
         {view === "projects" && (
           <div className="wide">
-            <ProjectHome state={state} now={now} act={act} notify={notify} onAddProject={() => void addProject()} onSwitchProject={(id) => void act("switchProject", { id })} onOpenWorkspace={() => setView("workspace")} />
+            <ProjectHome state={state} now={now} act={act} notify={notify} onAddProject={() => void addProject()} onSwitchProject={(id) => void act("switchProject", { id })} onOpenWorkspace={() => setView("workspace")} onOpenTask={(id) => void selectTodo(id)} />
           </div>
         )}
         {view === "requirements" && <div className="wide"><Requirements state={state} act={act} notify={notify} onBack={() => setView("projects")} /></div>}

@@ -7,6 +7,7 @@ import { EmptyState } from "./EmptyState";
 import { ChevronDownIcon, ChevronLeftIcon, PlusIcon, XIcon } from "./Icons";
 import { Tabs } from "./Tabs";
 import { confirmDialog } from "./ConfirmHost";
+import { STATUS } from "../ui";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
 
@@ -95,7 +96,7 @@ function gateFor(req: Requirement, next: RequirementStatus, children: Requiremen
 
 type DraftKey = "title" | "body" | "priority" | "owner" | "source" | "requester" | "scope" | "outOfScope" | "impact" | "role" | "value";
 
-export function Requirements({ state, act, notify, onBack, embedded = false, projectId, focus, createRequest }: {
+export function Requirements({ state, act, notify, onBack, embedded = false, projectId, focus, createRequest, onOpenTask }: {
   state: State; act: Act; notify: (message: string) => void; onBack?: () => void;
   /** 嵌进项目页的「需求」tab：不画页头 / 概览 / 项目选择器 / 视图 tab */
   embedded?: boolean;
@@ -105,6 +106,8 @@ export function Requirements({ state, act, notify, onBack, embedded = false, pro
   focus?: { id: string; at: number } | null;
   /** 外部请求打开「新建需求」；parentId 为空就是新建 RR */
   createRequest?: { parentId?: string | null; at: number } | null;
+  /** 点「任务」里的某条 → 去工作台打开它 */
+  onOpenTask?: (id: string) => void;
 }) {
   const requirements = state.requirements ?? [];
   const project = state.projects.find((p) => p.id === (projectId || state.activeProjectId)) ?? state.projects[0] ?? null;
@@ -537,6 +540,9 @@ export function Requirements({ state, act, notify, onBack, embedded = false, pro
                 {selected.level === "us" ? (
                   <RowMenu title="派活" trigger={<span className="btn tiny">派活 · {tasksOf(selected.id).length}</span>} triggerClassName="req-dispatch">
                     <div className="row-menu-info"><div><span>已派</span><em>{tasksOf(selected.id).map((t) => t.key).join(" / ") || "还没有"}</em></div></div>
+                    {!(state.agents || []).some((a) => (a.role || "worker") !== "supervisor") && !(state.bots || []).some((b) => b.projectId === (project?.id || "")) ? (
+                      <div className="row-menu-info"><div><span>没有实现者</span><em>先在「人物」里加一个，或给项目配一个 bot</em></div></div>
+                    ) : null}
                     {(state.agents || []).filter((a) => (a.role || "worker") !== "supervisor").map((a) => (
                       <button key={a.id} disabled={selected.status === "draft" || selected.status === "reviewing"}
                         onClick={() => void dispatch("agentId", a.id, a.alias || a.name)}>
@@ -618,6 +624,27 @@ export function Requirements({ state, act, notify, onBack, embedded = false, pro
                   </div>
                 </section>
               ) : null}
+
+              <section className="req-section" data-req-tasks>
+                <div className="req-section-head">
+                  <b>任务</b><span>{tasksOf(selected.id).length}</span>
+                  <span className="req-section-hint">派活后在这里，也在工作台</span>
+                </div>
+                {tasksOf(selected.id).map((t) => (
+                  <button className="req-child-row" key={t.id} onClick={() => onOpenTask?.(t.id)} title={`${t.key} ${t.title}`}>
+                    <span className={`req-dot ${t.status === "done" ? "done" : t.status === "in_progress" ? "in_progress" : "approved"}`} />
+                    <span className="req-key mono">{t.key}</span>
+                    <span className="req-row-title">{t.title}</span>
+                    <span className="req-row-end">
+                      {t.botId ? <span className="req-row-end-muted">{(state.bots || []).find((b) => b.id === t.botId)?.name || ""}</span> : null}
+                      <span className="req-chip">{STATUS[t.status]?.label || t.status}</span>
+                    </span>
+                  </button>
+                ))}
+                {!tasksOf(selected.id).length ? (
+                  <div className="inline-empty">还没有任务。批准之后点右上「派活」，会建一条带这条需求的任务。</div>
+                ) : null}
+              </section>
 
               <section className="req-section" data-req-children>
                 <div className="req-section-head">

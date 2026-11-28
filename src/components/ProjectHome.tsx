@@ -70,11 +70,12 @@ function gapOf(state: State, req: Requirement, byId: Map<string, Requirement>) {
   return null;
 }
 
-export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchProject, onOpenWorkspace }: {
+export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchProject, onOpenWorkspace, onOpenTask }: {
   state: State; now: number; act: Act; notify: (message: string) => void;
   onAddProject: () => void;
   onSwitchProject: (id: string) => void;
   onOpenWorkspace?: () => void;
+  onOpenTask?: (id: string) => void;
 }) {
   const project = state.projects.find((p) => p.id === state.activeProjectId) || state.projects[0] || null;
   const [tab, setTab] = useState<"pool" | "board" | "plan" | "items" | "sum">(() => {
@@ -156,7 +157,10 @@ export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchPro
   }, [matrixOpen, creatingIssue, openIssue, goalDraft, msDraft, renaming]);
 
   const run = useCallback(async (label: string, fn: () => Promise<unknown>) => {
-    try { await fn(); } catch (err) { notify(String((err as Error)?.message || err)); }
+    try { await fn(); } catch (err) {
+      const raw = String((err as Error)?.message || err);
+      notify(raw.replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/, ""));
+    }
     void label;
   }, [notify]);
 
@@ -170,6 +174,13 @@ export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchPro
     if (!project) return;
     if (!(await confirmDialog({ title: `移除项目「${project.name}」？`, desc: "不会删除磁盘上的文件；项目下还有任务或需求时不能移除。", ok: "移除", danger: true }))) return;
     await run("remove", () => act("removeProject", { id: project.id }));
+  };
+
+  const moveReq = async (req: Requirement, status: string) => {
+    await run("move", async () => {
+      const res = await act("requirementSetStatus", { id: req.id, status });
+      if (res) notify(`${req.key} → ${REQ_STATUS[status] || status}`);
+    });
   };
 
   const filteredProjects = state.projects.filter((p) => !projQuery.trim() || `${p.name} ${p.alias} ${p.path}`.toLowerCase().includes(projQuery.trim().toLowerCase()));
@@ -316,16 +327,17 @@ export function ProjectHome({ state, now, act, notify, onAddProject, onSwitchPro
 
         {tab === "pool" && (
           <Requirements state={state} act={act} notify={notify} embedded projectId={project.id}
-            focus={focusReq} createRequest={createReq} />
+            focus={focusReq} createRequest={createReq} onOpenTask={onOpenTask} />
         )}
 
         {tab === "board" && (
           <BoardPane state={state} reqs={reqs} project={project} byId={byId} botFilter={boardBot} gapOnly={boardGap}
             onBot={setBoardBot} onGap={setBoardGap} onOpen={(id) => { setTab("pool"); setFocusReq({ id, at: Date.now() }); }}
-            onCreate={() => { setTab("pool"); setCreateReq({ parentId: null, at: Date.now() }); }} />
+            onCreate={() => { setTab("pool"); setCreateReq({ parentId: null, at: Date.now() }); }}
+            onMove={(req, status) => void moveReq(req, status)} />
         )}
 
-        {tab === "plan" && <PlanPane reqs={reqs} onOpen={(id) => { setTab("pool"); if (id) setFocusReq({ id, at: Date.now() }); }} />}
+        {tab === "plan" && <PlanPane reqs={reqs} act={act} run={run} onOpen={(id) => { setTab("pool"); if (id) setFocusReq({ id, at: Date.now() }); }} />}
 
         {tab === "items" && (
           <ItemsPane state={state} project={project} issues={issues} reqs={reqs}
@@ -446,11 +458,14 @@ function MatrixDialog({ state, onClose, onPick }: {
 }
 
 /* ── 看板 ───────────────────────────────────────────────────── */
-function BoardPane({ state, reqs, project, byId, botFilter, gapOnly, onBot, onGap, onOpen, onCreate }: {
+function BoardPane({ state, reqs, project, byId, botFilter, gapOnly, onBot, onGap, onOpen, onCreate, onMove }: {
   state: State; reqs: Requirement[]; project: Project; byId: Map<string, Requirement>;
   botFilter: string; gapOnly: boolean; onBot: (v: string) => void; onGap: (v: boolean) => void; onOpen: (id: string) => void;
   onCreate: () => void;
+  onMove: (req: Requirement, status: string) => void;
 }) {
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overCol, setOverCol] = useState<string | null>(null);
   const delivery = reqs.filter((r) => r.level === DELIVERY);
   let list = delivery;
   if (botFilter === "none") list = list.filter((r) => !todosOf(state, r.id).length);
@@ -476,7 +491,7 @@ function BoardPane({ state, reqs, project, byId, botFilter, gapOnly, onBot, onGa
           </select>
           <label className="ph-check"><input type="checkbox" checked={gapOnly} onChange={(e) => onGap(e.target.checked)} /> 只看缺口</label>
           <span className="ph-spacer" />
-          <span className="ph-note">交付层 {LEVEL_LABEL[DELIVERY]} · 拖拽与闸门未做</span>
+          <span className="ph-note">拖到别的列可改状态（闸门会拦：先批准 / 先派活 / 验收勾完）</span>
         </div>
         {!delivery.length ? (
           <div className="ph-empty-board">
@@ -493,22 +508,33 @@ function BoardPane({ state, reqs, project, byId, botFilter, gapOnly, onBot, onGa
           {BOARD_COLS.map((col) => {
             const items = list.filter((r) => r.status === col);
             return (
-              <div className="ph-board-col" key={col}>
+              <div className={`ph-board-col${overCol === col ? " drop" : ""}`} key={col}
+                onDragOver={(e) => { if (!dragId) return; e.preventDefault(); if (overCol !== col) setOverCol(col); }}
+                onDragLeave={() => setOverCol((c) => (c === col ? null : c))}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const req = delivery.find((r) => r.id === (dragId || e.dataTransfer.getData("text/plain")));
+                  setOverCol(null); setDragId(null);
+                  if (req && req.status !== col) onMove(req, col);
+                }}>
                 <div className="ph-board-head"><span className={`req-dot ${col}`} />{REQ_STATUS[col]}<span className="ph-n mono">{items.length}</span></div>
                 <div className="ph-board-cards">
                   {items.map((r) => {
                     const impl = implementersOf(state, r);
                     const gap = gapOf(state, r, byId);
                     return (
-                      <button key={r.id} className="ph-card" onClick={() => onOpen(r.id)} title={r.title}>
+                      <button key={r.id} className={`ph-card${dragId === r.id ? " dragging" : ""}`}
+                        draggable
+                        onDragStart={(e) => { e.dataTransfer.setData("text/plain", r.id); e.dataTransfer.effectAllowed = "move"; setDragId(r.id); }}
+                        onDragEnd={() => { setDragId(null); setOverCol(null); }}
+                        onClick={() => onOpen(r.id)}
+                        title={`${r.title}（可拖到别的列改状态）`}>
                         <div className="ph-card-key mono">{r.key}</div>
                         <div className="ph-card-title">{r.title}</div>
                         <div className="ph-card-foot">
                           {impl.length
                             ? <span className="ellipsis">{impl.join(" / ")}</span>
-                            : todosOf(state, r.id).length
-                              ? <span className="ph-muted">待认领</span>
-                              : <span className="ph-muted">—</span>}
+                            : todosOf(state, r.id).length ? <span className="ph-muted">待认领</span> : null}
                           <span className="ph-spacer" />
                           {gap && <span className="req-chip warn">{gap.label}</span>}
                           {(r.acceptance || []).length ? <span className="mono">验收 {(r.acceptance || []).filter((a) => a.done).length}/{(r.acceptance || []).length}</span> : null}
@@ -530,7 +556,30 @@ function BoardPane({ state, reqs, project, byId, botFilter, gapOnly, onBot, onGa
 }
 
 /* ── 计划 ───────────────────────────────────────────────────── */
-function PlanPane({ reqs, onOpen }: { reqs: Requirement[]; onOpen: (id?: string) => void }) {
+function PlanPane({ reqs, onOpen, act, run }: {
+  reqs: Requirement[]; onOpen: (id?: string) => void;
+  act: Act; run: (label: string, fn: () => Promise<unknown>) => Promise<void>;
+}) {
+  const [edit, setEdit] = useState<{ id: string; start: string; end: string } | null>(null);
+  const dateInput = (ts?: number | null) => {
+    if (!ts) return "";
+    const d = new Date(ts);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const openEdit = (r: Requirement) => setEdit({
+    id: r.id,
+    start: dateInput(r.planStart) || dateInput(Date.now()),
+    end: dateInput(r.planEnd) || dateInput(Date.now() + 2 * DAY),
+  });
+  const savePlan = async () => {
+    if (!edit) return;
+    const start = new Date(`${edit.start}T09:00:00`).getTime();
+    const end = new Date(`${edit.end}T18:00:00`).getTime();
+    if (!edit.start || !edit.end || end < start) { setEdit(null); return; }
+    setEdit(null);
+    await run("plan", () => act("requirementSetPlan", { id: edit.id, planStart: start, planEnd: end }));
+  };
+  const editing = edit ? reqs.find((r) => r.id === edit.id) || null : null;
   const list = reqs.filter((r) => r.level === DELIVERY);
   const scheduled = list.filter((r) => r.planStart && r.planEnd);
   const unscheduled = list.filter((r) => !r.planStart || !r.planEnd);
@@ -555,8 +604,23 @@ function PlanPane({ reqs, onOpen }: { reqs: Requirement[]; onOpen: (id?: string)
           <b className="ph-tools-title">计划</b>
           <span className="ph-note">{LEVEL_LABEL[DELIVERY]} · 14 天窗口 · 今天 {dayLabel(Date.now())}</span>
           <span className="ph-spacer" />
-          <span className="ph-note">排期在需求详情里填（起止日期）</span>
+          <span className="ph-note">点甘特条或「排期」直接改起止日期</span>
         </div>
+        {edit && editing ? (
+          <div className="ph-plan-edit">
+            <span className="mono">{editing.key}</span>
+            <span className="ellipsis ph-plan-edit-title">{editing.title}</span>
+            <label className="ph-check">起
+              <input className="ph-input" type="date" value={edit.start} onChange={(e) => setEdit({ ...edit, start: e.target.value })} aria-label="开始日期" />
+            </label>
+            <label className="ph-check">止
+              <input className="ph-input" type="date" value={edit.end} onChange={(e) => setEdit({ ...edit, end: e.target.value })} aria-label="结束日期" />
+            </label>
+            <span className="ph-spacer" />
+            <button className="btn tiny" onClick={() => setEdit(null)}>取消</button>
+            <button className="btn tiny primary" onClick={() => void savePlan()}>保存排期</button>
+          </div>
+        ) : null}
         <div className="ph-gantt-wrap">
           {scheduled.length ? (
             <div className="ph-gantt">
@@ -585,7 +649,9 @@ function PlanPane({ reqs, onOpen }: { reqs: Requirement[]; onOpen: (id?: string)
                         <div className="ph-gantt-track">
                           <span className="ph-gantt-today-band" style={{ left: `${todayPct}%`, width: `${100 / span}%` }} />
                           <span className="ph-gantt-today" style={{ left: `${todayPct}%` }} />
-                          <span className={`ph-gantt-bar s-${r.status}`} style={{ left: `${left}%`, width: `${width}%` }} title={`${dayLabel(r.planStart!)} → ${dayLabel(r.planEnd!)}`} />
+                          <button className={`ph-gantt-bar s-${r.status}`} style={{ left: `${left}%`, width: `${width}%` }}
+                            title={`${dayLabel(r.planStart!)} → ${dayLabel(r.planEnd!)}（点一下改日期）`}
+                            aria-label={`修改 ${r.key} 的排期`} onClick={() => openEdit(r)} />
                         </div>
                       </div>
                     );
@@ -599,10 +665,13 @@ function PlanPane({ reqs, onOpen }: { reqs: Requirement[]; onOpen: (id?: string)
           <div className="ph-unscheduled">
             <b>未排期 <span className="ph-n mono">{unscheduled.length}</span></b>
             {unscheduled.length ? unscheduled.map((r) => (
-              <button key={r.id} className="ph-u-row" onClick={() => onOpen(r.id)}>
-                <span className={`req-dot ${r.status}`} /><span className="mono">{r.key.replace(/^[A-Z]+-/, "")}</span><span className="ellipsis">{r.title}</span>
+              <div key={r.id} className="ph-u-row">
+                <button className="ph-u-main" onClick={() => onOpen(r.id)} title={`${r.key} ${r.title}`}>
+                  <span className={`req-dot ${r.status}`} /><span className="mono">{r.key.replace(/^[A-Z]+-/, "")}</span><span className="ellipsis">{r.title}</span>
+                </button>
                 <span className="ph-spacer" /><span className="req-chip">未排期</span>
-              </button>
+                <button className="btn tiny" onClick={() => openEdit(r)}>排期</button>
+              </div>
             )) : <div className="inline-empty">全部已排期</div>}
           </div>
         </div>
@@ -680,6 +749,9 @@ function ItemsPane({ state, project, issues, reqs, query, onQuery, kind, onKind,
             <option value="all">全部状态</option>
             {Object.entries(ISSUE_STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
+          {query || kind !== "all" || status !== "all" ? (
+            <button className="ph-link" onClick={() => { onQuery(""); onKind("all"); onStatus("all"); }}>清空筛选</button>
+          ) : null}
           <span className="ph-spacer" />
           <button className="btn tiny" onClick={() => onCreating({ kind: "issue", title: "", body: "", priority: "P2", owner: "", reqId: "" })}><PlusIcon size={12} /> 新建</button>
         </div>
@@ -820,7 +892,7 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
   const openIssues = issues.filter((i) => i.status === "open");
   const implName = (r: Requirement) => implementersOf(state, r).join(" / ") || (todosOf(state, r.id).length ? "待认领" : "—");
   const unassigned = issues.filter((i) => !i.owner && ["open", "doing", "blocked"].includes(i.status));
-  const nextReqs = reqs.filter((r) => (r.planStart && r.planStart > now) || (r.status === "approved" && r.level === DELIVERY && !todosOf(state, r.id).length));
+  const nextReqs = reqs.filter((r) => r.status === "approved" && r.level === DELIVERY && !todosOf(state, r.id).length);
   const milestones = [...(project.milestones || [])].sort((a, b) => a.date - b.date);
   const milestonesDone = milestones.filter((m) => m.status === "done").length;
   const nextMs = milestones.find((m) => m.status === "doing") || milestones.find((m) => m.status === "todo") || null;
@@ -831,7 +903,9 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
   const oneLine = [
     done.length ? `验收通过 ${done.length} 条需求` : "还没有需求验收通过",
     doing.length ? `${doing.length} 条在实现` : "",
-    nextMs ? `里程碑「${nextMs.name}」${nextMs.status === "doing" ? "进行中" : "未开始"}（${dayLabel(nextMs.date)}）` : "",
+    nextMs ? (nextMs.date < now - DAY
+      ? `里程碑「${nextMs.name}」已逾期（${dayLabel(nextMs.date)}）`
+      : `里程碑「${nextMs.name}」${nextMs.status === "doing" ? "进行中" : "未开始"}（${dayLabel(nextMs.date)}）`) : "",
     (blocked.length + failedRuns.length) ? `${blocked.length + failedRuns.length} 个问题需要你拍板` : "没有阻塞",
   ].filter(Boolean).join("；") + "。";
 
@@ -901,7 +975,7 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
   });
 
   return (
-    <div className="ph-pane">
+    <div className="ph-pane is-report">
       <article className="ph-report">
         <header className="ph-report-head">
           <div className="ph-note">项目汇总 · 周报</div>
@@ -956,11 +1030,11 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
             <div className="ph-ms" style={{ gridTemplateColumns: `repeat(${Math.min(6, milestones.length)}, minmax(0, 1fr))` }}>
               <span className="ph-ms-line" />
               {milestones.slice(0, 6).map((m) => (
-                <div key={m.id} className={`ph-ms-node ${m.status}`}>
+                <div key={m.id} className={`ph-ms-node ${m.status}${m.status !== "done" && m.date < now - DAY ? " late" : ""}`}>
                   <span className="ph-ms-dot" />
                   <span className="ph-ms-date mono">{dayLabel(m.date)}</span>
                   <span className="ph-ms-name">{m.name}</span>
-                  <span className="ph-ms-state">{m.status === "done" ? "已完成" : m.status === "doing" ? "进行中" : "未开始"}</span>
+                  <span className="ph-ms-state">{m.status === "done" ? "已完成" : m.date < now - DAY ? "已逾期" : m.status === "doing" ? "进行中" : "未开始"}</span>
                   <RowMenu title="里程碑操作">
                     <button onClick={() => saveMs(milestones.map((x) => x.id === m.id ? { ...x, status: "todo" } : x))}>未开始</button>
                     <button onClick={() => saveMs(milestones.map((x) => x.id === m.id ? { ...x, status: "doing" } : x))}>进行中</button>
@@ -971,6 +1045,7 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
               ))}
             </div>
           ) : <div className="inline-empty">还没有里程碑。加一个：名称 + 日期，状态稍后改。</div>}
+          {milestones.length > 6 ? <div className="ph-hint">时间轴只画最近 6 个；复制周报时全部带上。</div> : null}
           {msDraft && (
             <div className="ph-ms-add">
               <input className="ph-input grow" autoFocus value={msDraft.name} placeholder="里程碑名称"
