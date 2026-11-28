@@ -5193,6 +5193,18 @@ details.ds-live-thought[open]>summary{margin-bottom:2px}
 .ph-plan-edit-title{max-width:280px;color:var(--muted)}
 .ph-plan-edit .ph-input{width:150px}
 
+/* 周报：手写与行内编辑 */
+.ph-row-key{padding:0;border:0;background:transparent;color:var(--muted);font-family:var(--mono);font-size:10.5px;cursor:pointer}
+.ph-row-key:hover{color:var(--fg);text-decoration:underline;text-underline-offset:2px}
+.ph-manual{margin-left:6px;padding:0 4px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:10.5px;color:var(--faint);white-space:nowrap}
+.ph-row-actions{display:flex;align-items:center;gap:2px;justify-content:flex-end;white-space:nowrap}
+.ph-edit-row td{padding-top:4px;padding-bottom:4px;background:var(--surface-hover)}
+.ph-cell-input{width:100%;min-width:0;height:22px;padding:0 4px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--surface);color:var(--fg);font-size:11px;outline:none}
+.ph-cell-input:focus{border-color:var(--border-strong);box-shadow:var(--ring)}
+.ph-add-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-hover)}
+.ph-add-row .ph-input{width:120px}
+.ph-add-row .ph-input.grow{flex:1;min-width:120px}
+
 /* ══════════════════════════════════════════════════════════════
    项目主页（原型 docs/prototype/project-home.html 的落地）
    外壳：rail + 左栏 232（可收起）+ 主面；主面 = 页头一行 + 概览条 + 五个页面级 tab

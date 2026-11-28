@@ -7547,6 +7547,36 @@ const actions = {
     store.persist(); broadcast();
     return { ok: true, milestones: list };
   },
+  /** 汇总页手写的部分：一句话进展覆盖、手工进展行、手工问题行、说明覆盖 */
+  projectSetReport: ({ id = "", report = null } = {}) => {
+    const p = store.state.projects.find((x) => x.id === String(id));
+    if (!p) throw new Error("项目不存在");
+    if (report == null) {
+      p.report = undefined;
+    } else {
+      const rows = (list, keys, limit) => (Array.isArray(list) ? list : []).slice(0, limit).map((row, i) => {
+        const out = { id: String(row?.id || `${i}-${Date.now().toString(36)}`) };
+        for (const k of keys) out[k] = String(row?.[k] ?? "").slice(0, k === "note" || k === "impact" ? 400 : 120);
+        return out;
+      });
+      const notes = {};
+      for (const [key, value] of Object.entries(report.notes || {})) {
+        const text = String(value ?? "").trim();
+        if (key && text) notes[String(key).slice(0, 60)] = text.slice(0, 400);
+      }
+      const lede = String(report.lede ?? "").trim().slice(0, 600);
+      p.report = {
+        lede: lede || null,
+        progress: rows(report.progress, ["key", "title", "kind", "status", "owner", "note"], 40),
+        asks: rows(report.asks, ["key", "what", "owner", "impact", "need"], 40),
+        notes,
+      };
+    }
+    p.updatedAt = Date.now();
+    store.addEvent("project.report", `project.report ${p.name}`);
+    return { ok: true, report: p.report || null };
+  },
+
   /** 需求排期（计划 tab 的甘特条） */
   requirementSetPlan: ({ id = "", planStart = null, planEnd = null } = {}) => {
     const req = (store.state.requirements || []).find((r) => r.id === String(id));

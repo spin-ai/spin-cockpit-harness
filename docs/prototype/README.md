@@ -20,7 +20,7 @@
 | [`requirements.html`](requirements.html) | 需求管理（按项目 · RR/IR/SR/US · 可裁剪）**已被 `project-home.html` 吸收，保留作对照** | 需求没有结构化承载：层级不可裁剪、追溯靠人肉、实现者与任务脱节。原型验证「一个对象 + 四层 + 裁剪 + 追溯矩阵 + 派活 / 全局助手会话」的信息架构；看板 / 甘特只做 M2/M3 静态帧；小A同学（rail「说明」上方 / ⌘⇧A）在需求页右侧会话里演示：首页概览 / 哪些没派活 / 哪些验收没过 / 断链 / 用法带我去 / 验收 / 下游 / 检查 / 派活计划 / 任务进度 / 停 run / 关闭检查都做成可点卡片；点结果会选中需求、滚到对应区域并高亮（参考 spin-yieldmind-app 的侧栏联动）；chat 有流式 / 停止 / 复制 / 重试 / 路径步骤 / 多行输入；不做独立 AI 面板 |
 | [`project-home.html`](project-home.html) | 项目主页（项目 → 需求，master-detail） | 项目页是卡片墙、需求页是独立外壳，两边靠「页头一个按钮 + 需求页一个项目下拉」连着，在需求页换项目还会把全局当前项目一起换掉。这一版把需求收成**项目主面的一个 tab**：左栏是唯一的项目列表，主面 = 页头一行 + 概览条 + Tabs（需求 / 概览）；运行 / 场景 / 文件是空间与工具，只留一行出口，不占 tab |
 | [`pptx.html`](pptx.html) | 演示文稿（pptx 插件视图） | 插件只有 CLI / 命令面板入口，没有界面：参数没处填、大纲确认不可达、页级并发和门禁看不见。这一版把「新建 → 大纲 → 生成 → 结果」收进一个主面（不跳页），左栏生成记录（选中不重排）、右栏本次设置 / 报告 / 门禁 / 产物；并发用每页一张 16:9 卡画出来，失败页就地重试，不重跑整份 |
-| [`deckcraft-workbench.html`](deckcraft-workbench.html) | 工作台 · 插件面板（DeckCraft） | 插件只能整页打开，Chat 与工具不同屏；没有元素上下文、安装 / 权限 / 崩溃态。这一版把插件面板放进工作台右栏：任务 │ Chat │ 面板同屏，选中元素进 Chat，面板可装 / 可关 / 可崩，Chat 通过 MCP 改稿 |
+| [`deckcraft-workbench.html`](deckcraft-workbench.html) | 工作台 · 插件面板（DeckCraft） | 插件只能整页打开，Chat 与工具不同屏；没有元素上下文、安装 / 权限 / 崩溃态。这一版把插件面板 / 整页放进工作台：任务 │ Chat │ 面板同屏，DeckCraft / Excalidraw / Jupyter 多 tab，选中元素进 Chat，面板可装 / 可关 / 可崩，Chat 按插件跑 MCP 改稿 |
 | [`entry-points.html`](entry-points.html) | 入口总表（23 张卡，14 个能造出任务的入口） | 上一版把「表 / 时序 / 界面」横向拆成三章，读一个入口要来回跑三次。现在**一个入口一张卡**：卡里就是「条件 / 结果 / 代码 + 时序图 + 界面示意图」，按「这句话从哪儿来」分 8 组 |
 
 
@@ -61,25 +61,26 @@ rail 56 │ 左 232 生成记录 │ 主面：新建 / 大纲 / 页级并发 / �
 rail 56 │ 任务 / 项目 320 │ Chat 400 │ splitter │ DeckCraft 面板（插件）
 ```
 
-- **插件是面板，不是整页**：面板 tab 一行 chrome（插件名 + 页码 + 保存 + `⋯`），没有第二排 ribbon；关掉面板，工作台回到原来的单面布局。
+- **插件是面板，不是整页**：面板一行 chrome（插件 tab + 页码 + 保存 + `⋯`），没有第二排 ribbon；关掉面板，工作台回到原来的单面布局。
+- **多插件 tab**：DeckCraft / Excalidraw 是 panel，Jupyter 是 page（整页工具；原型里缩在右栏预览，并标注 `page`）；点 tab 切换，film / 页码等只属于 deck，选区按插件重置。
 - **Chat 不动**：仍是我们自己的 `TaskChat`；插件只通过 RPC 送 `ui.context.set`，不拥有 Chat。
-- **选中元素**：点 slide 里的标题 / 指标卡 / 要点 → 选中描边 + Chat composer 出现 `元素 · 第 4 页 · 标题`；发送后随消息进 Agent。
-- **Chat 改稿**：模拟 `MCP deck.inspect → deck.set_text → deck.save`，预览即时更新；真实实现见 [`ARCH-plugin-panels`](../arch/ARCH-plugin-panels.md)。
+- **选中元素**：DeckCraft 点标题/指标卡 → chip `元素 · DeckCraft · 第 4 页 · 标题`；Excalidraw 点图形 → `元素 · Excalidraw · 画布 · 矩形 1`；Jupyter 点 cell → `元素 · Jupyter · Cell 2 · Code`。
+- **Chat 改稿**：按当前 tab 换工具：`deck.*` / `canvas.*` / `notebook.*`；预览即时更新；真实实现见 [`ARCH-plugin-panels`](../arch/ARCH-plugin-panels.md)。
 - **安装 / 权限 / 签名**：rail「插件」或任务栏底部「插件市场」→ 安装面板：来源 URL、11.9MB、四条权限（fs:project / ui:panel / ui:context / deck:engine）、SHA256 + 签名说明；装完直接出现在右侧。
 - **崩溃隔离**：面板崩了只显示「重载面板 / 查看日志」，Chat 和任务不动。
 - **中文**：这里是我们自己的 SVG 预览 + 无头引擎，不嵌 DeckCraft 的 ribbon；DeckCraft Web UI 没有 CJK 字体，中文会是方框。
 
 **可点交互**
 
-- 点标题 / 指标卡 / 要点 → 选中 + 进 Context；`XIcon` 移除上下文；`Esc` 清选中
+- 点标题 / 指标卡 / 图形 / cell → 选中 + 进 Context；`XIcon` 移除上下文；切 tab / 翻页 / `Esc` 清选中
 - 发送：无选中时只 inspect；选中标题时改标题并保存；选中指标时只回“要改什么”
-- 翻页 / 缩略图 / 左右方向键（翻页清选中）；`⌘S` 保存；`⌘↵` 发送
+- 翻页 / 缩略图 / 左右方向键（仅 DeckCraft）；`⌘S` 保存；`⌘↵` 发送
 - `⋯`：在 DeckCraft 中编辑（原生）/ 重载面板 / 面板权限 / 卸载插件
 - 拖 Chat 与面板之间的分缝（320–560）；收起任务栏；亮暗
 - 安装：`从插件市场安装` → 进度 / 校验 → 面板出现；已安装再看市场是「打开面板 / 卸载」
-- 定格：`?theme=light|dark`、`?state=panel|empty|install|crash`、`?deck=paper|ink`、`?page=4&select=title|card-2`、`?fold=task`
+- 定格：`?theme=light|dark`、`?state=panel|empty|install|crash`、`?plugin=deck|excalidraw|jupyter`、`?deck=paper|ink`、`?page=4&select=title|card-2`、`?fold=task`
 
-**与实现的关系**：尚未落地。插件面板、下载安装、元素上下文、App 托管 DeckCraft 引擎的完整方案见 [`ARCH-plugin-panels.md`](../arch/ARCH-plugin-panels.md)；这里只验证「任务 │ Chat │ 面板」的布局、选中链路和安装/崩溃态。
+**与实现的关系**：尚未落地。插件面板、`workbench.page`、下载安装、通用 `PluginElementContext`、App 托管 DeckCraft 引擎的完整方案见 [`ARCH-plugin-panels.md`](../arch/ARCH-plugin-panels.md)；这里验证「任务 │ Chat │ 面板/整页」的布局、多 tab、选中链路和安装/崩溃态。
 
 ### 项目主页（`project-home.html`）
 
@@ -140,6 +141,12 @@ rail 56 │ 左栏 232（唯一的项目列表） │ 主面：页头一行 · �
 - 交付层现在两种看法：`看板`（按状态分列、拖动改状态）和 `列表`（一行一条，先看在动的：实现中 / 待验收 → 已批准 → 待评审 → 草稿 → 已完成）。
 - 列表把状态做成行内下拉，改状态同样过闸门（拒绝时状态退回、原因弹出）；实现者、验收进度、缺口 chip 都在行里。
 - 选择记在 `localStorage.ph.boardView`；两个视图共用同一份筛选（实现者 / 只看缺口）。
+
+**第七轮（汇总每一栏都能编辑）**：
+- 一句话进展：默认按需求 / 里程碑算出来，点「编辑」手写覆盖（标注「手写」），可一键「恢复自动」。
+- 进展 / 问题与求助：表头「＋ 补一行 / ＋ 补一条」加手写记录（标「手写」，可改可删）；
+  自动算出来的行进「编辑」只改说明 / 责任人与「需要你」，**来源行本身不会变成手抄**（说明覆盖存在 `notes` 里，页面上标「改」）。
+- 存 `projects.report`（lede / progress / asks / notes），导出的 xlsx / eml / Markdown 用的是**编辑后**的这份数据。
 
 **第六轮（周报要能发出去：模板 + XLSX + Outlook）**：
 - 汇总不再只有「复制」：右上角一个 `导出周报`，里面三种出去的方式（导出 Excel / 发 Outlook 邮件 / 复制 Markdown）+ 三档模板。

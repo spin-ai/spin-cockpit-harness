@@ -165,6 +165,8 @@ export async function openDb(dir, { onTranscript } = {}) {
     "ALTER TABLE projects ADD COLUMN alias TEXT",
     "ALTER TABLE projects ADD COLUMN goal TEXT",
     "ALTER TABLE projects ADD COLUMN milestones TEXT",
+    // 周报里手写的部分：一句话进展覆盖 / 手工进展 / 手工问题 / 说明覆盖
+    "ALTER TABLE projects ADD COLUMN report TEXT",
     "ALTER TABLE requirements ADD COLUMN plan_start INTEGER",
     "ALTER TABLE requirements ADD COLUMN plan_end INTEGER",
     "ALTER TABLE agents ADD COLUMN alias TEXT",
@@ -309,6 +311,7 @@ export async function openDb(dir, { onTranscript } = {}) {
     alias: r.alias || "",
     goal: r.goal || "",
     milestones: J(r.milestones, []),
+    report: J(r.report, null) || undefined,
   }));
   state.requirements = rows("SELECT * FROM requirements").map((r) => ({
     id: r.id, projectId: r.project_id, key: r.key, level: r.level,
@@ -536,8 +539,8 @@ export async function openDb(dir, { onTranscript } = {}) {
         JSON.stringify(h.caps || []), h.lastProbe ?? null, h.latencyMs ?? null, h.maxConcurrency || 0, h.defaultCwd || "", h.probeError ?? null],
     );
     for (const p of state.projects) run(
-      "INSERT INTO projects (id,name,path,desc,color,status,created_at,last_opened_at,alias,goal,milestones) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-      [p.id, p.name, p.path, p.desc || "", p.color || "slate", p.status || "in_progress", p.createdAt || Date.now(), p.lastOpenedAt || 0, p.alias || "", p.goal || "", JSON.stringify(p.milestones || [])]);
+      "INSERT INTO projects (id,name,path,desc,color,status,created_at,last_opened_at,alias,goal,milestones,report) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+      [p.id, p.name, p.path, p.desc || "", p.color || "slate", p.status || "in_progress", p.createdAt || Date.now(), p.lastOpenedAt || 0, p.alias || "", p.goal || "", JSON.stringify(p.milestones || []), p.report ? JSON.stringify(p.report) : null]);
     for (const l of state.requirementLinks || []) run(
       "INSERT INTO requirement_links (id,from_id,to_id,kind,created_at) VALUES (?,?,?,?,?)",
       [l.id, l.fromId, l.toId, l.kind || "relates", l.createdAt || Date.now()],

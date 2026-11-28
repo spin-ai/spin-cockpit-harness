@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Project, ProjectIssue, ProjectMilestone, Requirement, State } from "../types";
+import type { Project, ProjectIssue, ProjectMilestone, ProjectReport, Requirement, State } from "../types";
 import { Requirements } from "./Requirements";
 import { Overview } from "./Overview";
 import { RowMenu } from "./RowMenu";
 import { confirmDialog } from "./ConfirmHost";
 import { EmptyState } from "./EmptyState";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DownloadIcon, ListIcon, MailIcon, PlusIcon, SearchIcon, SheetIcon, TableIcon, XIcon } from "./Icons";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DownloadIcon, ListIcon, MailIcon, PencilIcon, PlusIcon, SearchIcon, SheetIcon, TableIcon, TrashIcon, XIcon } from "./Icons";
 import { Segmented } from "./Tabs";
 import { agentOf } from "../ui";
 
@@ -950,6 +950,49 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
     } catch { return "standard"; }
   });
   useEffect(() => { try { localStorage.setItem("ph.reportTpl", tpl); } catch { /* ignore */ } }, [tpl]);
+  // 汇总里手写的部分（一句话进展 / 手工进展行 / 手工问题行 / 说明覆盖）
+  const reportData = project.report || {};
+  const [ledeDraft, setLedeDraft] = useState<string | null>(null);
+  const [rowEdit, setRowEdit] = useState<string | null>(null);
+  const [rowDraft, setRowDraft] = useState<Record<string, string>>({});
+  const [addSection, setAddSection] = useState<"progress" | "asks" | null>(null);
+  const [addDraft, setAddDraft] = useState<Record<string, string>>({});
+  const noteOf = (key: string) => (reportData.notes || {})[key] || "";
+  const saveReport = (patch: Partial<ProjectReport>) => run("report", async () => {
+    await act("projectSetReport", { id: project.id, report: { ...reportData, ...patch } });
+  });
+  const setNote = (key: string, text: string) => {
+    const notes = { ...(reportData.notes || {}) };
+    if (text.trim()) notes[key] = text.trim(); else delete notes[key];
+    return saveReport({ notes });
+  };
+  // 手写行在两种 section 里字段不同，编辑时统一按字符串字典处理，落库前再窄化
+  const manualOf = (section: "progress" | "asks") =>
+    ((section === "progress" ? reportData.progress : reportData.asks) || []) as unknown as Record<string, string>[];
+  const writeManual = (section: "progress" | "asks", list: Record<string, string>[]) =>
+    saveReport(section === "progress"
+      ? { progress: list as unknown as ProjectReport["progress"] }
+      : { asks: list as unknown as ProjectReport["asks"] });
+  const startRow = (id: string, values: Record<string, string>) => { setRowEdit(id); setRowDraft(values); };
+  const stopRow = () => { setRowEdit(null); setRowDraft({}); };
+  const startAdd = (section: "progress" | "asks") => {
+    setAddSection(section);
+    setAddDraft(section === "progress"
+      ? { key: "", title: "", owner: "", note: "" }
+      : { key: "", what: "", owner: "", impact: "", need: "" });
+  };
+  const commitManual = async (section: "progress" | "asks") => {
+    if (!rowEdit) return;
+    const id = rowEdit.replace(/^[^:]+:/, "");
+    const list = manualOf(section).map((r) => (r.id === id ? { ...r, ...rowDraft } : r));
+    stopRow();
+    await writeManual(section, list);
+    notify("已保存");
+  };
+  const removeManual = async (section: "progress" | "asks", id: string) => {
+    await writeManual(section, manualOf(section).filter((r) => r.id !== id));
+    notify("已删除这条手写记录");
+  };
   const weekStart = (() => {
     const d = new Date(now);
     d.setHours(0, 0, 0, 0);
@@ -1011,34 +1054,6 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
     ...(unassigned.length ? [{ key: "未指派", what: `${unassigned.length} 条事项没有负责人`, owner: "", impact: "没人接就会烂在台账里", need: "指派给谁", tone: "" }] : []),
   ];
 
-  /** 导出用的那份数据：页面渲染与 xlsx / eml 共用，避免「页上一套、文件里另一套」 */
-  const reportPayload = () => ({
-    projectName: project.name,
-    periodLabel: `本周 ${dayLabel(weekStart)} → ${dayLabel(weekStart + 6 * DAY)}`,
-    weekStartLabel: dayLabel(weekStart),
-    weekEndLabel: dayLabel(weekStart + 6 * DAY),
-    generatedLabel: `生成于 ${fmt(now)}`,
-    goal: project.goal || "",
-    oneLine,
-    stats: [
-      { label: "需求", value: reqs.length },
-      { label: "已批准未派活", value: gapUnplanned.length },
-      { label: "任务", value: (state.todos || []).filter((t) => t.projectId === project.id).length },
-      { label: "台账待处理", value: issues.filter((i) => i.status === "open").length },
-    ],
-    progress: progressRows.map((r) => ({ ...r, updatedLabel: fmt(r.at || 0) })),
-    asks,
-    milestones: milestones.map((m) => ({
-      name: m.name,
-      dateLabel: dayLabel(m.date),
-      statusLabel: m.status === "done" ? "已完成" : m.date < now - DAY ? "已逾期" : m.status === "doing" ? "进行中" : "未开始",
-    })),
-    acceptance: reqs
-      .filter((r) => r.level === DELIVERY && (r.acceptance || []).length)
-      .slice(0, 60)
-      .map((r) => ({ key: r.key, title: r.title, items: (r.acceptance || []).map((a) => ({ text: a.text, done: !!a.done })) })),
-  });
-
   const exportReport = async (format: "xlsx" | "eml") => {
     try {
       const res = await act("reportExport", { format, template: tpl, payload: reportPayload() });
@@ -1060,6 +1075,58 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
       notify(String((err as Error)?.message || err));
     }
   };
+
+  const ledeText = (reportData.lede || "").trim() || oneLine;
+  type ProgressView = {
+    key: string; title: string; kind: string; status: string; owner: string; note: string;
+    at?: number; tone?: string; id?: string; source?: "req" | "issue"; manual: boolean;
+  };
+  type AskView = { key: string; what: string; owner: string; impact: string; need: string; tone?: string; issueId?: string; manual: boolean };
+  const progressShown: ProgressView[] = [
+    ...(reportData.progress || []).map((r) => ({
+      key: r.key, title: r.title, kind: r.kind || "手写", status: r.status, owner: r.owner, note: r.note, manual: true,
+    })),
+    ...progressRows.map((r) => ({ ...r, note: noteOf(r.key) || r.note, manual: false })),
+  ];
+  const asksShown: AskView[] = [
+    ...(reportData.asks || []).map((a) => ({
+      key: a.key, what: a.what, owner: a.owner, impact: a.impact, need: a.need, manual: true,
+    })),
+    ...asks.map((a) => ({
+      ...a,
+      owner: noteOf(`ask:${a.key}:owner`) || a.owner,
+      need: noteOf(`ask:${a.key}:need`) || a.need,
+      manual: false,
+    })),
+  ];
+
+  /** 导出用的那份数据：页面渲染与 xlsx / eml 共用，避免「页上一套、文件里另一套」 */
+  const reportPayload = () => ({
+    projectName: project.name,
+    periodLabel: `本周 ${dayLabel(weekStart)} → ${dayLabel(weekStart + 6 * DAY)}`,
+    weekStartLabel: dayLabel(weekStart),
+    weekEndLabel: dayLabel(weekStart + 6 * DAY),
+    generatedLabel: `生成于 ${fmt(now)}`,
+    goal: project.goal || "",
+    oneLine: ledeText,
+    stats: [
+      { label: "需求", value: reqs.length },
+      { label: "已批准未派活", value: gapUnplanned.length },
+      { label: "任务", value: (state.todos || []).filter((t) => t.projectId === project.id).length },
+      { label: "台账待处理", value: issues.filter((i) => i.status === "open").length },
+    ],
+    progress: progressShown.map((r) => ({ key: r.key, title: r.title, kind: r.kind, status: r.status, owner: r.owner, note: r.note, updatedLabel: r.at ? fmt(r.at) : "" })),
+    asks: asksShown.map((a) => ({ key: a.key, what: a.what, owner: a.owner, impact: a.impact, need: a.need })),
+    milestones: milestones.map((m) => ({
+      name: m.name,
+      dateLabel: dayLabel(m.date),
+      statusLabel: m.status === "done" ? "已完成" : m.date < now - DAY ? "已逾期" : m.status === "doing" ? "进行中" : "未开始",
+    })),
+    acceptance: reqs
+      .filter((r) => r.level === DELIVERY && (r.acceptance || []).length)
+      .slice(0, 60)
+      .map((r) => ({ key: r.key, title: r.title, items: (r.acceptance || []).map((a) => ({ text: a.text, done: !!a.done })) })),
+  });
 
   const saveMs = (list: ProjectMilestone[], done = "") => void run("ms", async () => {
     await act("projectMilestones", { id: project.id, milestones: list });
@@ -1095,8 +1162,28 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
         </header>
 
         <section className="ph-sec">
-          <div className="ph-sec-head"><h3>一句话进展</h3><span className="ph-sec-rule" /></div>
-          <p className="ph-lede">{oneLine}</p>
+          <div className="ph-sec-head"><h3>一句话进展</h3><span className="ph-sec-rule" />
+            {ledeDraft === null ? (
+              <>
+                {reportData.lede ? <button className="btn tiny" onClick={() => void saveReport({ lede: null })} title="改回按需求与里程碑自动生成">恢复自动</button> : null}
+                <button className="btn tiny" onClick={() => setLedeDraft(ledeText)}>编辑</button>
+              </>
+            ) : null}
+          </div>
+          {ledeDraft === null ? (
+            <p className="ph-lede">{ledeText}{reportData.lede ? <span className="ph-muted">（手写）</span> : null}</p>
+          ) : (
+            <div className="ph-goal-edit">
+              <textarea className="ph-textarea" autoFocus value={ledeDraft} placeholder="这周一句话：做完了什么、卡在哪、下周要什么"
+                onChange={(e) => setLedeDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setLedeDraft(null); } }} />
+              <div className="row gap6">
+                <button className="btn tiny primary" onClick={() => { void saveReport({ lede: ledeDraft }); setLedeDraft(null); notify("一句话进展已保存"); }}>保存</button>
+                <button className="btn tiny" onClick={() => setLedeDraft(null)}>取消</button>
+                <button className="ph-link" onClick={() => { setLedeDraft(null); void saveReport({ lede: null }); }}>用自动生成的</button>
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="ph-sec">
@@ -1169,47 +1256,159 @@ function SummaryPane({ state, project, reqs, issues, gaps, now, goalDraft, onGoa
         </section>
 
         <section className="ph-sec">
-          <div className="ph-sec-head"><h3>进展</h3><span className="ph-n mono">{progressRows.length}</span><span className="ph-sec-rule" /></div>
-          {progressRows.length ? (
+          <div className="ph-sec-head"><h3>进展</h3><span className="ph-n mono">{progressShown.length}</span><span className="ph-sec-rule" />
+            <button className="btn tiny" onClick={() => startAdd("progress")}>＋ 补一行</button>
+          </div>
+          {progressShown.length ? (
             <table className="ph-table report">
-              <thead><tr><th>编号</th><th>工作项</th><th>类型</th><th>状态</th><th>负责人</th><th>说明</th><th>更新</th></tr></thead>
+              <thead><tr><th>编号</th><th>工作项</th><th>类型</th><th>状态</th><th>负责人</th><th>说明</th><th>更新</th><th /></tr></thead>
               <tbody>
-                {progressRows.map((r) => (
-                  <tr key={`${r.key}-${r.at}`}
-                    className={r.source === "req" && onOpenReq ? "ph-row-link" : r.source === "issue" && onOpenIssue ? "ph-row-link" : ""}
-                    onClick={() => { if (r.source === "req") onOpenReq?.(r.id); else onOpenIssue?.(r.id); }}>
-                    <td className="mono">{r.key}</td>
-                    <td className="ph-cell-title">{r.title}</td>
-                    <td className="mono">{r.kind}</td>
-                    <td><span className={`ph-ist ${r.tone || ""}`}>{r.status}</span></td>
-                    <td>{r.owner}</td>
-                    <td className="ph-muted">{r.note}</td>
-                    <td className="mono">{fmt(r.at)}</td>
-                  </tr>
-                ))}
+                {progressShown.map((r) => {
+                  const editId = `progress:${r.manual ? r.id : r.key}`;
+                  if (rowEdit === editId) {
+                    return (
+                      <tr key={editId} className="ph-edit-row">
+                        <td className="mono">{r.manual ? <input className="ph-cell-input mono" value={rowDraft.key ?? ""} placeholder="编号" onChange={(e) => setRowDraft({ ...rowDraft, key: e.target.value })} /> : r.key}</td>
+                        <td>{r.manual ? <input className="ph-cell-input" value={rowDraft.title ?? ""} placeholder="工作项" onChange={(e) => setRowDraft({ ...rowDraft, title: e.target.value })} /> : r.title}</td>
+                        <td className="mono">{r.manual ? <input className="ph-cell-input mono" value={rowDraft.kind ?? ""} placeholder="类型" onChange={(e) => setRowDraft({ ...rowDraft, kind: e.target.value })} /> : r.kind}</td>
+                        <td>{r.manual ? <input className="ph-cell-input" value={rowDraft.status ?? ""} placeholder="状态" onChange={(e) => setRowDraft({ ...rowDraft, status: e.target.value })} /> : <span className={`ph-ist ${r.tone || ""}`}>{r.status}</span>}</td>
+                        <td>{r.manual ? <input className="ph-cell-input" value={rowDraft.owner ?? ""} placeholder="负责人" onChange={(e) => setRowDraft({ ...rowDraft, owner: e.target.value })} /> : r.owner}</td>
+                        <td><input className="ph-cell-input" value={rowDraft.note ?? ""} placeholder="说明（手写会覆盖自动算出来的）" onChange={(e) => setRowDraft({ ...rowDraft, note: e.target.value })} /></td>
+                        <td className="mono">{r.manual ? "—" : fmt(r.at || 0)}</td>
+                        <td className="ph-row-actions">
+                          <button className="btn tiny primary" onClick={() => { if (r.manual) void commitManual("progress"); else { void setNote(r.key, rowDraft.note ?? ""); stopRow(); notify("说明已保存"); } }}>保存</button>
+                          <button className="btn tiny" onClick={stopRow}>取消</button>
+                        </td>
+                      </tr>
+                    );
+                  }
+                  return (
+                    <tr key={r.manual ? r.id : `${r.key}-${r.at}`}>
+                      <td className="mono">
+                        {r.manual ? r.key || "—" : (
+                          <button className="ph-row-key" title="打开这条需求 / 事项"
+                            onClick={() => { if (!r.id) return; if (r.source === "req") onOpenReq?.(r.id); else onOpenIssue?.(r.id); }}>{r.key}</button>
+                        )}
+                      </td>
+                      <td className="ph-cell-title">{r.title}{r.manual ? <span className="ph-manual">手写</span> : null}</td>
+                      <td className="mono">{r.kind}</td>
+                      <td><span className={`ph-ist ${r.tone || ""}`}>{r.status}</span></td>
+                      <td>{r.owner}</td>
+                      <td className="ph-muted">{r.note || "—"}{!r.manual && noteOf(r.key) ? <span className="ph-manual">改</span> : null}</td>
+                      <td className="mono">{r.manual ? "—" : fmt(r.at || 0)}</td>
+                      <td className="ph-row-actions">
+                        <button className="icon-btn" title={r.manual ? "编辑这一行" : "改说明"} aria-label={r.manual ? "编辑这一行" : "改说明"}
+                          onClick={() => startRow(editId, { key: r.key, title: r.title, kind: r.kind, status: r.status, owner: r.owner, note: r.note })}>
+                          <PencilIcon size={12} />
+                        </button>
+                        {r.manual ? (
+                          <button className="icon-btn" title="删除这条手写记录" aria-label="删除这条手写记录" onClick={() => void removeManual("progress", r.id || "")}>
+                            <TrashIcon size={12} />
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           ) : <div className="inline-empty">这周还没有可写的进展</div>}
+          {addSection === "progress" ? (
+            <div className="ph-add-row">
+              <input className="ph-input" placeholder="编号（可空）" value={addDraft.key || ""} onChange={(e) => setAddDraft({ ...addDraft, key: e.target.value })} />
+              <input className="ph-input grow" autoFocus placeholder="工作项" value={addDraft.title || ""} onChange={(e) => setAddDraft({ ...addDraft, title: e.target.value })} />
+              <input className="ph-input" placeholder="负责人" value={addDraft.owner || ""} onChange={(e) => setAddDraft({ ...addDraft, owner: e.target.value })} />
+              <input className="ph-input grow" placeholder="说明" value={addDraft.note || ""} onChange={(e) => setAddDraft({ ...addDraft, note: e.target.value })} />
+              <button className="btn tiny" onClick={() => setAddSection(null)}>取消</button>
+              <button className="btn tiny primary" disabled={!(addDraft.title || "").trim()} onClick={() => {
+                const row = { id: `pr-${Date.now().toString(36)}`, key: addDraft.key || "", title: addDraft.title || "", kind: "手写", status: "", owner: addDraft.owner || "", note: addDraft.note || "" };
+                void writeManual("progress", [...manualOf("progress"), row]);
+                setAddSection(null);
+                notify("已补一行进展（可以随时改）");
+              }}>加入周报</button>
+            </div>
+          ) : null}
         </section>
 
         <section className="ph-sec">
-          <div className="ph-sec-head"><h3>问题与求助</h3><span className="ph-n mono">{asks.length}</span><span className="ph-sec-rule" /></div>
-          {asks.length ? (
+          <div className="ph-sec-head"><h3>问题与求助</h3><span className="ph-n mono">{asksShown.length}</span><span className="ph-sec-rule" />
+            <button className="btn tiny" onClick={() => startAdd("asks")}>＋ 补一条</button>
+          </div>
+          {asksShown.length ? (
             <table className="ph-table report">
-              <thead><tr><th>编号</th><th>问题</th><th>责任人</th><th>影响</th><th>需要你</th></tr></thead>
+              <thead><tr><th>编号</th><th>问题</th><th>责任人</th><th>影响</th><th>需要你</th><th /></tr></thead>
               <tbody>
-                {asks.map((a) => (
-                  <tr key={a.key} className={a.issueId ? "ph-row-link" : ""} onClick={() => { if (a.issueId) onOpenIssue?.(a.issueId); }}>
-                    <td className="mono">{a.key}</td>
-                    <td className="ph-cell-title">{a.what}</td>
-                    <td>{a.owner || <span className="warn">未指派</span>}</td>
-                    <td className="ph-muted">{a.impact}</td>
-                    <td><span className={`ph-ist ${a.tone || ""}`}>{a.need}</span></td>
-                  </tr>
-                ))}
+                {asksShown.map((a) => {
+                  const editId = `asks:${a.manual ? (a as unknown as { id: string }).id : a.key}`;
+                  if (rowEdit === editId) {
+                    return (
+                      <tr key={editId} className="ph-edit-row">
+                        <td className="mono">{a.manual ? <input className="ph-cell-input mono" value={rowDraft.key ?? ""} placeholder="编号" onChange={(e) => setRowDraft({ ...rowDraft, key: e.target.value })} /> : a.key}</td>
+                        <td>{a.manual ? <input className="ph-cell-input" value={rowDraft.what ?? ""} placeholder="问题" onChange={(e) => setRowDraft({ ...rowDraft, what: e.target.value })} /> : a.what}</td>
+                        <td><input className="ph-cell-input" value={rowDraft.owner ?? ""} placeholder="责任人" onChange={(e) => setRowDraft({ ...rowDraft, owner: e.target.value })} /></td>
+                        <td>{a.manual ? <input className="ph-cell-input" value={rowDraft.impact ?? ""} placeholder="影响" onChange={(e) => setRowDraft({ ...rowDraft, impact: e.target.value })} /> : <span className="ph-muted">{a.impact}</span>}</td>
+                        <td><input className="ph-cell-input" value={rowDraft.need ?? ""} placeholder="需要你" onChange={(e) => setRowDraft({ ...rowDraft, need: e.target.value })} /></td>
+                        <td className="ph-row-actions">
+                          <button className="btn tiny primary" onClick={() => {
+                            if (a.manual) { void commitManual("asks"); return; }
+                            // 自动行只覆盖「责任人 / 需要你」两个字段，来源仍是需求或台账
+                            void setNote(`ask:${a.key}:owner`, rowDraft.owner ?? "");
+                            void setNote(`ask:${a.key}:need`, rowDraft.need ?? "");
+                            stopRow();
+                            notify("已保存");
+                          }}>保存</button>
+                          <button className="btn tiny" onClick={stopRow}>取消</button>
+                        </td>
+                      </tr>
+                    );
+                  }
+                  return (
+                    <tr key={a.manual ? (a as unknown as { id: string }).id : a.key}>
+                      <td className="mono">
+                        {a.manual ? a.key || "—" : (
+                          <button className="ph-row-key" title="打开这条事项" onClick={() => { if (a.issueId) onOpenIssue?.(a.issueId); }}>{a.key}</button>
+                        )}
+                      </td>
+                      <td className="ph-cell-title">{a.what}{a.manual ? <span className="ph-manual">手写</span> : null}</td>
+                      <td>{a.owner || <span className="warn">未指派</span>}</td>
+                      <td className="ph-muted">{a.impact}</td>
+                      <td><span className={`ph-ist ${a.tone || ""}`}>{a.need}</span></td>
+                      <td className="ph-row-actions">
+                        <button className="icon-btn" title={a.manual ? "编辑这一条" : "改责任人与「需要你」"} aria-label="编辑这一条"
+                          onClick={() => startRow(editId, a.manual
+                            ? { key: a.key, what: a.what, owner: a.owner, impact: a.impact, need: a.need }
+                            : { owner: a.owner, need: a.need })}>
+                          <PencilIcon size={12} />
+                        </button>
+                        {a.manual ? (
+                          <button className="icon-btn" title="删除这条手写记录" aria-label="删除这条手写记录"
+                            onClick={() => void removeManual("asks", (a as unknown as { id: string }).id)}>
+                            <TrashIcon size={12} />
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           ) : <div className="inline-empty">没有需要你处理的问题</div>}
+          {addSection === "asks" ? (
+            <div className="ph-add-row">
+              <input className="ph-input" placeholder="编号（可空）" value={addDraft.key || ""} onChange={(e) => setAddDraft({ ...addDraft, key: e.target.value })} />
+              <input className="ph-input grow" autoFocus placeholder="问题（一句话）" value={addDraft.what || ""} onChange={(e) => setAddDraft({ ...addDraft, what: e.target.value })} />
+              <input className="ph-input" placeholder="责任人" value={addDraft.owner || ""} onChange={(e) => setAddDraft({ ...addDraft, owner: e.target.value })} />
+              <input className="ph-input grow" placeholder="影响" value={addDraft.impact || ""} onChange={(e) => setAddDraft({ ...addDraft, impact: e.target.value })} />
+              <input className="ph-input grow" placeholder="需要你（拍板 / 找谁 / 做什么）" value={addDraft.need || ""} onChange={(e) => setAddDraft({ ...addDraft, need: e.target.value })} />
+              <button className="btn tiny" onClick={() => setAddSection(null)}>取消</button>
+              <button className="btn tiny primary" disabled={!(addDraft.what || "").trim()} onClick={() => {
+                const row = { id: `ar-${Date.now().toString(36)}`, key: addDraft.key || "", what: addDraft.what || "", owner: addDraft.owner || "", impact: addDraft.impact || "", need: addDraft.need || "" };
+                void writeManual("asks", [...manualOf("asks"), row]);
+                setAddSection(null);
+                notify("已补一条问题（可以随时改）");
+              }}>加入周报</button>
+            </div>
+          ) : null}
         </section>
 
         <footer className="ph-report-foot">

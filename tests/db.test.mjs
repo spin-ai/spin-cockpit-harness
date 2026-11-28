@@ -199,8 +199,23 @@ try {
     title: "交出去的工作区", kind: "worktree", terminalId: "term-rt", goal: "修登录并回一句", status: "open",
     createdAt: 1700000000000, updatedAt: 1700000000001 });
   rt.state.bots.push({ id: "bot-rt", name: "技能 bot", avatar: "", avatarClass: "a", persona: {}, capability: "work", role: "worker", executorAgentId: null, model: "", effort: "", skills: ["status-brief", "pr-review"], projectId: "p1", hostId: "h1", team: "产品组", plan: { goal: "修登录", steps: [{ text: "看日志", status: "doing" }] }, channels: ["local"], policy: {}, budget: {}, status: "active", mutedUntil: 0, createdAt: 1, updatedAt: 2 });
+  // 周报手写部分：projects.report 要能原样往返（一句话进展 / 手工行 / 说明覆盖）
+  const proj = rt.state.projects.find((p) => p.id === rt.state.activeProjectId) || rt.state.projects[0];
+  proj.report = {
+    lede: "本周收口项目页",
+    progress: [{ id: "pr-1", key: "手工-01", title: "对齐周报模板", kind: "手写", status: "", owner: "spin", note: "选精简版" }],
+    asks: [{ id: "ar-1", key: "", what: "GitHub token", owner: "spin", impact: "任务源接不上", need: "给只读 token" }],
+    notes: { "US-09": "说明覆盖", "ask:未派活:need": "先派两个人" },
+  };
   rt.persist(); rt.flush(); rt.close();
   const rt2 = await openDb(dir);
+  const proj2 = rt2.state.projects.find((p) => p.id === proj.id);
+  assert.equal(proj2?.report?.lede, "本周收口项目页", "projects.report.lede 要能往返");
+  assert.equal(proj2?.report?.progress?.[0]?.title, "对齐周报模板", "手工进展行要能往返");
+  assert.equal(proj2?.report?.asks?.[0]?.need, "给只读 token", "手工问题行要能往返");
+  assert.equal(proj2?.report?.notes?.["US-09"], "说明覆盖", "说明覆盖要能往返");
+  ok("周报手写部分", "projects.report 往返一致（lede / progress / asks / notes）");
+
   const turn = (rt2.state.botTurns || []).find((t) => t.id === "bt-rt");
   const th = rt2.state.threads.find((t) => t.id === "th-rt");
   assert.equal(turn?.todoId, null, "bot_turns.todo_id 不能被写成 cost 的 JSON");

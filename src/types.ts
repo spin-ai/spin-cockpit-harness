@@ -1,5 +1,23 @@
 export type TodoStatus = "todo" | "queued" | "in_progress" | "waiting_input" | "in_review" | "done" | "cancelled";
 export type ProjectStatus = "planned" | "in_progress" | "paused" | "completed" | "cancelled";
+/** 周报里手写的部分：自动生成之外，允许人补一条 / 改一句 */
+export interface ReportProgressRow {
+  id: string; key: string; title: string; kind: string; status: string; owner: string; note: string;
+}
+export interface ReportAskRow {
+  id: string; key: string; what: string; owner: string; impact: string; need: string;
+}
+export interface ProjectReport {
+  /** 覆盖自动生成的「一句话进展」；null / 空 = 用算出来的 */
+  lede?: string | null;
+  /** 手工补的进展行（排在上面） */
+  progress?: ReportProgressRow[];
+  /** 手工补的问题行（排在上面） */
+  asks?: ReportAskRow[];
+  /** 覆盖自动行的说明：key = 行编号（如 US-09 / LEGACY-01） */
+  notes?: Record<string, string>;
+}
+
 export interface ProjectMilestone { id: string; name: string; date: number; status: "done" | "doing" | "todo"; }
 export interface Project {
   id: string; name: string; path: string; desc: string; color: string;
@@ -8,6 +26,8 @@ export interface Project {
   goal?: string;
   /** 里程碑：项目汇总里的横向时间轴 */
   milestones?: ProjectMilestone[];
+  /** 汇总页手写的部分：一句话进展覆盖 / 手工进展行 / 手工问题行 / 说明覆盖 */
+  report?: ProjectReport;
 }
 export type RequirementLevel = "rr" | "ir" | "sr" | "us";
 export type RequirementStatus = "draft" | "reviewing" | "approved" | "done" | "rejected" | "obsolete" | "in_progress" | "verifying";
