@@ -5284,6 +5284,8 @@ details.ds-live-thought[open]>summary{margin-bottom:2px}
 .ph-table tbody tr.on td{background:var(--surface-selected)}
 .ph-table .mono{font-family:var(--mono);font-size:10.5px;color:var(--faint);white-space:nowrap}
 .ph-cell-title{color:var(--fg);min-width:180px}
+.ph-row-title{padding:0;border:0;background:transparent;color:var(--fg);font-size:11px;text-align:left;cursor:pointer}
+.ph-row-title:hover{text-decoration:underline;text-underline-offset:2px}
 .ph-kind{display:inline-flex;align-items:center;height:17px;padding:0 4px;border-radius:var(--radius-sm);border:1px solid var(--border);font-size:10.5px;color:var(--muted)}
 .ph-kind.issue{color:var(--red);border-color:var(--red-line);background:var(--red-soft)}
 .ph-kind.legacy{color:var(--purple);border-color:var(--purple-line);background:var(--purple-soft)}
@@ -5392,6 +5394,12 @@ details.ds-live-thought[open]>summary{margin-bottom:2px}
 .req-embedded .req-plan-row .req-input{width:150px}
 .req-plan-hint{font-size:10.5px;color:var(--faint)}
 .ph-empty{display:grid;place-items:center;height:100%;padding:24px}
+
+/* 交付层列表视图：状态就在行里改（同样过闸门） */
+.ph-table.board-list td{height:34px}
+.ph-ist-select{height:22px;padding:0 4px;border:1px solid transparent;border-radius:var(--radius-sm);background:transparent;color:var(--muted);font-size:11px;outline:none;cursor:pointer}
+.ph-ist-select:hover{border-color:var(--border);color:var(--fg)}
+.ph-ist-select:focus{border-color:var(--border-strong);color:var(--fg)}
 
 @media (max-width:1180px){ .ph{--ph-col:184px;padding-left:16px} }
 @media (max-width:980px){ .ph{grid-template-columns:minmax(0,1fr)} .ph-col{display:none} }

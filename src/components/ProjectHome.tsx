@@ -5,7 +5,8 @@ import { Overview } from "./Overview";
 import { RowMenu } from "./RowMenu";
 import { confirmDialog } from "./ConfirmHost";
 import { EmptyState } from "./EmptyState";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, SearchIcon, XIcon } from "./Icons";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ListIcon, PlusIcon, SearchIcon, TableIcon, XIcon } from "./Icons";
+import { Segmented } from "./Tabs";
 import { agentOf } from "../ui";
 
 type Act = (type: string, payload?: unknown) => Promise<any>;
@@ -18,6 +19,8 @@ const ISSUE_KIND: Record<string, string> = { legacy: "遗留事项", task: "任�
 const ISSUE_STATUS: Record<string, string> = { open: "待处理", doing: "进行中", blocked: "受阻", resolved: "已解决", closed: "已关闭" };
 const PROJECT_STATUS: Record<string, string> = { planned: "计划中", in_progress: "进行中", paused: "已暂停", completed: "已完成", cancelled: "已取消" };
 const BOARD_COLS = ["draft", "reviewing", "approved", "in_progress", "verifying", "done"];
+/** 列表视图的顺序：现在在动的排前面，积压的往后，已完成垫底 */
+const LIST_ORDER = ["in_progress", "verifying", "approved", "reviewing", "draft", "done"];
 const DELIVERY = "us";
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -466,6 +469,10 @@ function BoardPane({ state, reqs, project, byId, botFilter, gapOnly, onBot, onGa
 }) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overCol, setOverCol] = useState<string | null>(null);
+  const [view, setView] = useState<"board" | "list">(() => {
+    try { return localStorage.getItem("ph.boardView") === "list" ? "list" : "board"; } catch { return "board"; }
+  });
+  useEffect(() => { try { localStorage.setItem("ph.boardView", view); } catch { /* ignore */ } }, [view]);
   const delivery = reqs.filter((r) => r.level === DELIVERY);
   let list = delivery;
   if (botFilter === "none") list = list.filter((r) => !todosOf(state, r.id).length);
@@ -491,13 +498,56 @@ function BoardPane({ state, reqs, project, byId, botFilter, gapOnly, onBot, onGa
           </select>
           <label className="ph-check"><input type="checkbox" checked={gapOnly} onChange={(e) => onGap(e.target.checked)} /> 只看缺口</label>
           <span className="ph-spacer" />
-          <span className="ph-note">拖到别的列可改状态（闸门会拦：先批准 / 先派活 / 验收勾完）</span>
+          <Segmented ariaLabel="交付层视图" value={view} onChange={(id) => setView(id as "board" | "list")}
+            items={[
+              { id: "board", label: (<><TableIcon size={13} /> 看板</>), title: "看板视图（拖拽改状态）" },
+              { id: "list", label: (<><ListIcon size={13} /> 列表</>), title: "列表视图（一行一条，可当场改状态）" },
+            ]} />
+          <span className="ph-note">{view === "board" ? "拖到别的列可改状态" : "改状态同样过闸门"}（先批准 / 先派活 / 验收勾完）</span>
         </div>
         {!delivery.length ? (
           <div className="ph-empty-board">
             <EmptyState compact title="还没有交付层需求"
               desc="看板按交付层（US）的需求状态分列。先在「需求」里建一条 RR，再往下拆到 US。"
               action={<button className="btn tiny" onClick={onCreate}>新建需求</button>} />
+          </div>
+        ) : view === "list" ? (
+          <div className="ph-table-wrap">
+            <table className="ph-table board-list">
+              <thead>
+                <tr><th>编号</th><th>标题</th><th>状态</th><th>实现者</th><th>验收</th><th>缺口</th><th>更新</th></tr>
+              </thead>
+              <tbody>
+                {[...list]
+                  .sort((a, b) => LIST_ORDER.indexOf(a.status) - LIST_ORDER.indexOf(b.status) || (b.updatedAt || 0) - (a.updatedAt || 0))
+                  .map((r) => {
+                    const impl = implementersOf(state, r);
+                    const gap = gapOf(state, r, byId);
+                    const acc = r.acceptance || [];
+                    return (
+                      <tr key={r.id}>
+                        <td className="mono">{r.key.replace(/^[A-Z0-9]+-/, "")}</td>
+                        <td className="ph-cell-title">
+                          <button className="ph-row-title" onClick={() => onOpen(r.id)} title={`${r.key} ${r.title}`}>{r.title}</button>
+                        </td>
+                        <td>
+                          <select className="ph-ist-select" value={r.status} aria-label={`${r.key} 状态`}
+                            onChange={(e) => { if (e.target.value !== r.status) onMove(r, e.target.value); }}>
+                            {BOARD_COLS.map((col) => <option key={col} value={col}>{REQ_STATUS[col]}</option>)}
+                          </select>
+                        </td>
+                        <td>
+                          {impl.length ? impl.join(" / ") : todosOf(state, r.id).length ? <span className="ph-muted">待认领</span> : <span className="ph-muted">—</span>}
+                        </td>
+                        <td className="mono">{acc.length ? `${acc.filter((a) => a.done).length}/${acc.length}` : "—"}</td>
+                        <td>{gap ? <span className="req-chip warn">{gap.label}</span> : <span className="ph-muted">—</span>}</td>
+                        <td className="mono">{fmt(r.updatedAt || 0)}</td>
+                      </tr>
+                    );
+                  })}
+                {!list.length && <tr><td colSpan={7}><div className="inline-empty">没有匹配的交付层需求</div></td></tr>}
+              </tbody>
+            </table>
           </div>
         ) : gapOnly && !list.length ? (
           <div className="ph-empty-board">
